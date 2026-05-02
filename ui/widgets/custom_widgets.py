@@ -17,7 +17,6 @@ class HoverDeleteListWidget(QListWidget):
         self.setStyleSheet("QListWidget { border: 2px dashed #E0E0E0; border-radius: 6px; background: #FAFAFA; padding: 5px;} QListWidget::item:selected { border: 2px solid #1976D2; background: transparent; border-radius: 4px;}")
         self.setMouseTracking(True)
         self.btn_delete = QPushButton("🗑️", self)
-        # 这里的删除按钮红色属于交互层面的通用警告色，可保留不放到业务配置中
         self.btn_delete.setStyleSheet("QPushButton { background-color: rgba(244, 67, 54, 0.85); color: white; border: none; border-radius: 12px; font-size: 12px; font-weight: bold;} QPushButton:hover { background-color: rgba(211, 47, 47, 1); }")
         self.btn_delete.resize(24, 24)
         self.btn_delete.hide()
@@ -55,17 +54,30 @@ class CandlestickItem(pg.GraphicsObject):
     def generatePicture(self):
         self.picture = QtGui.QPicture()
         p = QtGui.QPainter(self.picture)
-        w = (self.data[1][0] - self.data[0][0]) / 3.0 if len(self.data) > 1 else 0.3
+        
+        # 【Pokorny 原则 1】开启抗锯齿渲染，让图表像丝绸一样平滑
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        
+        w = 0.3
+        if len(self.data) > 1:
+            w = (self.data[1][0] - self.data[0][0]) * 0.35 
+            
         for (t, open_p, close_p, min_p, max_p) in self.data:
-            if close_p >= open_p: 
-                # 【进化】使用配置中心的颜色
-                p.setPen(pg.mkPen(settings.COLOR_PROFIT, width=1.5))
-                p.setBrush(pg.mkBrush(settings.COLOR_PROFIT))
-            else: 
-                p.setPen(pg.mkPen(settings.COLOR_LOSS, width=1.5))
-                p.setBrush(pg.mkBrush(settings.COLOR_LOSS))
+            is_profit = close_p >= open_p
+            
+            # 【Pokorny 原则 2】抛弃刺眼的黑色描边，影线和实体采用纯净的扁平单色
+            color_hex = settings.COLOR_PROFIT if is_profit else settings.COLOR_LOSS
+            color = QtGui.QColor(color_hex)
+            
+            # 画影线 (Wick)
+            p.setPen(pg.mkPen(color, width=1.5))
             p.drawLine(QtCore.QPointF(t, min_p), QtCore.QPointF(t, max_p))
+            
+            # 画实体 (Body)：边框和填充色完全一致，彻底消除描边感
+            p.setBrush(pg.mkBrush(color))
+            p.setPen(pg.mkPen(color, width=1)) 
             p.drawRect(QtCore.QRectF(t - w, open_p, w * 2, close_p - open_p))
+            
         p.end()
 
     def paint(self, p, *args): 

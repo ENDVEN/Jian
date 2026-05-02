@@ -120,7 +120,10 @@ class JianMainWindow(QMainWindow):
         
         if raw_report:
             self.page_overview.update_view(raw_report, analyzer.df)
-            self.page_records.populate_table(analyzer.df)
+            
+            # 【核心修改点】这里不再是无脑塞数据，而是让流水页面去刷新它自己的高级过滤器！
+            self.page_records.refresh_records_filters()
+            
             self.page_review.refresh_review_filters()
             self.page_review.update_review_view()
 

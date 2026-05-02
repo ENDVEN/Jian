@@ -47,4 +47,4 @@ SCREENSHOT_DIR = os.path.join(USER_DATA_DIR, "screenshots")
 # 这里填写你存放在云端的 version.json 文件的直链地址
 # 格式要求形如：{"version": "1.1.0", "notes": "修复了Bug", "url": "https://下载链接"}
 # 测试阶段，我们先用一个安全的占位符，一会教你怎么在本地测试它
-UPDATE_CHECK_URL = "file:///C:/Users/Administrator/Desktop/test_version.json.json"
+UPDATE_CHECK_URL = "https://raw.githubusercontent.com/ENDVEN/Jian/refs/heads/main/version.json"
