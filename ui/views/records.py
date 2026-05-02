@@ -30,6 +30,11 @@ class RecordsView(QWidget):
         self.btn_manual.setStyleSheet(f"QPushButton {{ background-color: {settings.COLOR_PROFIT}; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; margin-left:10px; }}")
         self.btn_manual.clicked.connect(self.main_win.open_manual_entry)
         
+        # 【新增】导出按钮，使用醒目的橘色
+        self.btn_export = QPushButton("📤 导出")
+        self.btn_export.setStyleSheet("QPushButton { background-color: #FF9800; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; margin-left:10px; }")
+        self.btn_export.clicked.connect(self.main_win.export_data)
+        
         self.btn_manage_acc = QPushButton("🗑️ 清空账户")
         self.btn_manage_acc.setStyleSheet(f"QPushButton {{ background-color: white; color: {settings.COLOR_LOSS}; border: 1px solid {settings.COLOR_LOSS}; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; margin-left:10px; }}")
         self.btn_manage_acc.clicked.connect(self.main_win.manage_accounts)
@@ -38,6 +43,7 @@ class RecordsView(QWidget):
         top_bar.addStretch()
         top_bar.addWidget(self.btn_import)
         top_bar.addWidget(self.btn_manual)
+        top_bar.addWidget(self.btn_export)      # 【新增】挂载到布局
         top_bar.addWidget(self.btn_manage_acc)
         
         self.records_tab_widget = QTabWidget()
@@ -87,7 +93,6 @@ class RecordsView(QWidget):
                 QTableWidgetItem(f"￥{record.get('commission', 0):.2f}")
             ]
             
-            # 【进化】使用配置中心的颜色
             pnl_color = settings.COLOR_PROFIT_TEXT if record.get('net_profit', 0) > 0 else settings.COLOR_LOSS_TEXT
             items[7].setForeground(QColor(pnl_color))
             items[7].setFont(QFont("Arial", 10, QFont.Weight.Bold))
