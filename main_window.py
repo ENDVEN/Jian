@@ -264,7 +264,7 @@ class TradingApp(QMainWindow):
         self.is_yearly_view = False
         
         # 为了演示，加入少量假数据
-        from main_window import generate_extreme_mock_data # 偷懒调用一下以前写的
+        from ui.main_window import generate_extreme_mock_data # 偷懒调用一下以前写的
         try:
             self.global_df = generate_extreme_mock_data(50)
             self.global_strategies += self.global_df['strategy_tag'].unique().tolist()
