@@ -1,0 +1,23 @@
+# === Python 核心缓存 ===
+__pycache__/
+*.py[cod]
+*$py.class
+
+# === 本地运行产生的业务数据 ===
+screenshots/
+data/cache/
+*.db
+*.sqlite3
+
+# === 操作系统产生的临时文件 ===
+.DS_Store
+Thumbs.db
+
+# === 常用 IDE 的配置文件 (比如你用的 VSCode 或 PyCharm) ===
+.vscode/
+.idea/
+
+# === 虚拟环境目录 (如果你未来使用的话) ===
+venv/
+env/
+.env
