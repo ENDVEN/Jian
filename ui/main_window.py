@@ -4,10 +4,13 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
                              QVBoxLayout, QPushButton, QFrame, QStackedWidget,
                              QDialog, QMessageBox, QFileDialog)
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QUrl
 
 from config import settings
 from core.analyzer import TradeAnalyzer
 from core.engine import DataEngine
+from core.updater import UpdateCheckerThread  # 【引入异步侦察兵】
 
 from ui.dialogs.dialogs import ListManagerDialog, ImportWizardDialog, ManualEntryDialog
 from ui.views.dashboard import DashboardView
@@ -74,7 +77,37 @@ class JianMainWindow(QMainWindow):
         self.btn_review.clicked.connect(lambda: self.content_area.setCurrentIndex(2))
         
         self.render_all_data()
+        
+        # 【新增】软件启动后，静默触发云端更新检测
+        self.check_for_updates()
 
+    # ==========================================
+    # 版本更新检测模块
+    # ==========================================
+    def check_for_updates(self):
+        """启动后台线程检测更新，防止主界面卡顿"""
+        self.updater_thread = UpdateCheckerThread()
+        # 信号接通：一旦侦察兵发现新版本，立刻调用 show_update_dialog
+        self.updater_thread.update_available.connect(self.show_update_dialog)
+        self.updater_thread.start()
+
+    def show_update_dialog(self, version: str, notes: str, download_url: str):
+        """弹出优美的更新提示框"""
+        msg = f"当前版本: {settings.APP_VERSION}\n最新版本: {version}\n\n更新说明:\n{notes}\n\n是否立即前往浏览器下载新版本？"
+        reply = QMessageBox.question(
+            self, 
+            "✨ 发现新版本", 
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes and download_url:
+            # 调用操作系统的默认浏览器打开下载链接
+            QDesktopServices.openUrl(QUrl(download_url))
+
+    # ==========================================
+    # 数据流与弹窗控制器 (保持不变)
+    # ==========================================
     def render_all_data(self):
         if self.engine.df.empty: 
             self.page_overview.clear_view()
@@ -91,9 +124,6 @@ class JianMainWindow(QMainWindow):
             self.page_review.refresh_review_filters()
             self.page_review.update_review_view()
 
-    # ==========================================
-    # 全局弹窗与数据导出控制器
-    # ==========================================
     def open_import_wizard(self):
         dialog = ImportWizardDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'final_trades', None):
@@ -107,30 +137,24 @@ class JianMainWindow(QMainWindow):
             self.render_all_data()
             
     def export_data(self):
-        """【新增】一键导出全量业务数据"""
         if self.engine.df.empty:
             QMessageBox.warning(self, "提示", "当前没有任何数据可以导出！")
             return
 
-        # 默认生成带时间戳的文件名
         default_name = f"Jian_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         file_path, _ = QFileDialog.getSaveFileName(self, "导出数据备份", default_name, "CSV 数据表 (*.csv)")
         
         if file_path:
             try:
                 export_df = self.engine.df.copy()
-                
-                # 剔除底层的 internal_id，防止用户看了迷惑
                 if 'internal_id' in export_df.columns:
                     export_df = export_df.drop(columns=['internal_id'])
                 
-                # 重新排列顺眼的列名顺序
                 cols_order = ['trade_id', 'account', 'symbol', 'direction', 'entry_time', 'exit_time', 
                               'lots', 'net_profit', 'commission', 'strategy_tag', 'entry_reason', 'reflection', 'screenshot_paths']
                 export_cols = [c for c in cols_order if c in export_df.columns]
                 export_df = export_df[export_cols]
                 
-                # 使用 utf-8-sig 编码保存，在 Windows 下用 Excel 打开绝不乱码
                 export_df.to_csv(file_path, index=False, encoding='utf-8-sig')
                 QMessageBox.information(self, "导出成功", f"恭喜！所有复盘数据已成功导出至：\n\n{file_path}")
             except Exception as e:

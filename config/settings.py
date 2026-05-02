@@ -33,12 +33,18 @@ DEFAULT_STRATEGY = "未分类"
 DEFAULT_ACCOUNTS = ["默认手工账户", "国内长线", "国内短线"]
 
 # ==========================================
-# 路径与存储配置 (物理隔离：防数据丢失)
+# 路径与存储配置 (物理隔离)
 # ==========================================
-# 将数据保存在系统的用户目录下，例如 C:\Users\YourName\.jian_data
-# 这样即便软件被卸载重装或版本覆盖，数据依然绝对安全！
 USER_HOME = Path.home()
 USER_DATA_DIR = os.path.join(USER_HOME, ".jian_data")
 
 DB_PATH = os.path.join(USER_DATA_DIR, "jian_trades.db")
 SCREENSHOT_DIR = os.path.join(USER_DATA_DIR, "screenshots")
+
+# ==========================================
+# 更新检测配置 (Update Settings)
+# ==========================================
+# 这里填写你存放在云端的 version.json 文件的直链地址
+# 格式要求形如：{"version": "1.1.0", "notes": "修复了Bug", "url": "https://下载链接"}
+# 测试阶段，我们先用一个安全的占位符，一会教你怎么在本地测试它
+UPDATE_CHECK_URL = "file:///C:/Users/Administrator/Desktop/test_version.json.json"
