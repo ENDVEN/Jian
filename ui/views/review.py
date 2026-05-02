@@ -314,7 +314,6 @@ class ReviewView(QWidget):
         equity_curve = [0.0] + df_sorted['net_profit'].cumsum().tolist(); x_data = list(range(len(equity_curve)))
         is_prof = equity_curve[-1] >= 0
         
-        # 【进化】使用配置中心的 RGB 颜色
         col = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
         fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
         self.review_pnl_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=col, width=3), fillLevel=0, fillBrush=fill)
@@ -347,7 +346,6 @@ class ReviewView(QWidget):
             txt = f"{sym} | ￥{'+' if pnl>0 else ''}{pnl:,.2f}" + (" 📝" if pd.notna(record.get('reflection')) and str(record.get('reflection')).strip()!="" else "")
             list_item = QListWidgetItem(txt)
             list_item.setData(Qt.ItemDataRole.UserRole, idx)
-            # 【进化】使用深色文本确保对比度
             list_item.setForeground(QColor(settings.COLOR_PROFIT_TEXT) if pnl > 0 else QColor(settings.COLOR_LOSS_TEXT))
             self.day_trades_list.addItem(list_item)
 
@@ -364,7 +362,6 @@ class ReviewView(QWidget):
         self.txt_reason.setPlainText(str(record.get('entry_reason', ''))); self.txt_reflection.setPlainText(str(record.get('reflection', '')))
         
         self.cb_edit_strategy.blockSignals(True)
-        # 【进化】如果策略为空，使用配置文件的默认策略
         self.cb_edit_strategy.setCurrentText(str(record.get('strategy_tag', settings.DEFAULT_STRATEGY)))
         self.cb_edit_strategy.blockSignals(False)
         
@@ -451,9 +448,12 @@ class ReviewView(QWidget):
         mime_data = clipboard.mimeData()
         if mime_data.hasImage():
             image = clipboard.image()
-            trade_id = str(self.main_win.engine.df.at[self.current_editing_idx, 'trade_id']).replace(" ", "_")
+            
+            # 【核心修复】保存截图时也使用绝对唯一的 internal_id，防止图片覆盖
+            internal_id = str(self.main_win.engine.df.at[self.current_editing_idx, 'internal_id'])
             timestamp = int(datetime.now().timestamp() * 1000)
-            filename = os.path.join(settings.SCREENSHOT_DIR, f"{trade_id}_{timestamp}.png")
+            filename = os.path.join(settings.SCREENSHOT_DIR, f"{internal_id}_{timestamp}.png")
+            
             image.save(filename)
             self.add_thumbnail(filename)
             self._save_image_paths_to_df() 
@@ -462,10 +462,12 @@ class ReviewView(QWidget):
     def import_image(self):
         if getattr(self, 'current_editing_idx', None) is None: return
         file_paths, _ = QFileDialog.getOpenFileNames(self, "选择截图", "", "Images (*.png *.jpg *.jpeg *.bmp)")
-        trade_id = str(self.main_win.engine.df.at[self.current_editing_idx, 'trade_id']).replace(" ", "_")
+        
+        # 【核心修复】保存截图时也使用绝对唯一的 internal_id
+        internal_id = str(self.main_win.engine.df.at[self.current_editing_idx, 'internal_id'])
         for path in file_paths:
             timestamp = int(datetime.now().timestamp() * 1000); ext = path.split('.')[-1]
-            filename = os.path.join(settings.SCREENSHOT_DIR, f"{trade_id}_{timestamp}.{ext}")
+            filename = os.path.join(settings.SCREENSHOT_DIR, f"{internal_id}_{timestamp}.{ext}")
             shutil.copy(path, filename)
             self.add_thumbnail(filename)
         self._save_image_paths_to_df()

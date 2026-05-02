@@ -4,30 +4,19 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                              QVBoxLayout, QPushButton, QFrame, QStackedWidget,
                              QDialog, QMessageBox)
 
-# 引入全局配置
 from config import settings
-
-# ========= 核心模块 =========
 from core.analyzer import TradeAnalyzer
 from core.engine import DataEngine
-from data.data_feed import generate_extreme_mock_data
 
-# ========= 弹窗控制器 =========
 from ui.dialogs.dialogs import ListManagerDialog, ImportWizardDialog, ManualEntryDialog
-
-# ========= 页面视图组件 =========
 from ui.views.dashboard import DashboardView
 from ui.views.records import RecordsView
 from ui.views.review import ReviewView
 
 class JianMainWindow(QMainWindow):
-    """
-    Jian 主窗口控制器。
-    """
     def __init__(self):
         super().__init__()
         
-        # 【核心进化】：使用配置中心参数
         self.setWindowTitle(settings.APP_NAME)
         self.resize(settings.MAIN_WINDOW_WIDTH, settings.MAIN_WINDOW_HEIGHT) 
         
@@ -39,6 +28,7 @@ class JianMainWindow(QMainWindow):
             QPushButton.NavBtn:checked { background-color: #E3F2FD; color: #1976D2; }
         """)
         
+        # 引擎初始化时，已经自动从数据库读取了真实数据！
         self.engine = DataEngine()
 
         central_widget = QWidget()
@@ -83,11 +73,9 @@ class JianMainWindow(QMainWindow):
         self.btn_records.clicked.connect(lambda: self.content_area.setCurrentIndex(1))
         self.btn_review.clicked.connect(lambda: self.content_area.setCurrentIndex(2))
         
-        self.engine.load_initial_mock(generate_extreme_mock_data)
         self.render_all_data()
 
     def render_all_data(self):
-        """核心数据流驱动中心"""
         if self.engine.df.empty: 
             self.page_overview.clear_view()
             self.page_records.clear_view()
@@ -103,9 +91,6 @@ class JianMainWindow(QMainWindow):
             self.page_review.refresh_review_filters()
             self.page_review.update_review_view()
 
-    # ==========================================
-    # 全局弹窗控制器
-    # ==========================================
     def open_import_wizard(self):
         dialog = ImportWizardDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'final_trades', None):
