@@ -2,33 +2,37 @@
 import pandas as pd
 import random
 from datetime import datetime, timedelta
+from models.trade import TradeRecord
 
-def generate_extreme_mock_data(num_trades=150):
-    """生成测试用的极端波动假数据"""
+def generate_extreme_mock_data(num_trades=150) -> list[TradeRecord]:
+    """生成测试用的极端波动假数据，返回标准数据模型列表"""
     trades = []
     base_time = datetime.now().replace(day=1, hour=9, minute=0) 
     accounts = ['国内长线账户', '国内短线账户', '外盘IBKR']
     strategies = ['均线突破', '震荡网格', 'MACD背离', '裸K情绪']
 
-    for i in range(num_trades):
+    for _ in range(num_trades):
         trade_time = base_time + timedelta(days=random.randint(0, 27), hours=random.randint(1, 10))
         net_profit = random.uniform(1000, 8000) if random.random() < 0.45 else random.uniform(-4000, -500)
         
-        trades.append({
-            "trade_id": f"M{i:04d}", 
-            "account": random.choice(accounts),
-            "symbol": random.choice(['IF2310', 'RB2401', 'AU2312', 'NQ100']),
-            "direction": random.choice(['LONG', 'SHORT']),
-            "entry_time": trade_time, "exit_time": trade_time + timedelta(hours=random.randint(1, 48)),
-            "lots": random.randint(1, 5), "net_profit": net_profit,
-            "commission": random.uniform(10, 30), 
-            "strategy_tag": random.choice(strategies),
-            "entry_reason": "", "reflection": "" 
-        })
-    return pd.DataFrame(trades)
+        # 使用标准化模型创建数据
+        record = TradeRecord(
+            account=random.choice(accounts),
+            symbol=random.choice(['IF2310', 'RB2401', 'AU2312', 'NQ100']),
+            direction=random.choice(['LONG', 'SHORT']),
+            entry_time=trade_time,
+            exit_time=trade_time + timedelta(hours=random.randint(1, 48)),
+            lots=random.randint(1, 5),
+            net_profit=net_profit,
+            commission=random.uniform(10, 30),
+            strategy_tag=random.choice(strategies)
+        )
+        trades.append(record)
+        
+    return trades
 
-def parse_cfmmc_excel(file_path):
-    """解析 CFMMC 标准格式的期货交割单 Excel 文件"""
+def parse_cfmmc_excel(file_path) -> list[TradeRecord]:
+    """解析 CFMMC 格式 Excel，清洗并转换为标准模型列表"""
     xls = pd.ExcelFile(file_path)
     account_name = "CFMMC真实账户"
     try:
@@ -72,12 +76,36 @@ def parse_cfmmc_excel(file_path):
                 while lots_to_close > 0 and open_positions[symbol][opposite_dir]:
                     open_trade = open_positions[symbol][opposite_dir][0]
                     matched_lots = min(lots_to_close, open_trade['lots'])
-                    matched_trades.append({'trade_id': str(row['成交序号']), 'account': account_name, 'symbol': symbol, 'direction': 'LONG' if opposite_dir == '买' else 'SHORT', 'entry_time': open_trade['entry_time'], 'exit_time': trade_time, 'lots': matched_lots, 'net_profit': profit * (matched_lots / lots), 'commission': close_commission * (matched_lots / lots) + open_trade['commission'] * (matched_lots / open_trade['lots']), 'strategy_tag': '未分类', 'entry_reason': '', 'reflection': '', 'screenshot_paths': ''})
+                    
+                    record = TradeRecord(
+                        trade_id=str(row['成交序号']),
+                        account=account_name,
+                        symbol=symbol,
+                        direction='LONG' if opposite_dir == '买' else 'SHORT',
+                        entry_time=open_trade['entry_time'],
+                        exit_time=trade_time,
+                        lots=matched_lots,
+                        net_profit=profit * (matched_lots / lots),
+                        commission=close_commission * (matched_lots / lots) + open_trade['commission'] * (matched_lots / open_trade['lots'])
+                    )
+                    matched_trades.append(record)
+                    
                     lots_to_close -= matched_lots
                     open_trade['lots'] -= matched_lots
                     if open_trade['lots'] == 0: open_positions[symbol][opposite_dir].pop(0)
             
             if lots_to_close > 0: 
-                matched_trades.append({'trade_id': str(row['成交序号']), 'account': account_name, 'symbol': symbol, 'direction': 'LONG' if opposite_dir == '买' else 'SHORT', 'entry_time': trade_time, 'exit_time': trade_time, 'lots': lots_to_close, 'net_profit': profit * (lots_to_close / lots), 'commission': close_commission * (lots_to_close / lots), 'strategy_tag': '未分类', 'entry_reason': '', 'reflection': '', 'screenshot_paths': ''})
+                record = TradeRecord(
+                    trade_id=str(row['成交序号']),
+                    account=account_name,
+                    symbol=symbol,
+                    direction='LONG' if opposite_dir == '买' else 'SHORT',
+                    entry_time=trade_time,
+                    exit_time=trade_time,
+                    lots=lots_to_close,
+                    net_profit=profit * (lots_to_close / lots),
+                    commission=close_commission * (lots_to_close / lots)
+                )
+                matched_trades.append(record)
                 
-    return pd.DataFrame(matched_trades)
+    return matched_trades

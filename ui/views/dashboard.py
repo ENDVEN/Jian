@@ -4,14 +4,12 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel
 from PyQt6.QtCore import Qt
 
+from config import settings
+
 class DashboardView(QWidget):
-    """
-    【资金与表现】页面组件。
-    只负责渲染图表和统计指标，不包含任何外部数据获取逻辑。
-    """
     def __init__(self, main_win):
         super().__init__()
-        self.main_win = main_win # 保存对主窗口的引用，方便以后需要时通信
+        self.main_win = main_win 
         self.metric_widgets = {}
         self._setup_ui()
 
@@ -65,24 +63,29 @@ class DashboardView(QWidget):
 
     def set_metric_style(self, widget, formatted_text, raw_value=None, force_neutral=False, reverse_color=False):
         widget.setText(formatted_text)
-        if force_neutral: color, bg_color = "#424242", "#F5F5F5"
+        if force_neutral: 
+            color, bg_color = settings.COLOR_TEXT_PRIMARY, "#F5F5F5"
         elif raw_value is not None:
-            if raw_value == 0: color, bg_color = "#757575", "#F5F5F5"
-            elif (raw_value > 0 and not reverse_color) or (raw_value < 0 and reverse_color): color, bg_color = "#4CAF50", "rgba(76, 175, 80, 0.1)"
-            else: color, bg_color = "#F44336", "rgba(244, 67, 54, 0.1)"
-        else: color, bg_color = "#757575", "#F5F5F5"
+            if raw_value == 0: 
+                color, bg_color = "#757575", "#F5F5F5"
+            elif (raw_value > 0 and not reverse_color) or (raw_value < 0 and reverse_color): 
+                color = settings.COLOR_PROFIT
+                # 提取 RGB 值动态生成透明背景
+                bg_color = f"rgba({settings.RGB_PROFIT[0]}, {settings.RGB_PROFIT[1]}, {settings.RGB_PROFIT[2]}, 0.1)"
+            else: 
+                color = settings.COLOR_LOSS
+                bg_color = f"rgba({settings.RGB_LOSS[0]}, {settings.RGB_LOSS[1]}, {settings.RGB_LOSS[2]}, 0.1)"
+        else: 
+            color, bg_color = "#757575", "#F5F5F5"
         widget.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {color}; padding: 5px; background-color: {bg_color}; border-radius: 4px;")
 
     def clear_view(self):
-        """当没有数据时，清空面板"""
         self.equity_chart.clear()
         self.distribution_chart.clear()
         for widget in self.metric_widgets.values():
             self.set_metric_style(widget, "-", force_neutral=True)
 
     def update_view(self, r, df):
-        """统一的对外更新接口"""
-        # 1. 更新指标文本
         m = self.metric_widgets
         self.set_metric_style(m["net_profit"], f"￥{r['net_profit']:,.2f}", r['net_profit'])
         self.set_metric_style(m["avg_win"], f"￥{r['avg_win']:,.2f}", r['avg_win'])
@@ -99,17 +102,16 @@ class DashboardView(QWidget):
         self.set_metric_style(m["winning_trades"], str(r['winning_trades']), force_neutral=True)
         self.set_metric_style(m["losing_trades"], str(r['losing_trades']), force_neutral=True)
 
-        # 2. 更新资金曲线
         equity_data = df['equity'].tolist()
         x_data = list(range(len(equity_data)))
         self.equity_chart.clear()
         if equity_data:
             is_prof = equity_data[-1] >= equity_data[0]
-            col = (76, 175, 80) if is_prof else (244, 67, 54)
-            fill = (76, 175, 80, 50) if is_prof else (244, 67, 54, 50)
+            # 【进化】使用配置中心的 RGB 元组
+            col = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
+            fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
             self.equity_chart.plot(x_data, equity_data, pen=pg.mkPen(color=col, width=2.5), fillLevel=equity_data[0], fillBrush=fill)
 
-        # 3. 更新分布图
         profits = df['net_profit'].values
         self.distribution_chart.clear()
         if len(profits) > 0:

@@ -6,11 +6,9 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
 
+from config import settings
+
 class RecordsView(QWidget):
-    """
-    【交易流水】页面组件。
-    负责渲染表格。按钮点击事件将委托给 main_win 控制器处理。
-    """
     def __init__(self, main_win):
         super().__init__()
         self.main_win = main_win
@@ -20,22 +18,20 @@ class RecordsView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
-        # 顶部操作栏
         top_bar = QHBoxLayout()
         title = QLabel("交易流水明细")
         title.setStyleSheet("font-size: 22px; font-weight: bold; color: #212121;")
         
         self.btn_import = QPushButton("📥 导入")
         self.btn_import.setStyleSheet("QPushButton { background-color: #1976D2; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; }")
-        # 直接连接到主窗口的方法
         self.btn_import.clicked.connect(self.main_win.open_import_wizard)
         
         self.btn_manual = QPushButton("✍️ 录入")
-        self.btn_manual.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; margin-left:10px; }")
+        self.btn_manual.setStyleSheet(f"QPushButton {{ background-color: {settings.COLOR_PROFIT}; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; margin-left:10px; }}")
         self.btn_manual.clicked.connect(self.main_win.open_manual_entry)
         
         self.btn_manage_acc = QPushButton("🗑️ 清空账户")
-        self.btn_manage_acc.setStyleSheet("QPushButton { background-color: white; color: #F44336; border: 1px solid #F44336; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; margin-left:10px; }")
+        self.btn_manage_acc.setStyleSheet(f"QPushButton {{ background-color: white; color: {settings.COLOR_LOSS}; border: 1px solid {settings.COLOR_LOSS}; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; margin-left:10px; }}")
         self.btn_manage_acc.clicked.connect(self.main_win.manage_accounts)
         
         top_bar.addWidget(title)
@@ -44,7 +40,6 @@ class RecordsView(QWidget):
         top_bar.addWidget(self.btn_manual)
         top_bar.addWidget(self.btn_manage_acc)
         
-        # 表格控件
         self.records_tab_widget = QTabWidget()
         self.records_tab_widget.setStyleSheet("QTabWidget::pane { border: 1px solid #E0E0E0; border-radius: 8px; background: white; top: -1px; } QTabBar::tab { background: #F5F5F5; color: #757575; padding: 10px 25px; border: 1px solid #E0E0E0; border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 4px; font-weight: bold; } QTabBar::tab:selected { background: white; color: #1976D2; border-bottom: 2px solid white; }")
         
@@ -56,7 +51,6 @@ class RecordsView(QWidget):
         self.records_tab_widget.clear()
 
     def populate_table(self, df):
-        """统一的对外更新接口"""
         self.clear_view()
         if df.empty: return
         
@@ -93,7 +87,9 @@ class RecordsView(QWidget):
                 QTableWidgetItem(f"￥{record.get('commission', 0):.2f}")
             ]
             
-            items[7].setForeground(QColor("#4CAF50") if record.get('net_profit', 0) > 0 else QColor("#F44336"))
+            # 【进化】使用配置中心的颜色
+            pnl_color = settings.COLOR_PROFIT_TEXT if record.get('net_profit', 0) > 0 else settings.COLOR_LOSS_TEXT
+            items[7].setForeground(QColor(pnl_color))
             items[7].setFont(QFont("Arial", 10, QFont.Weight.Bold))
             
             for col, item in enumerate(items): 
@@ -101,4 +97,3 @@ class RecordsView(QWidget):
                 table.setItem(row, col, item)
                 
         self.records_tab_widget.addTab(table, tab_name)
-        

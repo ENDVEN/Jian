@@ -4,6 +4,8 @@ from pyqtgraph import QtCore, QtGui
 from PyQt6.QtWidgets import QListWidget, QPushButton
 from PyQt6.QtCore import Qt, QSize
 
+from config import settings
+
 class HoverDeleteListWidget(QListWidget):
     def __init__(self, delete_callback, parent=None):
         super().__init__(parent)
@@ -15,6 +17,7 @@ class HoverDeleteListWidget(QListWidget):
         self.setStyleSheet("QListWidget { border: 2px dashed #E0E0E0; border-radius: 6px; background: #FAFAFA; padding: 5px;} QListWidget::item:selected { border: 2px solid #1976D2; background: transparent; border-radius: 4px;}")
         self.setMouseTracking(True)
         self.btn_delete = QPushButton("🗑️", self)
+        # 这里的删除按钮红色属于交互层面的通用警告色，可保留不放到业务配置中
         self.btn_delete.setStyleSheet("QPushButton { background-color: rgba(244, 67, 54, 0.85); color: white; border: none; border-radius: 12px; font-size: 12px; font-weight: bold;} QPushButton:hover { background-color: rgba(211, 47, 47, 1); }")
         self.btn_delete.resize(24, 24)
         self.btn_delete.hide()
@@ -55,11 +58,12 @@ class CandlestickItem(pg.GraphicsObject):
         w = (self.data[1][0] - self.data[0][0]) / 3.0 if len(self.data) > 1 else 0.3
         for (t, open_p, close_p, min_p, max_p) in self.data:
             if close_p >= open_p: 
-                p.setPen(pg.mkPen('#4CAF50', width=1.5))
-                p.setBrush(pg.mkBrush('#4CAF50'))
+                # 【进化】使用配置中心的颜色
+                p.setPen(pg.mkPen(settings.COLOR_PROFIT, width=1.5))
+                p.setBrush(pg.mkBrush(settings.COLOR_PROFIT))
             else: 
-                p.setPen(pg.mkPen('#F44336', width=1.5))
-                p.setBrush(pg.mkBrush('#F44336'))
+                p.setPen(pg.mkPen(settings.COLOR_LOSS, width=1.5))
+                p.setBrush(pg.mkBrush(settings.COLOR_LOSS))
             p.drawLine(QtCore.QPointF(t, min_p), QtCore.QPointF(t, max_p))
             p.drawRect(QtCore.QRectF(t - w, open_p, w * 2, close_p - open_p))
         p.end()

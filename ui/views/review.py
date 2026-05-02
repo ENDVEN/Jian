@@ -15,17 +15,13 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor, QFont, QKeySequence
 
-# 导入自定义组件
 from ui.widgets.custom_widgets import HoverDeleteListWidget, CandlestickItem
+from config import settings
 
 class ReviewView(QWidget):
-    """
-    【深度复盘工作台】组件。
-    包含双模态（月视图/年视图）、日历、图库与文字总结。
-    """
     def __init__(self, main_win):
         super().__init__()
-        self.main_win = main_win  # 获取主窗口引用，以便访问 global_df 和 global_strategies
+        self.main_win = main_win  
         self.current_review_date = datetime.now()
         self.is_yearly_view = False
         self.current_view_df = pd.DataFrame()
@@ -38,7 +34,6 @@ class ReviewView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
         
-        # === 顶部控制栏 ===
         top_bar = QHBoxLayout()
         title = QLabel("复盘工作台")
         title.setStyleSheet("font-size: 22px; font-weight: bold; color: #212121;")
@@ -58,7 +53,6 @@ class ReviewView(QWidget):
         
         self.btn_manage_str = QPushButton("🏷️ 管理策略")
         self.btn_manage_str.setStyleSheet("QPushButton { border: none; color: #1976D2; font-weight:bold; font-size:14px; margin-left: 5px;} QPushButton:hover { text-decoration: underline; }")
-        # 委托给主窗口处理策略管理
         self.btn_manage_str.clicked.connect(self.main_win.manage_strategies)
         top_bar.addWidget(self.btn_manage_str)
         top_bar.addStretch()
@@ -86,7 +80,6 @@ class ReviewView(QWidget):
         top_bar.addLayout(nav_layout)
         layout.addLayout(top_bar)
 
-        # === 动态核心区 ===
         self.review_stack = QStackedWidget()
         self.review_monthly_widget = self._build_monthly_mode()
         self.review_yearly_widget = self._build_yearly_mode()
@@ -138,7 +131,7 @@ class ReviewView(QWidget):
         self.btn_paste_img.clicked.connect(self.paste_image); self.btn_import_img.clicked.connect(self.import_image); img_header.addWidget(self.btn_paste_img); img_header.addWidget(self.btn_import_img); img_layout.addLayout(img_header)
         self.list_screenshots = HoverDeleteListWidget(self.delete_image, self); self.list_screenshots.itemDoubleClicked.connect(self.view_full_image); shortcut = QtGui.QShortcut(QKeySequence("Ctrl+V"), self.list_screenshots); shortcut.activated.connect(self.paste_image); img_layout.addWidget(self.list_screenshots); editor_layout.addLayout(img_layout)
         
-        action_layout = QHBoxLayout(); self.btn_del_trade = QPushButton("🗑️ 删除此单"); self.btn_del_trade.setStyleSheet("QPushButton { background-color: white; color: #F44336; border: 1px solid #F44336; border-radius: 6px; padding: 10px; font-weight: bold; } QPushButton:hover { background-color: #FFEBEE; }"); self.btn_del_trade.clicked.connect(self.delete_current_trade)
+        action_layout = QHBoxLayout(); self.btn_del_trade = QPushButton("🗑️ 删除此单"); self.btn_del_trade.setStyleSheet(f"QPushButton {{ background-color: white; color: {settings.COLOR_LOSS}; border: 1px solid {settings.COLOR_LOSS}; border-radius: 6px; padding: 10px; font-weight: bold; }} QPushButton:hover {{ background-color: #FFEBEE; }}"); self.btn_del_trade.clicked.connect(self.delete_current_trade)
         self.btn_save_review = QPushButton("💾 保存复盘文字与截图"); self.btn_save_review.setStyleSheet("QPushButton { background-color: #1976D2; color: white; border: none; border-radius: 6px; padding: 10px; font-weight: bold; } QPushButton:hover { background-color: #1565C0; }"); self.btn_save_review.clicked.connect(self.save_review_text)
         action_layout.addWidget(self.btn_del_trade); action_layout.addStretch(); action_layout.addWidget(self.btn_save_review); editor_layout.addLayout(action_layout)
         
@@ -197,7 +190,7 @@ class ReviewView(QWidget):
         self.is_yearly_view = not self.is_yearly_view
         if self.is_yearly_view:
             self.btn_mode_toggle.setText("切换月视图 🔍")
-            self.btn_mode_toggle.setStyleSheet("QPushButton { font-size: 14px; font-weight: bold; color: #4CAF50; padding: 5px 15px; border: 1px solid #A5D6A7; border-radius: 6px; background: #E8F5E9; margin-right: 15px;} QPushButton:hover { background: #C8E6C9; }")
+            self.btn_mode_toggle.setStyleSheet(f"QPushButton {{ font-size: 14px; font-weight: bold; color: {settings.COLOR_PROFIT_TEXT}; padding: 5px 15px; border: 1px solid #A5D6A7; border-radius: 6px; background: #E8F5E9; margin-right: 15px;}} QPushButton:hover {{ background: #C8E6C9; }}")
             self.review_stack.setCurrentIndex(1) 
             self.refresh_time_picker(is_year=True)
         else:
@@ -209,15 +202,15 @@ class ReviewView(QWidget):
         self.update_review_view()
 
     def refresh_review_filters(self):
-        if self.main_win.global_df.empty: return
+        if self.main_win.engine.df.empty: return
         self.cb_rev_account.blockSignals(True); self.cb_rev_strategy.blockSignals(True); self.cb_edit_strategy.blockSignals(True)
         
         self.cb_rev_account.clear(); self.cb_rev_account.addItem("全账户汇总", "ALL")
-        for acc in self.main_win.global_df['account'].dropna().unique(): 
+        for acc in self.main_win.engine.df['account'].dropna().unique(): 
             self.cb_rev_account.addItem(str(acc), str(acc))
             
         self.cb_rev_strategy.clear(); self.cb_rev_strategy.addItem("全策略分类", "ALL")
-        all_st = list(set(self.main_win.global_strategies + self.main_win.global_df['strategy_tag'].dropna().unique().tolist()))
+        all_st = list(set(self.main_win.engine.strategies + self.main_win.engine.df['strategy_tag'].dropna().unique().tolist()))
         self.cb_edit_strategy.clear()
         for st in all_st: 
             self.cb_rev_strategy.addItem(str(st), str(st))
@@ -230,9 +223,9 @@ class ReviewView(QWidget):
     def refresh_time_picker(self, is_year=False):
         self.cb_time_picker.blockSignals(True)
         self.cb_time_picker.clear()
-        if self.main_win.global_df.empty: return
+        if self.main_win.engine.df.empty: return
         
-        dates = pd.to_datetime(self.main_win.global_df['exit_time'])
+        dates = pd.to_datetime(self.main_win.engine.df['exit_time'])
         if is_year:
             years = sorted(dates.dt.year.unique().tolist(), reverse=True)
             for y in years:
@@ -260,13 +253,13 @@ class ReviewView(QWidget):
         self.update_review_view()
 
     def update_review_view(self):
-        if self.main_win.global_df.empty: return
+        if self.main_win.engine.df.empty: return
         
         display_text = f"{self.current_review_date.year}年" if self.is_yearly_view else self.current_review_date.strftime("%Y年 %m月")
         idx = self.cb_time_picker.findText(display_text)
         if idx >= 0: self.cb_time_picker.setCurrentIndex(idx)
         
-        df = self.main_win.global_df.copy()
+        df = self.main_win.engine.df.copy()
         acc_sel = self.cb_rev_account.currentData()
         if acc_sel != "ALL" and acc_sel is not None: df = df[df['account'] == acc_sel]
         str_sel = self.cb_rev_strategy.currentData()
@@ -300,8 +293,14 @@ class ReviewView(QWidget):
                 item = QTableWidgetItem(str(day))
                 if day in daily_stats:
                     net = daily_stats[day]['net']
-                    if net > 0: item.setBackground(QColor("#E8F5E9")); item.setForeground(QColor("#2E7D32")); item.setText(f"{day}\n+{net:,.0f}")
-                    elif net < 0: item.setBackground(QColor("#FFEBEE")); item.setForeground(QColor("#C62828")); item.setText(f"{day}\n{net:,.0f}")
+                    if net > 0: 
+                        item.setBackground(QColor("#E8F5E9"))
+                        item.setForeground(QColor(settings.COLOR_PROFIT_TEXT))
+                        item.setText(f"{day}\n+{net:,.0f}")
+                    elif net < 0: 
+                        item.setBackground(QColor("#FFEBEE"))
+                        item.setForeground(QColor(settings.COLOR_LOSS_TEXT))
+                        item.setText(f"{day}\n{net:,.0f}")
                     if daily_stats[day]['reviewed']: item.setText(item.text() + "\n📝")
                 else: item.setForeground(QColor("#BDBDBD"))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter); font = QFont(); font.setBold(day in daily_stats); item.setFont(font); item.setData(Qt.ItemDataRole.UserRole, QDate(y, m, day))
@@ -313,8 +312,13 @@ class ReviewView(QWidget):
         if df.empty: return
         df_sorted = df.sort_values(by='exit_time')
         equity_curve = [0.0] + df_sorted['net_profit'].cumsum().tolist(); x_data = list(range(len(equity_curve)))
-        is_prof = equity_curve[-1] >= 0; pen = pg.mkPen(color=(46, 125, 50) if is_prof else (198, 40, 40), width=3); fill = (76, 175, 80, 50) if is_prof else (244, 67, 54, 50)
-        self.review_pnl_chart.plot(x_data, equity_curve, pen=pen, fillLevel=0, fillBrush=fill)
+        is_prof = equity_curve[-1] >= 0
+        
+        # 【进化】使用配置中心的 RGB 颜色
+        col = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
+        fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
+        self.review_pnl_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=col, width=3), fillLevel=0, fillBrush=fill)
+        
         df_sorted['day'] = df_sorted['exit_time'].dt.day; k_data = []; current_equity = 0.0
         for i, (day, group) in enumerate(df_sorted.groupby('day')):
             open_eq = current_equity; high_eq = current_equity; low_eq = current_equity
@@ -323,9 +327,11 @@ class ReviewView(QWidget):
             k_data.append((i, open_eq, current_equity, low_eq, high_eq))
         if k_data:
             self.review_kline_chart.addItem(CandlestickItem(k_data)); axis = self.review_kline_chart.getAxis('bottom'); axis.setTicks([[(i, f"{day}日") for i, day in enumerate(df_sorted['day'].unique())]])
+            
         durations = (df['exit_time'] - df['entry_time']).dt.total_seconds() / 3600.0; profits = df['net_profit'].values; spots = []
         for h, p in zip(durations, profits):
-            h = max(h, 0); brush = pg.mkBrush(color=(76, 175, 80, 150)) if p > 0 else pg.mkBrush(color=(244, 67, 54, 150))
+            h = max(h, 0)
+            brush = pg.mkBrush(color=(settings.RGB_PROFIT[0], settings.RGB_PROFIT[1], settings.RGB_PROFIT[2], 150)) if p > 0 else pg.mkBrush(color=(settings.RGB_LOSS[0], settings.RGB_LOSS[1], settings.RGB_LOSS[2], 150))
             spots.append({'pos': (h, p), 'brush': brush, 'pen': None, 'size': 12})
         self.review_duration_chart.addItem(pg.ScatterPlotItem(spots=spots)); self.review_duration_chart.addLine(y=0, pen=pg.mkPen(color='#9E9E9E', style=Qt.PenStyle.DashLine))
 
@@ -339,15 +345,29 @@ class ReviewView(QWidget):
         for idx, record in day_df.iterrows():
             pnl, sym = record['net_profit'], record['symbol']
             txt = f"{sym} | ￥{'+' if pnl>0 else ''}{pnl:,.2f}" + (" 📝" if pd.notna(record.get('reflection')) and str(record.get('reflection')).strip()!="" else "")
-            list_item = QListWidgetItem(txt); list_item.setData(Qt.ItemDataRole.UserRole, idx); list_item.setForeground(QColor("#2E7D32") if pnl > 0 else QColor("#C62828")); self.day_trades_list.addItem(list_item)
+            list_item = QListWidgetItem(txt)
+            list_item.setData(Qt.ItemDataRole.UserRole, idx)
+            # 【进化】使用深色文本确保对比度
+            list_item.setForeground(QColor(settings.COLOR_PROFIT_TEXT) if pnl > 0 else QColor(settings.COLOR_LOSS_TEXT))
+            self.day_trades_list.addItem(list_item)
 
     def on_review_trade_selected(self, current, previous):
         if not current: return
-        df_idx = current.data(Qt.ItemDataRole.UserRole); record = self.main_win.global_df.loc[df_idx]; self.current_editing_idx = df_idx
-        pnl = record['net_profit']; duration = (record['exit_time'] - record['entry_time']).total_seconds() / 3600; col_hex = "#2E7D32" if pnl > 0 else "#C62828"
+        df_idx = current.data(Qt.ItemDataRole.UserRole)
+        record = self.main_win.engine.df.loc[df_idx]
+        self.current_editing_idx = df_idx
+        
+        pnl = record['net_profit']; duration = (record['exit_time'] - record['entry_time']).total_seconds() / 3600
+        col_hex = settings.COLOR_PROFIT_TEXT if pnl > 0 else settings.COLOR_LOSS_TEXT
+        
         self.lbl_trade_detail.setText(f"""<span style="font-size:16px;">{record['symbol']}</span><br><span style="color:#757575;">进场: {pd.to_datetime(record['entry_time']).strftime('%m-%d %H:%M')} <br>出场: {pd.to_datetime(record['exit_time']).strftime('%m-%d %H:%M')} (持仓 {duration:.1f} h)</span><br>结果: <b style="color:{col_hex}; font-size:16px;">￥{pnl:,.2f}</b>""")
         self.txt_reason.setPlainText(str(record.get('entry_reason', ''))); self.txt_reflection.setPlainText(str(record.get('reflection', '')))
-        self.cb_edit_strategy.blockSignals(True); self.cb_edit_strategy.setCurrentText(str(record.get('strategy_tag', '未分类'))); self.cb_edit_strategy.blockSignals(False)
+        
+        self.cb_edit_strategy.blockSignals(True)
+        # 【进化】如果策略为空，使用配置文件的默认策略
+        self.cb_edit_strategy.setCurrentText(str(record.get('strategy_tag', settings.DEFAULT_STRATEGY)))
+        self.cb_edit_strategy.blockSignals(False)
+        
         self.list_screenshots.clear()
         paths_str = str(record.get('screenshot_paths', ''))
         if paths_str and paths_str != 'nan':
@@ -356,22 +376,24 @@ class ReviewView(QWidget):
 
     def silent_update_strategy(self, *args):
         if getattr(self, 'current_editing_idx', None) is None: return
-        new_st = self.cb_edit_strategy.currentText().strip(); new_st = "未分类" if new_st == "" else new_st
-        old_st = str(self.main_win.global_df.at[self.current_editing_idx, 'strategy_tag']).strip()
+        new_st = self.cb_edit_strategy.currentText().strip()
+        new_st = settings.DEFAULT_STRATEGY if new_st == "" else new_st
+        old_st = str(self.main_win.engine.df.at[self.current_editing_idx, 'strategy_tag']).strip()
+        
         if new_st == old_st: return
-        self.main_win.global_df.at[self.current_editing_idx, 'strategy_tag'] = new_st
-        if new_st not in self.main_win.global_strategies: 
-            self.main_win.global_strategies.append(new_st)
-            self.refresh_review_filters()
-        self.update_review_view()
-        # 通知主界面刷新整体数据(比如首页的图表可能受策略变化影响)
+        self.main_win.engine.update_trade_strategy(self.current_editing_idx, new_st)
         self.main_win.render_all_data()
 
     def save_review_text(self):
         if getattr(self, 'current_editing_idx', None) is None: QMessageBox.warning(self, "提示", "请先选择一笔交易！"); return
-        self.main_win.global_df.at[self.current_editing_idx, 'entry_reason'] = self.txt_reason.toPlainText()
-        self.main_win.global_df.at[self.current_editing_idx, 'reflection'] = self.txt_reflection.toPlainText()
+        
+        reason = self.txt_reason.toPlainText()
+        reflection = self.txt_reflection.toPlainText()
         self._save_image_paths_to_df()
+        
+        paths = self.main_win.engine.df.at[self.current_editing_idx, 'screenshot_paths']
+        self.main_win.engine.update_trade_review(self.current_editing_idx, reason, reflection, paths)
+        
         self.update_review_view()
         QMessageBox.information(self, "保存成功", "复盘文字及截图状态已保存。")
 
@@ -389,10 +411,10 @@ class ReviewView(QWidget):
             if m in monthly_stats:
                 net = monthly_stats[m]
                 if net > 0:
-                    card.setStyleSheet("background: #E8F5E9; border-radius: 6px; font-size: 16px; font-weight:bold; color: #2E7D32;")
+                    card.setStyleSheet(f"background: #E8F5E9; border-radius: 6px; font-size: 16px; font-weight:bold; color: {settings.COLOR_PROFIT_TEXT};")
                     card.setText(f"{m}月\n+{net:,.0f}")
                 else:
-                    card.setStyleSheet("background: #FFEBEE; border-radius: 6px; font-size: 16px; font-weight:bold; color: #C62828;")
+                    card.setStyleSheet(f"background: #FFEBEE; border-radius: 6px; font-size: 16px; font-weight:bold; color: {settings.COLOR_LOSS_TEXT};")
                     card.setText(f"{m}月\n{net:,.0f}")
             else:
                 card.setStyleSheet("background: #F5F5F5; border-radius: 6px; font-size: 14px; font-weight:bold; color: #9E9E9E;")
@@ -403,14 +425,17 @@ class ReviewView(QWidget):
         
         df_sorted = df.sort_values(by='exit_time')
         equity_curve = [0.0] + df_sorted['net_profit'].cumsum().tolist(); x_data = list(range(len(equity_curve)))
-        is_prof = equity_curve[-1] >= 0; pen = pg.mkPen(color=(46, 125, 50) if is_prof else (198, 40, 40), width=3); fill = (76, 175, 80, 50) if is_prof else (244, 67, 54, 50)
-        self.yearly_curve_chart.plot(x_data, equity_curve, pen=pen, fillLevel=0, fillBrush=fill)
+        is_prof = equity_curve[-1] >= 0
+        
+        col = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
+        fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
+        self.yearly_curve_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=col, width=3), fillLevel=0, fillBrush=fill)
         
         strategy_pnl = df.groupby('strategy_tag')['net_profit'].sum().sort_values()
         y_pos = list(range(len(strategy_pnl)))
         x_vals = strategy_pnl.values.tolist()
         
-        brushes = [pg.mkBrush('#4CAF50') if x > 0 else pg.mkBrush('#F44336') for x in x_vals]
+        brushes = [pg.mkBrush(settings.COLOR_PROFIT) if x > 0 else pg.mkBrush(settings.COLOR_LOSS) for x in x_vals]
         
         bar_item = pg.BarGraphItem(x0=0, y=y_pos, width=x_vals, height=0.6, brushes=brushes)
         self.yearly_bar_chart.addItem(bar_item)
@@ -426,9 +451,9 @@ class ReviewView(QWidget):
         mime_data = clipboard.mimeData()
         if mime_data.hasImage():
             image = clipboard.image()
-            trade_id = str(self.main_win.global_df.at[self.current_editing_idx, 'trade_id']).replace(" ", "_")
+            trade_id = str(self.main_win.engine.df.at[self.current_editing_idx, 'trade_id']).replace(" ", "_")
             timestamp = int(datetime.now().timestamp() * 1000)
-            filename = f"screenshots/{trade_id}_{timestamp}.png"
+            filename = os.path.join(settings.SCREENSHOT_DIR, f"{trade_id}_{timestamp}.png")
             image.save(filename)
             self.add_thumbnail(filename)
             self._save_image_paths_to_df() 
@@ -437,10 +462,10 @@ class ReviewView(QWidget):
     def import_image(self):
         if getattr(self, 'current_editing_idx', None) is None: return
         file_paths, _ = QFileDialog.getOpenFileNames(self, "选择截图", "", "Images (*.png *.jpg *.jpeg *.bmp)")
-        trade_id = str(self.main_win.global_df.at[self.current_editing_idx, 'trade_id']).replace(" ", "_")
+        trade_id = str(self.main_win.engine.df.at[self.current_editing_idx, 'trade_id']).replace(" ", "_")
         for path in file_paths:
             timestamp = int(datetime.now().timestamp() * 1000); ext = path.split('.')[-1]
-            filename = f"screenshots/{trade_id}_{timestamp}.{ext}"
+            filename = os.path.join(settings.SCREENSHOT_DIR, f"{trade_id}_{timestamp}.{ext}")
             shutil.copy(path, filename)
             self.add_thumbnail(filename)
         self._save_image_paths_to_df()
@@ -464,7 +489,7 @@ class ReviewView(QWidget):
     def _save_image_paths_to_df(self):
         if getattr(self, 'current_editing_idx', None) is None: return
         paths = [self.list_screenshots.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list_screenshots.count())]
-        self.main_win.global_df.at[self.current_editing_idx, 'screenshot_paths'] = ";".join(paths)
+        self.main_win.engine.df.at[self.current_editing_idx, 'screenshot_paths'] = ";".join(paths)
 
     def view_full_image(self, item):
         filepath = item.data(Qt.ItemDataRole.UserRole) 
@@ -487,6 +512,6 @@ class ReviewView(QWidget):
     def delete_current_trade(self):
         if getattr(self, 'current_editing_idx', None) is None: return
         if QMessageBox.question(self, "危险操作", "永久删除此交易记录？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-            self.main_win.global_df = self.main_win.global_df.drop(self.current_editing_idx).reset_index(drop=True)
-            self.current_editing_idx = None
-            self.main_win.render_all_data() # 触发主窗口全局更新
+            if self.main_win.engine.delete_trade(self.current_editing_idx):
+                self.current_editing_idx = None
+                self.main_win.render_all_data()

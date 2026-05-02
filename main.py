@@ -2,8 +2,11 @@
 import sys
 import logging
 import os
-import pyqtgraph as pg  # <--- 新增：导入图表库用于全局配置
+import pyqtgraph as pg  
 from PyQt6.QtWidgets import QApplication
+
+# 引入全局配置
+from config import settings
 
 # 从包内导入主窗口
 from ui.main_window import JianMainWindow
@@ -15,21 +18,22 @@ def setup_env():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # 1. 确保截图目录存在
-    if not os.path.exists("screenshots"): 
-        os.makedirs("screenshots")
-        logging.info("已创建 screenshots 目录")
+    # 1. 使用配置中心定义好的截图路径
+    if not os.path.exists(settings.SCREENSHOT_DIR): 
+        os.makedirs(settings.SCREENSHOT_DIR)
+        logging.info(f"已创建截图目录: {settings.SCREENSHOT_DIR}")
         
-    # 2. 【修复】配置 PyQtGraph 全局主题 (白底黑字，抗锯齿)
-    pg.setConfigOption('background', '#FFFFFF')
-    pg.setConfigOption('foreground', '#424242')
+    # 2. 使用配置中心定义好的颜色主题
+    pg.setConfigOption('background', settings.COLOR_BACKGROUND)
+    pg.setConfigOption('foreground', settings.COLOR_TEXT_PRIMARY)
     pg.setConfigOptions(antialias=True)
 
 def main():
     setup_env()
     app = QApplication(sys.argv)
     
-    logging.info("正在启动 Jian 复盘系统...")
+    # 使用配置中心定义好的软件名称和版本
+    logging.info(f"正在启动 {settings.APP_NAME} v{settings.APP_VERSION}...")
     window = JianMainWindow()
     window.show()
     
