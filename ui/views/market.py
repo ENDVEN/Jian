@@ -20,11 +20,18 @@ class FetchDataThread(QThread):
         self.symbol = symbol; self.name = name
     def run(self):
         try:
-            df = AkShareFeed.fetch_a_share_daily(self.symbol)
+            # 【核心修复：智能路由】
+            # 如果代码是纯数字(如 600519)，走股票接口；如果含字母(如 RB)，走期货主力接口
+            if self.symbol.isdigit():
+                df = AkShareFeed.fetch_a_share_daily(self.symbol)
+            else:
+                df = AkShareFeed.fetch_futures_daily(self.symbol)
+                
             if not df.empty:
                 DataLakeManager().save_data("kline_daily", self.symbol, df)
                 self.finished_signal.emit(True, self.symbol, df, self.name)
-            else: self.finished_signal.emit(False, self.symbol, pd.DataFrame(), self.name)
+            else: 
+                self.finished_signal.emit(False, self.symbol, pd.DataFrame(), self.name)
         except Exception as e:
             print(f"线程崩溃: {e}")
             self.finished_signal.emit(False, self.symbol, pd.DataFrame(), self.name)
