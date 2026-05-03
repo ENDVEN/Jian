@@ -10,12 +10,13 @@ from PyQt6.QtCore import QUrl
 from config import settings
 from core.analyzer import TradeAnalyzer
 from core.engine import DataEngine
-from core.updater import UpdateCheckerThread  # 【引入异步侦察兵】
+from core.updater import UpdateCheckerThread
 
 from ui.dialogs.dialogs import ListManagerDialog, ImportWizardDialog, ManualEntryDialog
 from ui.views.dashboard import DashboardView
 from ui.views.records import RecordsView
 from ui.views.review import ReviewView
+from ui.views.market import MarketView  # 【新增】引入行情视图
 
 class JianMainWindow(QMainWindow):
     def __init__(self):
@@ -40,6 +41,7 @@ class JianMainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
+        # --- 左侧导航栏构建 ---
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
         sidebar.setFixedWidth(200)
@@ -49,8 +51,10 @@ class JianMainWindow(QMainWindow):
         self.btn_overview = QPushButton("📊 资金与表现")
         self.btn_records = QPushButton("📝 交易流水")
         self.btn_review = QPushButton("💡 深度复盘")
+        self.btn_market = QPushButton("📈 市场行情")  # 【新增】行情按钮
         
-        for btn in [self.btn_overview, self.btn_records, self.btn_review]:
+        # 将四个按钮加入侧边栏
+        for btn in [self.btn_overview, self.btn_records, self.btn_review, self.btn_market]:
             btn.setProperty("class", "NavBtn")
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
@@ -58,41 +62,42 @@ class JianMainWindow(QMainWindow):
         self.btn_overview.setChecked(True)
         sidebar_layout.addStretch()
         
+        # --- 右侧主内容栈构建 ---
         self.content_area = QStackedWidget()
         self.content_area.setContentsMargins(20, 20, 20, 20)
         
         self.page_overview = DashboardView(self)
         self.page_records = RecordsView(self)
         self.page_review = ReviewView(self) 
+        self.page_market = MarketView(self)  # 【新增】实例化行情视图
         
+        # 将四个页面加入堆叠容器
         self.content_area.addWidget(self.page_overview)
         self.content_area.addWidget(self.page_records)
         self.content_area.addWidget(self.page_review) 
+        self.content_area.addWidget(self.page_market)  # 【新增】装入栈中
         
         main_layout.addWidget(sidebar)
         main_layout.addWidget(self.content_area)
         
+        # --- 路由信号连接 ---
         self.btn_overview.clicked.connect(lambda: self.content_area.setCurrentIndex(0))
         self.btn_records.clicked.connect(lambda: self.content_area.setCurrentIndex(1))
         self.btn_review.clicked.connect(lambda: self.content_area.setCurrentIndex(2))
+        self.btn_market.clicked.connect(lambda: self.content_area.setCurrentIndex(3)) # 【新增】切换到第4页
         
         self.render_all_data()
-        
-        # 【新增】软件启动后，静默触发云端更新检测
         self.check_for_updates()
 
     # ==========================================
     # 版本更新检测模块
     # ==========================================
     def check_for_updates(self):
-        """启动后台线程检测更新，防止主界面卡顿"""
         self.updater_thread = UpdateCheckerThread()
-        # 信号接通：一旦侦察兵发现新版本，立刻调用 show_update_dialog
         self.updater_thread.update_available.connect(self.show_update_dialog)
         self.updater_thread.start()
 
     def show_update_dialog(self, version: str, notes: str, download_url: str):
-        """弹出优美的更新提示框"""
         msg = f"当前版本: {settings.APP_VERSION}\n最新版本: {version}\n\n更新说明:\n{notes}\n\n是否立即前往浏览器下载新版本？"
         reply = QMessageBox.question(
             self, 
@@ -102,11 +107,10 @@ class JianMainWindow(QMainWindow):
         )
         
         if reply == QMessageBox.StandardButton.Yes and download_url:
-            # 调用操作系统的默认浏览器打开下载链接
             QDesktopServices.openUrl(QUrl(download_url))
 
     # ==========================================
-    # 数据流与弹窗控制器 (保持不变)
+    # 数据流与弹窗控制器
     # ==========================================
     def render_all_data(self):
         if self.engine.df.empty: 
@@ -120,10 +124,7 @@ class JianMainWindow(QMainWindow):
         
         if raw_report:
             self.page_overview.update_view(raw_report, analyzer.df)
-            
-            # 【核心修改点】这里不再是无脑塞数据，而是让流水页面去刷新它自己的高级过滤器！
             self.page_records.refresh_records_filters()
-            
             self.page_review.refresh_review_filters()
             self.page_review.update_review_view()
 

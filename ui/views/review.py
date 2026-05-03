@@ -20,6 +20,10 @@ from PyQt6.QtGui import QColor, QFont, QKeySequence
 from ui.widgets.custom_widgets import HoverDeleteListWidget, CandlestickItem
 from config import settings
 
+# 【新增】引入数据湖管家和原生指标引擎，准备缝合！
+from data.market_db import DataLakeManager
+from core.indicators import TAEngine
+
 class ReviewView(QWidget):
     def __init__(self, main_win):
         super().__init__()
@@ -28,6 +32,9 @@ class ReviewView(QWidget):
         self.is_yearly_view = False
         self.current_view_df = pd.DataFrame()
         self.current_editing_idx = None
+        
+        # 实例化数据湖，随时准备抽取 K 线
+        self.data_lake = DataLakeManager()
         
         self._setup_ui()
 
@@ -181,9 +188,15 @@ class ReviewView(QWidget):
         self.review_duration_chart.setLabel('left', '单笔盈亏', color='#9E9E9E')
         self.review_duration_chart.setLabel('bottom', '时长(H)', color='#9E9E9E')
 
+        # 【核心新增】：🎯 交易回放视图
+        self.playback_chart = pg.PlotWidget()
+        self._apply_pokorny_style(self.playback_chart)
+
         self.review_chart_tabs.addTab(self.review_pnl_chart, "📈 累计盈亏")
+        self.review_chart_tabs.addTab(self.playback_chart, "🎯 交易回放") # 放到第二位，最高优先级体验
         self.review_chart_tabs.addTab(self.review_kline_chart, "📊 资金 K线")
         self.review_chart_tabs.addTab(self.review_duration_chart, "⏳ 时长分析")
+        
         chart_layout.addWidget(self.review_chart_tabs)
         
         macro_splitter.addWidget(cal_card); macro_splitter.addWidget(chart_card); macro_splitter.setSizes([450, 600])
@@ -455,12 +468,10 @@ class ReviewView(QWidget):
         
         y = self.current_review_date.year
         if self.is_yearly_view:
-            # 【核心安全修复】强制给底层切片加上 .copy()，彻底阻断隐性赋值崩溃
             self.current_view_df = df[df['exit_time'].dt.year == y].copy()
             self._render_yearly_view()
         else:
             m = self.current_review_date.month
-            # 【核心安全修复】
             self.current_view_df = df[(df['exit_time'].dt.year == y) & (df['exit_time'].dt.month == m)].copy()
             self.lbl_cal_month_title.setText(f"📅 {y}年 {m}月 复盘热力图")
             self._render_calendar()
@@ -496,10 +507,6 @@ class ReviewView(QWidget):
                     net = daily_stats[day]['net']
                     intensity = 40 + int((abs(net) / max_abs_net) * 215)
                     
-                    # 【致命对比度 Bug 修复】
-                    # 彻底移除 `QColor("white")` 的危险逻辑。
-                    # 在纯白背景+透明度的叠加下，白色文字会直接隐形！
-                    # 现在强制采用深绿/深红，保证任何透明度下文字都极其锐利可见。
                     if net > 0: 
                         r, g, b = settings.RGB_PROFIT
                         bg_color = QColor(r, g, b, intensity)
@@ -610,6 +617,93 @@ class ReviewView(QWidget):
         if paths_str and paths_str != 'nan':
             for p in paths_str.split(';'):
                 if os.path.exists(p): self.add_thumbnail(p)
+                
+        # ==========================================
+        # 【终极杀器】触发 K 线回放渲染引擎！
+        # ==========================================
+        self._render_trade_playback(record)
+
+    def _render_trade_playback(self, record):
+        """核心缝合逻辑：将交易点位死死钉在历史 K 线上"""
+        self.playback_chart.clear()
+        symbol = str(record['symbol'])
+        
+        # 提取真实标的主体去数据湖寻址
+        match = re.match(r'^[A-Za-z]+', symbol)
+        root_sym = match.group().upper() if match else symbol.upper()
+        
+        df_k = self.data_lake.load_data("kline_daily", root_sym)
+        if df_k.empty:
+            df_k = self.data_lake.load_data("kline_daily", symbol) # 备用寻址
+            
+        if df_k.empty:
+            self.playback_chart.setTitle(f"⚠️ 缺乏 {symbol} 的本地数据，请先前往 [市场行情] 页面进行云端同步！", color="#FF9800", size="11pt")
+            # 自动跳回累积盈亏，防止用户盯着空图看
+            self.review_chart_tabs.setCurrentIndex(0)
+            return
+
+        # 转换并切片数据 (提取进场前60天，出场后20天)
+        df_k['date'] = pd.to_datetime(df_k['date'])
+        entry_time = pd.to_datetime(record['entry_time'])
+        exit_time = pd.to_datetime(record['exit_time'])
+        
+        start_cut = entry_time - pd.Timedelta(days=60)
+        end_cut = exit_time + pd.Timedelta(days=20)
+        
+        df_slice = df_k[(df_k['date'] >= start_cut) & (df_k['date'] <= end_cut)].copy()
+        if df_slice.empty: return
+        
+        df_slice.reset_index(drop=True, inplace=True)
+        
+        # 加上原生的 20 日均线，辅助看趋势
+        df_slice = TAEngine.add_ma(df_slice, windows=(20,))
+        x_data = list(range(len(df_slice)))
+        
+        # 找准进出场的绝对坐标 (X轴索引，Y轴价格)
+        try:
+            entry_idx = df_slice[df_slice['date'] <= entry_time].index[-1]
+        except: entry_idx = 0
+        try:
+            exit_idx = df_slice[df_slice['date'] <= exit_time].index[-1]
+        except: exit_idx = len(df_slice) - 1
+        
+        # 做多和做空的标识画法完全相反
+        is_long = record['direction'] == 'LONG'
+        entry_y = df_slice.loc[entry_idx, 'low'] * 0.98 if is_long else df_slice.loc[entry_idx, 'high'] * 1.02
+        exit_y = df_slice.loc[exit_idx, 'high'] * 1.02 if is_long else df_slice.loc[exit_idx, 'low'] * 0.98
+        
+        # 画图：背景与基础 K 线
+        self.playback_chart.setTitle(f"🎯 {symbol} | 交易回放", color="#1976D2", size="12pt", bold=True)
+        k_data = [(i, row['open'], row['close'], row['low'], row['high']) for i, row in df_slice.iterrows()]
+        self.playback_chart.addItem(CandlestickItem(k_data))
+        self.playback_chart.plot(x_data, df_slice['MA_20'], pen=pg.mkPen(color='#FF9800', width=1.5, style=Qt.PenStyle.DashLine))
+
+        # 画图：进出场连线 (亏损用红虚线，盈利用绿虚线)
+        is_profit = record['net_profit'] > 0
+        line_color = settings.COLOR_PROFIT if is_profit else settings.COLOR_LOSS
+        self.playback_chart.plot([entry_idx, exit_idx], [entry_y, exit_y], pen=pg.mkPen(color=line_color, width=2, style=Qt.PenStyle.DotLine))
+        
+        # 画图：进出场箭头 (使用 ScatterPlot 里的三角形)
+        entry_brush = pg.mkBrush(settings.COLOR_PROFIT) if is_long else pg.mkBrush(settings.COLOR_LOSS)
+        exit_brush = pg.mkBrush(settings.COLOR_LOSS) if is_long else pg.mkBrush(settings.COLOR_PROFIT)
+        
+        # t = triangle up (买入), d = triangle down (卖出)
+        entry_symbol = 't' if is_long else 'd'
+        exit_symbol = 'd' if is_long else 't'
+        
+        entry_marker = pg.ScatterPlotItem(x=[entry_idx], y=[entry_y], symbol=entry_symbol, size=18, brush=entry_brush, pen='w')
+        exit_marker = pg.ScatterPlotItem(x=[exit_idx], y=[exit_y], symbol=exit_symbol, size=18, brush=exit_brush, pen='w')
+        
+        self.playback_chart.addItem(entry_marker)
+        self.playback_chart.addItem(exit_marker)
+        
+        # 格式化底部时间
+        axis = self.playback_chart.getAxis('bottom')
+        ticks = [[(i, df_slice['date'].iloc[i].strftime('%m-%d')) for i in range(0, len(df_slice), max(1, len(df_slice)//8))]]
+        axis.setTicks(ticks)
+
+        # 【极其聪明的交互体验】一旦点击交易单，图表区立刻自动切到“回放模式”！
+        self.review_chart_tabs.setCurrentWidget(self.playback_chart)
 
     def silent_update_strategy(self, *args):
         if getattr(self, 'current_editing_idx', None) is None: return
