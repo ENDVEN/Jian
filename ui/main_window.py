@@ -1,5 +1,4 @@
 # ui/main_window.py
-import pandas as pd
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
                              QVBoxLayout, QPushButton, QFrame, QStackedWidget,
@@ -12,11 +11,16 @@ from core.analyzer import TradeAnalyzer
 from core.engine import DataEngine
 from core.updater import UpdateCheckerThread
 
-from ui.dialogs.dialogs import ListManagerDialog, ImportWizardDialog, ManualEntryDialog
 from ui.views.dashboard import DashboardView
 from ui.views.records import RecordsView
 from ui.views.review import ReviewView
-from ui.views.market import MarketView  # 【新增】引入行情视图
+from ui.views.market import MarketView
+
+# 【高内聚、低耦合的体现】：从各自独立的文件中按需引入模块
+from ui.dialogs.list_manager import ListManagerDialog
+from ui.dialogs.manual_entry import ManualEntryDialog
+from ui.dialogs.import_futures import FuturesImportDialog
+from ui.dialogs.import_stocks import ImportWizardDialog
 
 class JianMainWindow(QMainWindow):
     def __init__(self):
@@ -51,9 +55,8 @@ class JianMainWindow(QMainWindow):
         self.btn_overview = QPushButton("📊 资金与表现")
         self.btn_records = QPushButton("📝 交易流水")
         self.btn_review = QPushButton("💡 深度复盘")
-        self.btn_market = QPushButton("📈 市场行情")  # 【新增】行情按钮
+        self.btn_market = QPushButton("📈 市场行情")
         
-        # 将四个按钮加入侧边栏
         for btn in [self.btn_overview, self.btn_records, self.btn_review, self.btn_market]:
             btn.setProperty("class", "NavBtn")
             btn.setCheckable(True)
@@ -69,29 +72,24 @@ class JianMainWindow(QMainWindow):
         self.page_overview = DashboardView(self)
         self.page_records = RecordsView(self)
         self.page_review = ReviewView(self) 
-        self.page_market = MarketView(self)  # 【新增】实例化行情视图
+        self.page_market = MarketView(self)
         
-        # 将四个页面加入堆叠容器
         self.content_area.addWidget(self.page_overview)
         self.content_area.addWidget(self.page_records)
         self.content_area.addWidget(self.page_review) 
-        self.content_area.addWidget(self.page_market)  # 【新增】装入栈中
+        self.content_area.addWidget(self.page_market)
         
         main_layout.addWidget(sidebar)
         main_layout.addWidget(self.content_area)
         
-        # --- 路由信号连接 ---
         self.btn_overview.clicked.connect(lambda: self.content_area.setCurrentIndex(0))
         self.btn_records.clicked.connect(lambda: self.content_area.setCurrentIndex(1))
         self.btn_review.clicked.connect(lambda: self.content_area.setCurrentIndex(2))
-        self.btn_market.clicked.connect(lambda: self.content_area.setCurrentIndex(3)) # 【新增】切换到第4页
+        self.btn_market.clicked.connect(lambda: self.content_area.setCurrentIndex(3))
         
         self.render_all_data()
         self.check_for_updates()
 
-    # ==========================================
-    # 版本更新检测模块
-    # ==========================================
     def check_for_updates(self):
         self.updater_thread = UpdateCheckerThread()
         self.updater_thread.update_available.connect(self.show_update_dialog)
@@ -99,19 +97,10 @@ class JianMainWindow(QMainWindow):
 
     def show_update_dialog(self, version: str, notes: str, download_url: str):
         msg = f"当前版本: {settings.APP_VERSION}\n最新版本: {version}\n\n更新说明:\n{notes}\n\n是否立即前往浏览器下载新版本？"
-        reply = QMessageBox.question(
-            self, 
-            "✨ 发现新版本", 
-            msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
+        reply = QMessageBox.question(self, "✨ 发现新版本", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes and download_url:
             QDesktopServices.openUrl(QUrl(download_url))
 
-    # ==========================================
-    # 数据流与弹窗控制器
-    # ==========================================
     def render_all_data(self):
         if self.engine.df.empty: 
             self.page_overview.clear_view()
@@ -128,11 +117,35 @@ class JianMainWindow(QMainWindow):
             self.page_review.refresh_review_filters()
             self.page_review.update_review_view()
 
-    def open_import_wizard(self):
+    # ==========================================
+    # 数据流与弹窗调度器 (完全解耦调用)
+    # ==========================================
+    
+    def open_futures_import(self):
+        dialog = FuturesImportDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'final_trades', None):
+            # 获取引擎返回的统计报告
+            stats = self.engine.add_trades(dialog.final_trades)
+            self.render_all_data()
+            
+            # 优雅的防呆反馈
+            msg = f"操作完成！\n\n📄 共解析到闭环交易：{stats['total']} 笔\n✅ 成功新增入库：{stats['inserted']} 笔"
+            if stats['ignored'] > 0:
+                msg += f"\n🛡️ 拦截重复数据：{stats['ignored']} 笔 (已跳过)"
+                
+            QMessageBox.information(self, "导入结果", msg)
+
+    def open_stock_import(self):
         dialog = ImportWizardDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'final_trades', None):
-            self.engine.add_trades(dialog.final_trades)
+            stats = self.engine.add_trades(dialog.final_trades)
             self.render_all_data()
+            
+            msg = f"操作完成！\n\n📄 共映射交易：{stats['total']} 笔\n✅ 成功新增入库：{stats['inserted']} 笔"
+            if stats['ignored'] > 0:
+                msg += f"\n🛡️ 拦截重复数据：{stats['ignored']} 笔 (已跳过)"
+                
+            QMessageBox.information(self, "导入结果", msg)
 
     def open_manual_entry(self):
         dialog = ManualEntryDialog(self.engine.strategies, self)

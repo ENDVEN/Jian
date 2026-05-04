@@ -26,9 +26,25 @@ class RecordsView(QWidget):
         title = QLabel("交易流水明细")
         title.setStyleSheet("font-size: 22px; font-weight: bold; color: #212121;")
         
-        self.btn_import = QPushButton("📥 导入")
-        self.btn_import.setStyleSheet("QPushButton { background-color: #1976D2; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; }")
-        self.btn_import.clicked.connect(self.main_win.open_import_wizard)
+        # 【修改点】将导入按钮升级为带下拉菜单的按钮
+        from PyQt6.QtWidgets import QMenu # 请确保在文件顶部引入了 QMenu
+        self.btn_import = QPushButton("📥 导入数据")
+        self.btn_import.setStyleSheet("QPushButton { background-color: #1976D2; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; } QPushButton::menu-indicator { image: none; }")
+        
+        import_menu = QMenu(self.btn_import)
+        import_menu.setStyleSheet("""
+            QMenu { background-color: white; border: 1px solid #E0E0E0; border-radius: 4px; padding: 5px; } 
+            QMenu::item { padding: 8px 25px; font-size: 14px; color: #333; } 
+            QMenu::item:selected { background-color: #E3F2FD; color: #1976D2; border-radius: 4px;}
+        """)
+        
+        action_futures = import_menu.addAction("📊 导入期货交割单")
+        action_futures.triggered.connect(self.main_win.open_futures_import)
+        
+        action_stocks = import_menu.addAction("📈 导入股票交割单")
+        action_stocks.triggered.connect(self.main_win.open_stock_import)
+        
+        self.btn_import.setMenu(import_menu)
         
         self.btn_manual = QPushButton("✍️ 录入")
         self.btn_manual.setStyleSheet(f"QPushButton {{ background-color: {settings.COLOR_PROFIT}; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; margin-left:10px; }}")

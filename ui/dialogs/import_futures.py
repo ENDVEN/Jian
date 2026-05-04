@@ -1,26 +1,12 @@
-# ui/dialogs/dialogs.py
-import pandas as pd
-from datetime import datetime
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-                             QListWidget, QListWidgetItem, QWidget, QFileDialog, 
-                             QComboBox, QMessageBox, QFormLayout, QLineEdit, 
-                             QDateTimeEdit, QDoubleSpinBox, QSpinBox)
-from PyQt6.QtCore import Qt, QDateTime, QThread, pyqtSignal
-
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QMessageBox
+from PyQt6.QtCore import QThread, pyqtSignal
 from data.data_feed import parse_cfmmc_excel
-from models.trade import TradeRecord
-from config import settings
 
-# 【保留原有的 ListManagerDialog 和 ManualEntryDialog 代码... 保持不变】
-
-# ===============================================
-# 【全新增加】异步解析工作线程，防止 UI 假死
-# ===============================================
 class FuturesImportWorker(QThread):
     finished = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, file_paths): # 改为接受路径列表
+    def __init__(self, file_paths):
         super().__init__()
         self.file_paths = file_paths
 
@@ -42,7 +28,6 @@ class FuturesImportDialog(QDialog):
         self.setStyleSheet("QDialog { background-color: white; font-family: -apple-system, sans-serif; }")
         
         self.final_trades = None
-        
         layout = QVBoxLayout(self)
         
         self.lbl_info = QLabel("请选择由监控中心导出的 Excel 结算单。\n系统支持一次性选择多月的数据，并在后台自动进行缝合并拆单去重。")
@@ -68,10 +53,8 @@ class FuturesImportDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def select_and_process_file(self):
-        # 允许选择多个文件
         file_paths, _ = QFileDialog.getOpenFileNames(self, "选择交割单(可多选)", "", "Excel Files (*.xls *.xlsx)")
-        if not file_paths: 
-            return
+        if not file_paths: return
             
         self.btn_select.setEnabled(False)
         self.lbl_status.setText(f"⏳ 正在后台解析 {len(file_paths)} 个文件，请稍候...")

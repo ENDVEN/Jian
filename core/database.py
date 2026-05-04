@@ -80,12 +80,21 @@ class DatabaseManager:
     # ==========================================
     # 交易流水操作 (Trades CRUD)
     # ==========================================
-    def insert_trades(self, trades: list[TradeRecord]):
+    def insert_trades(self, trades: list[TradeRecord]) -> dict:
+        """
+        批量插入交易记录。
+        采用 INSERT OR IGNORE 防呆策略，保护用户已有复盘数据不被覆盖。
+        返回统计字典：{'total': 总尝试量, 'inserted': 新增量, 'ignored': 拦截重复量}
+        """
+        stats = {'total': len(trades), 'inserted': 0, 'ignored': 0}
+        if not trades: return stats
+        
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             for t in trades:
+                # 【防呆核心】使用 INSERT OR IGNORE
                 cursor.execute('''
-                    INSERT OR REPLACE INTO trades 
+                    INSERT OR IGNORE INTO trades 
                     (internal_id, trade_id, account, symbol, direction, entry_time, exit_time, lots, net_profit, commission, strategy_tag, entry_reason, reflection, screenshot_paths)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
@@ -95,7 +104,14 @@ class DatabaseManager:
                     t.lots, t.net_profit, t.commission, 
                     t.strategy_tag, t.entry_reason, t.reflection, t.screenshot_paths
                 ))
+                # cursor.rowcount 为 1 表示成功插入，为 0 表示因为 IGNORE 被忽略
+                if cursor.rowcount > 0:
+                    stats['inserted'] += 1
+                else:
+                    stats['ignored'] += 1
             conn.commit()
+            
+        return stats
 
     def load_all_trades(self) -> pd.DataFrame:
         with sqlite3.connect(self.db_path) as conn:

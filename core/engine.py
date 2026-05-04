@@ -23,10 +23,18 @@ class DataEngine:
                 if st not in self.strategies and st != settings.DEFAULT_STRATEGY:
                     self.strategies.append(st)
 
-    def add_trades(self, trades: list[TradeRecord]):
-        if not trades: return
-        self.db.insert_trades(trades)
-        self.reload_data()
+    def add_trades(self, trades: list[TradeRecord]) -> dict:
+        """接收新数据并交由 DB 处理，返回插入统计报告"""
+        if not trades: 
+            return {'total': 0, 'inserted': 0, 'ignored': 0}
+            
+        stats_report = self.db.insert_trades(trades)
+        
+        # 只有在真正有新增数据时，才触发耗时的全体数据重载
+        if stats_report['inserted'] > 0:
+            self.reload_data()
+            
+        return stats_report
 
     def clear_account(self, acc_name: str) -> bool:
         if self.df.empty: return False
