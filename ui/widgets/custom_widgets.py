@@ -61,21 +61,29 @@ class CandlestickItem(pg.GraphicsObject):
         w = 0.3
         if len(self.data) > 1:
             w = (self.data[1][0] - self.data[0][0]) * 0.35 
-            
+
+        # 【性能要点】画笔/画刷仅有“涨/跌”两种状态，必须在循环外一次性创建；
+        # 否则每根 K 线都会新造 3 个 Qt 图形对象，千根 K 线即产生数千次内存分配。
+        # 【Pokorny 原则 2】抛弃刺眼的黑色描边，影线和实体采用纯净的扁平单色。
+        styles = {
+            True:  (pg.mkPen(settings.COLOR_PROFIT, width=1.5),
+                    pg.mkPen(settings.COLOR_PROFIT, width=1),
+                    pg.mkBrush(settings.COLOR_PROFIT)),
+            False: (pg.mkPen(settings.COLOR_LOSS, width=1.5),
+                    pg.mkPen(settings.COLOR_LOSS, width=1),
+                    pg.mkBrush(settings.COLOR_LOSS)),
+        }
+
         for (t, open_p, close_p, min_p, max_p) in self.data:
-            is_profit = close_p >= open_p
-            
-            # 【Pokorny 原则 2】抛弃刺眼的黑色描边，影线和实体采用纯净的扁平单色
-            color_hex = settings.COLOR_PROFIT if is_profit else settings.COLOR_LOSS
-            color = QtGui.QColor(color_hex)
+            wick_pen, body_pen, body_brush = styles[close_p >= open_p]
             
             # 画影线 (Wick)
-            p.setPen(pg.mkPen(color, width=1.5))
+            p.setPen(wick_pen)
             p.drawLine(QtCore.QPointF(t, min_p), QtCore.QPointF(t, max_p))
             
             # 画实体 (Body)：边框和填充色完全一致，彻底消除描边感
-            p.setBrush(pg.mkBrush(color))
-            p.setPen(pg.mkPen(color, width=1)) 
+            p.setBrush(body_brush)
+            p.setPen(body_pen)
             p.drawRect(QtCore.QRectF(t - w, open_p, w * 2, close_p - open_p))
             
         p.end()

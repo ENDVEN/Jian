@@ -1,5 +1,7 @@
 # core/updater.py
 import json
+import re
+import logging
 import urllib.request
 from PyQt6.QtCore import QThread, pyqtSignal
 from config import settings
@@ -36,13 +38,27 @@ class UpdateCheckerThread(QThread):
                     
         except Exception as e:
             # 无论发生什么错误（断网、404、JSON解析失败），都在后台安静地死掉，不打扰用户
-            pass
+            # 仅写入 debug 日志，保证问题可追溯但不弹窗骚扰
+            logging.debug(f"版本检测静默失败: {e}")
             
+    @staticmethod
+    def _parse_version(version: str) -> tuple:
+        """将 '1.2.3' / 'v1.2' 解析为可比较的整数元组，非数字段按 0 处理"""
+        parts = []
+        for chunk in str(version).split('.'):
+            matched = re.match(r'\d+', chunk.strip())
+            parts.append(int(matched.group()) if matched else 0)
+        return tuple(parts)
+
     def _is_newer(self, remote_ver: str, local_ver: str) -> bool:
         """比较版本号大小，例如 1.1.0 > 1.0.0"""
         try:
-            r_parts = [int(x) for x in remote_ver.split('.')]
-            l_parts = [int(x) for x in local_ver.split('.')]
-            return r_parts > l_parts
+            remote = self._parse_version(remote_ver)
+            local = self._parse_version(local_ver)
+            # 补齐长度后再比较，避免 '1.1' 与 '1.1.0' 因元组长度不同得出错误结论
+            width = max(len(remote), len(local))
+            remote += (0,) * (width - len(remote))
+            local += (0,) * (width - len(local))
+            return remote > local
         except Exception:
             return False

@@ -4,16 +4,35 @@ import pandas as pd
 import logging
 from datetime import datetime
 
+# 系统内部统一的标准量价列名 (Canonical OHLCV Schema)
+OHLCV_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume']
+
+# 新浪/东财日线接口的中文列名统一映射 (兼容两个接口不同时期的列名)
+KLINE_CN_RENAME = {
+    '日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume',
+    '开盘价': 'open', '收盘价': 'close', '最高价': 'high', '最低价': 'low',
+}
+
+# 东财接口超时上限 (秒)：作为兜底源时不允许无限期挂起
+EM_TIMEOUT_SECONDS = 15
+
+
 class AkShareFeed:
     """
     数据源接入层 (Data Fetcher)。
     专职负责从 AkShare 免费拉取各类金融数据，并清洗成系统统一的标准格式。
+
+    【架构纪律】本类是唯一允许感知 AkShare 接口细节的地方，
+    上层 UI 只需调用 fetch_daily_auto()，由本类负责路由到股票或期货接口。
     """
-    
+
+    # ==========================================
+    # 花名册 (Roster)
+    # ==========================================
     @staticmethod
     def fetch_futures_roster() -> pd.DataFrame:
         """
-        【新增】国内期货全品种标准花名册。
+        国内期货全品种标准花名册。
         期货品种固定，硬编码可实现 0 毫秒极速加载，防断网。
         """
         futures_map = {
@@ -31,8 +50,7 @@ class AkShareFeed:
             "TS": "2年期国债", "TF": "5年期国债", "T": "10年期国债",
             "SC": "原油", "LU": "低硫燃油", "FU": "燃油"
         }
-        df = pd.DataFrame(list(futures_map.items()), columns=['symbol', 'name'])
-        return df
+        return pd.DataFrame(list(futures_map.items()), columns=['symbol', 'name'])
 
     @staticmethod
     def fetch_a_share_roster() -> pd.DataFrame:
@@ -41,61 +59,128 @@ class AkShareFeed:
         try:
             df = ak.stock_zh_a_spot_em()
             if df.empty: return pd.DataFrame()
-            rename_map = {'代码': 'symbol', '名称': 'name'}
-            df = df.rename(columns=rename_map)[['symbol', 'name']]
-            df = df[df['symbol'].str.match(r'^\d{6}$')]
-            return df
+            df = df.rename(columns={'代码': 'symbol', '名称': 'name'})[['symbol', 'name']]
+            return df[df['symbol'].str.match(r'^\d{6}$')]
         except Exception as e:
             logging.error(f"拉取花名册失败: {str(e)}")
             return pd.DataFrame()
 
+    # ==========================================
+    # 日线行情 (Daily K-Line)
+    # ==========================================
+    @staticmethod
+    def is_stock_code(symbol: str) -> bool:
+        """智能识别市场归属：纯 6 位数字为 A 股，含字母为期货"""
+        return str(symbol).strip().isdigit()
+
+    @staticmethod
+    def _normalize_ohlcv(df: pd.DataFrame, rename_map: dict, symbol_value: str) -> pd.DataFrame:
+        """
+        【统一清洗管道】将任意来源的脏数据规整为系统标准格式。
+        - 重命名列名 -> 统一英文
+        - 日期转 datetime 并剔除无法解析的行
+        - 价格与成交量强制转数值
+        - 打上标的标签
+        """
+        df = df.rename(columns=rename_map)
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        df = df.dropna(subset=['date'])
+
+        for col in OHLCV_COLUMNS[1:]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        df['symbol'] = symbol_value
+        return df.reset_index(drop=True)
+
     @staticmethod
     def fetch_futures_daily(symbol: str) -> pd.DataFrame:
         """
-        【新增】拉取期货主力连续合约日线数据。
+        拉取期货主力连续合约日线数据。
         :param symbol: 根代码，如 "RB"
         """
-        logging.info(f"开始拉取期货 {symbol} 主力连续日线数据...")
+        root = symbol.upper()
+        logging.info(f"开始拉取期货 {root} 主力连续日线数据...")
         try:
             # AkShare/新浪接口中，主力连续合约通常以 0 结尾，如 RB0
-            fetch_sym = f"{symbol.upper()}0"
-            df = ak.futures_main_sina(symbol=fetch_sym)
-            
+            df = ak.futures_main_sina(symbol=f"{root}0")
             if df.empty:
                 return pd.DataFrame()
-                
-            rename_map = {
-                '日期': 'date', '开盘价': 'open', '最高价': 'high', 
-                '最低价': 'low', '收盘价': 'close', '成交量': 'volume'
-            }
-            df = df.rename(columns=rename_map)
-            df['date'] = pd.to_datetime(df['date'])
-            for col in ['open', 'close', 'high', 'low', 'volume']:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-                    
-            df['symbol'] = symbol.upper()
-            return df
-            
+            return AkShareFeed._normalize_ohlcv(df, KLINE_CN_RENAME, root)
         except Exception as e:
             logging.error(f"拉取期货数据失败: {str(e)}")
             return pd.DataFrame()
 
     @staticmethod
+    def _to_sina_stock_symbol(symbol: str) -> str:
+        """
+        把 6 位 A股代码转换成新浪接口要求的带市场前缀代码。
+        - "600519" -> "sh600519" (沪市: 60/68/90 开头)
+        - "000001" -> "sz000001" (深市: 00/30/20 开头)
+        - 已是 "sh/sz/bj" 前缀的代码原样返回
+        - 无法识别的市场返回 "" (交由东财兜底源处理)
+        """
+        sym = str(symbol).strip()
+        if sym[:2].lower() in ('sh', 'sz', 'bj'):
+            return sym.lower()
+        if not sym.isdigit() or len(sym) != 6:
+            return ""
+        if sym.startswith(('60', '68', '90', '50', '51', '56', '58', '52')):
+            return f"sh{sym}"
+        if sym.startswith(('00', '30', '20', '15', '16', '12')):
+            return f"sz{sym}"
+        return ""
+
+    @staticmethod
+    def _fetch_a_share_via_em(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """东财日线 (兜底源)：兼容北交所等新浪未覆盖的标的"""
+        try:
+            df = ak.stock_zh_a_hist(
+                symbol=symbol, period="daily", start_date=start_date,
+                end_date=end_date, adjust="qfq", timeout=EM_TIMEOUT_SECONDS,
+            )
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            logging.warning(f"A股日线东财源失败 [{symbol}]: {e}")
+            return pd.DataFrame()
+
+    @staticmethod
     def fetch_a_share_daily(symbol: str, start_date: str = "20100101", end_date: str = None) -> pd.DataFrame:
-        """拉取 A 股历史日线数据"""
+        """
+        拉取 A 股历史日线数据 (前复权)。
+
+        【数据源路由】主源 = 新浪 (stock_zh_a_daily)，与期货主力接口同源，
+        在国内多数网络环境（含受限代理）均可直达；
+        新浪失败/无法识别的市场 (如北交所) 自动降级到东财 (stock_zh_a_hist)。
+        """
         if not end_date: end_date = datetime.now().strftime("%Y%m%d")
         logging.info(f"开始拉取 A股 {symbol} 日线数据...")
-        try:
-            df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
-            if df.empty: return pd.DataFrame()
-            rename_map = {'日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume'}
-            df = df.rename(columns=rename_map)
-            df['date'] = pd.to_datetime(df['date'])
-            for col in ['open', 'close', 'high', 'low', 'volume']:
-                if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
-            df['symbol'] = symbol
-            return df
-        except Exception as e:
-            logging.error(f"拉取数据失败: {str(e)}")
-            return pd.DataFrame()
+
+        # 1) 主源：新浪 (需带市场前缀)
+        sina_symbol = AkShareFeed._to_sina_stock_symbol(symbol)
+        if sina_symbol:
+            try:
+                df = ak.stock_zh_a_daily(symbol=sina_symbol, start_date=start_date,
+                                         end_date=end_date, adjust="qfq")
+                if df is not None and not df.empty:
+                    return AkShareFeed._normalize_ohlcv(df, KLINE_CN_RENAME, symbol)
+            except Exception as e:
+                logging.warning(f"A股日线新浪源失败 [{sina_symbol}]: {e}")
+
+        # 2) 兜底：东财 (覆盖北交所与新浪暂未支持的标的)
+        em_df = AkShareFeed._fetch_a_share_via_em(symbol, start_date, end_date)
+        if not em_df.empty:
+            return AkShareFeed._normalize_ohlcv(em_df, KLINE_CN_RENAME, symbol)
+
+        logging.error(f"A股日线拉取失败: {symbol} (主源与兜底源均未返回数据)")
+        return pd.DataFrame()
+
+    @staticmethod
+    def fetch_daily_auto(symbol: str) -> pd.DataFrame:
+        """
+        【智能路由】根据代码形态自动选择数据源。
+        纯数字 (600519) -> A股接口；含字母 (RB) -> 期货主力接口。
+        """
+        if AkShareFeed.is_stock_code(symbol):
+            return AkShareFeed.fetch_a_share_daily(symbol)
+        return AkShareFeed.fetch_futures_daily(symbol)

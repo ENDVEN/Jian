@@ -1,13 +1,13 @@
 # ui/views/records.py
 import pandas as pd
-import re
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QTabWidget, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QComboBox)
+                             QHeaderView, QComboBox, QMenu)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
 
 from config import settings
+from core.utils import extract_root_symbol, format_trade_time
 
 class RecordsView(QWidget):
     def __init__(self, main_win):
@@ -27,7 +27,6 @@ class RecordsView(QWidget):
         title.setStyleSheet("font-size: 22px; font-weight: bold; color: #212121;")
         
         # 【修改点】将导入按钮升级为带下拉菜单的按钮
-        from PyQt6.QtWidgets import QMenu # 请确保在文件顶部引入了 QMenu
         self.btn_import = QPushButton("📥 导入数据")
         self.btn_import.setStyleSheet("QPushButton { background-color: #1976D2; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; font-weight: bold; } QPushButton::menu-indicator { image: none; }")
         
@@ -93,14 +92,7 @@ class RecordsView(QWidget):
         self.cb_res.currentIndexChanged.connect(self.apply_filters)
         top_bar_2.addWidget(self.cb_res)
 
-        # 核心杀器：持仓时间过滤
-        top_bar_2.addSpacing(15)
-        top_bar_2.addWidget(QLabel("持仓时间:"))
-        self.cb_dur = QComboBox()
-        self.cb_dur.addItems(["全部时长", "日内 (<24h)", "隔夜 (1~2天)", "波段 (>2天)", "长线 (>5天)"])
-        self.cb_dur.currentIndexChanged.connect(self.apply_filters)
-        top_bar_2.addWidget(self.cb_dur)
-        
+        # NOTE(v1.1)：原"持仓时间"过滤依赖开/平仓双时间，交割单不再提供该数据，已删除
         top_bar_2.addStretch()
 
         self.records_tab_widget = QTabWidget()
@@ -113,29 +105,30 @@ class RecordsView(QWidget):
 
     def refresh_records_filters(self):
         """主窗口数据变动时，刷新这里的下拉框选项"""
-        if self.main_win.engine.df.empty: 
-            self.clear_view()
-            return
-            
-        self.cb_acc.blockSignals(True)
-        self.cb_sym.blockSignals(True)
-        
-        self.cb_acc.clear(); self.cb_acc.addItem("全账户", "ALL")
-        for acc in self.main_win.engine.df['account'].dropna().unique(): 
-            self.cb_acc.addItem(str(acc), str(acc))
-            
-        self.cb_sym.clear(); self.cb_sym.addItem("全品种", "ALL")
-        roots = set()
-        for sym in self.main_win.engine.df['symbol'].dropna().unique():
-            match = re.match(r'^[A-Za-z]+', str(sym))
-            if match: roots.add(match.group().upper())
-            else: roots.add(str(sym).upper()) 
-        for r in sorted(roots): self.cb_sym.addItem(r, r)
-            
-        self.cb_acc.blockSignals(False)
-        self.cb_sym.blockSignals(False)
-        
+        for cb in (self.cb_acc, self.cb_sym):
+            cb.blockSignals(True)
+        try:
+            self._populate_record_filter_options()
+        finally:
+            # 【健壮性】异常时也必须恢复信号，避免下拉框“假死”
+            for cb in (self.cb_acc, self.cb_sym):
+                cb.blockSignals(False)
+        # 数据为空时 apply_filters 会清空表格，统一走同一出口
         self.apply_filters()
+
+    def _populate_record_filter_options(self):
+        df = self.main_win.engine.df
+
+        self.cb_acc.clear(); self.cb_acc.addItem("全账户", "ALL")
+        if not df.empty:
+            for acc in df['account'].dropna().unique():
+                self.cb_acc.addItem(str(acc), str(acc))
+
+        self.cb_sym.clear(); self.cb_sym.addItem("全品种", "ALL")
+        if not df.empty:
+            roots = {extract_root_symbol(sym) for sym in df['symbol'].dropna().unique()}
+            for r in sorted(roots):
+                self.cb_sym.addItem(r, r)
 
     def apply_filters(self):
         """执行高级多维过滤矩阵，并将结果输出给表格"""
@@ -152,7 +145,7 @@ class RecordsView(QWidget):
         # 2. 品种过滤
         sym_sel = self.cb_sym.currentData()
         if sym_sel != "ALL" and sym_sel is not None: 
-            df['root_sym'] = df['symbol'].apply(lambda x: re.match(r'^[A-Za-z]+', str(x)).group().upper() if re.match(r'^[A-Za-z]+', str(x)) else str(x).upper())
+            df['root_sym'] = df['symbol'].apply(extract_root_symbol)
             df = df[df['root_sym'] == sym_sel]
             
         # 3. 方向过滤
@@ -164,19 +157,6 @@ class RecordsView(QWidget):
         res_sel = self.cb_res.currentText()
         if res_sel == "仅盈利": df = df[df['net_profit'] > 0]
         elif res_sel == "仅亏损": df = df[df['net_profit'] <= 0]
-        
-        # 5. 持仓时间过滤 (核心武器)
-        if not df.empty:
-            df['entry_time'] = pd.to_datetime(df['entry_time'])
-            df['exit_time'] = pd.to_datetime(df['exit_time'])
-            # 计算持仓小时数
-            df['duration_h'] = (df['exit_time'] - df['entry_time']).dt.total_seconds() / 3600.0
-            
-            dur_sel = self.cb_dur.currentText()
-            if dur_sel == "日内 (<24h)": df = df[df['duration_h'] < 24]
-            elif dur_sel == "隔夜 (1~2天)": df = df[(df['duration_h'] >= 24) & (df['duration_h'] <= 48)]
-            elif dur_sel == "波段 (>2天)": df = df[df['duration_h'] > 48]
-            elif dur_sel == "长线 (>5天)": df = df[df['duration_h'] > 120]
 
         self._populate_table_internal(df)
 
@@ -191,7 +171,8 @@ class RecordsView(QWidget):
         self._create_table_for_tab(f"筛选结果 ({len(df)}笔)", df)
         
         # 如果没有按账户筛选，就额外生成每个账户的分类页签
-        if self.cb_acc.currentData() == "ALL" or self.cb_acc.currentData() is None:
+        account_filter = self.cb_acc.currentData()
+        if account_filter == "ALL" or account_filter is None:
             for acc in df['account'].unique():
                 if pd.notna(acc): 
                     acc_df = df[df['account'] == acc]
@@ -199,8 +180,9 @@ class RecordsView(QWidget):
 
     def _create_table_for_tab(self, tab_name, df_subset):
         table = QTableWidget()
-        table.setColumnCount(10) # 增加了一列持仓时间
-        table.setHorizontalHeaderLabels(["单号", "账户", "品种", "方向", "进场时间", "平仓时间", "持仓(h)", "手数", "盈亏", "手续费"])
+        # v1.1：交割单只有单一交易时间，表格不再展示进场/平仓/持仓时长三列
+        table.setColumnCount(8)
+        table.setHorizontalHeaderLabels(["单号", "账户", "品种", "方向", "交易时间", "手数", "盈亏", "手续费"])
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         table.setAlternatingRowColors(True)
@@ -210,26 +192,22 @@ class RecordsView(QWidget):
         df_reversed = df_subset.iloc[::-1].reset_index(drop=True) 
         for row in range(len(df_reversed)):
             record = df_reversed.iloc[row]
-            entry_t = record['entry_time'].strftime('%m-%d %H:%M') if pd.notna(record.get('entry_time')) else "-"
-            exit_t = record['exit_time'].strftime('%m-%d %H:%M') if pd.notna(record.get('exit_time')) else "-"
-            dur = f"{record.get('duration_h', 0):.1f}" if 'duration_h' in record else "-"
+            trade_time = format_trade_time(record.get('trade_time'))
             
             items = [
                 QTableWidgetItem(str(record.get('trade_id', '-'))), 
                 QTableWidgetItem(str(record.get('account', '-'))), 
                 QTableWidgetItem(str(record.get('symbol', '-'))), 
                 QTableWidgetItem("做多" if record.get('direction') == 'LONG' else "做空"), 
-                QTableWidgetItem(entry_t), 
-                QTableWidgetItem(exit_t), 
-                QTableWidgetItem(dur), # 新增的持仓时间列
+                QTableWidgetItem(trade_time),
                 QTableWidgetItem(str(record.get('lots', 0))), 
                 QTableWidgetItem(f"￥{record.get('net_profit', 0):,.2f}"), 
                 QTableWidgetItem(f"￥{record.get('commission', 0):.2f}")
             ]
             
             pnl_color = settings.COLOR_PROFIT_TEXT if record.get('net_profit', 0) > 0 else settings.COLOR_LOSS_TEXT
-            items[8].setForeground(QColor(pnl_color))
-            items[8].setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            items[6].setForeground(QColor(pnl_color))
+            items[6].setFont(QFont("Arial", 10, QFont.Weight.Bold))
             
             for col, item in enumerate(items): 
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)

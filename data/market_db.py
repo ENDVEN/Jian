@@ -1,7 +1,10 @@
 # data/market_db.py
 import os
+import logging
 import pandas as pd
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 class DataLakeManager:
     """
@@ -57,7 +60,7 @@ class DataLakeManager:
             df.to_parquet(filepath, engine='pyarrow', index=False)
             return True
         except Exception as e:
-            print(f"数据湖落盘失败 [{zone}/{filename}]: {e}")
+            logger.error(f"数据湖落盘失败 [{zone}/{filename}]: {e}")
             return False
 
     def load_data(self, zone: str, filename: str) -> pd.DataFrame:
@@ -69,8 +72,16 @@ class DataLakeManager:
         try:
             return pd.read_parquet(filepath, engine='pyarrow')
         except Exception as e:
-            print(f"数据湖读取失败 [{zone}/{filename}]: {e}")
+            logger.error(f"数据湖读取失败 [{zone}/{filename}]: {e}")
             return pd.DataFrame()
+
+    def exists(self, zone: str, filename: str) -> bool:
+        """
+        轻量级存在性探针。
+        【性能要点】仅做文件系统检查，绝不触碰 Parquet 实体，
+        避免在“判断是否需要联网”时把整个历史文件读进内存。
+        """
+        return os.path.exists(self._get_filepath(zone, filename))
 
     def get_latest_date(self, zone: str, filename: str, date_col: str = 'date') -> str:
         """智能增量探测：获取某份数据最近的更新日期"""

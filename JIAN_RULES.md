@@ -1,4 +1,4 @@
-# Jian - 项目开发规范与上下文记忆 (v4.5)
+# Jian - 项目开发规范与上下文记忆 (v4.6)
 
 ## 1. 项目愿景与定位
 - **项目名称:** Jian (专业量化交易复盘与分析系统)
@@ -11,7 +11,7 @@
 ## 2. 技术栈与核心设施
 - **UI 框架:** PyQt6 / PySide6 (主界面与视图组件)
 - **图表引擎:** PyQtGraph (自定义 `CandlestickItem`，强制抗锯齿、去描边、单色填充，严格遵循 Michael Pokorny 视觉规范)
-- **数据源接入:** AkShare (全A股/期货花名册拉取与日线数据接入)
+- **数据源接入:** AkShare。日线行情统一走**新浪源为主 + 东财源兜底** (A股 `stock_zh_a_daily` 与期货 `futures_main_sina` 同源，多数受限网络可达；东财 `stock_zh_a_hist` 兜底北交所等标的)
 - **指标计算:** 纯原生 `Pandas` 向量化 TAEngine (零编译依赖，完美兼容 Python 3.14+，已实现 MA/BOLL/MACD)
 - **持久化方案:** 
   - **业务数据:** SQLite (`INSERT OR IGNORE` 事务与哈希去重)
@@ -24,33 +24,38 @@
 1. **防呆入库与反馈闭环 (Idempotent Design):** 
    - 数据库插入必须严格使用 `INSERT OR IGNORE`。
    - 任何导入操作必须通过统计报告（`inserted`, `ignored`）向 UI 层清晰反馈结果，让用户对数据的去重和拦截有绝对掌控感。
-2. **确定性哈希主键:** 针对外部无时间戳数据（如 CFMMC 期货交割单），强制使用 **MD5(账户名_单号_数量_进场日期)** 生成绝对唯一的 `internal_id`，以支持多次反复导入与跨月缝合。
+2. **确定性哈希主键:** 针对外部数据（如 CFMMC 期货交割单），使用 **MD5(账户名_单号_交易日期_数量)** 生成绝对唯一的 `internal_id`，以支持多次反复导入与跨月缝合。
 3. **数据物理隔离:** 用户产生的 `.db` 文件与行情数据湖必须存在于操作系统的独立数据目录（如 `~/.jian_data`）中。
 4. **组件物理拆分:** 严禁将不同的业务逻辑揉在一个大文件里（例如已将所有的 Dialog 拆分为独立模块）。
+5. **单一时间锚点 (v1.1):** 交割单现实只有"交易日期"，严禁为填充字段而虚构开/平仓时间。一切日历/绩效/回放都以唯一 `trade_time`（盈亏实现日）为锚点；无法自洽的统计（如持仓时长）直接下线而非伪造。
 
 ## 4. 目录结构 (Phase 4 演进态)
 ```text
 Jian/
 ├── main.py                 # 程序唯一启动入口，负责环境初始化
-├── JIAN_RULES.md           # 本规范与记忆文件 (当前版本 v4.5)
+├── requirements.txt        # 依赖清单 (PyQt6 / pyqtgraph / pandas / pyarrow / akshare)
+├── JIAN_RULES.md           # 本规范与记忆文件 (当前版本 v4.6)
 ├── config/                 # 【配置中心】
 │   └── settings.py         # 全局常量、颜色、路径、UI 样式统一定义
 ├── models/                 # 【数据模型】
-│   └── trade.py            # 核心数据契约 (TradeRecord)，含强化版 internal_id 钩子
+│   └── trade.py            # 核心数据契约 (TradeRecord, v1.1 单一 trade_time)，含强化版 internal_id 钩子
 ├── core/                   # 【核心逻辑引擎】
 │   ├── engine.py           # 中央数据引擎 (DataEngine)，统筹内存状态与 DB 报告
 │   ├── database.py         # 业务数据库管家 (SQLite)，负责复盘单据的 CRUD 与防呆拦截
 │   ├── indicators.py       # 纯 Pandas 原生技术分析引擎 (TAEngine)
 │   ├── analyzer.py         # 绩效评估与回撤计算引擎
+│   ├── utils.py            # 无副作用公共工具 (品种主体提取、交易时间格式化)
 │   └── updater.py          # 异步后台版本检测 (QThread)
 ├── data/                   # 【数据来源与持久化】
-│   ├── data_feed.py        # 专职处理脏数据清洗与 CFMMC 交割单的 FIFO 匹配缝合
-│   ├── akshare_feed.py     # 外部金融数据爬取代理 (A股/期货日线及花名册)
+│   ├── data_feed.py        # 账单解析抽象层 (BaseTradeParser + PARSER_REGISTRY) + CFMMC FIFO 缝合
+│   ├── akshare_feed.py     # 外部金融数据爬取代理 (A股/期货日线及花名册)，含市场智能路由
 │   └── market_db.py        # 工业级 Parquet 数据湖管家 (DataLakeManager)
 └── ui/                     # 【表现层 (UI)】
     ├── main_window.py      # 总路由器 (Controller)，极简代码，只负责引入组件与事件分发
     ├── widgets/            # 【可复用图元与控件】
-    │   └── custom_widgets.py   # Hover 悬浮列表、Pokorny 风格 K线图元等
+    │   ├── custom_widgets.py       # Hover 悬浮列表、Pokorny 风格 K线图元等
+    │   ├── screenshot_gallery.py   # 复盘截图画廊 (粘贴/导入/预览/删除/序列化)
+    │   └── yearly_review.py        # 年度复盘面板 (月度盈亏卡片/策略贡献/净值曲线)
     ├── dialogs/            # 【物理拆分后的独立弹窗】
     │   ├── list_manager.py     # 账户/策略管理与删除警告
     │   ├── manual_entry.py     # 手工录入交易单
@@ -59,8 +64,8 @@ Jian/
     └── views/              # 页面级大型视图组件
         ├── dashboard.py    # 资金与表现面板
         ├── records.py      # 流水表格，含多维高级过滤器与全量 CSV 导出
-        ├── review.py       # 深度复盘双模态工作台
-        └── market.py       # (建设中) 市场行情对照与沙盒视图
+        ├── review.py       # 深度复盘双模态工作台 (含 K线交易回放)
+        └── market.py       # 市场行情对照与沙盒视图
 ```
 
 ## 5. AI 协作约定 (给 AI 的最高指令)
@@ -79,6 +84,8 @@ Michael Pokorny UI 准则: 任何新增图表元素必须严格遵循“抗锯�
 
 ✅ Phase 4.1 (基础设施建设): 完成 Parquet 极速数据湖 (market_db.py)、零依赖向量化指标库 (indicators.py)、AkShare 接口封装 (akshare_feed.py)。
 
+✅ v1.1 (数据契约重构): 交割单导入与全链路仅保留单一 `trade_time`；旧库双时间自动无损迁移；交易回放改单点锚定式；删除无法自洽的"时长分析"。
+
 🚀 Phase 4.2+: 前端集成与业务展现 (当前阶段)
 
 [ ] 打通视图层: 将数据湖的数据喂给 ui/views/market.py，并利用 custom_widgets.py 中的底盘渲染出行情图表，提供输入代码查询交互。
@@ -86,3 +93,40 @@ Michael Pokorny UI 准则: 任何新增图表元素必须严格遵循“抗锯�
 [ ] 复盘涂鸦板: 允许在行情图表上绘制支撑/阻力线并持久化。
 
 [ ] 热力图看板: 升级 dashboard，引入 GitHub 风格日历热力图。
+
+## 7. v1.1 数据契约变更记录 (改前必读)
+
+### 7.1 发生了什么
+交割单 (CFMMC) 只有"交易日期"，原先 `entry_time` / `exit_time` 双时间结构会在流水表格制造虚构信息。v1.1 将二者合并为**单一 `trade_time`**：
+
+- 数据库 `trades` 表：`entry_time`、`exit_time` 两列删除，改为 `trade_time`。
+- 启动时自动迁移：`DatabaseManager` 检测到旧结构会把表改名备份后重建；
+  数据归并规则 **`COALESCE(exit_time, entry_time)`**（平仓日优先，开仓日兜底），
+  已有 `internal_id` 原样继承，无主键的远古库会逐行补全。
+- 导出 CSV 只包含 `trade_time` 单时间列。
+- `format_trade_time()`：若时间恰为当天零点只显示 `YYYY-MM-DD`，有具体时分才带 `HH:MM`，杜绝虚假 `00:00`。
+
+### 7.2 已下线的模块与理由
+| 模块 | 去处 | 理由 |
+|---|---|---|
+| 流水表"进场/平仓时间"列与"持仓(h)"列 | 删除 | 数据源无开平仓双时间 |
+| 流水页"持仓时间"高级过滤器 | 删除 | 依赖时长，逻辑无法自洽 |
+| 复盘页 "⏳ 时长分析" 页签与其散点图 | 删除 | 同上 |
+| `core/utils.parse_time_gap_hours` | 删除 | 被以上功能独占 |
+
+### 7.3 交易回放的新的表现形态 (单点锚定式)
+交割单无法提供进场/离场两个坐标点，回放改为：
+1. 以 `trade_time` 为圆心截取前后 ±45 天本地 K 线 (`PLAYBACK_CONTEXT_DAYS`);
+2. 定位时间上最接近的一根 K 线为锚点，画垂直虚线;
+3. 在该 K 线上叠加标记：**箭头方向 = 多/空**，**颜色 = 盈/亏**，并带 PnL 文字;
+4. 本地缺数据或锚点误差 > 7 天 (`MAX_ANCHOR_GAP_DAYS`) 时明确提示，
+   绝不硬凑坐标，并自动切回"累计盈亏"页。
+
+### 7.4 后续使用注意事项
+- **升级即迁移**：旧库首次启动自动重建为 v1.1，迁移日志走 logging；
+  数据量不大，迁移在后台瞬时完成。
+- **约定俗成**：新增任何按日统计/日历/回放功能一律使用 `trade_time`；
+  严禁重新引入成对的进场/离场时间列。
+- 手工录入与股票导入向导均已改为单"交易时间"，向导中该字段现在是必选映射项。
+- 若将来真能拿到带时分秒的开/平仓逐笔流水，应新增**可选**的 `entry_time`
+  作为独立附表字段，而不是推翻 `trade_time` 主锚点设计。

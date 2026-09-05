@@ -7,6 +7,10 @@ from PyQt6.QtCore import Qt
 from config import settings
 
 class DashboardView(QWidget):
+    # 中性态配色 (无数据 / 不参与盈亏着色的指标)
+    NEUTRAL_TEXT = "#757575"
+    NEUTRAL_BG = "#F5F5F5"
+
     def __init__(self, main_win):
         super().__init__()
         self.main_win = main_win 
@@ -61,23 +65,37 @@ class DashboardView(QWidget):
         layout.addWidget(self.distribution_chart, 1)
         return panel
 
-    def set_metric_style(self, widget, formatted_text, raw_value=None, force_neutral=False, reverse_color=False):
+    @staticmethod
+    def _rgba_bg(rgb: tuple, alpha: float = 0.1) -> str:
+        """将配置中心的 RGB 元组转换为带透明度的背景色"""
+        return f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {alpha})"
+
+    def set_metric_style(self, widget, formatted_text, raw_value=None, threshold=0.0,
+                         force_neutral=False, reverse_color=False):
+        """
+        统一的指标着色策略。
+        :param threshold: 好坏判定基准线，默认 0；胜率这类“过半才算好”的指标传 0.5
+        :param reverse_color: 数值越大越糟糕的指标 (如最大回撤) 置为 True
+        """
         widget.setText(formatted_text)
-        if force_neutral: 
-            color, bg_color = settings.COLOR_TEXT_PRIMARY, "#F5F5F5"
-        elif raw_value is not None:
-            if raw_value == 0: 
-                color, bg_color = "#757575", "#F5F5F5"
-            elif (raw_value > 0 and not reverse_color) or (raw_value < 0 and reverse_color): 
-                color = settings.COLOR_PROFIT
-                # 提取 RGB 值动态生成透明背景
-                bg_color = f"rgba({settings.RGB_PROFIT[0]}, {settings.RGB_PROFIT[1]}, {settings.RGB_PROFIT[2]}, 0.1)"
-            else: 
-                color = settings.COLOR_LOSS
-                bg_color = f"rgba({settings.RGB_LOSS[0]}, {settings.RGB_LOSS[1]}, {settings.RGB_LOSS[2]}, 0.1)"
-        else: 
-            color, bg_color = "#757575", "#F5F5F5"
-        widget.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {color}; padding: 5px; background-color: {bg_color}; border-radius: 4px;")
+
+        if force_neutral:
+            color, bg_color = settings.COLOR_TEXT_PRIMARY, self.NEUTRAL_BG
+        elif raw_value is None:
+            color, bg_color = self.NEUTRAL_TEXT, self.NEUTRAL_BG
+        else:
+            diff = raw_value - threshold
+            if diff == 0:
+                color, bg_color = self.NEUTRAL_TEXT, self.NEUTRAL_BG
+            elif (diff > 0) != reverse_color:
+                color, bg_color = settings.COLOR_PROFIT, self._rgba_bg(settings.RGB_PROFIT)
+            else:
+                color, bg_color = settings.COLOR_LOSS, self._rgba_bg(settings.RGB_LOSS)
+
+        widget.setStyleSheet(
+            f"font-size: 14px; font-weight: bold; color: {color}; "
+            f"padding: 5px; background-color: {bg_color}; border-radius: 4px;"
+        )
 
     def clear_view(self):
         self.equity_chart.clear()
@@ -93,7 +111,7 @@ class DashboardView(QWidget):
         self.set_metric_style(m["max_profit"], f"￥{r['max_profit']:,.2f}", r['max_profit'])
         self.set_metric_style(m["max_loss"], f"￥{r['max_loss']:,.2f}", r['max_loss'])
         self.set_metric_style(m["return_rate"], f"{r['return_rate']*100:.2f}%", r['return_rate'])
-        self.set_metric_style(m["win_rate"], f"{r['win_rate']*100:.2f}%", r['win_rate'] - 0.5)
+        self.set_metric_style(m["win_rate"], f"{r['win_rate']*100:.2f}%", r['win_rate'], threshold=0.5)
         self.set_metric_style(m["max_drawdown"], f"{r['max_drawdown']*100:.2f}%", r['max_drawdown'], reverse_color=True)
         self.set_metric_style(m["initial_capital"], f"￥{r['initial_capital']:,.2f}", force_neutral=True)
         self.set_metric_style(m["total_commission"], f"￥{r['total_commission']:,.2f}", force_neutral=True)

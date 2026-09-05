@@ -1,0 +1,158 @@
+# ui/widgets/yearly_review.py
+import pandas as pd
+import pyqtgraph as pg
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame,
+                             QGridLayout, QSplitter)
+from PyQt6.QtCore import Qt
+
+from config import settings
+
+
+class YearlyReviewPanel(QWidget):
+    """
+    年度复盘面板 (SRP 拆分自 ReviewView)。
+
+    职责单一：给定某一年全部交易的 DataFrame，渲染
+      - 12 个月盈亏强度卡片
+      - 策略利润贡献条形图
+      - 年度资金净值曲线
+    内部状态 (month_cards / 图表对象) 全部自持，宿主只负责喂数据。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.month_cards = []
+        self._build_ui()
+
+    # ==========================================
+    # UI 构建
+    # ==========================================
+    def _apply_pokorny_style(self, chart: pg.PlotWidget, title: str = ""):
+        chart.setBackground('w')
+        if title:
+            chart.setTitle(title, color="#424242", size="11pt", bold=True)
+
+        plot_item = chart.getPlotItem()
+        plot_item.hideAxis('top')
+        plot_item.hideAxis('right')
+        chart.showGrid(x=True, y=True, alpha=0.15)
+
+        pen = pg.mkPen(color='#E0E0E0', width=1)
+        text_pen = pg.mkPen(color='#9E9E9E')
+        for axis_name in ['left', 'bottom']:
+            axis = plot_item.getAxis(axis_name)
+            axis.setPen(pen)
+            axis.setTextPen(text_pen)
+
+        plot_item.getViewBox().setContentsMargins(15, 15, 15, 15)
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # ---- 上区：月度盈亏卡片 2x6 ----
+        cal_card = QFrame()
+        cal_card.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
+        cal_layout = QVBoxLayout(cal_card)
+
+        cal_title = QLabel("📅 年度各月盈亏概览")
+        cal_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #424242; margin-bottom: 5px;")
+        cal_layout.addWidget(cal_title)
+
+        card_grid = QGridLayout()
+        card_grid.setSpacing(10)
+        for i in range(12):
+            card = QLabel(f"{i+1}月\n无数据")
+            card.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card.setStyleSheet("background: #F5F5F5; border-radius: 6px; font-size: 14px; font-weight:bold; color: #9E9E9E;")
+            card.setMinimumSize(80, 80)
+            self.month_cards.append(card)
+            card_grid.addWidget(card, i // 6, i % 6)
+
+        cal_layout.addLayout(card_grid)
+        layout.addWidget(cal_card, 2)
+
+        # ---- 下区：策略贡献 + 资金净值 ----
+        charts_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        bar_card = QFrame()
+        bar_card.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
+        bar_layout = QVBoxLayout(bar_card)
+        self.yearly_bar_chart = pg.PlotWidget()
+        self._apply_pokorny_style(self.yearly_bar_chart, title="🏆 年度策略利润贡献度")
+        self.yearly_bar_chart.showGrid(x=False, y=False)
+        bar_layout.addWidget(self.yearly_bar_chart)
+        charts_splitter.addWidget(bar_card)
+
+        curve_card = QFrame()
+        curve_card.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
+        curve_layout = QVBoxLayout(curve_card)
+        self.yearly_curve_chart = pg.PlotWidget()
+        self._apply_pokorny_style(self.yearly_curve_chart, title="📈 年度资金净值曲线")
+        curve_layout.addWidget(self.yearly_curve_chart)
+        charts_splitter.addWidget(curve_card)
+
+        charts_splitter.setSizes([500, 500])
+        layout.addWidget(charts_splitter, 5)
+
+    # ==========================================
+    # 对外渲染接口
+    # ==========================================
+    def render(self, df: pd.DataFrame):
+        """依据全年已平仓记录刷新月度卡片与全部图表。空 DataFrame 时安全地清空画面。"""
+        df = df.copy()  # 【防御】绝不修改宿主传入的 DataFrame
+        self._render_month_cards(df)
+        self._render_charts(df)
+
+    def _render_month_cards(self, df: pd.DataFrame):
+        monthly_stats = {}
+        if not df.empty:
+            df['month'] = df['trade_time'].dt.month
+            monthly_stats = df.groupby('month')['net_profit'].sum().to_dict()
+
+        for i in range(12):
+            m = i + 1
+            card = self.month_cards[i]
+            if m not in monthly_stats:
+                card.setStyleSheet("background: #F5F5F5; border-radius: 6px; font-size: 14px; font-weight:bold; color: #9E9E9E;")
+                card.setText(f"{m}月\n无交易")
+                continue
+
+            net = monthly_stats[m]
+            if net > 0:
+                card.setStyleSheet(f"background: #E8F5E9; border-radius: 6px; font-size: 16px; font-weight:bold; color: {settings.COLOR_PROFIT_TEXT};")
+                card.setText(f"{m}月\n+{net:,.0f}")
+            else:
+                card.setStyleSheet(f"background: #FFEBEE; border-radius: 6px; font-size: 16px; font-weight:bold; color: {settings.COLOR_LOSS_TEXT};")
+                card.setText(f"{m}月\n{net:,.0f}")
+
+    def _render_charts(self, df: pd.DataFrame):
+        self.yearly_bar_chart.clear()
+        self.yearly_curve_chart.clear()
+        if df.empty:
+            return
+
+        df_sorted = df.sort_values(by='trade_time')
+        equity_curve = [0.0] + df_sorted['net_profit'].cumsum().tolist()
+        x_data = list(range(len(equity_curve)))
+        is_prof = equity_curve[-1] >= 0
+
+        color = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
+        fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
+        self.yearly_curve_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=color, width=3),
+                                     fillLevel=0, fillBrush=fill)
+
+        strategy_pnl = df.groupby('strategy_tag')['net_profit'].sum().sort_values()
+        if strategy_pnl.empty:
+            return
+
+        y_pos = list(range(len(strategy_pnl)))
+        x_vals = strategy_pnl.values.tolist()
+        brushes = [pg.mkBrush(settings.COLOR_PROFIT) if x > 0 else pg.mkBrush(settings.COLOR_LOSS) for x in x_vals]
+        pens = [pg.mkPen(settings.COLOR_PROFIT) if x > 0 else pg.mkPen(settings.COLOR_LOSS) for x in x_vals]
+        bar_item = pg.BarGraphItem(x0=0, y=y_pos, width=x_vals, height=0.5, brushes=brushes, pens=pens)
+        self.yearly_bar_chart.addItem(bar_item)
+
+        axis = self.yearly_bar_chart.getAxis('left')
+        axis.setTicks([list(zip(y_pos, strategy_pnl.index.tolist()))])
+        self.yearly_bar_chart.addLine(x=0, pen=pg.mkPen(color='#9E9E9E'))

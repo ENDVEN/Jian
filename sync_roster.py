@@ -21,6 +21,9 @@ def main():
     
     # 3. 缝合兵力并入库
     df_roster = pd.concat([df_a, df_f], ignore_index=True)
+    if df_roster.empty:
+        print("❌ 双市场花名册均为空 (疑似断网)，已中止入库以避免覆盖既有名册。")
+        return
     
     db = DatabaseManager()
     db.update_market_roster(df_roster)

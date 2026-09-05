@@ -15,12 +15,10 @@ def setup_env():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # 在系统的安全区域创建业务目录
-    if not os.path.exists(settings.USER_DATA_DIR):
-        os.makedirs(settings.USER_DATA_DIR)
-    if not os.path.exists(settings.SCREENSHOT_DIR): 
-        os.makedirs(settings.SCREENSHOT_DIR)
-        logging.info(f"已创建安全数据目录: {settings.USER_DATA_DIR}")
+    # 在系统的安全区域创建业务目录 (exist_ok 保证并发/重入安全)
+    for directory in (settings.USER_DATA_DIR, settings.SCREENSHOT_DIR):
+        os.makedirs(directory, exist_ok=True)
+    logging.info(f"数据目录已就绪: {settings.USER_DATA_DIR}")
         
     pg.setConfigOption('background', settings.COLOR_BACKGROUND)
     pg.setConfigOption('foreground', settings.COLOR_TEXT_PRIMARY)

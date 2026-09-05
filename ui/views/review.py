@@ -1,28 +1,29 @@
 # ui/views/review.py
-import os
-import shutil
 import calendar
 import pandas as pd
 from datetime import datetime
-import re
 
 import pyqtgraph as pg
-from pyqtgraph import QtGui
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QStackedWidget, QTableWidget, 
-                             QTableWidgetItem, QHeaderView, QGridLayout, 
-                             QTabWidget, QDialog, QFileDialog, QComboBox, 
-                             QMessageBox, QListWidget, QListWidgetItem, 
-                             QTextEdit, QSplitter, QApplication)
+                             QTableWidgetItem, QHeaderView,
+                             QTabWidget, QComboBox, QMessageBox, QListWidget, 
+                             QListWidgetItem, QTextEdit, QSplitter)
 from PyQt6.QtCore import Qt, QDate, QTimer
-from PyQt6.QtGui import QColor, QFont, QKeySequence
+from PyQt6.QtGui import QColor, QFont
 
-from ui.widgets.custom_widgets import HoverDeleteListWidget, CandlestickItem
+from ui.widgets.custom_widgets import CandlestickItem
+from ui.widgets.screenshot_gallery import ScreenshotGallery
+from ui.widgets.yearly_review import YearlyReviewPanel
 from config import settings
-
-# 【新增】引入数据湖管家和原生指标引擎，准备缝合！
+from core.utils import extract_root_symbol, format_trade_time
 from data.market_db import DataLakeManager
 from core.indicators import TAEngine
+
+# 交易回放上下文窗口 (交易时间前后各多少天) 与可容忍的锚点误差
+PLAYBACK_CONTEXT_DAYS = 45
+MAX_ANCHOR_GAP_DAYS = 7
+
 
 class ReviewView(QWidget):
     def __init__(self, main_win):
@@ -140,10 +141,10 @@ class ReviewView(QWidget):
 
         self.review_stack = QStackedWidget()
         self.review_monthly_widget = self._build_monthly_mode()
-        self.review_yearly_widget = self._build_yearly_mode()
+        self.yearly_panel = YearlyReviewPanel(self)
         
         self.review_stack.addWidget(self.review_monthly_widget) 
-        self.review_stack.addWidget(self.review_yearly_widget)  
+        self.review_stack.addWidget(self.yearly_panel)  
         layout.addWidget(self.review_stack)
 
     def _build_monthly_mode(self):
@@ -182,20 +183,15 @@ class ReviewView(QWidget):
         
         self.review_kline_chart = pg.PlotWidget()
         self._apply_pokorny_style(self.review_kline_chart)
-        
-        self.review_duration_chart = pg.PlotWidget()
-        self._apply_pokorny_style(self.review_duration_chart)
-        self.review_duration_chart.setLabel('left', '单笔盈亏', color='#9E9E9E')
-        self.review_duration_chart.setLabel('bottom', '时长(H)', color='#9E9E9E')
 
-        # 【核心新增】：🎯 交易回放视图
+        # 【交易回放】v1.1 起为"单时间点锚定式"展示，见 _render_trade_playback
         self.playback_chart = pg.PlotWidget()
         self._apply_pokorny_style(self.playback_chart)
 
         self.review_chart_tabs.addTab(self.review_pnl_chart, "📈 累计盈亏")
-        self.review_chart_tabs.addTab(self.playback_chart, "🎯 交易回放") # 放到第二位，最高优先级体验
+        self.review_chart_tabs.addTab(self.playback_chart, "🎯 交易回放")
         self.review_chart_tabs.addTab(self.review_kline_chart, "📊 资金 K线")
-        self.review_chart_tabs.addTab(self.review_duration_chart, "⏳ 时长分析")
+        # NOTE(v1.1): "时长分析"依赖开/平仓双时间，交割单不再提供该数据，已整体下线
         
         chart_layout.addWidget(self.review_chart_tabs)
         
@@ -247,11 +243,10 @@ class ReviewView(QWidget):
         v2.addWidget(QLabel("🔍 离场反思:")); self.txt_reflection = QTextEdit(); self.txt_reflection.setStyleSheet("QTextEdit { border: 1px solid #EEEEEE; border-radius: 4px; background: #FAFAFA; padding: 5px;}"); v2.addWidget(self.txt_reflection)
         text_layout.addLayout(v1); text_layout.addLayout(v2); editor_layout.addLayout(text_layout)
         
-        img_layout = QVBoxLayout(); img_header = QHBoxLayout(); lbl_img = QLabel("📸 画廊:"); lbl_img.setStyleSheet("font-weight: bold; color: #424242;"); img_header.addWidget(lbl_img); img_header.addStretch()
-        self.btn_paste_img = QPushButton("📋 粘贴"); self.btn_import_img = QPushButton("📁 导入")
-        for btn in [self.btn_paste_img, self.btn_import_img]: btn.setStyleSheet("QPushButton { background-color: #F5F5F5; color: #424242; border: 1px solid #E0E0E0; border-radius: 4px; padding: 4px 10px; font-weight: bold; } QPushButton:hover { background-color: #EEEEEE; }")
-        self.btn_paste_img.clicked.connect(self.paste_image); self.btn_import_img.clicked.connect(self.import_image); img_header.addWidget(self.btn_paste_img); img_header.addWidget(self.btn_import_img); img_layout.addLayout(img_header)
-        self.list_screenshots = HoverDeleteListWidget(self.delete_image, self); self.list_screenshots.itemDoubleClicked.connect(self.view_full_image); shortcut = QtGui.QShortcut(QKeySequence("Ctrl+V"), self.list_screenshots); shortcut.activated.connect(self.paste_image); img_layout.addWidget(self.list_screenshots); editor_layout.addLayout(img_layout)
+        # 【SRP 拆分】截图画廊的全部职能已下沉为独立组件，此处只负责挂载与信号桥接
+        self.gallery = ScreenshotGallery(self)
+        self.gallery.paths_changed.connect(self._save_image_paths_to_df)
+        editor_layout.addWidget(self.gallery)
         
         action_layout = QHBoxLayout(); self.btn_del_trade = QPushButton("🗑️ 删除此单"); self.btn_del_trade.setStyleSheet(f"QPushButton {{ background-color: white; color: {settings.COLOR_LOSS}; border: 1px solid {settings.COLOR_LOSS}; border-radius: 6px; padding: 10px; font-weight: bold; }} QPushButton:hover {{ background-color: #FFEBEE; }}"); self.btn_del_trade.clicked.connect(self.delete_current_trade)
         
@@ -265,56 +260,7 @@ class ReviewView(QWidget):
         layout.addWidget(micro_splitter, 4)
         return widget
 
-    def _build_yearly_mode(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget); layout.setContentsMargins(0, 0, 0, 0)
-        
-        cal_card = QFrame()
-        cal_card.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
-        cal_layout = QVBoxLayout(cal_card)
-        cal_title = QLabel("📅 年度各月盈亏概览")
-        cal_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #424242; margin-bottom: 5px;")
-        cal_layout.addWidget(cal_title)
-        
-        self.yearly_grid = QGridLayout()
-        self.yearly_grid.setSpacing(10)
-        self.month_cards = []
-        
-        for i in range(12):
-            card = QLabel(f"{i+1}月\n无数据")
-            card.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            card.setStyleSheet("background: #F5F5F5; border-radius: 6px; font-size: 14px; font-weight:bold; color: #9E9E9E;")
-            card.setMinimumSize(80, 80)
-            self.month_cards.append(card)
-            self.yearly_grid.addWidget(card, i // 6, i % 6)
-            
-        cal_layout.addLayout(self.yearly_grid)
-        layout.addWidget(cal_card, 2)
-        
-        radar_splitter = QSplitter(Qt.Orientation.Horizontal)
-        bar_card = QFrame()
-        bar_card.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
-        bar_layout = QVBoxLayout(bar_card)
-        
-        self.yearly_bar_chart = pg.PlotWidget()
-        self._apply_pokorny_style(self.yearly_bar_chart, title="🏆 年度策略利润贡献度")
-        self.yearly_bar_chart.showGrid(x=False, y=False)
-        bar_layout.addWidget(self.yearly_bar_chart)
-        radar_splitter.addWidget(bar_card)
-        
-        curve_card = QFrame()
-        curve_card.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
-        curve_layout = QVBoxLayout(curve_card)
-        
-        self.yearly_curve_chart = pg.PlotWidget()
-        self._apply_pokorny_style(self.yearly_curve_chart, title="📈 年度资金净值曲线")
-        curve_layout.addWidget(self.yearly_curve_chart)
-        radar_splitter.addWidget(curve_card)
-        
-        radar_splitter.setSizes([500, 500])
-        layout.addWidget(radar_splitter, 5)
-        return widget
-
+    # NOTE: 年度视图的 UI 构建与渲染已整体下沉至 ui/widgets/yearly_review.py (YearlyReviewPanel)
     def toggle_review_mode(self):
         self.is_yearly_view = not self.is_yearly_view
         if self.is_yearly_view:
@@ -329,41 +275,40 @@ class ReviewView(QWidget):
         self.update_review_view()
 
     def refresh_review_filters(self):
-        if self.main_win.engine.df.empty: return
-        
-        self.cb_rev_account.blockSignals(True)
-        self.cb_rev_strategy.blockSignals(True)
-        self.cb_rev_symbol.blockSignals(True)
-        self.cb_edit_strategy.blockSignals(True)
-        
-        self.cb_rev_account.clear(); self.cb_rev_account.addItem("全账户", "ALL")
-        for acc in self.main_win.engine.df['account'].dropna().unique(): 
-            self.cb_rev_account.addItem(str(acc), str(acc))
-            
-        self.cb_rev_strategy.clear(); self.cb_rev_strategy.addItem("全策略", "ALL")
-        all_st = list(set(self.main_win.engine.strategies + self.main_win.engine.df['strategy_tag'].dropna().unique().tolist()))
+        """数据变动后重建筛选下拉框。数据为空时重置为默认项，绝不残留旧选项。"""
+        combos = [self.cb_rev_account, self.cb_rev_strategy, self.cb_rev_symbol, self.cb_edit_strategy]
+        for cb in combos:
+            cb.blockSignals(True)
+        try:
+            self._populate_review_filter_options()
+        finally:
+            # 【健壮性】即使中途抛异常也必须恢复信号，否则控件会“假死”
+            for cb in combos:
+                cb.blockSignals(False)
+
+    def _populate_review_filter_options(self):
+        df = self.main_win.engine.df
+
+        self.cb_rev_account.clear()
+        self.cb_rev_account.addItem("全账户", "ALL")
+        if not df.empty:
+            for acc in df['account'].dropna().unique():
+                self.cb_rev_account.addItem(str(acc), str(acc))
+
+        # engine.strategies 已汇总默认策略与历史出现过的策略，数据为空时自动退化为默认项
+        self.cb_rev_strategy.clear()
+        self.cb_rev_strategy.addItem("全策略", "ALL")
         self.cb_edit_strategy.clear()
-        for st in all_st: 
+        for st in self.main_win.engine.strategies:
             self.cb_rev_strategy.addItem(str(st), str(st))
             self.cb_edit_strategy.addItem(str(st))
-            
+
         self.cb_rev_symbol.clear()
         self.cb_rev_symbol.addItem("全品种", "ALL")
-        roots = set()
-        for sym in self.main_win.engine.df['symbol'].dropna().unique():
-            match = re.match(r'^[A-Za-z]+', str(sym))
-            if match:
-                roots.add(match.group().upper())
-            else:
-                roots.add(str(sym).upper()) 
-        
-        for r in sorted(roots):
-            self.cb_rev_symbol.addItem(r, r)
-            
-        self.cb_rev_account.blockSignals(False)
-        self.cb_rev_strategy.blockSignals(False)
-        self.cb_rev_symbol.blockSignals(False)
-        self.cb_edit_strategy.blockSignals(False)
+        if not df.empty:
+            roots = {extract_root_symbol(sym) for sym in df['symbol'].dropna().unique()}
+            for r in sorted(roots):
+                self.cb_rev_symbol.addItem(r, r)
 
     def refresh_time_picker(self, is_year=False):
         self.cb_time_picker.blockSignals(True)
@@ -372,7 +317,7 @@ class ReviewView(QWidget):
             self.cb_time_picker.blockSignals(False)
             return
         
-        dates = pd.to_datetime(self.main_win.engine.df['exit_time'])
+        dates = pd.to_datetime(self.main_win.engine.df['trade_time'])
         
         if is_year:
             data_years = set(dates.dt.year.dropna().unique())
@@ -407,7 +352,7 @@ class ReviewView(QWidget):
 
     def jump_to_latest(self):
         if self.main_win.engine.df.empty: return
-        latest_date = pd.to_datetime(self.main_win.engine.df['exit_time']).dropna().max()
+        latest_date = pd.to_datetime(self.main_win.engine.df['trade_time']).dropna().max()
         if pd.notna(latest_date):
             self.current_review_date = latest_date.to_pydatetime()
             self.update_review_view()
@@ -417,7 +362,7 @@ class ReviewView(QWidget):
         self.day_trades_list.clear()
         self.txt_reason.clear()
         self.txt_reflection.clear()
-        self.list_screenshots.clear()
+        self.gallery.clear()
         
         self.lbl_trade_detail.setText("等待选择交易...")
         self.lbl_trade_detail.setStyleSheet("font-size: 14px; color: #9E9E9E; border: none;")
@@ -453,7 +398,7 @@ class ReviewView(QWidget):
             
         sym_sel = self.cb_rev_symbol.currentData()
         if sym_sel != "ALL" and sym_sel is not None: 
-            df['root_sym'] = df['symbol'].apply(lambda x: re.match(r'^[A-Za-z]+', str(x)).group().upper() if re.match(r'^[A-Za-z]+', str(x)) else str(x).upper())
+            df['root_sym'] = df['symbol'].apply(extract_root_symbol)
             df = df[df['root_sym'] == sym_sel]
             
         dir_sel = self.cb_rev_direction.currentText()
@@ -464,15 +409,15 @@ class ReviewView(QWidget):
         if res_sel == "仅盈利": df = df[df['net_profit'] > 0]
         elif res_sel == "仅亏损": df = df[df['net_profit'] <= 0]
             
-        df['exit_time'] = pd.to_datetime(df['exit_time']); df['entry_time'] = pd.to_datetime(df['entry_time'])
+        df['trade_time'] = pd.to_datetime(df['trade_time'])
         
         y = self.current_review_date.year
         if self.is_yearly_view:
-            self.current_view_df = df[df['exit_time'].dt.year == y].copy()
-            self._render_yearly_view()
+            self.current_view_df = df[df['trade_time'].dt.year == y].copy()
+            self.yearly_panel.render(self.current_view_df)
         else:
             m = self.current_review_date.month
-            self.current_view_df = df[(df['exit_time'].dt.year == y) & (df['exit_time'].dt.month == m)].copy()
+            self.current_view_df = df[(df['trade_time'].dt.year == y) & (df['trade_time'].dt.month == m)].copy()
             self.lbl_cal_month_title.setText(f"📅 {y}年 {m}月 复盘热力图")
             self._render_calendar()
             self._render_monthly_charts() 
@@ -486,7 +431,7 @@ class ReviewView(QWidget):
         max_abs_net = 0.0
         
         if not df.empty:
-            df['day'] = df['exit_time'].dt.day
+            df['day'] = df['trade_time'].dt.day
             daily_sums = df.groupby('day')['net_profit'].sum()
             if not daily_sums.empty:
                 max_abs_net = daily_sums.abs().max()
@@ -533,37 +478,44 @@ class ReviewView(QWidget):
                 self.review_calendar.setItem(row, col, item)
 
     def _render_monthly_charts(self):
-        self.review_pnl_chart.clear(); self.review_kline_chart.clear(); self.review_duration_chart.clear()
+        """月度复盘图表：累计盈亏净值曲线 + 按日聚合成K线的资金曲线。
+
+        NOTE(v1.1): 原"时长分析"散点图依赖开/平仓双时间，交割单不再提供，已删除。
+        """
+        self.review_pnl_chart.clear()
+        self.review_kline_chart.clear()
         df = self.current_view_df.copy()
         if df.empty: return
-        df_sorted = df.sort_values(by='exit_time')
-        equity_curve = [0.0] + df_sorted['net_profit'].cumsum().tolist(); x_data = list(range(len(equity_curve)))
+
+        df_sorted = df.sort_values(by='trade_time')
+        equity_curve = [0.0] + df_sorted['net_profit'].cumsum().tolist()
+        x_data = list(range(len(equity_curve)))
         is_prof = equity_curve[-1] >= 0
-        
+
         col = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
         fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
-        self.review_pnl_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=col, width=2), fillLevel=0, fillBrush=fill)
-        
-        df_sorted['day'] = df_sorted['exit_time'].dt.day; k_data = []; current_equity = 0.0
+        self.review_pnl_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=col, width=2),
+                                   fillLevel=0, fillBrush=fill)
+
+        # 资金 K 线：把同一天的多笔交易聚合成一根蜡烛 (当日权益的开高低收)
+        df_sorted['day'] = df_sorted['trade_time'].dt.day
+        k_data, day_labels = [], []
+        current_equity = 0.0
         for i, (day, group) in enumerate(df_sorted.groupby('day')):
-            open_eq = current_equity; high_eq = current_equity; low_eq = current_equity
+            open_eq = current_equity
+            high_eq = current_equity
+            low_eq = current_equity
             for pnl in group['net_profit']:
-                current_equity += pnl; high_eq = max(high_eq, current_equity); low_eq = min(low_eq, current_equity)
+                current_equity += pnl
+                high_eq = max(high_eq, current_equity)
+                low_eq = min(low_eq, current_equity)
             k_data.append((i, open_eq, current_equity, low_eq, high_eq))
+            day_labels.append(f"{day}日")
+
         if k_data:
-            self.review_kline_chart.addItem(CandlestickItem(k_data)); axis = self.review_kline_chart.getAxis('bottom'); axis.setTicks([[(i, f"{day}日") for i, day in enumerate(df_sorted['day'].unique())]])
-            
-        durations = (df['exit_time'] - df['entry_time']).dt.total_seconds() / 3600.0; profits = df['net_profit'].values; spots = []
-        
-        for h, p in zip(durations, profits):
-            h = max(h, 0)
-            color = settings.RGB_PROFIT if p > 0 else settings.RGB_LOSS
-            brush = pg.mkBrush(color=(color[0], color[1], color[2], 180)) 
-            pen = pg.mkPen(color=(color[0], color[1], color[2], 255), width=1) 
-            spots.append({'pos': (h, p), 'brush': brush, 'pen': pen, 'size': 10})
-            
-        self.review_duration_chart.addItem(pg.ScatterPlotItem(spots=spots))
-        self.review_duration_chart.addLine(y=0, pen=pg.mkPen(color='#9E9E9E', style=Qt.PenStyle.DashLine))
+            self.review_kline_chart.addItem(CandlestickItem(k_data))
+            axis = self.review_kline_chart.getAxis('bottom')
+            axis.setTicks([list(enumerate(day_labels))])
 
     def on_calendar_day_clicked(self, row, col):
         item = self.review_calendar.item(row, col)
@@ -572,13 +524,13 @@ class ReviewView(QWidget):
         self.lbl_selected_date.setText(f"👇 选定日期: {qdate.toString('yyyy年MM月dd日')}")
         self.lbl_selected_date.setStyleSheet("font-weight: bold; color: #1976D2; font-size: 14px;")
         
-        self.day_trades_list.clear(); self.txt_reason.clear(); self.txt_reflection.clear(); self.list_screenshots.clear()
+        self.day_trades_list.clear(); self.txt_reason.clear(); self.txt_reflection.clear(); self.gallery.clear()
         
         self.lbl_trade_detail.setText("请在下方列表选择一笔特定交易...")
         self.lbl_trade_detail.setStyleSheet("font-size: 14px; color: #9E9E9E; border: none;")
         
         self.current_editing_idx = None
-        day_df = self.current_view_df[self.current_view_df['exit_time'].dt.day == qdate.day()]
+        day_df = self.current_view_df[self.current_view_df['trade_time'].dt.day == qdate.day()]
         for idx, record in day_df.iterrows():
             pnl, sym = record['net_profit'], record['symbol']
             txt = f"{sym} | ￥{'+' if pnl>0 else ''}{pnl:,.2f}" + (" 📝" if pd.notna(record.get('reflection')) and str(record.get('reflection')).strip()!="" else "")
@@ -595,13 +547,13 @@ class ReviewView(QWidget):
         record = self.main_win.engine.df.loc[df_idx]
         self.current_editing_idx = df_idx
         
-        pnl = record['net_profit']; duration = (record['exit_time'] - record['entry_time']).total_seconds() / 3600
+        pnl = record['net_profit']
         col_hex = settings.COLOR_PROFIT_TEXT if pnl > 0 else settings.COLOR_LOSS_TEXT
+        trade_time = format_trade_time(record.get('trade_time'))
         
         self.lbl_trade_detail.setText(
             f"""<span style="font-size:16px; font-weight:bold; color:#212121;">{record['symbol']}</span> 
-            <span style="color:#757575; font-size:12px;">&nbsp;|&nbsp; 进: {pd.to_datetime(record['entry_time']).strftime('%m-%d %H:%M')} 
-            &nbsp;|&nbsp; 出: {pd.to_datetime(record['exit_time']).strftime('%m-%d %H:%M')} (持仓 {duration:.1f} h)</span><br>
+            <span style="color:#757575; font-size:12px;">&nbsp;|&nbsp; 交易时间: {trade_time}</span><br>
             <span style="font-size:13px; color:#757575;">结果: </span>
             <b style="color:{col_hex}; font-size:16px;">￥{pnl:,.2f}</b>"""
         )
@@ -612,97 +564,142 @@ class ReviewView(QWidget):
         self.cb_edit_strategy.setCurrentText(str(record.get('strategy_tag', settings.DEFAULT_STRATEGY)))
         self.cb_edit_strategy.blockSignals(False)
         
-        self.list_screenshots.clear()
-        paths_str = str(record.get('screenshot_paths', ''))
-        if paths_str and paths_str != 'nan':
-            for p in paths_str.split(';'):
-                if os.path.exists(p): self.add_thumbnail(p)
+        # 绑定归属交易后重建画廊，后续粘贴/导入的截图都会挂到这笔交易名下
+        self.gallery.set_owner(record.get('internal_id'))
+        self.gallery.set_paths(record.get('screenshot_paths', ''))
                 
         # ==========================================
         # 【终极杀器】触发 K 线回放渲染引擎！
         # ==========================================
         self._render_trade_playback(record)
 
+    @staticmethod
+    def _nearest_bar_index(df_slice: pd.DataFrame, anchor_ts) -> int:
+        """返回切片内距离目标时间最近的一根 K 线位置索引"""
+        return int((df_slice['date'] - anchor_ts).abs().idxmin())
+
     def _render_trade_playback(self, record):
-        """核心缝合逻辑：将交易点位死死钉在历史 K 线上"""
+        """
+        v1.1 交易回放：单时间点锚定式展示。
+
+        交割单只提供唯一的"交易时间"，现实中不存在可区分的开/平仓区间，
+        因此回放不再虚构进场/离场两个坐标点，而是：
+          1. 截取交易时间前后 PLAYBACK_CONTEXT_DAYS 天的本地 K 线
+          2. 以时间上最近的 K 线为锚点画一条垂直虚线
+          3. 在该 K 线上叠加「多/空箭头 + 盈亏」标记，颜色即代表盈/亏
+          4. 数据缺口过大时明确给出提示，绝不硬凑错误坐标
+        """
         self.playback_chart.clear()
         symbol = str(record['symbol'])
-        
-        # 提取真实标的主体去数据湖寻址
-        match = re.match(r'^[A-Za-z]+', symbol)
-        root_sym = match.group().upper() if match else symbol.upper()
-        
-        df_k = self.data_lake.load_data("kline_daily", root_sym)
+        trade_time = pd.to_datetime(record['trade_time'])
+
+        # 【数据防御】无有效交易时间则无法锚定，给出提示而不是渲染空图
+        if pd.isna(trade_time):
+            self.playback_chart.setTitle("⚠️ 该记录缺少交易时间，无法回放。", color="#FF9800", size="11pt")
+            self.review_chart_tabs.setCurrentIndex(0)
+            return
+
+        # 提取真实标的主体去数据湖寻址 (品种主体 RB -> 完整合约 RB2410)
+        root_sym = extract_root_symbol(symbol)
+        df_k = pd.DataFrame()
+        for candidate in dict.fromkeys((root_sym, symbol)):
+            if not candidate:
+                continue
+            # 【性能要点】先用轻量探针判断，避免为不存在的文件读取整个 Parquet
+            if self.data_lake.exists("kline_daily", candidate):
+                df_k = self.data_lake.load_data("kline_daily", candidate)
+            if not df_k.empty:
+                break
+
         if df_k.empty:
-            df_k = self.data_lake.load_data("kline_daily", symbol) # 备用寻址
-            
-        if df_k.empty:
-            self.playback_chart.setTitle(f"⚠️ 缺乏 {symbol} 的本地数据，请先前往 [市场行情] 页面进行云端同步！", color="#FF9800", size="11pt")
+            self.playback_chart.setTitle(
+                f"⚠️ 缺乏 {symbol} 的本地行情，请先前往 [市场行情] 页面进行云端同步！",
+                color="#FF9800", size="11pt")
             # 自动跳回累积盈亏，防止用户盯着空图看
             self.review_chart_tabs.setCurrentIndex(0)
             return
 
-        # 转换并切片数据 (提取进场前60天，出场后20天)
+        # 以交易时间为圆心截取上下文窗口
         df_k['date'] = pd.to_datetime(df_k['date'])
-        entry_time = pd.to_datetime(record['entry_time'])
-        exit_time = pd.to_datetime(record['exit_time'])
-        
-        start_cut = entry_time - pd.Timedelta(days=60)
-        end_cut = exit_time + pd.Timedelta(days=20)
-        
+        start_cut = trade_time - pd.Timedelta(days=PLAYBACK_CONTEXT_DAYS)
+        end_cut = trade_time + pd.Timedelta(days=PLAYBACK_CONTEXT_DAYS)
         df_slice = df_k[(df_k['date'] >= start_cut) & (df_k['date'] <= end_cut)].copy()
-        if df_slice.empty: return
-        
-        df_slice.reset_index(drop=True, inplace=True)
-        
-        # 加上原生的 20 日均线，辅助看趋势
+
+        if df_slice.empty:
+            self.playback_chart.setTitle(
+                f"⚠️ {symbol} 缺少 {format_trade_time(trade_time)} 附近 {PLAYBACK_CONTEXT_DAYS} 天的K线数据，请先同步。",
+                color="#FF9800", size="11pt")
+            self.review_chart_tabs.setCurrentIndex(0)
+            return
+
+        df_slice = df_slice.reset_index(drop=True)
+
+        # 找到离交易时间最近的 K 线作为锚点
+        anchor_idx = self._nearest_bar_index(df_slice, trade_time)
+        nearest_date = df_slice['date'].iloc[anchor_idx]
+        gap_days = abs((nearest_date - trade_time).days)
+
+        # 【诚实原则】最近 K 线距离过远 (节假日/停牌/数据断层) 时不硬凑坐标，
+        # 明确提示用户核对日期或补充同步。
+        if gap_days > MAX_ANCHOR_GAP_DAYS:
+            self.playback_chart.setTitle(
+                f"⚠️ {symbol} 本地数据距该交易日已达 {gap_days} 天，无法可靠回放。\n"
+                f"请核对交易日期或先前往 [市场行情] 补充同步。",
+                color="#FF9800", size="11pt")
+            self.review_chart_tabs.setCurrentIndex(0)
+            return
+
+        # 辅助趋势参考：20 日均线
         df_slice = TAEngine.add_ma(df_slice, windows=(20,))
         x_data = list(range(len(df_slice)))
-        
-        # 找准进出场的绝对坐标 (X轴索引，Y轴价格)
-        try:
-            entry_idx = df_slice[df_slice['date'] <= entry_time].index[-1]
-        except: entry_idx = 0
-        try:
-            exit_idx = df_slice[df_slice['date'] <= exit_time].index[-1]
-        except: exit_idx = len(df_slice) - 1
-        
-        # 做多和做空的标识画法完全相反
-        is_long = record['direction'] == 'LONG'
-        entry_y = df_slice.loc[entry_idx, 'low'] * 0.98 if is_long else df_slice.loc[entry_idx, 'high'] * 1.02
-        exit_y = df_slice.loc[exit_idx, 'high'] * 1.02 if is_long else df_slice.loc[exit_idx, 'low'] * 0.98
-        
-        # 画图：背景与基础 K 线
-        self.playback_chart.setTitle(f"🎯 {symbol} | 交易回放", color="#1976D2", size="12pt", bold=True)
+
+        title = (f"🎯 {symbol} | 交易 {format_trade_time(trade_time)} "
+                 f"(就近K线 {format_trade_time(nearest_date)})")
+        self.playback_chart.setTitle(title, color="#1976D2", size="12pt", bold=True)
+
         k_data = [(i, row['open'], row['close'], row['low'], row['high']) for i, row in df_slice.iterrows()]
         self.playback_chart.addItem(CandlestickItem(k_data))
-        self.playback_chart.plot(x_data, df_slice['MA_20'], pen=pg.mkPen(color='#FF9800', width=1.5, style=Qt.PenStyle.DashLine))
+        self.playback_chart.plot(x_data, df_slice['MA_20'],
+                                 pen=pg.mkPen(color='#FF9800', width=1.5, style=Qt.PenStyle.DashLine))
 
-        # 画图：进出场连线 (亏损用红虚线，盈利用绿虚线)
+        # 锚点垂直虚线，标明该笔交易落在哪根 K 线上
+        self.playback_chart.addLine(x=anchor_idx,
+                                    pen=pg.mkPen(color='#90A4AE', width=1, style=Qt.PenStyle.DashLine))
+
+        # 标记语义：箭头方向 = 多空；颜色 = 盈亏 (绿盈红亏)
+        is_long = record['direction'] == 'LONG'
         is_profit = record['net_profit'] > 0
-        line_color = settings.COLOR_PROFIT if is_profit else settings.COLOR_LOSS
-        self.playback_chart.plot([entry_idx, exit_idx], [entry_y, exit_y], pen=pg.mkPen(color=line_color, width=2, style=Qt.PenStyle.DotLine))
-        
-        # 画图：进出场箭头 (使用 ScatterPlot 里的三角形)
-        entry_brush = pg.mkBrush(settings.COLOR_PROFIT) if is_long else pg.mkBrush(settings.COLOR_LOSS)
-        exit_brush = pg.mkBrush(settings.COLOR_LOSS) if is_long else pg.mkBrush(settings.COLOR_PROFIT)
-        
-        # t = triangle up (买入), d = triangle down (卖出)
-        entry_symbol = 't' if is_long else 'd'
-        exit_symbol = 'd' if is_long else 't'
-        
-        entry_marker = pg.ScatterPlotItem(x=[entry_idx], y=[entry_y], symbol=entry_symbol, size=18, brush=entry_brush, pen='w')
-        exit_marker = pg.ScatterPlotItem(x=[exit_idx], y=[exit_y], symbol=exit_symbol, size=18, brush=exit_brush, pen='w')
-        
-        self.playback_chart.addItem(entry_marker)
-        self.playback_chart.addItem(exit_marker)
-        
-        # 格式化底部时间
+        marker_color = settings.COLOR_PROFIT if is_profit else settings.COLOR_LOSS
+
+        bar = df_slice.loc[anchor_idx]
+        anchor_y = bar['low'] * 0.98 if is_long else bar['high'] * 1.02
+
+        marker = pg.ScatterPlotItem(
+            x=[anchor_idx], y=[anchor_y],
+            symbol='t' if is_long else 'd',  # t=向上箭头(做多), d=向下箭头(做空)
+            size=18, brush=pg.mkBrush(marker_color), pen='w')
+        self.playback_chart.addItem(marker)
+
+        # 盈亏文字标注
+        annotation = pg.TextItem(
+            f"{'做多' if is_long else '做空'}  ￥{record['net_profit']:+,.0f}",
+            color=marker_color, anchor=(0.5, 1.2))
+        annotation.setPos(anchor_idx, anchor_y)
+        self.playback_chart.addItem(annotation)
+
+        # 底部时间轴
         axis = self.playback_chart.getAxis('bottom')
-        ticks = [[(i, df_slice['date'].iloc[i].strftime('%m-%d')) for i in range(0, len(df_slice), max(1, len(df_slice)//8))]]
+        step = max(1, len(df_slice) // 8)
+        ticks = [[(i, df_slice['date'].iloc[i].strftime('%m-%d')) for i in range(0, len(df_slice), step)]]
         axis.setTicks(ticks)
 
-        # 【极其聪明的交互体验】一旦点击交易单，图表区立刻自动切到“回放模式”！
+        # 自动聚焦锚点附近窗口，避免用户在大尺度下找不到那根 K 线
+        half = min(30, len(df_slice) // 2)
+        lo = max(0, anchor_idx - half)
+        hi = min(len(df_slice) - 1, anchor_idx + half)
+        self.playback_chart.setXRange(lo, hi, padding=0.05)
+
+        # 【交互体验】点击交易单即自动切到回放页
         self.review_chart_tabs.setCurrentWidget(self.playback_chart)
 
     def silent_update_strategy(self, *args):
@@ -752,117 +749,10 @@ class ReviewView(QWidget):
             
         QTimer.singleShot(1500, reset_btn)
 
-    def _render_yearly_view(self):
-        df = self.current_view_df
-        monthly_stats = {}
-        if not df.empty:
-            df['month'] = df['exit_time'].dt.month
-            for m, group in df.groupby('month'):
-                monthly_stats[m] = group['net_profit'].sum()
-
-        for i in range(12):
-            m = i + 1
-            card = self.month_cards[i]
-            if m in monthly_stats:
-                net = monthly_stats[m]
-                if net > 0:
-                    card.setStyleSheet(f"background: #E8F5E9; border-radius: 6px; font-size: 16px; font-weight:bold; color: {settings.COLOR_PROFIT_TEXT};")
-                    card.setText(f"{m}月\n+{net:,.0f}")
-                else:
-                    card.setStyleSheet(f"background: #FFEBEE; border-radius: 6px; font-size: 16px; font-weight:bold; color: {settings.COLOR_LOSS_TEXT};")
-                    card.setText(f"{m}月\n{net:,.0f}")
-            else:
-                card.setStyleSheet("background: #F5F5F5; border-radius: 6px; font-size: 14px; font-weight:bold; color: #9E9E9E;")
-                card.setText(f"{m}月\n无交易")
-
-        self.yearly_bar_chart.clear(); self.yearly_curve_chart.clear()
-        if df.empty: return
-        
-        df_sorted = df.sort_values(by='exit_time')
-        equity_curve = [0.0] + df_sorted['net_profit'].cumsum().tolist(); x_data = list(range(len(equity_curve)))
-        is_prof = equity_curve[-1] >= 0
-        
-        col = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
-        fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
-        self.yearly_curve_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=col, width=3), fillLevel=0, fillBrush=fill)
-        
-        strategy_pnl = df.groupby('strategy_tag')['net_profit'].sum().sort_values()
-        y_pos = list(range(len(strategy_pnl)))
-        x_vals = strategy_pnl.values.tolist()
-        
-        brushes = [pg.mkBrush(settings.COLOR_PROFIT) if x > 0 else pg.mkBrush(settings.COLOR_LOSS) for x in x_vals]
-        pens = [pg.mkPen(settings.COLOR_PROFIT) if x > 0 else pg.mkPen(settings.COLOR_LOSS) for x in x_vals]
-        bar_item = pg.BarGraphItem(x0=0, y=y_pos, width=x_vals, height=0.5, brushes=brushes, pens=pens)
-        self.yearly_bar_chart.addItem(bar_item)
-        
-        ax = self.yearly_bar_chart.getAxis('left')
-        ticks = [list(zip(y_pos, strategy_pnl.index.tolist()))]
-        ax.setTicks(ticks)
-        self.yearly_bar_chart.addLine(x=0, pen=pg.mkPen(color='#9E9E9E'))
-
-    def paste_image(self):
-        if getattr(self, 'current_editing_idx', None) is None: QMessageBox.warning(self, "提示", "请先选择交易！"); return
-        clipboard = QApplication.clipboard()
-        mime_data = clipboard.mimeData()
-        if mime_data.hasImage():
-            image = clipboard.image()
-            internal_id = str(self.main_win.engine.df.at[self.current_editing_idx, 'internal_id'])
-            timestamp = int(datetime.now().timestamp() * 1000)
-            filename = os.path.join(settings.SCREENSHOT_DIR, f"{internal_id}_{timestamp}.png")
-            image.save(filename)
-            self.add_thumbnail(filename)
-            self._save_image_paths_to_df() 
-        else: QMessageBox.warning(self, "提示", "剪贴板无图片！")
-
-    def import_image(self):
-        if getattr(self, 'current_editing_idx', None) is None: return
-        file_paths, _ = QFileDialog.getOpenFileNames(self, "选择截图", "", "Images (*.png *.jpg *.jpeg *.bmp)")
-        internal_id = str(self.main_win.engine.df.at[self.current_editing_idx, 'internal_id'])
-        for path in file_paths:
-            timestamp = int(datetime.now().timestamp() * 1000); ext = path.split('.')[-1]
-            filename = os.path.join(settings.SCREENSHOT_DIR, f"{internal_id}_{timestamp}.{ext}")
-            shutil.copy(path, filename)
-            self.add_thumbnail(filename)
-        self._save_image_paths_to_df()
-
-    def add_thumbnail(self, filepath):
-        icon = QtGui.QIcon(filepath)
-        item = QListWidgetItem(icon, "")
-        item.setData(Qt.ItemDataRole.UserRole, filepath)
-        self.list_screenshots.addItem(item)
-
-    def delete_image(self, item, filepath):
-        reply = QMessageBox.question(self, "删除截图", "确定要永久删除截图吗？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                if os.path.exists(filepath): os.remove(filepath)
-            except Exception as e: QMessageBox.warning(self, "错误", str(e))
-            row = self.list_screenshots.row(item)
-            self.list_screenshots.takeItem(row)
-            self._save_image_paths_to_df()
-
     def _save_image_paths_to_df(self):
+        """将画廊当前内容同步进内存 DataFrame (真正的落库时机由“保存复盘”按钮决定)"""
         if getattr(self, 'current_editing_idx', None) is None: return
-        paths = [self.list_screenshots.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list_screenshots.count())]
-        self.main_win.engine.df.at[self.current_editing_idx, 'screenshot_paths'] = ";".join(paths)
-
-    def view_full_image(self, item):
-        filepath = item.data(Qt.ItemDataRole.UserRole) 
-        if not os.path.exists(filepath): return
-        dialog = QDialog(self)
-        dialog.setWindowTitle("查看截图")
-        dialog.setStyleSheet("QDialog { background-color: #212121; }")
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(0, 0, 0, 0)
-        label = QLabel()
-        pixmap = QtGui.QPixmap(filepath)
-        screen = QApplication.primaryScreen().geometry()
-        if pixmap.width() > screen.width() * 0.8 or pixmap.height() > screen.height() * 0.8:
-            pixmap = pixmap.scaled(int(screen.width() * 0.8), int(screen.height() * 0.8), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        label.setPixmap(pixmap)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
-        dialog.exec()
+        self.main_win.engine.df.at[self.current_editing_idx, 'screenshot_paths'] = self.gallery.get_paths()
 
     def delete_current_trade(self):
         if getattr(self, 'current_editing_idx', None) is None: return

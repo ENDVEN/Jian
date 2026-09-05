@@ -121,31 +121,28 @@ class JianMainWindow(QMainWindow):
     # 数据流与弹窗调度器 (完全解耦调用)
     # ==========================================
     
+    def _show_import_result(self, stats: dict, source_label: str):
+        """统一的导入防呆反馈：让用户对新增量与拦截量一目了然"""
+        msg = (f"操作完成！\n\n📄 共解析到{source_label}：{stats['total']} 笔\n"
+               f"✅ 成功新增入库：{stats['inserted']} 笔")
+        if stats['ignored'] > 0:
+            msg += f"\n🛡️ 拦截重复数据：{stats['ignored']} 笔 (已跳过)"
+        QMessageBox.information(self, "导入结果", msg)
+
     def open_futures_import(self):
         dialog = FuturesImportDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'final_trades', None):
             # 获取引擎返回的统计报告
             stats = self.engine.add_trades(dialog.final_trades)
             self.render_all_data()
-            
-            # 优雅的防呆反馈
-            msg = f"操作完成！\n\n📄 共解析到闭环交易：{stats['total']} 笔\n✅ 成功新增入库：{stats['inserted']} 笔"
-            if stats['ignored'] > 0:
-                msg += f"\n🛡️ 拦截重复数据：{stats['ignored']} 笔 (已跳过)"
-                
-            QMessageBox.information(self, "导入结果", msg)
+            self._show_import_result(stats, "闭环交易")
 
     def open_stock_import(self):
         dialog = ImportWizardDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'final_trades', None):
             stats = self.engine.add_trades(dialog.final_trades)
             self.render_all_data()
-            
-            msg = f"操作完成！\n\n📄 共映射交易：{stats['total']} 笔\n✅ 成功新增入库：{stats['inserted']} 笔"
-            if stats['ignored'] > 0:
-                msg += f"\n🛡️ 拦截重复数据：{stats['ignored']} 笔 (已跳过)"
-                
-            QMessageBox.information(self, "导入结果", msg)
+            self._show_import_result(stats, "映射交易")
 
     def open_manual_entry(self):
         dialog = ManualEntryDialog(self.engine.strategies, self)
@@ -167,7 +164,7 @@ class JianMainWindow(QMainWindow):
                 if 'internal_id' in export_df.columns:
                     export_df = export_df.drop(columns=['internal_id'])
                 
-                cols_order = ['trade_id', 'account', 'symbol', 'direction', 'entry_time', 'exit_time', 
+                cols_order = ['trade_id', 'account', 'symbol', 'direction', 'trade_time', 
                               'lots', 'net_profit', 'commission', 'strategy_tag', 'entry_reason', 'reflection', 'screenshot_paths']
                 export_cols = [c for c in cols_order if c in export_df.columns]
                 export_df = export_df[export_cols]

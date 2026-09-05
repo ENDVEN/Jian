@@ -1,40 +1,59 @@
 # ui/views/market.py
+import logging
 import pandas as pd
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QLineEdit, QMessageBox, QCheckBox,
-                             QScrollArea, QSplitter)
+                             QSplitter)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import pyqtgraph as pg
-from pyqtgraph import QtGui, QtCore
+from pyqtgraph import QtGui
 
 from config import settings
 from data.akshare_feed import AkShareFeed
 from data.market_db import DataLakeManager
 from ui.widgets.custom_widgets import CandlestickItem
-from core.indicators import TAEngine  # 【新增】引入我们自己的原生引擎
+from core.indicators import TAEngine
+
+# 主图均线序列：(列名, 配色)。需与 TAEngine.add_ma 的默认窗口 (5/20/60) 保持一致
+MA_SERIES = (
+    ('MA_5',  '#2196F3'),
+    ('MA_20', '#FF9800'),
+    ('MA_60', '#9C27B0'),
+)
+
+# 附图 (成交量 / MACD) 统一高度
+SUB_PLOT_HEIGHT = 150
+
+# 默认可视 K 线根数，超出后只展示最近一段
+DEFAULT_VISIBLE_BARS = 150
+
+# 趋势线默认横向跨度 (起点比例, 终点比例)
+TRENDLINE_SPAN = (0.2, 0.8)
+
 
 class FetchDataThread(QThread):
+    """
+    行情拉取工作线程 (只负责调度，不感知任何数据源细节)。
+    【架构纪律】市场路由与数据清洗全部收敛在 data/akshare_feed.py，UI 层不做接口判断。
+    """
     finished_signal = pyqtSignal(bool, str, pd.DataFrame, str)
     def __init__(self, symbol: str, name: str):
         super().__init__()
-        self.symbol = symbol; self.name = name
+        self.symbol = symbol
+        self.name = name
+
     def run(self):
+        df = pd.DataFrame()
         try:
-            # 【核心修复：智能路由】
-            # 如果代码是纯数字(如 600519)，走股票接口；如果含字母(如 RB)，走期货主力接口
-            if self.symbol.isdigit():
-                df = AkShareFeed.fetch_a_share_daily(self.symbol)
-            else:
-                df = AkShareFeed.fetch_futures_daily(self.symbol)
-                
+            df = AkShareFeed.fetch_daily_auto(self.symbol)
             if not df.empty:
                 DataLakeManager().save_data("kline_daily", self.symbol, df)
-                self.finished_signal.emit(True, self.symbol, df, self.name)
-            else: 
-                self.finished_signal.emit(False, self.symbol, pd.DataFrame(), self.name)
         except Exception as e:
-            print(f"线程崩溃: {e}")
-            self.finished_signal.emit(False, self.symbol, pd.DataFrame(), self.name)
+            logging.error(f"行情拉取线程异常 [{self.symbol}]: {e}")
+            df = pd.DataFrame()
+
+        # 无论成功失败都保证回传一次结果，主线程据此恢复按钮状态
+        self.finished_signal.emit(not df.empty, self.symbol, df, self.name)
 
 class MarketView(QWidget):
     def __init__(self, main_win):
@@ -42,9 +61,10 @@ class MarketView(QWidget):
         self.main_win = main_win
         self.data_lake = DataLakeManager()
         self.current_symbol = None
-        self.current_name = None
+        self.current_name = ""
         self.current_df = pd.DataFrame()
         
+        self.main_plot = None
         self.drawn_lines = [] 
         
         self._setup_ui()
@@ -165,16 +185,19 @@ class MarketView(QWidget):
         self.current_symbol = str(res_df.iloc[0]['symbol'])
         self.current_name = str(res_df.iloc[0]['name'])
         
-        df = self.data_lake.load_data("kline_daily", self.current_symbol)
-        
-        if df.empty:
-            self.force_sync_cloud()
-        else:
-            self.current_df = df
-            self.render_charts()
+        # 【性能要点】先用轻量探针命中本地缓存，避免每次都把整个 Parquet 读进内存
+        if self.data_lake.exists("kline_daily", self.current_symbol):
+            self.current_df = self.data_lake.load_data("kline_daily", self.current_symbol)
+            if not self.current_df.empty:
+                self.render_charts()
+                return
+            
+        self.force_sync_cloud()
 
     def force_sync_cloud(self):
-        if not self.current_symbol: return
+        if not self.current_symbol:
+            QMessageBox.information(self, "提示", "请先搜索并选中一个标的，再进行云端同步。")
+            return
         self.btn_sync.setEnabled(False)
         self.fetch_thread = FetchDataThread(self.current_symbol, self.current_name)
         self.fetch_thread.finished_signal.connect(self._on_sync_finished)
@@ -182,35 +205,53 @@ class MarketView(QWidget):
 
     def _on_sync_finished(self, success, symbol, df, name):
         self.btn_sync.setEnabled(True)
+        
+        # 【竞态防护】拉取期间用户可能已切换到其他标的，过期结果必须丢弃
+        if symbol != self.current_symbol:
+            return
+            
         if success and not df.empty:
             self.current_df = df
+            if name: self.current_name = name
             self.render_charts()
         else:
-            QMessageBox.critical(self, "错误", "拉取失败。")
+            QMessageBox.critical(self, "错误", f"{symbol} 行情拉取失败。\n请检查网络连接或标的代码是否正确。")
 
     def render_charts(self):
+        """按当前指标开关重建整个图表矩阵 (幂等设计，可安全重复调用)"""
         self.graphics_layout.clear()
         self.drawn_lines.clear()
+        self.main_plot = None
         
         if self.current_df.empty: return
         
         # 使用 copy 保护原始数据
         df = self.current_df.copy().sort_values(by='date').reset_index(drop=True)
+        
+        # 【数据防御】日期为 NaT 的行会让 strftime 崩溃，先剔除
+        df = df.dropna(subset=['date'])
+        if df.empty:
+            logging.warning("行情数据缺少有效日期列，已中止渲染。")
+            return
+            
         x_data = list(range(len(df)))
         
-        # --- 接入原生 TAEngine ---
-        if self.cb_ma.isChecked():
-            df = TAEngine.add_ma(df, windows=(5, 20, 60))
-        if self.cb_boll.isChecked():
-            df = TAEngine.add_boll(df, window=20, num_std=2)
-        if self.cb_macd.isChecked():
-            df = TAEngine.add_macd(df, fast=12, slow=26, signal=9)
+        # --- 通过 TAEngine 注册表声明式计算指标 ---
+        selected = [
+            key for key, checkbox in
+            (('ma', self.cb_ma), ('boll', self.cb_boll), ('macd', self.cb_macd))
+            if checkbox.isChecked()
+        ]
+        df = TAEngine.apply(df, selected)
             
         # ==========================================
         # 窗口 1：主图
         # ==========================================
-        start_date = df['date'].iloc[0].strftime('%Y-%m-%d'); end_date = df['date'].iloc[-1].strftime('%Y-%m-%d')
-        title = f"<span style='color:#212121; font-size:16px; font-weight:bold;'>{self.current_name} ({self.current_symbol})</span> <span style='color:#757575; font-size:12px;'> 日线 | {end_date}</span>"
+        end_date = df['date'].iloc[-1].strftime('%Y-%m-%d')
+        display_name = self.current_name or self.current_symbol
+        title = (f"<span style='color:#212121; font-size:16px; font-weight:bold;'>"
+                 f"{display_name} ({self.current_symbol})</span> "
+                 f"<span style='color:#757575; font-size:12px;'> 日线 | {end_date}</span>")
         
         self.main_plot = self.graphics_layout.addPlot(row=0, col=0, title=title)
         self._apply_pokorny_axis(self.main_plot)
@@ -219,57 +260,62 @@ class MarketView(QWidget):
         self.main_plot.addItem(CandlestickItem(k_data))
         
         if self.cb_ma.isChecked():
-            self.main_plot.plot(x_data, df['MA_5'], pen=pg.mkPen(color='#2196F3', width=1.5))
-            self.main_plot.plot(x_data, df['MA_20'], pen=pg.mkPen(color='#FF9800', width=1.5))
-            self.main_plot.plot(x_data, df['MA_60'], pen=pg.mkPen(color='#9C27B0', width=1.5))
+            for column, color in MA_SERIES:
+                if column in df.columns:
+                    self.main_plot.plot(x_data, df[column], pen=pg.mkPen(color=color, width=1.5))
         
         if self.cb_boll.isChecked():
-            self.main_plot.plot(x_data, df['BOLL_UP'], pen=pg.mkPen(color='#90CAF9', width=1, style=Qt.PenStyle.DashLine))
-            self.main_plot.plot(x_data, df['BOLL_DOWN'], pen=pg.mkPen(color='#90CAF9', width=1, style=Qt.PenStyle.DashLine))
+            boll_pen = pg.mkPen(color='#90CAF9', width=1, style=Qt.PenStyle.DashLine)
+            self.main_plot.plot(x_data, df['BOLL_UP'], pen=boll_pen)
+            self.main_plot.plot(x_data, df['BOLL_DOWN'], pen=boll_pen)
 
+        # 附图按添加顺序入列，最后一个负责显示时间轴
+        sub_plots = []
         row_idx = 1
         
         # ==========================================
         # 窗口 2：成交量
         # ==========================================
         if self.cb_vol.isChecked():
-            self.vol_plot = self.graphics_layout.addPlot(row=row_idx, col=0)
-            self._apply_pokorny_axis(self.vol_plot)
-            self.vol_plot.setMaximumHeight(150) 
-            self.vol_plot.setXLink(self.main_plot)
+            vol_plot = self.graphics_layout.addPlot(row=row_idx, col=0)
+            self._apply_pokorny_axis(vol_plot)
+            vol_plot.setMaximumHeight(SUB_PLOT_HEIGHT) 
+            vol_plot.setXLink(self.main_plot)
             
             colors = [settings.COLOR_PROFIT if close >= open else settings.COLOR_LOSS for open, close in zip(df['open'], df['close'])]
             brushes = [pg.mkBrush(c) for c in colors]
             pens = [pg.mkPen(c) for c in colors]
             
             vol_item = pg.BarGraphItem(x=x_data, height=df['volume'], width=0.6, brushes=brushes, pens=pens)
-            self.vol_plot.addItem(vol_item)
+            vol_plot.addItem(vol_item)
+            sub_plots.append(vol_plot)
             row_idx += 1
 
         # ==========================================
         # 窗口 3：MACD
         # ==========================================
         if self.cb_macd.isChecked():
-            self.macd_plot = self.graphics_layout.addPlot(row=row_idx, col=0)
-            self._apply_pokorny_axis(self.macd_plot)
-            self.macd_plot.setMaximumHeight(150)
-            self.macd_plot.setXLink(self.main_plot) 
-            self.macd_plot.addLine(y=0, pen=pg.mkPen(color='#BDBDBD', style=Qt.PenStyle.DashLine))
+            macd_plot = self.graphics_layout.addPlot(row=row_idx, col=0)
+            self._apply_pokorny_axis(macd_plot)
+            macd_plot.setMaximumHeight(SUB_PLOT_HEIGHT)
+            macd_plot.setXLink(self.main_plot) 
+            macd_plot.addLine(y=0, pen=pg.mkPen(color='#BDBDBD', style=Qt.PenStyle.DashLine))
             
-            self.macd_plot.plot(x_data, df['MACD_line'], pen=pg.mkPen(color='#212121', width=1.5))
-            self.macd_plot.plot(x_data, df['MACD_signal'], pen=pg.mkPen(color='#FF9800', width=1.5))
+            macd_plot.plot(x_data, df['MACD_line'], pen=pg.mkPen(color='#212121', width=1.5))
+            macd_plot.plot(x_data, df['MACD_signal'], pen=pg.mkPen(color='#FF9800', width=1.5))
             
             hist = df['MACD_hist']
             hist_colors = [settings.COLOR_PROFIT if v > 0 else settings.COLOR_LOSS for v in hist]
             hist_brushes = [pg.mkBrush(QtGui.QColor(c).lighter(120)) for c in hist_colors]
             hist_pens = [pg.mkPen(c) for c in hist_colors]
             macd_hist_item = pg.BarGraphItem(x=x_data, height=hist, width=0.5, brushes=hist_brushes, pens=hist_pens)
-            self.macd_plot.addItem(macd_hist_item)
+            macd_plot.addItem(macd_hist_item)
+            sub_plots.append(macd_plot)
             
         # ==========================================
-        # 格式化日期刻度
+        # 格式化日期刻度 (仅最底部的图表显示时间轴)
         # ==========================================
-        bottom_plot = self.macd_plot if self.cb_macd.isChecked() else (self.vol_plot if self.cb_vol.isChecked() else self.main_plot)
+        bottom_plot = sub_plots[-1] if sub_plots else self.main_plot
         axis = bottom_plot.getAxis('bottom')
         ticks = []
         step = max(1, len(df) // 10)
@@ -277,23 +323,22 @@ class MarketView(QWidget):
             ticks.append((i, df['date'].iloc[i].strftime('%Y-%m')))
         axis.setTicks([ticks])
         
-        if bottom_plot != self.main_plot:
-            self.main_plot.getAxis('bottom').setStyle(showValues=False)
-        if self.cb_vol.isChecked() and bottom_plot != self.vol_plot:
-            self.vol_plot.getAxis('bottom').setStyle(showValues=False)
+        # 除最底部图表外，其余图表的横轴刻度值全部隐藏，保持画面干净
+        for plot in [self.main_plot] + sub_plots[:-1]:
+            plot.getAxis('bottom').setStyle(showValues=False)
 
-        if len(df) > 150:
-            self.main_plot.getViewBox().setXRange(len(df) - 150, len(df))
+        if len(df) > DEFAULT_VISIBLE_BARS:
+            self.main_plot.getViewBox().setXRange(len(df) - DEFAULT_VISIBLE_BARS, len(df))
 
     def add_trendline(self):
-        if not hasattr(self, 'main_plot') or self.current_df.empty: return
+        if self.main_plot is None: return
         
         view_range = self.main_plot.getViewBox().viewRange()
         x_min, x_max = view_range[0]
         y_min, y_max = view_range[1]
         
-        start_x = x_min + (x_max - x_min) * 0.2
-        end_x = x_min + (x_max - x_min) * 0.8
+        start_x = x_min + (x_max - x_min) * TRENDLINE_SPAN[0]
+        end_x = x_min + (x_max - x_min) * TRENDLINE_SPAN[1]
         y_mid = (y_max + y_min) / 2
         
         line = pg.LineSegmentROI([[start_x, y_mid], [end_x, y_mid]], pen=pg.mkPen(color='#1976D2', width=2))
@@ -301,7 +346,7 @@ class MarketView(QWidget):
         self.drawn_lines.append(line)
 
     def clear_trendlines(self):
-        if not hasattr(self, 'main_plot'): return
+        if self.main_plot is None: return
         for line in self.drawn_lines:
             self.main_plot.removeItem(line)
         self.drawn_lines.clear()

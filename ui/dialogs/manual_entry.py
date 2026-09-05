@@ -1,15 +1,22 @@
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QComboBox, QMessageBox, QFormLayout, QLineEdit, 
+# ui/dialogs/manual_entry.py
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+                             QComboBox, QMessageBox, QFormLayout, QLineEdit,
                              QDateTimeEdit, QDoubleSpinBox, QSpinBox)
 from PyQt6.QtCore import QDateTime
 from models.trade import TradeRecord
 from config import settings
 
+
 class ManualEntryDialog(QDialog):
+    """手工录入一笔已闭环交易。
+
+    v1.1 起只保留单一"交易时间"：现实中交易记录只存在一个成交/结算时间点，
+    不存在需要分开录入的进场与平仓时间。
+    """
     def __init__(self, current_strategies, parent=None):
         super().__init__(parent)
         self.setWindowTitle("✍️ 手工录入交易")
-        self.resize(400, 500)
+        self.resize(400, 460)
         self.setStyleSheet("QDialog { background-color: #FAFAFA; font-family: -apple-system, sans-serif; } QLabel { font-weight: bold; color: #424242; } QLineEdit, QComboBox, QDateTimeEdit, QDoubleSpinBox, QSpinBox { border: 1px solid #E0E0E0; border-radius: 6px; padding: 6px; background: white; font-size: 14px; }")
         
         self.new_trades = None
@@ -35,13 +42,9 @@ class ManualEntryDialog(QDialog):
         self.inp_strategy.addItems(current_strategies if current_strategies else [settings.DEFAULT_STRATEGY])
         form.addRow("策略分类:", self.inp_strategy)
         
-        self.inp_entry_time = QDateTimeEdit(QDateTime.currentDateTime().addDays(-1))
-        self.inp_entry_time.setCalendarPopup(True)
-        form.addRow("进场时间:", self.inp_entry_time)
-        
-        self.inp_exit_time = QDateTimeEdit(QDateTime.currentDateTime())
-        self.inp_exit_time.setCalendarPopup(True)
-        form.addRow("平仓时间:", self.inp_exit_time)
+        self.inp_time = QDateTimeEdit(QDateTime.currentDateTime())
+        self.inp_time.setCalendarPopup(True)
+        form.addRow("交易时间:", self.inp_time)
         
         self.inp_lots = QSpinBox()
         self.inp_lots.setRange(1, 100000)
@@ -72,20 +75,20 @@ class ManualEntryDialog(QDialog):
         layout.addLayout(btn_layout)
         
     def submit_data(self):
-        if not self.inp_symbol.text().strip(): 
+        symbol = self.inp_symbol.text().strip()
+        if not symbol: 
             QMessageBox.warning(self, "错误", "品种不能为空！")
             return
             
         record = TradeRecord(
-            account=self.inp_account.currentText().strip(),
-            symbol=self.inp_symbol.text().strip(),
+            account=self.inp_account.currentText().strip() or settings.DEFAULT_ACCOUNTS[0],
+            symbol=symbol,
             direction='LONG' if '多' in self.inp_direction.currentText() else 'SHORT',
-            entry_time=self.inp_entry_time.dateTime().toPyDateTime(),
-            exit_time=self.inp_exit_time.dateTime().toPyDateTime(),
+            trade_time=self.inp_time.dateTime().toPyDateTime(),
             lots=self.inp_lots.value(),
             net_profit=self.inp_pnl.value(),
             commission=self.inp_comm.value(),
-            strategy_tag=self.inp_strategy.currentText().strip()
+            strategy_tag=self.inp_strategy.currentText().strip() or settings.DEFAULT_STRATEGY
         )
         self.new_trades = [record]
         self.accept()
