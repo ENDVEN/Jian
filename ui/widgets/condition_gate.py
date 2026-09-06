@@ -16,7 +16,10 @@
 """
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
-                             QComboBox, QDoubleSpinBox, QPushButton, QFrame)
+                             QPushButton, QFrame)
+
+from ui.widgets.custom_widgets import (NoWheelComboBox,
+                                       NoWheelDoubleSpinBox)
 
 _CARD_QSS = ("QFrame { background: white; border: 1px solid #E7EAF0; border-radius: 12px; }")
 _CTRL_QSS = ("QComboBox { padding: 0 8px; border: 1px solid #E0E4EC; border-radius: 8px; "
@@ -74,13 +77,13 @@ class _ConditionRow(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        self.cb_var = QComboBox()
+        self.cb_var = NoWheelComboBox()
         self.cb_var.setMinimumWidth(120)
         self.cb_var.setStyleSheet(_CTRL_QSS)
         self.cb_var.currentIndexChanged.connect(lambda *_: self.changed.emit())
         lay.addWidget(self.cb_var, 3)
 
-        self.cb_rule = QComboBox()
+        self.cb_rule = NoWheelComboBox()
         self.cb_rule.setMinimumWidth(150)
         self.cb_rule.setStyleSheet(_CTRL_QSS)
         for text, _ in CONDITION_RULES:
@@ -89,7 +92,7 @@ class _ConditionRow(QWidget):
         self.cb_rule.currentIndexChanged.connect(lambda *_: self.changed.emit())
         lay.addWidget(self.cb_rule, 2)
 
-        self.spin = QDoubleSpinBox()
+        self.spin = NoWheelDoubleSpinBox()
         self.spin.setRange(-9999999, 9999999)
         self.spin.setDecimals(4)
         self.spin.setValue(1.0)
@@ -180,14 +183,14 @@ class ConditionGate(QWidget):
         head.addWidget(tag)
         head.addStretch()
         head.addWidget(self._mini("满足"))
-        self.cb_logic = QComboBox()
+        self.cb_logic = NoWheelComboBox()
         self.cb_logic.setStyleSheet(_CTRL_QSS)
         for key in (LOGIC_ALL, LOGIC_ANY, LOGIC_AT_LEAST):
             self.cb_logic.addItem(_LOGIC_LABELS[key], key)
         self.cb_logic.currentIndexChanged.connect(self._sync_n_spin)
         self.cb_logic.currentIndexChanged.connect(lambda *_: self._emit_changed())
         head.addWidget(self.cb_logic)
-        self.spin_n = QDoubleSpinBox()
+        self.spin_n = NoWheelDoubleSpinBox()
         self.spin_n.setRange(1, 999)
         self.spin_n.setDecimals(0)
         self.spin_n.setValue(1)

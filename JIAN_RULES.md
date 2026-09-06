@@ -1,10 +1,12 @@
-# Jian — 开发规范与上下文记忆 (文档 v5.2)
+# Jian — 开发规范与上下文记忆 (文档 v5.4)
 
 > **本文档是"给未来的你看"的唯一权威记忆**。功能开发前先读：
 > §3 产品全景 → §4 代码地图 → §5 数据契约/铁律 → §6/§7 完成度清单。
 > 本文档于 v5.0 全面重排：完成项按模块归类核对，未完成项按**优先级 + 依赖**重新分类。
 > v5.1：记录「市场回测·阶段A」落地（多函数段共享池 + 条件组 Gate）。
 > v5.2：记录「市场回测·阶段B」落地（引擎风控离场器 + exit_reason 全链路）。
+> v5.3：记录「市场回测·阶段C」落地（大盘指数 regime 门控）。
+> v5.4：记录「单股回测 UX 硬化」（指数预设扩充 / 防滚轮 / 角标弱化 / 编辑区滚动）。
 > 状态图例：`[x]` 完成 · `[~]` 部分/半成品 · `[ ]` 未开始/占位。
 
 ---
@@ -78,13 +80,13 @@ Jian/
 │   ├── backtest.py      # BacktestEngine/BacktestTrade/BacktestResult：LONG-only 单股回测；
 │   │                    #   条件为真即触发 + 阶段B风控离场器(risk参数/exit_reason)
 │   ├── formula/         # 通达信 DSL（详见 §5.2）
-│   ├── utils.py         # 无副作用纯函数：品种去根/诚实时间/持仓秒/交易日跨度/格式化
+│   ├── utils.py         # 无副作用纯函数：品种去根/诚实时间/持仓秒/交易日跨度/格式化/日期对齐(align_by_date)
 │   ├── preferences.py   # Preferences 单例：~/.jian_data/preferences.json（唯一键 time_precision）
 │   └── updater.py       # UpdateCheckerThread(QThread)：远端 version.json 异步比对，静默失败
 ├── data/                # 【数据获取/存储层】
 │   ├── data_feed.py     # CFMMC 解析(965行)：纯函数无副作用；成交/持仓/结算月报三页签；
 │   │                    #   BaseTradeParser+PARSER_REGISTRY；FIFO 缝合与孤儿分配；漏月检测
-│   ├── akshare_feed.py  # AkShareFeed：A股新浪/东财兜底、期货主连、花名册、统一清洗、智能路由
+│   ├── akshare_feed.py  # AkShareFeed：A股新浪/东财兜底、期货主连、指数日线(阶段C)、花名册、清洗路由
 │   ├── market_db.py     # DataLakeManager：parquet 分区存取(exists/save/load/get_latest_date)
 │   └── strategy_store.py# StrategyStore：回测策略 JSON CRUD + 每标的 metrics 档案(同股对比)
 └── ui/                  # 【表现层：只做展示，禁 SQL/爬虫】(见 §3)
@@ -206,7 +208,12 @@ Jian/
   `ConditionGate.load_config` 兼容旧版单条件平铺 dict。
 - [x] **签名含风控（阶段B）**：`_signature` 计入 `risk`，全 0 与旧档(无 risk)等价；
   任一风控启用即视为不同策略，避免不同风控配置相互污染对比。
-- [x] 稳定性：缺参友好提示；非法周期不穿透 UI；UI 始终 QThread 执行拉数与回测。
+- [x] **指数 regime 门控（阶段C）**：③ 卡可选启用；指数下拉预设/手输新浪代码；买卖指数 Gate
+  用 `IDX_` 前缀变量；数据就绪链(先指数后个股)；门控列拼入个股 df 后引擎零改动生效
+  （详见 §6.5-C）。
+- [x] **签名含指数门控（阶段C）**：`_signature` 计入 `index`；未启用/条件空与旧档等价。
+- [x] 稳定性：缺参友好提示；非法周期不穿透 UI；UI 始终 QThread 执行拉数与回测
+  （含指数日线同步）。
 
 ### 6.4 基础设施与演进
 - [x] SQLite 迁移链：旧双时间表自动备份重建（COALESCE 归并）；v1.2 增量列走 `ALTER TABLE` 零损加列。
@@ -216,7 +223,7 @@ Jian/
 
 ---
 
-## 6.5 市场回测·升级迭代路线（阶段 A/B 已落地，C/远期排期）
+## 6.5 市场回测·升级迭代路线（阶段 A/B/C 已落地，远期排期）
 
 > 2026-09 定稿的产品口径：**信号语义 = 多条件满足计数**，OR/AND 只是"至少N"的两个特例，
 > 不做传统意义上的单一"事件"二分。以下阶段由用户分期批准，逐批实施。
@@ -237,9 +244,41 @@ Jian/
     成交明细表新增「离场原因」列（按原因着色 + tooltip）。
   - B-5 `strategy_store`：策略 payload 新增 `risk` 字段；`_signature` 计入风控
     （全 0 等价旧档空字段，签名兼容已验证）。
-- **[ ] 阶段 C** —— 大盘/指数 regime 门控：指数函数段独立求值→按日对齐拼接为门控列参与
-  买卖组（引擎零改动）；需先补 `akshare_feed` 指数接口与 `index_daily` zone 使用。
+- **[x] 阶段 C（已落地）** —— 大盘/指数 regime 门控（"不能把个股与大盘分离"）：
+  - C-1 `data/akshare_feed.py`：新增 `fetch_index_daily(symbol, min_date)` 新浪指数接口
+    （`ak.stock_zh_index_daily`，代码须带前缀如 `sh000001`/`sz399001`，附 `INDEX_PRESETS` 预设表
+    与 `is_index_symbol` 校验）；数据落盘数据湖 **`index_daily` zone**。
+  - C-2 `core/utils.align_by_date()`：把指数侧(外部日历)序列对齐到个股交易日轴
+    —— reindex + ffill（指数停牌日沿用前值），前导空洞按 0 兜底。
+  - C-3 UI ③「大盘/指数 regime 门控」卡（可折叠）：启用勾选 + 指数下拉/手输 +
+    买卖两个指数 Gate（`gate_index_buy` 买入许可 / `gate_index_sell` 卖出破位）。
+    指数 Gate 变量池 = 同一批函数段的 `IDX_` 前缀变量（同一段函数既算个股也算大盘）。
+  - C-4 回测链路零引擎改动：指数函数段在大盘上求值 → 指数 Gate 表达式求布尔 →
+    `align_by_date` 对齐 → 门控列 `IDX_GATE_BUY/SELL` 拼入个股 df →
+    最终表达式 = 原买入 `AND` 许可门控 / 原卖出 `OR` 破位门控。
+  - C-5 数据就绪链：先指数后个股（各自本地缺则 QThread 同步后再续跑）；
+    `_signature` 计入指数门控（未启用/条件空等价旧档空字段）。
+  - 边界纪律：指数求值失败（函数段依赖个股独有列）→ 明确提示，不静默放行。
 - **[ ] 远期** —— 组合级多标的引擎（指数择时后全市场挑股 + 资金分配）= 全新模块，勿并入 M1。
+
+### 6.6 单股回测 UX 硬化（文档 v5.4）
+
+> 高信息密度工作台的防误触与可读性改造，由用户实测反馈驱动。
+
+- **[x] U1 指数选择广度**：`INDEX_PRESETS` 从 8 项扩到 **29 项**（分组：大盘核心 / 风格红利 /
+  科创创业板 / 热门行业主题 / 北交所），覆盖 `sh000688 科创50`、`sh000698 科创100`、
+  `bj899050 北证50`、`sz399997 中证白酒`、`sz399975 证券公司` 等；全部经真实接口代测可用。
+  `is_index_symbol` 前缀白名单扩展到 `sh/sz/bj`。行业板块(东财源)当前网络不稳定，未纳入预置。
+- **[x] U2 防滚轮误触**：新增 `ui/widgets/custom_widgets.py` 的 **NoWheel 控件族**
+  （`NoWheelComboBox/NoWheelDoubleSpinBox/NoWheelSpinBox/NoWheelDateEdit`），
+  wheelEvent 直接 ignore —— 悬停参数控件滚动不再误改值，滚动权交还给父级滚动容器。
+  已统一替换：回测页全部下拉/日期/风控数值、ConditionGate 全部行内控件、
+  流水页 5 个过滤下拉、复盘页 7 个下拉、手工录入 3 个下拉。
+- **[x] U3 灰字弱化**：把占版面的长说明文字收敛为「?」小角标 `_hint_icon`(hover 出 tooltip)：
+  工具栏提示、②组合逻辑说明、③指数说明、风控行说明；风控各项已有独立 tooltip。
+- **[x] U4 编辑区可滚动**：①/②/③ 卡片包进 `QScrollArea`；新增很多函数段/条件不再撑爆页面，
+  超高超限时编辑区内部滚动；`_resync_config_split` 重写为配合滚动容器 + 上区高度上限
+  (`max(total*0.55, 320)`)，折叠卡片仍可把空间让给结果区。
 
 ---
 
@@ -252,13 +291,15 @@ Jian/
   `record_result` 已归档每标的 metrics 且同股对比可用，但**结果集无导出/删除 UI**。
   **收尾定义**：结果明细入库 + 列表管理 + CSV 导出（对齐主链路 `export_data` 体验）。
 - **A3 [~] P0 数据管理页**：回测需"先本地湖后扫描"，当前**无删除缓存原语**（`DataLakeManager`
-  缺 `delete_data`/同步方法）、无独立管理 UI、`akshare_feed` 无指数接口（M3 前置依赖）。
-  **收尾定义**：`delete_data` 原语 → `index_daily` 指数拉取 → UI 管理页(预下载/增量/删除)。
+  缺 `delete_data`/同步方法）、无独立管理 UI。（指数拉取能力已在阶段 C 就绪：`fetch_index_daily`
+  + `index_daily` zone 缓存。）
+  **收尾定义**：`delete_data` 原语 → UI 管理页(预下载/增量/删除)。
 
 ### B 类 · 市场回测扩展（规格 §9 已定稿，占位就绪待填充）
 - **B1 [ ] M2 全市场单日横截面筛选**：`backtest_module.py` `page_scan` 现为 `_ComingSoonPage`。
   依赖 A3（预下载全市场湖）。需 `scan_cache` zone（公式哈希+日期维中间结果缓存）。
-- **B2 [ ] M3 全市场广度家数折线 + 指数双轴叠加**：`page_breadth` 占位；需指数日线接入。
+- **B2 [ ] M3 全市场广度家数折线 + 指数双轴叠加**：`page_breadth` 占位；指数日线能力已就绪
+  （阶段C：`fetch_index_daily`/`index_daily`），缺广度统计实现与双轴 UI。
 - **B3 [ ] P1b+ 公式绘制补强** `core/formula/program.py`：STICKLINE/DRAWICON/颜色线型现被 SKIP。
   收尾：实现真执行（产出绘图指令序列）→ UI 叠加到 K线图；扩展函数子集 + 函数模板库。
 - **B4 [ ] P1c 回测进阶（部分）**：结果长期入库已有雏形(A2)，缺 复用 `TradeAnalyzer` 绩效维度
@@ -289,7 +330,8 @@ Jian/
 | v1.3 | 范围聚焦+时长回归 | 删股票导入链路；持仓时长三级口径回归(卡+复盘页签)；手工录入补开仓时间(选填) |
 | 阶段A(文档v5.1) | 回测信号升级 | 多函数段共享变量池；条件组 Gate(全部/任一/至少N→COUNT_TRUE)；策略快照兼容 |
 | 阶段B(文档v5.2) | 回测风控落地 | 引擎风控离场器(止损/止盈/移动止盈/最长持仓,盘中触发硬规则优先) + exit_reason 全链路 + 明细着色 |
-| 阶段C/远期 | 排期 | C=大盘指数 regime 门控；远期=组合级多标的引擎（见 §6.5） |
+| 阶段C(文档v5.3) | 指数门控落地 | 新浪指数接口 + index_daily 数据湖 + align_by_date 对齐 + ③指数Gate(买许可AND/卖破位OR)，引擎零改动 |
+| 远期 | 排期 | 组合级多标的引擎（指数择时后全市场挑股+资金分配，见 §6.5） |
 
 ---
 

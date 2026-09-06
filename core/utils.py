@@ -229,3 +229,40 @@ def format_days_count(days) -> str:
     if days is None:
         return "—"
     return f"{int(days)}个交易日" if days else "当日"
+
+
+def align_by_date(values: dict[str, pd.Series], anchor_dates,
+                  default: float = 0.0) -> dict[str, pd.Series]:
+    """
+    【日期对齐工具 (阶段C)】把"外部日历"的序列(如指数函数输出)对齐到"个股交易日"。
+
+    背景：指数交易日与个股交易日不完全一致(停牌/节假日)，
+    回测引擎只认识个股行情 df 的日期轴。这里把指数侧每个变量：
+      1) 以自身日期为索引；
+      2) reindex 到 anchor_dates (个股交易日)：缺失日期用最近前值 ffill；
+      3) 仍早于序列首日的前导空洞用 default 兜底 (默认 0)。
+
+    使用场景：指数 regime 门控列 = align_by_date(指数变量, 个股df['date'])[var]，
+    随后作为普通列拼入个股 df，即可被公式引擎/买卖表达式引用 (引擎零改动)。
+
+    :param values: {变量名: 以日期为索引的 Series}
+    :param anchor_dates: 对齐目标日期 (个股交易日，datetime 可转换，允许乱序)
+    :param default: 前导空洞填充值 (门控列建议 False->0)
+    :return: {变量名: 与 anchor_dates 原顺序等长的 Series}
+    """
+    try:
+        anchor_raw = list(pd.to_datetime(list(anchor_dates)))
+        anchors_sorted = pd.DatetimeIndex(sorted(anchor_raw))
+    except Exception:
+        return {k: pd.Series([default] * len(list(anchor_dates))) for k in values}
+
+    out = {}
+    for name, series in values.items():
+        s = series.copy()
+        # 规范日期索引：排序 + 去重(保留最后一个)
+        s.index = pd.to_datetime(s.index)
+        s = s[~s.index.duplicated(keep="last")].sort_index()
+        aligned = s.reindex(anchors_sorted, method="ffill").fillna(default)
+        # 还原到调用方给定的原顺序 (DataFrame 按 index 赋值可自动对齐)
+        out[name] = aligned.reindex(pd.DatetimeIndex(anchor_raw))
+    return out

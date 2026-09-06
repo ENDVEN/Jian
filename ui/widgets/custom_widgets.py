@@ -1,10 +1,43 @@
 # ui/widgets/custom_widgets.py
 import pyqtgraph as pg
 from pyqtgraph import QtCore, QtGui
-from PyQt6.QtWidgets import QListWidget, QPushButton
+from PyQt6.QtWidgets import (QListWidget, QPushButton, QComboBox, QDateEdit,
+                             QDoubleSpinBox, QSpinBox)
 from PyQt6.QtCore import Qt, QSize
 
 from config import settings
+
+
+# ==========================================
+# 防滚轮误触控件族 (高信息密度页面防手滑)
+# ==========================================
+class _NoWheelMixin:
+    """让滚轮事件不再改变控件值。
+
+    适用场景：策略编辑页里“参数下拉/数值/日期”本身是高危误操作区——
+    用户本想滚动页面/列表，悬停在控件上就会悄悄改掉关键参数。
+    覆写 wheelEvent 直接忽略，把滚动权交还给父级滚动容器。
+    若确需键盘微调：点中控件后用上下方向键 (Combo/Spin/Date 原生支持)。
+    """
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelComboBox(_NoWheelMixin, QComboBox):
+    pass
+
+
+class NoWheelDoubleSpinBox(_NoWheelMixin, QDoubleSpinBox):
+    pass
+
+
+class NoWheelSpinBox(_NoWheelMixin, QSpinBox):
+    pass
+
+
+class NoWheelDateEdit(_NoWheelMixin, QDateEdit):
+    pass
 
 class HoverDeleteListWidget(QListWidget):
     def __init__(self, delete_callback, parent=None):

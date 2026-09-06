@@ -118,6 +118,8 @@ def _signature(payload: dict) -> str:
         # 阶段B：风控参数也是策略配置的一部分，不同风控视为不同策略签名；
         # 但“全 0 = 未启用风控”与旧存档(无 risk 字段)等价，故归并为空串以兼容。
         _risk_signature(payload.get("risk")),
+        # 阶段C：指数 regime 门控计入签名；未启用(或缺失)与旧存档等价。
+        _index_signature(payload.get("index")),
     ])
 
 
@@ -133,3 +135,31 @@ def _risk_signature(risk) -> str:
     if all(v == 0 for v in values):
         return ""
     return "|".join(repr(v) for v in values)
+
+
+def _index_signature(index) -> str:
+    """指数门控未启用(或缺失) -> ''；启用 -> symbol + 买卖条件稳定化文本"""
+    if not isinstance(index, dict) or not index.get("enabled"):
+        return ""
+    symbol = str(index.get("symbol", "") or "").strip()
+    buy = index.get("buy") or {}
+    sell = index.get("sell") or {}
+    # 未配置任何有效条件行的门控不参与签名
+    buy_str = _gate_text(buy)
+    sell_str = _gate_text(sell)
+    if not symbol or (not buy_str and not sell_str):
+        return ""
+    return f"{symbol}|{buy_str}|{sell_str}"
+
+
+def _gate_text(cfg: dict) -> str:
+    """把 ConditionGate.config 展成稳定文本；无有效条件行为空"""
+    if not isinstance(cfg, dict):
+        return ""
+    conditions = cfg.get("conditions") or []
+    if not conditions:
+        return ""
+    rows = "|".join(
+        f"{c.get('variable')}{c.get('rule')}{c.get('value', '')}"
+        for c in conditions)
+    return f"{cfg.get('logic')}n{cfg.get('n')}:{rows}"

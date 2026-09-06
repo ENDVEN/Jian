@@ -28,21 +28,26 @@ import pandas as pd
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtWidgets import QCompleter
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QLineEdit, QFrame, QDateEdit,
+                             QLabel, QLineEdit, QFrame, QScrollArea,
                              QMessageBox, QTabWidget, QTableWidget,
                              QTableWidgetItem, QHeaderView,
-                             QComboBox, QCheckBox, QDoubleSpinBox, QSplitter,
+                             QComboBox, QCheckBox, QSplitter,
                              QInputDialog, QApplication)
 
 from config import settings
+from core.formula import FormulaEngine
 from core.formula.program import (parse_program, execute_programs,
                                   FormulaProgramError, missing_parameter_names)
 from core.backtest import BacktestEngine
+from core.utils import align_by_date
 from data.market_db import DataLakeManager
-from data.akshare_feed import AkShareFeed
+from data.akshare_feed import (AkShareFeed, INDEX_PRESETS,
+                               is_index_symbol)
 from data.strategy_store import StrategyStore
-from ui.widgets.custom_widgets import CandlestickItem
+from ui.widgets.custom_widgets import (CandlestickItem, NoWheelComboBox,
+                                       NoWheelDateEdit, NoWheelDoubleSpinBox)
 from ui.widgets.condition_gate import ConditionGate
 from ui.widgets.function_segments import FunctionSegments
 
@@ -123,6 +128,27 @@ class _StockSyncThread(QThread):
         self.finished_signal.emit(not df.empty, self.symbol, df)
 
 
+class _IndexSyncThread(QThread):
+    """大盘指数日线同步线程 (阶段C)：拉取并回写数据湖 index_daily zone"""
+
+    finished_signal = pyqtSignal(bool, str, object)
+
+    def __init__(self, symbol: str):
+        super().__init__()
+        self.symbol = symbol
+
+    def run(self):
+        df = pd.DataFrame()
+        try:
+            df = AkShareFeed.fetch_index_daily(self.symbol, min_date="20050101")
+            if not df.empty:
+                DataLakeManager().save_data("index_daily", self.symbol, df)
+        except Exception as e:
+            logger.error(f"市场回测-指数拉取异常 [{self.symbol}]: {e}")
+            df = pd.DataFrame()
+        self.finished_signal.emit(not df.empty, self.symbol, df)
+
+
 class _BacktestRunThread(QThread):
     finished_signal = pyqtSignal(object)
 
@@ -184,14 +210,18 @@ class SingleStockBacktestView(QWidget):
         self._last_df = pd.DataFrame()
         self._last_result = None
         self._sync_thread = None
+        self._index_thread = None      # 阶段C：指数同步线程
         self._run_thread = None
         self._kline_state = None
 
         self._equity_state = None
-        self._collapsed = {}   # id(body) -> bool：编辑区 ①/② 折叠状态
+        self._collapsed = {}   # id(body) -> bool：编辑区 ①/②/③ 折叠状态
+        self._pending_risk = {}
+        self._pending_index = None     # 阶段C：{symbol, index_df} (数据就绪后)
 
         self._setup_ui()
         self._connect_chart_zoom()
+        self._sync_index_enabled(False)
         self._set_condition_enabled(False)
         self._reload_strategy_combo()
 
@@ -252,7 +282,7 @@ class SingleStockBacktestView(QWidget):
         toolbar.addWidget(sep1)
 
         # —— 策略组 ——
-        self.cmb_strategy = QComboBox()
+        self.cmb_strategy = NoWheelComboBox()
         self.cmb_strategy.setPlaceholderText("选用已保存策略")
         self.cmb_strategy.setMinimumWidth(170)
         self.cmb_strategy.setFixedHeight(ctrl_height)
@@ -272,9 +302,9 @@ class SingleStockBacktestView(QWidget):
         toolbar.addWidget(self.btn_del_strategy)
 
         toolbar.addStretch()
-        tip = QLabel("聚焦结果：点击 ①/② 卡片右上角即可收起编辑区")
-        tip.setStyleSheet("font-size: 11px; color: #A7AEBE;")
-        toolbar.addWidget(tip)
+        toolbar.addWidget(
+            self._hint_icon("需要更大空间看结果？点击 ①/②/③ 卡片右上角「收起 ▲」即可折叠编辑区；"
+                            "内容超高时编辑区可上下滚动。"))
         root.addLayout(toolbar)
 
         # ---------- 垂直分割: 上区 策略编辑 / 下区 回测工作台 ----------
@@ -282,11 +312,20 @@ class SingleStockBacktestView(QWidget):
         self._splitter.setHandleWidth(4)
         self._splitter.setStyleSheet("QSplitter::handle { background: #E7EAF0; border-radius: 2px; }")
 
-        # ========== 上区：① 函数 + ② 条件 (可各自收起，专注下方回测结果) ==========
+        # ========== 上区：① 函数 + ② 条件 + ③ 指数 (可各自收起，超高时可滚动) ==========
+        self._config_scroll = QScrollArea()
+        self._config_scroll.setWidgetResizable(True)
+        self._config_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._config_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._config_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollArea > QWidget > QWidget { background: transparent; }")
         top_area = QWidget()
         top_lay = QVBoxLayout(top_area)
         top_lay.setContentsMargins(0, 0, 0, 0)
         top_lay.setSpacing(10)
+        self._config_scroll.setWidget(top_area)
 
         # —— 卡片 ① 函数 ——
         self._func_card = QFrame()
@@ -339,9 +378,9 @@ class SingleStockBacktestView(QWidget):
         title_cond.setStyleSheet("font-size: 14px; font-weight: bold; color: #1976D2;")
         cond_head.addWidget(title_cond)
         cond_head.addStretch()
-        hint = QLabel("全部满足=AND · 任一满足=OR · 至少N个=满足计数")
-        hint.setStyleSheet("font-size: 11px; color: #A7AEBE;")
-        cond_head.addWidget(hint)
+        cond_head.addWidget(
+            self._hint_icon("组合逻辑=满足计数：全部满足(AND) / 任一满足(OR) / 至少 N 个满足；"
+                            "底部预览为该组实时翻译出的表达式。每行规则：变量 + 算子 + 数值。"))
         self.btn_collapse_cond = QPushButton("收起 ▲")
         self.btn_collapse_cond.setStyleSheet("QPushButton { color:#8A94A6; background:transparent; border:none; padding:4px 6px; font-weight:bold; } QPushButton:hover{color:#1976D2;}")
         self.btn_collapse_cond.clicked.connect(lambda: self._toggle_collapse(self._cond_body, self.btn_collapse_cond))
@@ -371,6 +410,71 @@ class SingleStockBacktestView(QWidget):
         cond_body_lay.addLayout(grid_rows)
         cond_lay.addWidget(self._cond_body)
         top_lay.addWidget(self._cond_card)
+
+        # —— 卡片 ③ 大盘/指数 regime 门控 (阶段C) ——
+        self._index_card = QFrame()
+        self._index_card.setStyleSheet(_CARD_QSS)
+        index_lay = QVBoxLayout(self._index_card)
+        index_lay.setContentsMargins(16, 6, 10, 12)
+        index_lay.setSpacing(8)
+
+        index_head = QHBoxLayout()
+        title_idx = QLabel("③ 大盘/指数 regime 门控（可选）")
+        title_idx.setStyleSheet("font-size: 14px; font-weight: bold; color: #6A1B9A;")
+        index_head.addWidget(title_idx)
+        index_head.addStretch()
+        self.btn_collapse_index = QPushButton("收起 ▲")
+        self.btn_collapse_index.setStyleSheet("QPushButton { color:#8A94A6; background:transparent; border:none; padding:4px 6px; font-weight:bold; } QPushButton:hover{color:#6A1B9A;}")
+        self.btn_collapse_index.clicked.connect(
+            lambda: self._toggle_collapse(self._index_body, self.btn_collapse_index))
+        index_head.addWidget(self.btn_collapse_index)
+        index_lay.addLayout(index_head)
+
+        self._index_body = QWidget()
+        idx_body_lay = QVBoxLayout(self._index_body)
+        idx_body_lay.setContentsMargins(0, 0, 0, 0)
+        idx_body_lay.setSpacing(8)
+
+        # 顶行：启用 + 指数选择 + 缓存状态
+        idx_row = QHBoxLayout()
+        self.chk_index_enable = QCheckBox("启用大盘先决条件")
+        self.chk_index_enable.toggled.connect(self._sync_index_enabled)
+        idx_row.addWidget(self.chk_index_enable)
+        idx_row.addWidget(self._mini_label("指数"))
+        self.cmb_index = NoWheelComboBox()
+        self.cmb_index.setEditable(True)
+        self.cmb_index.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        # 关闭自动补全：手输代码不应被预设文本接管
+        completer = self.cmb_index.completer()
+        if completer is not None:
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.cmb_index.setStyleSheet("QComboBox { padding: 0 10px; border: 1px solid #E0E4EC; "
+                                     "border-radius: 8px; background: white; font-size: 13px; }")
+        for code, name in INDEX_PRESETS.items():
+            self.cmb_index.addItem(f"{code}  {name}", code)
+        self.cmb_index.setCurrentIndex(0)
+        self.cmb_index.setFixedHeight(30)
+        idx_row.addWidget(self.cmb_index, 1)
+        self.lbl_index_status = QLabel("")
+        self.lbl_index_status.setStyleSheet("font-size: 11px; color: #8A94A6;")
+        idx_row.addWidget(self.lbl_index_status)
+        idx_row.addWidget(
+            self._hint_icon("指数 regime 门控：用与个股相同的函数段对所选指数再求值，"
+                            "指数侧变量自动加 IDX_ 前缀。"
+                            "买入：个股条件与「指数买入许可」同时成立才进场；"
+                            "卖出：个股条件或「指数卖出破位」任一成立即离场。"
+                            "首次回测若本地无指数数据将自动联网同步。"))
+        idx_body_lay.addLayout(idx_row)
+
+        idx_gates = QHBoxLayout()
+        idx_gates.setSpacing(16)
+        self.gate_index_buy = ConditionGate("指数买入许可", "#6A1B9A")
+        self.gate_index_sell = ConditionGate("指数卖出破位", "#E65100")
+        idx_gates.addWidget(self.gate_index_buy, 1)
+        idx_gates.addWidget(self.gate_index_sell, 1)
+        idx_body_lay.addLayout(idx_gates)
+        index_lay.addWidget(self._index_body)
+        top_lay.addWidget(self._index_card)
         top_lay.addStretch()
 
         # ========== 下区：回测工作台 ==========
@@ -385,16 +489,16 @@ class SingleStockBacktestView(QWidget):
         run_lay = QHBoxLayout(run_bar)
         run_lay.setContentsMargins(14, 8, 14, 8)
         run_lay.addWidget(self._mini_label("回测区间"))
-        self.cmb_range_preset = QComboBox()
+        self.cmb_range_preset = NoWheelComboBox()
         self.cmb_range_preset.addItems(_PRESET_ORDER)
         self.cmb_range_preset.currentTextChanged.connect(self._on_range_preset)
         run_lay.addWidget(self.cmb_range_preset)
-        self.date_start = QDateEdit(QDate(2018, 1, 1))
+        self.date_start = NoWheelDateEdit(QDate(2018, 1, 1))
         self.date_start.setCalendarPopup(True)
         self.date_start.setDisplayFormat("yyyy-MM-dd")
         run_lay.addWidget(self.date_start)
         run_lay.addWidget(QLabel("至"))
-        self.date_end = QDateEdit(QDate.currentDate())
+        self.date_end = NoWheelDateEdit(QDate.currentDate())
         self.date_end.setCalendarPopup(True)
         self.date_end.setDisplayFormat("yyyy-MM-dd")
         run_lay.addWidget(self.date_end)
@@ -434,9 +538,9 @@ class SingleStockBacktestView(QWidget):
         risk_lay.addWidget(self.spin_risk_trail)
         risk_lay.addWidget(self._mini_label("%"))
         risk_lay.addStretch()
-        tip_risk = QLabel("硬性规则盘中触发即离场，优先于卖出信号；0 表示不使用")
-        tip_risk.setStyleSheet("font-size: 11px; color: #A7AEBE;")
-        risk_lay.addWidget(tip_risk)
+        risk_lay.addWidget(
+            self._hint_icon("硬性保护规则：盘中触发即离场，优先于卖出信号，谁先到谁执行。"
+                            "任意一项设 0 即关闭；悬停各项输入框可看单独说明。"))
         bottom_lay.addWidget(risk_bar)
 
         # KPI 卡片行
@@ -491,9 +595,9 @@ class SingleStockBacktestView(QWidget):
         self.tabs.addTab(self.trades_table, "🧾 成交明细")
         bottom_lay.addWidget(self.tabs, 1)
 
-        self._splitter.addWidget(top_area)
+        self._splitter.addWidget(self._config_scroll)
         self._splitter.addWidget(bottom_area)
-        self._splitter.setSizes([380, 540])
+        self._splitter.setSizes([420, 520])
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
         root.addWidget(self._splitter, 1)
@@ -506,8 +610,19 @@ class SingleStockBacktestView(QWidget):
         return lbl
 
     @staticmethod
-    def _risk_spin(tooltip: str, value: float, lo: float, hi: float, decimals: int) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
+    def _hint_icon(tooltip: str) -> QLabel:
+        """灰字说明弱化：用一个小 ? 角标承载 tooltip，代替占据版面的长灰字"""
+        icon = QLabel("?")
+        icon.setFixedSize(15, 15)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet("QLabel { background:#E3E7EF; color:#7A8392; border-radius:7px;"
+                           " font-size:10px; font-weight:bold; }")
+        icon.setToolTip(tooltip)
+        return icon
+
+    @staticmethod
+    def _risk_spin(tooltip: str, value: float, lo: float, hi: float, decimals: int) -> NoWheelDoubleSpinBox:
+        spin = NoWheelDoubleSpinBox()
         spin.setRange(lo, hi)
         spin.setDecimals(decimals)
         spin.setValue(value)
@@ -632,6 +747,10 @@ class SingleStockBacktestView(QWidget):
             f"{' …' if len(self._variables) > 10 else ''}")
         self.gate_buy.set_variables(self._variables)
         self.gate_sell.set_variables(self._variables)
+        # 指数门控的变量池：同一批函数段在大盘上求值，产出 IDX_ 前缀变量 (阶段C)
+        idx_vars = [f"IDX_{v}" for v in self._variables]
+        self.gate_index_buy.set_variables(idx_vars)
+        self.gate_index_sell.set_variables(idx_vars)
         self._set_condition_enabled(True)
 
     def _set_detect(self, ok: bool, message: str):
@@ -640,12 +759,42 @@ class SingleStockBacktestView(QWidget):
             f"font-size: 12px; color: {'#4CAF50' if ok else '#F44336'}; font-weight: bold;")
 
     # ==========================================
-    # ② 条件 (Gate 桥接)
+    # ② 条件 (Gate 桥接) + ③ 指数门控
     # ==========================================
     def _set_condition_enabled(self, enabled: bool):
         self.gate_buy.set_gate_enabled(enabled)
         self.gate_sell.set_gate_enabled(enabled)
+        self._sync_index_enabled(self.chk_index_enable.isChecked() if enabled else False)
         self.btn_run.setEnabled(enabled)
+
+    def _sync_index_enabled(self, enabled: bool):
+        """指数门控启用联动：勾选开启 + 函数已检测才可配条件"""
+        on = bool(enabled) and bool(self._variables)
+        self.gate_index_buy.set_gate_enabled(on)
+        self.gate_index_sell.set_gate_enabled(on)
+        self.cmb_index.setEnabled(bool(enabled) and bool(self._variables))
+        if on and self._index_symbol():
+            self._refresh_index_status()
+
+    def _index_symbol(self) -> str:
+        """读取当前指数代码 (下拉选中或手动输入，规范化为新浪格式)"""
+        text = self.cmb_index.currentText().strip()
+        if not text:
+            return ""
+        # 支持用户直接输入 000300 -> 自动补 sh 前缀兜底 (仅对常见6位，用户亦可显式 sh/sz)
+        sym = text.split()[0] if text else ""
+        if sym.isdigit() and len(sym) == 6:
+            return f"sh{sym}"
+        return sym.lower()
+
+    def _refresh_index_status(self):
+        """刷新指数本地缓存状态提示"""
+        symbol = self._index_symbol()
+        if not symbol or not is_index_symbol(symbol):
+            self.lbl_index_status.setText("需形如 sh000001 / sz399001")
+            return
+        cached = self.data_lake.exists("index_daily", symbol)
+        self.lbl_index_status.setText("✓ 本地已缓存" if cached else "首次回测将自动联网同步")
 
     # ==========================================
     # 策略库 (选用 / 保存 / 删除 / 对比)
@@ -668,6 +817,7 @@ class SingleStockBacktestView(QWidget):
             "condition_buy": self.gate_buy.config(),
             "condition_sell": self.gate_sell.config(),
             "risk": self._risk_config(),
+            "index": self._index_config(),
             "start_date": self.date_start.date().toString("yyyy-MM-dd"),
             "end_date": self.date_end.date().toString("yyyy-MM-dd"),
             "symbol": self.current_symbol,
@@ -715,7 +865,34 @@ class SingleStockBacktestView(QWidget):
         self.gate_sell.load_config(strategy.get("condition_sell") or {})
         # 还原风控参数 (旧策略无 risk 字段 -> 回落 0 全关闭)
         self._apply_risk_config(strategy.get("risk") or {})
+        # 还原指数 regime 门控 (旧策略无 index 字段 -> 全关)
+        self._apply_index_config(strategy.get("index") or {})
         self.lbl_run_status.setText(f"已载入策略「{strategy.get('name')}」，请选择股票后运行。")
+
+    def _index_config(self) -> dict:
+        """读取当前指数门控状态 (阶段C)"""
+        return {
+            "enabled": bool(self.chk_index_enable.isChecked()),
+            "symbol": self._index_symbol(),
+            "buy": self.gate_index_buy.config(),
+            "sell": self.gate_index_sell.config(),
+        }
+
+    def _apply_index_config(self, cfg: dict):
+        """从策略快照恢复指数门控；缺失/非法一律回落关闭"""
+        cfg = cfg or {}
+        self.chk_index_enable.setChecked(bool(cfg.get("enabled", False)))
+        symbol = str(cfg.get("symbol", "") or "").strip()
+        if symbol:
+            # 下拉中查找；不存在则以文本方式置入 (可编辑下拉支持任意新浪代码)
+            idx = self.cmb_index.findData(symbol)
+            if idx >= 0:
+                self.cmb_index.setCurrentIndex(idx)
+            else:
+                self.cmb_index.setEditText(symbol)
+        self.gate_index_buy.load_config(cfg.get("buy") or {})
+        self.gate_index_sell.load_config(cfg.get("sell") or {})
+        self._sync_index_enabled(self.chk_index_enable.isChecked())
 
     def save_strategy(self):
         if not self._programs:
@@ -836,6 +1013,44 @@ class SingleStockBacktestView(QWidget):
         self._pending_params = self._parse_params_text(self.txt_params.text())
         self._pending_risk = self._risk_config()
 
+        # 指数 regime 门控配置 (阶段C)：仅当启用且至少一侧配了条件才需要指数数据
+        index_cfg = None
+        if self.chk_index_enable.isChecked():
+            symbol = self._index_symbol()
+            if not is_index_symbol(symbol):
+                QMessageBox.warning(self, "指数代码", "请输入有效的新浪指数代码，形如 sh000001 / sz399001。")
+                return
+            idx_buy = (self.gate_index_buy.expression() or "").strip()
+            idx_sell = (self.gate_index_sell.expression() or "").strip()
+            if idx_buy or idx_sell:
+                index_cfg = {"symbol": symbol, "expr_buy": idx_buy, "expr_sell": idx_sell}
+        self._pending_index = index_cfg
+
+        self._prepare_index_then_stock()
+
+    def _prepare_index_then_stock(self):
+        """阶段C 数据就绪链：先指数(若启用) 后个股，均就绪后执行回测"""
+        if not self._pending_index:
+            self._prepare_stock_then_run()
+            return
+        symbol = self._pending_index["symbol"]
+        idx_df = self.data_lake.load_data("index_daily", symbol)
+        if idx_df.empty:
+            self._set_busy(True, f"本地无指数 {symbol} 数据，正在联网同步...")
+            self._index_thread = _IndexSyncThread(symbol)
+            self._index_thread.finished_signal.connect(self._on_index_synced)
+            self._index_thread.start()
+        else:
+            self._prepare_stock_then_run()
+
+    def _on_index_synced(self, ok, symbol, df):
+        if not ok or df.empty:
+            self._set_busy(False, "")
+            QMessageBox.critical(self, "指数同步失败", f"无法获取指数 {symbol} 数据，请检查网络。")
+            return
+        self._prepare_stock_then_run()
+
+    def _prepare_stock_then_run(self):
         df = self.data_lake.load_data("kline_daily", self.current_symbol)
         if df.empty:
             self._set_busy(True, "本地无日线，正在联网同步...")
@@ -873,6 +1088,21 @@ class SingleStockBacktestView(QWidget):
 
         buy_expr, sell_expr = self._pending_run
         risk = getattr(self, '_pending_risk', {}) or {}
+
+        # 阶段C：指数 regime 门控列拼接 (引擎零改动)
+        index_cfg = getattr(self, '_pending_index', None)
+        if index_cfg:
+            try:
+                gated = self._attach_index_gates(merged, index_cfg, params)
+            except FormulaProgramError as e:
+                self._set_busy(False, "")
+                QMessageBox.critical(self, "指数求值失败",
+                                     "指数 regime 门控求值失败。请确认函数段仅依赖 K线列"
+                                     "(C/O/H/L/V)，若函数含个股专属逻辑请拆成单独段。\n\n" + str(e))
+                return
+            if gated is not None:
+                merged, buy_expr, sell_expr = gated
+
         self._last_df = merged.copy()
         self._set_busy(True, "回测计算中...")
         self._run_thread = _BacktestRunThread(
@@ -882,6 +1112,60 @@ class SingleStockBacktestView(QWidget):
             risk=risk)
         self._run_thread.finished_signal.connect(self._on_result)
         self._run_thread.start()
+
+    def _attach_index_gates(self, merged: pd.DataFrame, index_cfg: dict, params: dict):
+        """在个股 df 上拼入指数门控列，并返回合成后的 (merged, buy_expr, sell_expr)。
+
+        实现要点 (引擎零改动)：
+        1) 对指数日线执行同一批函数段 -> 变量加 IDX_ 前缀，供指数 Gate 表达式引用；
+        2) 指数 Gate 表达式在指数行情上求值 -> 布尔门控；
+        3) 门控布尔序列用 align_by_date 对齐到个股交易日 (缺失日 ffill, 前导默认 0)；
+        4) 门控列(IDX_GATE_BUY/SELL)拼入 merged，买卖表达式 AND/OR 引用该列。
+        """
+        symbol = index_cfg.get("symbol")
+        idx_buy_expr = (index_cfg.get("expr_buy") or "").strip()
+        idx_sell_expr = (index_cfg.get("expr_sell") or "").strip()
+        if not idx_buy_expr and not idx_sell_expr:
+            return merged, self._pending_run[0], self._pending_run[1]
+
+        idx_df = self.data_lake.load_data("index_daily", symbol)
+        if idx_df.empty:
+            QMessageBox.critical(self, "指数数据缺失",
+                                 f"本地没有指数 {symbol} 数据，请重试运行(将自动联网同步)。")
+            return None
+
+        # 1) 指数侧执行函数段 -> IDX_ 变量列
+        idx_vars = execute_programs(self._programs, idx_df, params)
+        idx_ext = idx_df.copy()
+        for name, series in idx_vars.items():
+            idx_ext[f"IDX_{name}"] = series.values
+
+        def build_gate(expr: str) -> pd.Series | None:
+            if not expr:
+                return None
+            try:
+                gate = FormulaEngine.signal(expr, idx_ext, params)
+            except Exception as e:
+                raise FormulaProgramError(f"指数门控表达式 {expr} 求值失败: {e}") from None
+            # 以指数日期为索引 -> 对齐到个股交易日
+            dated = pd.Series(gate.to_numpy(), index=pd.to_datetime(idx_ext['date']))
+            aligned = align_by_date({"G": dated}, pd.to_datetime(merged['date']))["G"]
+            return pd.Series(aligned.to_numpy(), index=merged.index)
+
+        gate_buy = build_gate(idx_buy_expr)
+        gate_sell = build_gate(idx_sell_expr)
+        merged = merged.copy()
+        if gate_buy is not None:
+            merged["IDX_GATE_BUY"] = gate_buy.to_numpy()
+        if gate_sell is not None:
+            merged["IDX_GATE_SELL"] = gate_sell.to_numpy()
+
+        buy_expr, sell_expr = self._pending_run
+        if gate_buy is not None:
+            buy_expr = f"({buy_expr}) AND IDX_GATE_BUY"
+        if gate_sell is not None:
+            sell_expr = f"({sell_expr}) OR IDX_GATE_SELL"
+        return merged, buy_expr, sell_expr
 
     def _on_result(self, result):
         self._set_busy(False, "")
@@ -922,27 +1206,36 @@ class SingleStockBacktestView(QWidget):
         """
         if not hasattr(self, "_splitter"):
             return
-        top_area = self._splitter.widget(0)
-        if top_area is None:
+        scroll = self._splitter.widget(0)
+        if scroll is None:
             return
 
-        layout = top_area.layout()
+        # 上区卡片现在位于 QScrollArea 内部的 content widget 中 (超高可滚动)。
+        content = scroll.widget()
+        layout = content.layout() if content is not None else None
         if layout is not None:
             layout.invalidate()
             layout.activate()
-        top_area.updateGeometry()
+        if content is not None:
+            content.updateGeometry()
         # 布局激活后需交付一轮事件循环，sizeHint 才会收缩到折叠后的真实高度
         QApplication.processEvents()
 
         func_h = self._func_card.sizeHint().height()
         cond_h = self._cond_card.sizeHint().height()
+        index_h = (self._index_card.sizeHint().height()
+                   if hasattr(self, "_index_card") else 0)
         spacing = layout.spacing() if layout is not None else 10
-        desired = int(func_h + cond_h + spacing)
+        desired = int(func_h + cond_h + index_h + spacing * 2)
 
         total = self._splitter.height()
         if total <= 0:  # 尚未布局完成(首帧)时按当前分割总和兜底
             total = sum(self._splitter.sizes()) or 900
-        bottom = max(140, int(total - desired))
+        # 上区高度上限：即便三卡全展开、行数很多也禁止把结果区挤没，
+        # 超出上限的内容交给 QScrollArea 内部滚动 (配合 NoWheel 控件族滚轮直达)。
+        max_top = max(320, int(total * 0.55))
+        desired = min(desired, max_top)
+        bottom = max(200, int(total - desired))
         self._splitter.setSizes([int(desired), bottom])
 
     # ==========================================

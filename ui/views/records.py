@@ -2,9 +2,10 @@
 import pandas as pd
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QTabWidget, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QComboBox, QMenu, QFrame, QMessageBox)
+                             QHeaderView, QMenu, QFrame, QMessageBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
+from ui.widgets.custom_widgets import NoWheelComboBox
 
 from config import settings
 from core.preferences import TIME_PRECISION_DATE, TIME_PRECISION_FILL, preferences
@@ -106,24 +107,24 @@ class RecordsView(QWidget):
         top_bar_2 = QHBoxLayout()
         
         top_bar_2.addWidget(QLabel("账户:"))
-        self.cb_acc = QComboBox(); self.cb_acc.currentIndexChanged.connect(self.apply_filters)
+        self.cb_acc = NoWheelComboBox(); self.cb_acc.currentIndexChanged.connect(self.apply_filters)
         top_bar_2.addWidget(self.cb_acc)
         
         top_bar_2.addSpacing(15)
         top_bar_2.addWidget(QLabel("品种主体:"))
-        self.cb_sym = QComboBox(); self.cb_sym.currentIndexChanged.connect(self.apply_filters)
+        self.cb_sym = NoWheelComboBox(); self.cb_sym.currentIndexChanged.connect(self.apply_filters)
         top_bar_2.addWidget(self.cb_sym)
 
         top_bar_2.addSpacing(15)
         top_bar_2.addWidget(QLabel("买卖:"))
-        self.cb_dir = QComboBox()
+        self.cb_dir = NoWheelComboBox()
         self.cb_dir.addItems(["全部", "买入开仓 (做多)", "卖出开仓 (做空)"])
         self.cb_dir.currentIndexChanged.connect(self.apply_filters)
         top_bar_2.addWidget(self.cb_dir)
 
         top_bar_2.addSpacing(15)
         top_bar_2.addWidget(QLabel("盈亏结果:"))
-        self.cb_res = QComboBox()
+        self.cb_res = NoWheelComboBox()
         self.cb_res.addItems(["全部", "仅盈利", "仅亏损"])
         self.cb_res.currentIndexChanged.connect(self.apply_filters)
         top_bar_2.addWidget(self.cb_res)
@@ -131,7 +132,7 @@ class RecordsView(QWidget):
         # v1.2：区分"完整闭环"与"待缝合（开仓腿缺失）"
         top_bar_2.addSpacing(15)
         top_bar_2.addWidget(QLabel("完整度:"))
-        self.cb_stitch = QComboBox()
+        self.cb_stitch = NoWheelComboBox()
         self.cb_stitch.addItems(["全部", "仅完整闭环", "仅待缝合"])
         self.cb_stitch.currentIndexChanged.connect(self.apply_filters)
         top_bar_2.addWidget(self.cb_stitch)

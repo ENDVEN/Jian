@@ -54,7 +54,9 @@ class FunctionSegments(QWidget):
         self._seg_lay.setSpacing(8)
         lay.addWidget(self._seg_box)
 
-        self.btn_add_seg = QPushButton("＋ 添加函数段（多段共享变量池，后段可引用前段）")
+        self.btn_add_seg = QPushButton("＋ 添加函数段")
+        self.btn_add_seg.setToolTip("再粘一段函数（如抄来的 MACD/KDJ）。"
+                                    "多段在同一个变量池中顺序求值，后段可引用前段变量。")
         self.btn_add_seg.setStyleSheet("QPushButton { color: #1976D2; background: transparent; "
                                        "border: none; padding: 2px 0; font-weight: bold; "
                                        "font-size: 12px; text-align: left; }"

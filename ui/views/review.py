@@ -9,13 +9,13 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QStackedWidget, QTableWidget, 
                              QTableWidgetItem, QHeaderView,
-                             QTabWidget, QComboBox, QMessageBox, QListWidget, 
+                             QTabWidget, QMessageBox, QListWidget, 
                              QListWidgetItem, QTextEdit, QSplitter, QLineEdit,
                              QDateEdit)
 from PyQt6.QtCore import Qt, QDate, QTimer
 from PyQt6.QtGui import QColor, QFont
 
-from ui.widgets.custom_widgets import CandlestickItem
+from ui.widgets.custom_widgets import CandlestickItem, NoWheelComboBox
 from ui.widgets.screenshot_gallery import ScreenshotGallery
 from ui.widgets.yearly_review import YearlyReviewPanel
 from config import settings
@@ -92,7 +92,7 @@ class ReviewView(QWidget):
         self.btn_prev_time.clicked.connect(lambda: self.change_review_time(-1))
         self.btn_next_time.clicked.connect(lambda: self.change_review_time(1))
         
-        self.cb_time_picker = QComboBox()
+        self.cb_time_picker = NoWheelComboBox()
         self.cb_time_picker.setStyleSheet("QComboBox { font-size: 16px; font-weight: bold; color: #1976D2; padding: 5px 15px; border: 1px solid #E0E0E0; border-radius: 6px; background: white;} QComboBox::drop-down { border: none; width: 20px;} QComboBox:hover { background: #F5F5F5; }")
         self.cb_time_picker.activated.connect(self.quick_jump_time)
 
@@ -108,13 +108,13 @@ class ReviewView(QWidget):
         
         top_bar_2 = QHBoxLayout()
         top_bar_2.addWidget(QLabel("账户:"))
-        self.cb_rev_account = QComboBox()
+        self.cb_rev_account = NoWheelComboBox()
         self.cb_rev_account.currentIndexChanged.connect(self.update_review_view)
         top_bar_2.addWidget(self.cb_rev_account)
         
         top_bar_2.addSpacing(15)
         top_bar_2.addWidget(QLabel("策略:"))
-        self.cb_rev_strategy = QComboBox()
+        self.cb_rev_strategy = NoWheelComboBox()
         self.cb_rev_strategy.currentIndexChanged.connect(self.update_review_view)
         top_bar_2.addWidget(self.cb_rev_strategy)
         
@@ -125,20 +125,20 @@ class ReviewView(QWidget):
 
         top_bar_2.addSpacing(15)
         top_bar_2.addWidget(QLabel("品种主体:"))
-        self.cb_rev_symbol = QComboBox()
+        self.cb_rev_symbol = NoWheelComboBox()
         self.cb_rev_symbol.currentIndexChanged.connect(self.update_review_view)
         top_bar_2.addWidget(self.cb_rev_symbol)
 
         top_bar_2.addSpacing(15)
         top_bar_2.addWidget(QLabel("方向:"))
-        self.cb_rev_direction = QComboBox()
+        self.cb_rev_direction = NoWheelComboBox()
         self.cb_rev_direction.addItems(["全部", "做多", "做空"])
         self.cb_rev_direction.currentIndexChanged.connect(self.update_review_view)
         top_bar_2.addWidget(self.cb_rev_direction)
 
         top_bar_2.addSpacing(15)
         top_bar_2.addWidget(QLabel("结果:"))
-        self.cb_rev_result = QComboBox()
+        self.cb_rev_result = NoWheelComboBox()
         self.cb_rev_result.addItems(["全部", "仅盈利", "仅亏损"])
         self.cb_rev_result.currentIndexChanged.connect(self.update_review_view)
         top_bar_2.addWidget(self.cb_rev_result)
@@ -241,7 +241,7 @@ class ReviewView(QWidget):
         lbl_cat.setStyleSheet("font-size: 11px; color: #757575; font-weight: bold; border: none;")
         strat_layout.addWidget(lbl_cat)
         
-        self.cb_edit_strategy = QComboBox()
+        self.cb_edit_strategy = NoWheelComboBox()
         self.cb_edit_strategy.setEditable(True)
         self.cb_edit_strategy.setFixedWidth(130)  
         self.cb_edit_strategy.setStyleSheet("QComboBox { border: 1px solid #D1D9E6; border-radius: 4px; background: white; color: #212121; padding: 4px; }")

@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QDateTimeEdit, QDoubleSpinBox, QSpinBox, QLabel,
                              QCheckBox)
 from PyQt6.QtCore import QDateTime
+from ui.widgets.custom_widgets import NoWheelComboBox
 from models.trade import TradeRecord
 from core.preferences import TIME_SOURCE_DATE_ONLY, TIME_SOURCE_MANUAL
 from config import settings
@@ -57,7 +58,7 @@ class ManualEntryDialog(QDialog):
         form.setSpacing(14)
 
         # ---- 归属账户：仅列出现有账户，可自由输入新账户名 ----
-        self.inp_account = QComboBox()
+        self.inp_account = NoWheelComboBox()
         self.inp_account.setEditable(True)
         self.inp_account.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.inp_account.addItems(existing_accounts)
@@ -85,11 +86,11 @@ class ManualEntryDialog(QDialog):
         self.inp_symbol.setPlaceholderText("例如: RB2401")
         form.addRow("交易品种*:", self.inp_symbol)
 
-        self.inp_direction = QComboBox()
+        self.inp_direction = NoWheelComboBox()
         self.inp_direction.addItems(["做多 (LONG)", "做空 (SHORT)"])
         form.addRow("买卖方向:", self.inp_direction)
 
-        self.inp_strategy = QComboBox()
+        self.inp_strategy = NoWheelComboBox()
         self.inp_strategy.setEditable(True)
         self.inp_strategy.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         strategy_options = current_strategies if current_strategies else [settings.DEFAULT_STRATEGY]

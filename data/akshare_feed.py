@@ -16,6 +16,51 @@ KLINE_CN_RENAME = {
 # 东财接口超时上限 (秒)：作为兜底源时不允许无限期挂起
 EM_TIMEOUT_SECONDS = 15
 
+# 常用大盘/行业指数预设 (供 UI 下拉 + 名称展示；symbol 即新浪指数接口代码)。
+# 分组仅供可读性；顺序即下拉展示顺序。已按真实接口逐一代测确认可用 (2026-09)。
+INDEX_PRESETS = {
+    # —— 大盘核心 ——
+    "sh000001": "上证指数",
+    "sz399001": "深证成指",
+    "sh000300": "沪深300",
+    "sh000905": "中证500",
+    "sh000852": "中证1000",
+    "sh000906": "中证800",
+    # —— 大盘风格/红利 ——
+    "sh000016": "上证50",
+    "sh000010": "上证180",
+    "sh000009": "上证380",
+    "sh000015": "上证红利",
+    "sh000922": "中证红利",
+    # —— 科创 / 创业 / 成长 ——
+    "sh000688": "科创50",
+    "sh000698": "科创100",
+    "sz399006": "创业板指",
+    "sz399673": "创业板50",
+    "sz399608": "科技100",
+    "sz399005": "中小板指",
+    "sz399330": "深证100",
+    # —— 热门行业 / 主题 ——
+    "sz399997": "中证白酒",
+    "sz399987": "中证酒",
+    "sz399986": "中证银行",
+    "sz399975": "证券公司",
+    "sz399989": "中证医疗",
+    "sz399396": "国证食品饮料",
+    "sz399998": "中证军工",
+    "sz399995": "中证基建",
+    "sh000928": "中证能源",
+    "sh000936": "中证电信",
+    # —— 北交所 ——
+    "bj899050": "北证50",
+}
+
+
+def is_index_symbol(symbol: str) -> bool:
+    """粗判是否为新浪指数代码形态：市场前缀(sh/sz/bj) + 6 位数字"""
+    sym = str(symbol or "").strip().lower()
+    return len(sym) == 8 and sym[:2] in ("sh", "sz", "bj") and sym[2:].isdigit()
+
 
 class AkShareFeed:
     """
@@ -184,3 +229,37 @@ class AkShareFeed:
         if AkShareFeed.is_stock_code(symbol):
             return AkShareFeed.fetch_a_share_daily(symbol)
         return AkShareFeed.fetch_futures_daily(symbol)
+
+    # ==========================================
+    # 大盘指数日线 (Index Daily) 阶段C
+    # ==========================================
+    @staticmethod
+    def fetch_index_daily(symbol: str, min_date: str = "20050101") -> pd.DataFrame:
+        """
+        拉取大盘/板块指数历史日线 (新浪源 stock_zh_index_daily)。
+
+        :param symbol: 新浪指数代码，必须带市场前缀，如 "sh000001"(上证) / "sz399001"(深成)
+        :param min_date: 裁剪早于该日的数据 (格式 YYYYMMDD)，降低存储与回测开销。
+                         注意：仅做截断不减未来，指数数据自 1990 年起全量可得。
+        """
+        sym = str(symbol or "").strip().lower()
+        if not is_index_symbol(sym):
+            logging.error(f"指数代码格式错误: {symbol} (需形如 sh000001 / sz399001)")
+            return pd.DataFrame()
+        logging.info(f"开始拉取指数 {sym} 日线数据...")
+        try:
+            df = ak.stock_zh_index_daily(symbol=sym)
+            if df is None or df.empty:
+                return pd.DataFrame()
+            # 新浪指数接口已返回标准英文列 date/open/high/low/close/volume；
+            # 统一走清洗管道：日期强转 + 数值强转 + 打标 (无中文列需重命名)
+            df = AkShareFeed._normalize_ohlcv(df, {}, sym)
+            try:
+                cutoff = pd.Timestamp(min_date)
+                df = df[df['date'] >= cutoff]
+            except Exception:
+                pass
+            return df.reset_index(drop=True)
+        except Exception as e:
+            logging.error(f"拉取指数日线失败 [{sym}]: {e}")
+            return pd.DataFrame()
