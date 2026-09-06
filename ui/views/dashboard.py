@@ -32,11 +32,15 @@ class DashboardView(QWidget):
         
         metrics_grid = QGridLayout()
         metrics_grid.setSpacing(10)
+        # v1.2：把"净额（真实到手）"提到首位，并拆出毛利与手续费供对照。
+        # 胜率/盈亏比/单笔极值等结果类指标均已按净额口径计算（见 analyzer）。
         self.metric_keys = [
-            ("净利润", "net_profit"), ("收益率", "return_rate"), ("胜率", "win_rate"), 
-            ("盈亏比", "pl_ratio"), ("最大回撤", "max_drawdown"), ("交易次数", "total_trades"), 
-            ("盈利次数", "winning_trades"), ("亏损次数", "losing_trades"), ("初始资金", "initial_capital"), 
-            ("总手续费", "total_commission"), ("平均盈利", "avg_win"), ("平均亏损", "avg_loss"), 
+            ("净额 (真实到手)", "net_amount"), ("平仓盈亏 (毛利)", "gross_profit"),
+            ("总手续费", "total_commission"), ("收益率", "return_rate"),
+            ("胜率", "win_rate"), ("盈亏比", "pl_ratio"), ("最大回撤", "max_drawdown"),
+            ("交易次数", "total_trades"), ("盈利次数", "winning_trades"),
+            ("亏损次数", "losing_trades"), ("初始资金", "initial_capital"),
+            ("平均盈利", "avg_win"), ("平均亏损", "avg_loss"),
             ("最大单笔赚", "max_profit"), ("最大单笔亏", "max_loss")
         ]
         
@@ -57,9 +61,10 @@ class DashboardView(QWidget):
     def create_charts_panel(self):
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        self.equity_chart = pg.PlotWidget(title="资金净值曲线")
+        # v1.2：净值曲线已改为按"净额（扣手续费后）"累计，标题如实标注口径
+        self.equity_chart = pg.PlotWidget(title="资金净值曲线 (已扣手续费)")
         self.equity_chart.showGrid(x=True, y=True, alpha=0.3)
-        self.distribution_chart = pg.PlotWidget(title="盈亏分布直方图")
+        self.distribution_chart = pg.PlotWidget(title="单笔净额分布直方图")
         self.distribution_chart.showGrid(x=True, y=True, alpha=0.3)
         layout.addWidget(self.equity_chart, 2)
         layout.addWidget(self.distribution_chart, 1)
@@ -105,7 +110,9 @@ class DashboardView(QWidget):
 
     def update_view(self, r, df):
         m = self.metric_widgets
-        self.set_metric_style(m["net_profit"], f"￥{r['net_profit']:,.2f}", r['net_profit'])
+        # 净额是主推指标；毛利与手续费并列展示，让用户一眼看清成本占比
+        self.set_metric_style(m["net_amount"], f"￥{r['net_amount']:,.2f}", r['net_amount'])
+        self.set_metric_style(m["gross_profit"], f"￥{r['gross_profit']:,.2f}", r['gross_profit'])
         self.set_metric_style(m["avg_win"], f"￥{r['avg_win']:,.2f}", r['avg_win'])
         self.set_metric_style(m["avg_loss"], f"￥{r['avg_loss']:,.2f}", r['avg_loss'])
         self.set_metric_style(m["max_profit"], f"￥{r['max_profit']:,.2f}", r['max_profit'])
@@ -130,7 +137,8 @@ class DashboardView(QWidget):
             fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
             self.equity_chart.plot(x_data, equity_data, pen=pg.mkPen(color=col, width=2.5), fillLevel=equity_data[0], fillBrush=fill)
 
-        profits = df['net_profit'].values
+        # 分布图同样改用净额，直方图形态才与真实到手盈亏一致
+        profits = df['net_amount'].values
         self.distribution_chart.clear()
         if len(profits) > 0:
             hist, bin_edges = np.histogram(profits, bins=25)

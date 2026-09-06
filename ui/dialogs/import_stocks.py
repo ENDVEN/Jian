@@ -36,7 +36,10 @@ class ImportWizardDialog(QDialog):
             "trade_time": {"label": "交易时间 (必选)", "keywords": ["交易时间", "成交日期", "成交时间", "日期", "Time"]}, 
             "lots": {"label": "交易数量(股/手)", "keywords": ["手数", "成交量", "成交数量", "Qty"]}, 
             "net_profit": {"label": "净盈亏 (必选)", "keywords": ["平仓盈亏", "发生金额", "净盈亏", "PnL"]}, 
-            "commission": {"label": "手续费", "keywords": ["手续费", "佣金", "印花税", "Commission"]}
+            "commission": {"label": "手续费", "keywords": ["手续费", "佣金", "印花税", "Commission"]},
+            # v1.2 选填：映射后可计算点数盈亏；留空则如实标记为待补录
+            "entry_price": {"label": "开仓价 (选填)", "keywords": ["开仓价", "买入价", "成本价", "Entry"]},
+            "exit_price": {"label": "平仓价 (选填)", "keywords": ["平仓价", "卖出价", "成交价", "Exit"]}
         }
         
         layout = QVBoxLayout(self)
@@ -151,6 +154,9 @@ class ImportWizardDialog(QDialog):
         temp_df['net_profit'] = pd.to_numeric(temp_df['net_profit'], errors='coerce').fillna(0.0)
         temp_df['lots'] = pd.to_numeric(temp_df['lots'], errors='coerce').fillna(1).astype(int)
         temp_df['commission'] = pd.to_numeric(temp_df['commission'], errors='coerce').fillna(0.0)
+        # v1.2 价格列：未映射 / 脏数据保持 NaN，绝不用 0 冒充真实成交价
+        temp_df['entry_price'] = pd.to_numeric(temp_df['entry_price'], errors='coerce')
+        temp_df['exit_price'] = pd.to_numeric(temp_df['exit_price'], errors='coerce')
         
         # v1.1：交割单只有单一"交易时间"，无需再做双时间互补
         temp_df['trade_time'] = pd.to_datetime(temp_df['trade_time'], errors='coerce')
@@ -165,7 +171,12 @@ class ImportWizardDialog(QDialog):
         for _, row in temp_df.iterrows():
             dir_str = str(row['direction']) if pd.notna(row['direction']) else ""
             direction = 'LONG' if ('买' in dir_str or '多' in dir_str) else 'SHORT'
-            
+
+            # v1.2 价格：NaN 视为"未提供"，显示为「—」。
+            # 注意：孤儿(待缝合)是交割单开平配对的专属语义，映射导入不参与。
+            entry_price = float(row['entry_price']) if pd.notna(row['entry_price']) else None
+            exit_price = float(row['exit_price']) if pd.notna(row['exit_price']) else None
+
             tr = TradeRecord(
                 account=str(row['account']),
                 symbol=str(row['symbol']) if pd.notna(row['symbol']) else "Unknown",
@@ -173,7 +184,9 @@ class ImportWizardDialog(QDialog):
                 trade_time=row['trade_time'].to_pydatetime(),
                 lots=int(row['lots']),
                 net_profit=float(row['net_profit']),
-                commission=float(row['commission'])
+                commission=float(row['commission']),
+                entry_price=entry_price,
+                exit_price=exit_price,
             )
             if pd.notna(row.get('trade_id')):
                 tr.trade_id = str(row['trade_id'])

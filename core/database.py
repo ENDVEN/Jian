@@ -5,12 +5,14 @@ import sqlite3
 import uuid
 import pandas as pd
 from models.trade import TradeRecord
+from core.preferences import TIME_SOURCE_MANUAL
 from config import settings
 
 logger = logging.getLogger(__name__)
 
 # 交易流水表结构定义 (单一事实来源：建表、插入、迁移全部由此派生)
 # v1.1: entry_time / exit_time 已合并为单一 trade_time
+# v1.2: 新增成交价 / 成交时刻 / 合约乘数 / 孤儿标记，全部可空，向后兼容
 TRADES_SCHEMA = [
     ('internal_id',       'TEXT PRIMARY KEY'),
     ('trade_id',          'TEXT'),
@@ -25,6 +27,15 @@ TRADES_SCHEMA = [
     ('entry_reason',      'TEXT'),
     ('reflection',        'TEXT'),
     ('screenshot_paths',  'TEXT'),
+    # ---------------- v1.2 新增 ----------------
+    ('entry_time',        'TIMESTAMP'), # 开仓腿真实成交时刻（孤儿单为 NULL）
+    ('entry_price',       'REAL'),      # 开仓成交价（过月遗留单为 NULL）
+    ('exit_price',        'REAL'),      # 平仓成交价
+    ('entry_fill_time',   'TEXT'),      # 开仓成交时刻 HH:MM:SS（可空）
+    ('exit_fill_time',    'TEXT'),      # 平仓成交时刻 HH:MM:SS（可空）
+    ('time_source',       'TEXT'),      # DATE_ONLY / STATEMENT / MANUAL
+    ('multiplier',        'REAL'),      # 合约乘数（每点价值）
+    ('is_orphan',         'INTEGER DEFAULT 0'),  # 1 = 开仓腿缺失，待缝合
 ]
 
 # 除主键外的业务列 (保持与 TradeRecord 一致的写入顺序)
@@ -35,6 +46,10 @@ _MIGRATABLE_COLUMNS = [
     'trade_id', 'account', 'symbol', 'direction', 'lots',
     'net_profit', 'commission', 'strategy_tag',
     'entry_reason', 'reflection', 'screenshot_paths',
+    # v1.2：老备份表若已存在这些列则一并带回，否则自动跳过（新列留 NULL）
+    'entry_time', 'entry_price', 'exit_price',
+    'entry_fill_time', 'exit_fill_time', 'time_source',
+    'multiplier', 'is_orphan',
 ]
 
 
@@ -54,6 +69,9 @@ class DatabaseManager:
             self._prepare_schema_upgrade(conn)
             self._ensure_trades_table(conn)
             self._restore_legacy_backup(conn)
+            self._ensure_extra_columns(conn)
+            self._ensure_open_legs_table(conn)
+            self._ensure_coverage_tables(conn)
             self._ensure_roster_table(conn)
             conn.commit()
 
@@ -86,6 +104,78 @@ class DatabaseManager:
         conn.execute(f'''
             CREATE TABLE IF NOT EXISTS trades (
                 {column_defs}
+            )
+        ''')
+
+    @classmethod
+    def _ensure_extra_columns(cls, conn: sqlite3.Connection):
+        """
+        【v1.2 增量加列迁移】为已存在的 trades 表补齐新增列。
+
+        与 v1.1 的"整表重建"不同，加列属于纯增量场景，
+        必须走 ALTER TABLE ADD COLUMN —— 绝不能重建表，否则会丢失 internal_id
+        (导致防重失效) 与用户已有的复盘文字。
+        """
+        existing = cls._table_columns(conn, 'trades')
+        if not existing:
+            return
+        for name, type_ in TRADES_SCHEMA:
+            if name in existing:
+                continue
+            logger.info(f"正在为 trades 表补充 v1.2 新列: {name}")
+            conn.execute(f"ALTER TABLE trades ADD COLUMN {name} {type_}")
+        conn.commit()
+
+    @classmethod
+    def _ensure_open_legs_table(cls, conn: sqlite3.Connection):
+        """
+        持仓腿暂存表：保存"截至上次导入仍未平仓的开仓腿"。
+
+        【为什么必须持久化】FIFO 队列原本只活在内存里，导入结束即丢，
+        导致用户分月导入时上月末的仓位无法延续到下月，凭空制造大量"假的孤儿单"。
+        持久化后，分批导入与一次性导入的结果完全一致，且与导入顺序无关。
+        """
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS open_legs (
+                leg_id       TEXT PRIMARY KEY,
+                account      TEXT,
+                symbol       TEXT,
+                direction    TEXT,
+                open_date    TEXT,
+                open_time    TEXT,
+                price        REAL,
+                lots         INTEGER,
+                commission   REAL,
+                multiplier   REAL,
+                source_month TEXT
+            )
+        ''')
+
+    @classmethod
+    def _ensure_coverage_tables(cls, conn: sqlite3.Connection):
+        """
+        月度覆盖表：记录每个账户已导入哪些月份，以及该月的资金勾稽数据。
+        配合 gaps 表实现"漏月检测"与"用户确认跳过"。
+        """
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS import_coverage (
+                account       TEXT,
+                month         TEXT,
+                prev_balance  REAL,
+                equity        REAL,
+                month_pnl     REAL,
+                month_fee     REAL,
+                month_deposit REAL,
+                has_trades    INTEGER DEFAULT 0,
+                source_file   TEXT,
+                PRIMARY KEY (account, month)
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS coverage_gaps (
+                account TEXT,
+                month   TEXT,
+                PRIMARY KEY (account, month)
             )
         ''')
 
@@ -167,20 +257,31 @@ class DatabaseManager:
             cursor = conn.cursor()
             for t in trades:
                 # 【防呆核心】使用 INSERT OR IGNORE
-                cursor.execute(insert_sql, (
-                    t.internal_id, t.trade_id, t.account, t.symbol, t.direction, 
-                    t.trade_time.strftime('%Y-%m-%d %H:%M:%S'), 
-                    t.lots, t.net_profit, t.commission, 
-                    t.strategy_tag, t.entry_reason, t.reflection, t.screenshot_paths
-                ))
+                # 【健壮性】逐列用 getattr 取值：无论 TradeRecord 来自哪个来源
+                # (交割单 / 手工录入 / 旧版本代码)，缺失的新字段都会安全写入 NULL，
+                # 而不会抛 AttributeError 让整次导入失败。
+                values = [t.internal_id] + [
+                    self._serialize_value(col, getattr(t, col, None))
+                    for col in TRADES_COLUMNS
+                ]
+                cursor.execute(insert_sql, tuple(values))
                 # cursor.rowcount 为 1 表示成功插入，为 0 表示因为 IGNORE 被忽略
                 if cursor.rowcount > 0:
                     stats['inserted'] += 1
                 else:
                     stats['ignored'] += 1
             conn.commit()
-            
+
         return stats
+
+    @staticmethod
+    def _serialize_value(column: str, value):
+        """按列语义做入库前序列化（时间戳转字符串，其余原样）"""
+        if column in ('trade_time', 'entry_time'):
+            if value is None or pd.isna(value):
+                return None
+            return pd.to_datetime(value).strftime('%Y-%m-%d %H:%M:%S')
+        return value
 
     def load_all_trades(self) -> pd.DataFrame:
         with sqlite3.connect(self.db_path) as conn:
@@ -224,6 +325,127 @@ class DatabaseManager:
             cursor = conn.execute(
                 "UPDATE trades SET entry_reason = ?, reflection = ?, screenshot_paths = ? WHERE internal_id = ?",
                 (reason, reflection, paths, internal_id)
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    # ==========================================
+    # 持仓腿操作 (Open Legs CRUD)
+    # ==========================================
+    def load_open_legs(self, account: str = None) -> pd.DataFrame:
+        """读取截至上次导入仍未平仓的开仓腿；无记录时返回空 DataFrame。"""
+        with sqlite3.connect(self.db_path) as conn:
+            sql = "SELECT * FROM open_legs"
+            params = ()
+            if account:
+                sql += " WHERE account = ?"
+                params = (account,)
+            return pd.read_sql_query(sql, conn, params=params)
+
+    def replace_open_legs(self, account: str, legs: list[dict]) -> int:
+        """
+        用"本次导入结束后的真实持仓"全量覆写某账户的持仓腿。
+
+        【为什么是全量覆写而非增量追加】持仓腿是"当前状态"而非"历史流水"，
+        全量覆写天然幂等：无论同一批文件重复导入多少次，结果都只反映最新状态，
+        不会像追加那样把仓位越滚越多。
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM open_legs WHERE account = ?", (account,))
+            if legs:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO open_legs "
+                    "(leg_id, account, symbol, direction, open_date, open_time, "
+                    " price, lots, commission, multiplier, source_month) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    [
+                        (leg['leg_id'], leg['account'], leg['symbol'], leg['direction'],
+                         leg.get('open_date', ''), leg.get('open_time', ''),
+                         leg.get('price'), leg.get('lots', 0), leg.get('commission', 0.0),
+                         leg.get('multiplier', 0.0), leg.get('source_month', ''))
+                        for leg in legs
+                    ],
+                )
+            conn.commit()
+        return len(legs)
+
+    # ==========================================
+    # 月度覆盖与漏月检测 (Import Coverage CRUD)
+    # ==========================================
+    def upsert_coverage(self, record: dict):
+        """登记某账户某月的资金勾稽数据（重复导入同一月时安全覆盖）"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO import_coverage "
+                "(account, month, prev_balance, equity, month_pnl, month_fee, "
+                " month_deposit, has_trades, source_file) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (record['account'], record['month'],
+                 record.get('prev_balance'), record.get('equity'),
+                 record.get('month_pnl'), record.get('month_fee'),
+                 record.get('month_deposit'), int(bool(record.get('has_trades'))),
+                 record.get('source_file', '')),
+            )
+            conn.commit()
+
+    def load_coverage(self, account: str = None) -> pd.DataFrame:
+        with sqlite3.connect(self.db_path) as conn:
+            sql = "SELECT * FROM import_coverage"
+            params = ()
+            if account:
+                sql += " WHERE account = ?"
+                params = (account,)
+            return pd.read_sql_query(sql, conn, params=params)
+
+    def add_gap(self, account: str, month: str):
+        """将某月登记为"用户确认的有意跳过"，后续不再重复提醒"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO coverage_gaps (account, month) VALUES (?, ?)",
+                (account, month),
+            )
+            conn.commit()
+
+    def load_gaps(self, account: str = None) -> set:
+        with sqlite3.connect(self.db_path) as conn:
+            sql = "SELECT account, month FROM coverage_gaps"
+            params = ()
+            if account:
+                sql += " WHERE account = ?"
+                params = (account,)
+            rows = conn.execute(sql, params).fetchall()
+        return {(row[0], row[1]) for row in rows}
+
+    # ==========================================
+    # 孤儿单操作 (Orphan / Pending Stitch)
+    # ==========================================
+    def load_orphans(self, account: str = None) -> pd.DataFrame:
+        """读取所有开仓腿缺失、等待缝合的平仓记录"""
+        with sqlite3.connect(self.db_path) as conn:
+            sql = "SELECT * FROM trades WHERE is_orphan = 1"
+            params = ()
+            if account:
+                sql += " AND account = ?"
+                params = (account,)
+            return pd.read_sql_query(sql, conn, params=params)
+
+    def stitch_orphan(self, internal_id: str, entry_price: float,
+                      entry_time=None, entry_fill_time: str = "",
+                      extra_commission: float = 0.0) -> int:
+        """
+        手工补录开仓信息，把孤儿单缝合为完整闭环交易。
+
+        【诚实原则】只写入用户明确填写的内容，绝不猜测或推算开仓价；
+        时间来源一律标记为 MANUAL，与交割单原生数据严格区分。
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "UPDATE trades SET is_orphan = 0, entry_price = ?, entry_time = ?, "
+                " entry_fill_time = ?, commission = commission + ?, time_source = ? "
+                "WHERE internal_id = ?",
+                (entry_price, self._serialize_value('entry_time', entry_time),
+                 entry_fill_time, extra_commission,
+                 TIME_SOURCE_MANUAL, internal_id),
             )
             conn.commit()
             return cursor.rowcount

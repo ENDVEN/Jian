@@ -126,21 +126,60 @@ class JianMainWindow(QMainWindow):
     # 数据流与弹窗调度器 (完全解耦调用)
     # ==========================================
     
-    def _show_import_result(self, stats: dict, source_label: str):
-        """统一的导入防呆反馈：让用户对新增量与拦截量一目了然"""
+    def _show_import_result(self, stats: dict, source_label: str, gaps: list = None):
+        """
+        统一的导入防呆反馈：既报告新增/拦截量，
+        也把"疑似漏月"这类影响数据完整性的情况明确告知用户。
+        """
         msg = (f"操作完成！\n\n📄 共解析到{source_label}：{stats['total']} 笔\n"
                f"✅ 成功新增入库：{stats['inserted']} 笔")
         if stats['ignored'] > 0:
             msg += f"\n🛡️ 拦截重复数据：{stats['ignored']} 笔 (已跳过)"
         QMessageBox.information(self, "导入结果", msg)
 
+        if gaps:
+            self._warn_coverage_gaps(gaps)
+
+    def _warn_coverage_gaps(self, gaps: list):
+        """
+        漏月告警：资金链条接不上，说明中间可能存在未导入的月份。
+
+        【绝不阻断】数据照常入库、照常可用，漏月只是提示而非错误；
+        用户可以选择"稍后处理"，也可以把该月登记为"确无交易"以免重复打扰。
+        """
+        for gap in gaps:
+            month = gap.get('missing_month') or gap['month']
+            box = QMessageBox(self)
+            box.setWindowTitle("⚠️ 检测到导入断层")
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setText(
+                f"账户【{gap['account']}】的 {gap['month']} 月报显示：\n"
+                f"　　上月结存 ￥{gap['prev_balance']:,.2f}\n\n"
+                f"该数值与已导入月份的资金期末值都对不上，"
+                f"说明中间很可能漏导了 {month} 的交割单。\n\n"
+                f"漏导会让更早月份建立的仓位被误判为「遗留单」，"
+                f"进而缺少开仓价与持仓时长。建议补齐后再继续。"
+            )
+            btn_fix = box.addButton("立即补导", QMessageBox.ButtonRole.AcceptRole)
+            btn_skip = box.addButton(f"{month} 确无交易，不再提醒",
+                                     QMessageBox.ButtonRole.DestructiveRole)
+            btn_later = box.addButton("稍后处理", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(btn_later)
+            box.exec()
+
+            if box.clickedButton() is btn_skip:
+                self.engine.confirm_coverage_gap(gap['account'], month)
+            elif box.clickedButton() is btn_fix:
+                self.open_futures_import()   # 递归补导，处理完即返回
+                return
+
     def open_futures_import(self):
         dialog = FuturesImportDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'final_trades', None):
-            # 获取引擎返回的统计报告
-            stats = self.engine.add_trades(dialog.final_trades)
+        if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'parsed_result', None):
+            # 解析已在子线程完成，这里只在主线程做轻量落库，线程安全
+            pkg = self.engine.commit_cfmmc(dialog.parsed_result)
             self.render_all_data()
-            self._show_import_result(stats, "闭环交易")
+            self._show_import_result(pkg['stats'], "闭环交易", pkg.get('gaps'))
 
     def open_stock_import(self):
         dialog = ImportWizardDialog(self)
@@ -150,7 +189,11 @@ class JianMainWindow(QMainWindow):
             self._show_import_result(stats, "映射交易")
 
     def open_manual_entry(self):
-        dialog = ManualEntryDialog(self.engine.strategies, self)
+        # v1.2.1：归属账户只列出真实存在的账户（来自已导入数据），不预置虚构账户
+        df = self.engine.df
+        accounts = (sorted({str(a) for a in df['account'].dropna().unique()})
+                    if not df.empty else [])
+        dialog = ManualEntryDialog(self.engine.strategies, accounts, self)
         if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'new_trades', None):
             self.engine.add_trades(dialog.new_trades)
             self.render_all_data()
@@ -168,9 +211,16 @@ class JianMainWindow(QMainWindow):
                 export_df = self.engine.df.copy()
                 if 'internal_id' in export_df.columns:
                     export_df = export_df.drop(columns=['internal_id'])
-                
-                cols_order = ['trade_id', 'account', 'symbol', 'direction', 'trade_time', 
-                              'lots', 'net_profit', 'commission', 'strategy_tag', 'entry_reason', 'reflection', 'screenshot_paths']
+
+                # v1.2：导出时补算净额，让 CSV 与界面口径保持一致
+                if {'net_profit', 'commission'}.issubset(export_df.columns):
+                    export_df['net_amount'] = export_df['net_profit'] - export_df['commission']
+
+                cols_order = ['trade_id', 'account', 'symbol', 'direction', 'trade_time',
+                              'exit_fill_time', 'entry_fill_time', 'time_source',
+                              'entry_price', 'exit_price', 'multiplier', 'is_orphan',
+                              'lots', 'net_profit', 'commission', 'net_amount',
+                              'strategy_tag', 'entry_reason', 'reflection', 'screenshot_paths']
                 export_cols = [c for c in cols_order if c in export_df.columns]
                 export_df = export_df[export_cols]
                 

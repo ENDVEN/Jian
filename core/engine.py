@@ -2,6 +2,11 @@
 import pandas as pd
 from models.trade import TradeRecord
 from core.database import DatabaseManager
+from data.data_feed import (
+    detect_coverage_gaps,
+    legs_from_payload,
+    parse_cfmmc_files,
+)
 from config import settings
 
 
@@ -46,6 +51,65 @@ class DataEngine:
             self.reload_data()
             
         return stats_report
+
+    # ==========================================
+    # CFMMC 交割单导入全流程 (Import Pipeline)
+    # ==========================================
+    def parse_cfmmc(self, file_paths) -> dict:
+        """
+        解析交割单（耗时步骤，请放在 QThread 中执行）。
+
+        会自动载入历史上未平仓的持仓腿一并参与 FIFO，
+        因此分月导入时上月末的仓位能无缝延续到本月。
+        """
+        payload = self.db.load_open_legs()
+        initial_legs = legs_from_payload(payload.to_dict('records')) if not payload.empty else []
+        return parse_cfmmc_files(file_paths, initial_legs)
+
+    def commit_cfmmc(self, result: dict) -> dict:
+        """
+        把解析结果落库（轻量步骤，在 UI 主线程执行以避免多线程写库）：
+          防重入库 → 结转最新持仓 → 月度覆盖登记 → 漏月检测
+
+        【架构纪律】UI 层只调用 parse_cfmmc / commit_cfmmc，绝不直接触碰 SQL。
+        【顺序无关】文件在解析阶段已按全局时间重新排序，
+        因此"分月多次导入"与"一次性导入"的结果完全一致。
+        """
+        stats = self.add_trades(result['trades'])
+
+        # 结转本次导入结束后的最新未平持仓（按账户分组全量覆写，天然幂等）
+        by_account: dict[str, list] = {}
+        for leg in result['open_legs']:
+            by_account.setdefault(leg['account'], []).append(leg)
+        for account, legs in by_account.items():
+            self.db.replace_open_legs(account, legs)
+
+        # 登记月度覆盖，供漏月检测使用
+        for item in result['coverage']:
+            self.db.upsert_coverage(item)
+
+        gaps = detect_coverage_gaps(result['coverage'], self.db.load_gaps())
+
+        return {'stats': stats, 'report': result['report'], 'gaps': gaps}
+
+    def confirm_coverage_gap(self, account: str, month: str):
+        """用户确认某月为"有意跳过"，此后不再重复提醒"""
+        self.db.add_gap(account, month)
+
+    def get_orphans(self) -> pd.DataFrame:
+        """当前所有待缝合的孤儿单（开仓腿缺失的平仓记录）"""
+        return self.db.load_orphans()
+
+    def stitch_orphan_trade(self, internal_id: str, entry_price: float,
+                            entry_time=None, entry_fill_time: str = "",
+                            extra_commission: float = 0.0) -> bool:
+        """手工补录开仓信息，把孤儿单缝合为完整闭环交易"""
+        changed = self.db.stitch_orphan(
+            internal_id, entry_price, entry_time, entry_fill_time, extra_commission
+        )
+        if changed > 0:
+            self.reload_data()
+        return changed > 0
 
     # ==========================================
     # 删除 / 更新操作
