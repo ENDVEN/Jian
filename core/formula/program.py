@@ -120,22 +120,35 @@ def missing_parameter_names(error: FormulaProgramError) -> list[str]:
     return [match.group(1)] if match else []
 
 
-def execute_program(program: CompiledProgram, df: pd.DataFrame,
-                    params: dict) -> dict[str, pd.Series]:
-    """按声明顺序执行整个函数，返回 {变量名: 序列}"""
+def execute_programs(programs: list[CompiledProgram], df: pd.DataFrame,
+                     params: dict) -> dict[str, pd.Series]:
+    """把多段函数在【同一个 EvalContext】上按顺序执行，返回合并的 {变量名: 序列}。
+
+    这是「多段粘贴 / 多指标合流」的地基：
+    - 各段产出的变量进入共享变量池，任意后续语句或条件都可引用；
+    - 后段可以引用前段产出的变量 (如同把各段按顺序拼成一大段执行)；
+    - 同名变量的语义 = 后者覆盖前者，与单段内顺序赋值一致。
+    """
     context = EvalContext(df, params)
     results: dict[str, pd.Series] = {}
-    for kind, name, ast in program.statements:
-        if kind not in (ASSIGN, OUTPUT):
-            continue
-        try:
-            value = context.eval(ast)
-        except FormulaEvalError as e:
-            raise FormulaProgramError(f"变量 '{name}' 计算失败: {e}") from None
-        series = context.ser(value)
-        context.add_variable(name, series)
-        results[name] = series
+    for program in programs:
+        for kind, name, ast in program.statements:
+            if kind not in (ASSIGN, OUTPUT):
+                continue
+            try:
+                value = context.eval(ast)
+            except FormulaEvalError as e:
+                raise FormulaProgramError(f"变量 '{name}' 计算失败: {e}") from None
+            series = context.ser(value)
+            context.add_variable(name, series)
+            results[name] = series
     return results
+
+
+def execute_program(program: CompiledProgram, df: pd.DataFrame,
+                    params: dict) -> dict[str, pd.Series]:
+    """单段执行 (兼容旧接口)：等价于只含一段的 execute_programs"""
+    return execute_programs([program], df, params)
 
 
 def run_function(text: str, df: pd.DataFrame, params: dict = None) -> tuple[CompiledProgram, dict[str, pd.Series]]:

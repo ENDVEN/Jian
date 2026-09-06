@@ -115,4 +115,21 @@ def _signature(payload: dict) -> str:
         str(payload.get("params_text", "")).strip(),
         str(payload.get("condition_buy", "")).strip(),
         str(payload.get("condition_sell", "")).strip(),
+        # 阶段B：风控参数也是策略配置的一部分，不同风控视为不同策略签名；
+        # 但“全 0 = 未启用风控”与旧存档(无 risk 字段)等价，故归并为空串以兼容。
+        _risk_signature(payload.get("risk")),
     ])
+
+
+def _risk_signature(risk) -> str:
+    """风控全关(或缺失) -> ''；任一启用 -> 稳定化 dict 文本"""
+    if not isinstance(risk, dict):
+        return ""
+    try:
+        values = [float(risk.get(k, 0) or 0)
+                  for k in ("max_bars", "stop_loss_pct", "take_profit_pct", "trailing_pct")]
+    except (TypeError, ValueError):
+        return ""
+    if all(v == 0 for v in values):
+        return ""
+    return "|".join(repr(v) for v in values)

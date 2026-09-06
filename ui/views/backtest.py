@@ -1,16 +1,19 @@
 # ui/views/backtest.py
 """
-📐 市场回测 视图 —— 策略工作台版 (UI v2)。
+📐 市场回测 视图 —— 策略工作台版 (UI v3 / 阶段A)。
 
 布局：
   ┌ 顶部标题带: 标题 + 标的 + 策略库(选用/另存/删除) ┐
   ├ QSplitter(垂直) ─────────────────────────────┤
-  │ 上区(策略编辑) : ① 函数粘贴+检测 / ② 条件配置   │
+  │ 上区(策略编辑) : ① 函数(可多段) + ② 买卖条件组 │
   │ 下区(回测工作台): 区间+运行 / KPI卡片 / 结果页签 │
   └─────────────────────────────────────────────┘
 
-工作流 (产品决策)：
-  ① 粘贴整段函数 -> 检测(语法/执行/缺参) -> ② 基于函数产出变量配置买卖条件
+工作流 (产品决策 / 阶段A)：
+  ① 粘贴函数(可多段：标准MACD/KDJ/自研各一段，共享变量池、后段可引用前段)
+     -> 检测(语法/执行/缺参)
+  -> ② 买卖各为一个「条件组 Gate」：多条件积木行 + 满足逻辑
+     (全部满足 / 任一满足 / 至少 N 个满足，内部翻译成 COUNT_TRUE 表达式)
   -> 运行回测 -> 保存为策略 -> 下次“选用”一键快速回测
   -> 「策略对比」页签横向比较各策略在该股上的胜率/累计收益。
 
@@ -26,20 +29,22 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QLineEdit, QPlainTextEdit, QFrame, QDateEdit,
+                             QLabel, QLineEdit, QFrame, QDateEdit,
                              QMessageBox, QTabWidget, QTableWidget,
-                             QTableWidgetItem, QHeaderView, QGridLayout,
-                             QComboBox, QDoubleSpinBox, QCheckBox, QSplitter,
+                             QTableWidgetItem, QHeaderView,
+                             QComboBox, QCheckBox, QDoubleSpinBox, QSplitter,
                              QInputDialog, QApplication)
 
 from config import settings
-from core.formula.program import (parse_program, execute_program,
+from core.formula.program import (parse_program, execute_programs,
                                   FormulaProgramError, missing_parameter_names)
 from core.backtest import BacktestEngine
 from data.market_db import DataLakeManager
 from data.akshare_feed import AkShareFeed
 from data.strategy_store import StrategyStore
 from ui.widgets.custom_widgets import CandlestickItem
+from ui.widgets.condition_gate import ConditionGate
+from ui.widgets.function_segments import FunctionSegments
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +52,23 @@ PLACEHOLDER = "-"
 MARKER_MARGIN = 0.03
 RECENT_BARS = 150
 
-# 条件规则：显示文本 -> DSL 算子
-CONDITION_RULES = [
-    ("= (等于)", "eq"), ("出现 (由假变真)", "rise"), ("消失 (由真变假)", "fall"),
-    ("> (大于)", "gt"), ("< (小于)", "lt"),
-    (">= (大于等于)", "ge"), ("<= (小于等于)", "le"), ("≠ (不等于)", "ne"),
-]
-_VALUE_RULES = {"eq", "gt", "lt", "ge", "le", "ne"}
-_RULE_KEY_TO_INDEX = {key: i for i, (_, key) in enumerate(CONDITION_RULES)}
+# 离场原因 -> 中文文案 (阶段B 风控离场器)
+EXIT_REASON_LABELS = {
+    "signal": "卖出信号",
+    "stop_loss": "固定止损",
+    "take_profit": "固定止盈",
+    "trailing": "移动止盈",
+    "max_bars": "超时强平",
+    "force_close": "收盘强平",
+}
+_REASON_COLORS = {
+    "signal": settings.COLOR_TEXT_PRIMARY,
+    "stop_loss": settings.COLOR_LOSS_TEXT,
+    "take_profit": settings.COLOR_PROFIT_TEXT,
+    "trailing": settings.COLOR_PROFIT_TEXT,
+    "max_bars": "#E65100",
+    "force_close": "#8A94A6",
+}
 
 # 快捷区间
 RANGE_PRESETS = {
@@ -76,20 +90,6 @@ def _dummy_bars(n: int = 200) -> pd.DataFrame:
         "date": dates, "open": close - 0.1, "high": close + 0.5,
         "low": close - 0.5, "close": close, "volume": 10000 + x * 10,
     })
-
-
-def build_condition_expression(variable: str, rule: str, value: float) -> str:
-    value_txt = f"{value:.6g}"
-    return {
-        "eq": f"{variable} = {value_txt}",
-        "gt": f"{variable} > {value_txt}",
-        "lt": f"{variable} < {value_txt}",
-        "ge": f"{variable} >= {value_txt}",
-        "le": f"{variable} <= {value_txt}",
-        "ne": f"{variable} <> {value_txt}",
-        "rise": f"CROSS({variable}, 0.5)",
-        "fall": f"CROSS(0.5, {variable})",
-    }.get(rule, "")
 
 
 def _date_from_preset(preset: str) -> QDate:
@@ -127,7 +127,7 @@ class _BacktestRunThread(QThread):
     finished_signal = pyqtSignal(object)
 
     def __init__(self, df: pd.DataFrame, symbol: str, buy_expr: str, sell_expr: str,
-                 start_date: str, end_date: str):
+                 start_date: str, end_date: str, risk: dict = None):
         super().__init__()
         self.df = df
         self.symbol = symbol
@@ -135,13 +135,14 @@ class _BacktestRunThread(QThread):
         self.sell_expr = sell_expr
         self.start_date = start_date
         self.end_date = end_date
+        self.risk = risk or {}
 
     def run(self):
         result = None
         try:
             result = BacktestEngine().run(
                 self.df, self.buy_expr, self.sell_expr, symbol=self.symbol,
-                start_date=self.start_date, end_date=self.end_date)
+                start_date=self.start_date, end_date=self.end_date, risk=self.risk)
         except Exception as e:
             logger.error(f"市场回测-计算异常 [{self.symbol}]: {e}")
         self.finished_signal.emit(result)
@@ -176,7 +177,7 @@ class SingleStockBacktestView(QWidget):
 
         self.current_symbol = None
         self.current_name = ""
-        self._program = None
+        self._programs: list = []     # 多段函数编译产物 (阶段A)
         self._variables = []
         self._active_strategy_id = None
 
@@ -295,7 +296,7 @@ class SingleStockBacktestView(QWidget):
         func_lay.setSpacing(6)
 
         func_head = QHBoxLayout()
-        step1 = QLabel("① 粘贴你的函数")
+        step1 = QLabel("① 粘贴你的函数（可多段 · 共享变量池）")
         step1.setStyleSheet("font-size: 14px; font-weight: bold; color: #1976D2;")
         func_head.addWidget(step1)
         func_head.addStretch()
@@ -313,15 +314,12 @@ class SingleStockBacktestView(QWidget):
         body_lay = QVBoxLayout(self._func_body)
         body_lay.setContentsMargins(0, 0, 0, 0)
         body_lay.setSpacing(6)
-        self.editor = QPlainTextEdit()
-        self.editor.setPlaceholderText(
+        self.segments = FunctionSegments(
             "MA5 := MA(C, 5);\n"
             "UPTREND := C > MA5;\n"
             "GOLD: CROSS(MA(C,5), MA(C,20)), COLORRED;\n\n"
             "粘贴你编写的整段函数后点击「检测函数」(示例为通用公开写法)")
-        self.editor.setStyleSheet("QPlainTextEdit { font-family: Consolas, 'Microsoft YaHei', monospace; font-size: 13px; border: 1px solid #E0E4EC; border-radius: 8px; background: #FAFBFD; padding: 6px; }")
-        self.editor.setFixedHeight(150)
-        body_lay.addWidget(self.editor)
+        body_lay.addWidget(self.segments)
         self.lbl_detect = QLabel("尚未检测")
         self.lbl_detect.setWordWrap(True)
         self.lbl_detect.setStyleSheet("font-size: 12px; color: #9AA3B2;")
@@ -337,10 +335,13 @@ class SingleStockBacktestView(QWidget):
         cond_lay.setSpacing(8)
 
         cond_head = QHBoxLayout()
-        title_cond = QLabel("② 买卖条件（用函数产出变量 · 事件模式）")
+        title_cond = QLabel("② 买卖条件组（每个条件一行 · 满足计数触发）")
         title_cond.setStyleSheet("font-size: 14px; font-weight: bold; color: #1976D2;")
         cond_head.addWidget(title_cond)
         cond_head.addStretch()
+        hint = QLabel("全部满足=AND · 任一满足=OR · 至少N个=满足计数")
+        hint.setStyleSheet("font-size: 11px; color: #A7AEBE;")
+        cond_head.addWidget(hint)
         self.btn_collapse_cond = QPushButton("收起 ▲")
         self.btn_collapse_cond.setStyleSheet("QPushButton { color:#8A94A6; background:transparent; border:none; padding:4px 6px; font-weight:bold; } QPushButton:hover{color:#1976D2;}")
         self.btn_collapse_cond.clicked.connect(lambda: self._toggle_collapse(self._cond_body, self.btn_collapse_cond))
@@ -355,7 +356,7 @@ class SingleStockBacktestView(QWidget):
         param_row = QHBoxLayout()
         param_row.addWidget(self._mini_label("函数参数"))
         self.txt_params = QLineEdit()
-        self.txt_params.setPlaceholderText("形如 N1=5 N2=20（名称与函数内参数一致）")
+        self.txt_params.setPlaceholderText("形如 N1=5 N2=20（对所有函数段统一生效）")
         self.txt_params.setFixedHeight(30)
         self.txt_params.setStyleSheet("QLineEdit { padding: 0 10px; border: 1px solid #E0E4EC; border-radius: 8px; background: white; font-size: 13px; }")
         param_row.addWidget(self.txt_params, 1)
@@ -363,10 +364,10 @@ class SingleStockBacktestView(QWidget):
 
         grid_rows = QHBoxLayout()
         grid_rows.setSpacing(16)
-        self.cb_buy_var, self.cb_buy_rule, self.spin_buy_val, self.lbl_buy_cond = \
-            self._build_condition_block(grid_rows, "买入", settings.COLOR_PROFIT_TEXT)
-        self.cb_sell_var, self.cb_sell_rule, self.spin_sell_val, self.lbl_sell_cond = \
-            self._build_condition_block(grid_rows, "卖出", settings.COLOR_LOSS_TEXT)
+        self.gate_buy = ConditionGate("买入条件", settings.COLOR_PROFIT_TEXT)
+        self.gate_sell = ConditionGate("卖出条件", settings.COLOR_LOSS_TEXT)
+        grid_rows.addWidget(self.gate_buy, 1)
+        grid_rows.addWidget(self.gate_sell, 1)
         cond_body_lay.addLayout(grid_rows)
         cond_lay.addWidget(self._cond_body)
         top_lay.addWidget(self._cond_card)
@@ -406,6 +407,37 @@ class SingleStockBacktestView(QWidget):
         self.btn_run.clicked.connect(self.start_backtest)
         run_lay.addWidget(self.btn_run)
         bottom_lay.addWidget(run_bar)
+
+        # 风控离场行 (阶段B；0 = 关闭对应规则)
+        risk_bar = QFrame()
+        risk_bar.setStyleSheet(_CARD_QSS)
+        risk_lay = QHBoxLayout(risk_bar)
+        risk_lay.setContentsMargins(14, 6, 14, 6)
+        risk_lay.setSpacing(8)
+        shield = QLabel("🛡 风控离场")
+        shield.setStyleSheet("font-size: 12px; font-weight: bold; color: #E65100;")
+        risk_lay.addWidget(shield)
+        risk_lay.addWidget(self._mini_label("最长持仓"))
+        self.spin_risk_bars = self._risk_spin("若持有超过 N 根 K 线仍未卖出则当日收盘强平", 0, 0, 999, 0)
+        risk_lay.addWidget(self.spin_risk_bars)
+        risk_lay.addWidget(self._mini_label("根"))
+        risk_lay.addWidget(self._mini_label("固定止损"))
+        self.spin_risk_stop = self._risk_spin("收盘/盘中自开仓价回撤达到该百分比即离场 (0=关闭)", 0, 0, 100, 1)
+        risk_lay.addWidget(self.spin_risk_stop)
+        risk_lay.addWidget(self._mini_label("%"))
+        risk_lay.addWidget(self._mini_label("固定止盈"))
+        self.spin_risk_take = self._risk_spin("自开仓价上涨达到该百分比即止盈离场 (0=关闭)", 0, 0, 100, 1)
+        risk_lay.addWidget(self.spin_risk_take)
+        risk_lay.addWidget(self._mini_label("%"))
+        risk_lay.addWidget(self._mini_label("移动止盈回撤"))
+        self.spin_risk_trail = self._risk_spin("自持仓最高点回落该百分比即离场，保护浮盈 (0=关闭)", 0, 0, 100, 1)
+        risk_lay.addWidget(self.spin_risk_trail)
+        risk_lay.addWidget(self._mini_label("%"))
+        risk_lay.addStretch()
+        tip_risk = QLabel("硬性规则盘中触发即离场，优先于卖出信号；0 表示不使用")
+        tip_risk.setStyleSheet("font-size: 11px; color: #A7AEBE;")
+        risk_lay.addWidget(tip_risk)
+        bottom_lay.addWidget(risk_bar)
 
         # KPI 卡片行
         kpi_row = QHBoxLayout()
@@ -451,8 +483,8 @@ class SingleStockBacktestView(QWidget):
         self._build_compare_tab()
         self.tabs.addTab(self.compare_tab, "🧭 策略对比")
         self.trades_table = QTableWidget()
-        self.trades_table.setColumnCount(8)
-        self.trades_table.setHorizontalHeaderLabels(["#", "买入日期", "买入价", "卖出日期", "卖出价", "持有天数", "盈亏", "收益率"])
+        self.trades_table.setColumnCount(9)
+        self.trades_table.setHorizontalHeaderLabels(["#", "买入日期", "买入价", "卖出日期", "卖出价", "持有天数", "盈亏", "收益率", "离场原因"])
         self.trades_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.trades_table.setAlternatingRowColors(True)
         self.trades_table.setStyleSheet("QTableWidget { background: white; alternate-background-color: #F7F9FC; border:none; gridline-color:#EEF1F6;} QHeaderView::section { background:#F4F6FA; color:#5B6472; font-weight:bold; border:none; padding:8px; }")
@@ -473,50 +505,39 @@ class SingleStockBacktestView(QWidget):
         lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #5B6472;")
         return lbl
 
-    def _build_condition_block(self, parent_lay, side, color_hex):
-        """每个条件: 变量 | 规则 | 数值 | 预览 (竖排紧凑块)"""
-        box = QVBoxLayout()
-        box.setSpacing(4)
-        head = QHBoxLayout()
-        tag = QLabel(side)
-        tag.setStyleSheet(f"font-weight: bold; color: {color_hex};")
-        head.addWidget(tag)
-        head.addStretch()
-        box.addLayout(head)
-
-        var_row = QHBoxLayout()
-        var_row.addWidget(self._mini_label("变量"))
-        cb_var = QComboBox()
-        cb_var.currentIndexChanged.connect(self._refresh_condition_preview)
-        var_row.addWidget(cb_var, 1)
-        box.addLayout(var_row)
-
-        rule_row = QHBoxLayout()
-        rule_row.addWidget(self._mini_label("规则"))
-        cb_rule = QComboBox()
-        for text, _ in CONDITION_RULES:
-            cb_rule.addItem(text)
-        cb_rule.currentIndexChanged.connect(self._sync_rule_value_visibility)
-        cb_rule.currentIndexChanged.connect(self._refresh_condition_preview)
-        rule_row.addWidget(cb_rule, 1)
-        box.addLayout(rule_row)
-
-        val_row = QHBoxLayout()
-        val_row.addWidget(self._mini_label("数值"))
+    @staticmethod
+    def _risk_spin(tooltip: str, value: float, lo: float, hi: float, decimals: int) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
-        spin.setRange(-9999999, 9999999)
-        spin.setDecimals(4)
-        spin.setValue(1.0)
-        spin.valueChanged.connect(self._refresh_condition_preview)
-        val_row.addWidget(spin, 1)
-        box.addLayout(val_row)
+        spin.setRange(lo, hi)
+        spin.setDecimals(decimals)
+        spin.setValue(value)
+        spin.setSingleStep(1 if decimals == 0 else 0.5)
+        spin.setMinimumWidth(64)
+        spin.setToolTip(tooltip)
+        spin.setStyleSheet("QDoubleSpinBox { padding: 0 6px; border: 1px solid #E0E4EC; "
+                           "border-radius: 8px; background: white; font-size: 12px; }")
+        return spin
 
-        cond_lbl = QLabel(" ")
-        cond_lbl.setStyleSheet("font-size: 12px; font-family: Consolas, 'Microsoft YaHei'; color: #424B5A; background:#F6F8FC; border-radius:6px; padding:4px 8px;")
-        cond_lbl.setWordWrap(True)
-        box.addWidget(cond_lbl)
-        parent_lay.addLayout(box, 1)
-        return cb_var, cb_rule, spin, cond_lbl
+    def _risk_config(self) -> dict:
+        """读取风控参数行 -> 引擎 risk dict (0 = 关闭)"""
+        return {
+            "max_bars": int(self.spin_risk_bars.value()),
+            "stop_loss_pct": float(self.spin_risk_stop.value()),
+            "take_profit_pct": float(self.spin_risk_take.value()),
+            "trailing_pct": float(self.spin_risk_trail.value()),
+        }
+
+    def _apply_risk_config(self, cfg: dict):
+        """从策略快照恢复风控参数 (字段缺失/非法则回落 0)"""
+        cfg = cfg or {}
+        for spin, key in ((self.spin_risk_bars, "max_bars"),
+                          (self.spin_risk_stop, "stop_loss_pct"),
+                          (self.spin_risk_take, "take_profit_pct"),
+                          (self.spin_risk_trail, "trailing_pct")):
+            try:
+                spin.setValue(float(cfg.get(key, 0) or 0))
+            except (TypeError, ValueError):
+                spin.setValue(0)
 
     def _build_compare_tab(self):
         lay = QVBoxLayout(self.compare_tab)
@@ -553,16 +574,28 @@ class SingleStockBacktestView(QWidget):
         return params
 
     def detect_function(self, quiet: bool = False):
-        text = self.editor.toPlainText().strip()
-        if not text:
+        """多段函数：逐段解析 + 共享 context 试运行 + 缺参自动探测 (阶段A)"""
+        texts = [t.strip() for t in self.segments.texts() if t.strip()]
+        if not texts:
             if not quiet:
                 QMessageBox.information(self, "提示", "请先粘贴函数内容。")
             return
-        try:
-            program = parse_program(text)
-        except FormulaProgramError as e:
-            self._set_detect(False, f"❌ {e}")
-            return
+
+        # 逐段解析，错误精确报出在哪一段
+        programs = []
+        for idx, text in enumerate(texts, start=1):
+            try:
+                programs.append(parse_program(text))
+            except FormulaProgramError as e:
+                self._set_detect(False, f"❌ 函数段 {idx}: {e}")
+                return
+
+        # 合并变量名 (保留声明顺序、去重；同名由后段覆盖，语义与单段一致)
+        variables = []
+        for program in programs:
+            for name in program.output_names:
+                if name not in variables:
+                    variables.append(name)
 
         params = self._parse_params_text(self.txt_params.text())
         dummy = _dummy_bars()
@@ -570,7 +603,7 @@ class SingleStockBacktestView(QWidget):
         attempt_params = dict(params)
         for _ in range(60):
             try:
-                execute_program(program, dummy, attempt_params)
+                execute_programs(programs, dummy, attempt_params)
                 break
             except FormulaProgramError as e:
                 names = missing_parameter_names(e)
@@ -586,18 +619,19 @@ class SingleStockBacktestView(QWidget):
                 f"❌ 缺少参数: {'、'.join(missing)}。请在「函数参数」中填写后重新检测。")
             return
         try:
-            execute_program(program, dummy, params)
+            execute_programs(programs, dummy, params)
         except FormulaProgramError as e:
             self._set_detect(False, f"❌ {e}")
             return
 
-        self._program = program
-        self._variables = program.output_names
+        self._programs = programs
+        self._variables = variables
         self._set_detect(
             True,
-            f"✓ 可运行。识别 {len(self._variables)} 个产出变量: {', '.join(self._variables[:10])}"
+            f"✓ 可运行。识别 {len(self._variables)} 个共享变量: {', '.join(self._variables[:10])}"
             f"{' …' if len(self._variables) > 10 else ''}")
-        self._populate_variable_combos()
+        self.gate_buy.set_variables(self._variables)
+        self.gate_sell.set_variables(self._variables)
         self._set_condition_enabled(True)
 
     def _set_detect(self, ok: bool, message: str):
@@ -606,68 +640,34 @@ class SingleStockBacktestView(QWidget):
             f"font-size: 12px; color: {'#4CAF50' if ok else '#F44336'}; font-weight: bold;")
 
     # ==========================================
-    # ② 条件
+    # ② 条件 (Gate 桥接)
     # ==========================================
-    def _populate_variable_combos(self):
-        for cb in (self.cb_buy_var, self.cb_sell_var):
-            cb.blockSignals(True)
-            cb.clear()
-            for var in self._variables:
-                cb.addItem(var, var)
-            cb.blockSignals(False)
-        if self._variables:
-            self.cb_buy_var.setCurrentIndex(0)
-            self.cb_sell_var.setCurrentIndex(0)
-        self._refresh_condition_preview()
-
     def _set_condition_enabled(self, enabled: bool):
-        for w in (self.cb_buy_var, self.cb_buy_rule, self.spin_buy_val,
-                  self.cb_sell_var, self.cb_sell_rule, self.spin_sell_val,
-                  self.btn_run):
-            w.setEnabled(enabled)
-
-    def _sync_rule_value_visibility(self, *args):
-        for spin, rule_cb in ((self.spin_buy_val, self.cb_buy_rule),
-                              (self.spin_sell_val, self.cb_sell_rule)):
-            key = CONDITION_RULES[rule_cb.currentIndex()][1]
-            spin.setEnabled(key in _VALUE_RULES)
-
-    def _refresh_condition_preview(self, *args):
-        if not self._variables:
-            return
-        self.lbl_buy_cond.setText(self._current_condition(
-            self.cb_buy_var, self.cb_buy_rule, self.spin_buy_val))
-        self.lbl_sell_cond.setText(self._current_condition(
-            self.cb_sell_var, self.cb_sell_rule, self.spin_sell_val))
-
-    @staticmethod
-    def _current_condition(cb_var, cb_rule, spin) -> str:
-        variable = cb_var.currentData() or ""
-        key = CONDITION_RULES[cb_rule.currentIndex()][1]
-        try:
-            return build_condition_expression(variable, key, spin.value())
-        except Exception:
-            return " "
-
-    def _condition_config(self, cb_var, cb_rule, spin) -> dict:
-        return {
-            "variable": cb_var.currentData() or "",
-            "rule": CONDITION_RULES[cb_rule.currentIndex()][1],
-            "value": spin.value(),
-        }
+        self.gate_buy.set_gate_enabled(enabled)
+        self.gate_sell.set_gate_enabled(enabled)
+        self.btn_run.setEnabled(enabled)
 
     # ==========================================
     # 策略库 (选用 / 保存 / 删除 / 对比)
     # ==========================================
     def _strategy_payload(self) -> dict:
-        """把当前编辑器状态打包为可持久化的策略快照"""
+        """把当前编辑器状态打包为可持久化的策略快照 (阶段A 多段结构)
+
+        存储约定：
+        - segments: [各段函数文本]，UI 还原时精确恢复多段；
+        - function: 各段以分号连接的合并文本，保留给 strategy_store 的
+          find_same 签名与旧版载入逻辑 (分号连接 = 同一 EvalContext 顺序执行，语义等价)。
+        """
+        texts = [t.strip() for t in self.segments.texts() if t.strip()]
         return {
             "name": "",
             "note": "",
-            "function": self.editor.toPlainText().strip(),
+            "segments": texts,
+            "function": "; ".join(texts),
             "params_text": self.txt_params.text().strip(),
-            "condition_buy": self._condition_config(self.cb_buy_var, self.cb_buy_rule, self.spin_buy_val),
-            "condition_sell": self._condition_config(self.cb_sell_var, self.cb_sell_rule, self.spin_sell_val),
+            "condition_buy": self.gate_buy.config(),
+            "condition_sell": self.gate_sell.config(),
+            "risk": self._risk_config(),
             "start_date": self.date_start.date().toString("yyyy-MM-dd"),
             "end_date": self.date_end.date().toString("yyyy-MM-dd"),
             "symbol": self.current_symbol,
@@ -701,39 +701,24 @@ class SingleStockBacktestView(QWidget):
         if not strategy:
             return
         self._active_strategy_id = strategy.get("id")
-        # 载入配置
-        self.editor.setPlainText(str(strategy.get("function", "")))
+        # 载入函数：新档用 segments 多段还原；旧档回落单段 function
+        segments = strategy.get("segments") or [str(strategy.get("function", ""))]
+        self.segments.set_texts([s for s in segments if s and s.strip()])
         self.txt_params.setText(str(strategy.get("params_text", "")))
         if strategy.get("start_date"):
             self.date_start.setDate(QDate.fromString(strategy["start_date"], "yyyy-MM-dd"))
         if strategy.get("end_date"):
             self.date_end.setDate(QDate.fromString(strategy["end_date"], "yyyy-MM-dd"))
         self.detect_function(quiet=True)
-        # 还原买卖条件
-        buy_cfg = strategy.get("condition_buy") or {}
-        sell_cfg = strategy.get("condition_sell") or {}
-        self._apply_condition_config(self.cb_buy_var, self.cb_buy_rule, self.spin_buy_val, buy_cfg)
-        self._apply_condition_config(self.cb_sell_var, self.cb_sell_rule, self.spin_sell_val, sell_cfg)
+        # 还原买卖条件组 (新结构 {logic,n,conditions} 与旧平铺 dict 均兼容)
+        self.gate_buy.load_config(strategy.get("condition_buy") or {})
+        self.gate_sell.load_config(strategy.get("condition_sell") or {})
+        # 还原风控参数 (旧策略无 risk 字段 -> 回落 0 全关闭)
+        self._apply_risk_config(strategy.get("risk") or {})
         self.lbl_run_status.setText(f"已载入策略「{strategy.get('name')}」，请选择股票后运行。")
 
-    def _apply_condition_config(self, cb_var, cb_rule, spin, cfg):
-        if not cfg:
-            return
-        variable = cfg.get("variable")
-        rule = cfg.get("rule")
-        idx_var = cb_var.findData(variable) if variable else -1
-        if idx_var >= 0:
-            cb_var.setCurrentIndex(idx_var)
-        if rule in _RULE_KEY_TO_INDEX:
-            cb_rule.setCurrentIndex(_RULE_KEY_TO_INDEX[rule])
-        try:
-            spin.setValue(float(cfg.get("value", 1.0)))
-        except (TypeError, ValueError):
-            pass
-        self._refresh_condition_preview()
-
     def save_strategy(self):
-        if self._program is None:
+        if not self._programs:
             QMessageBox.information(self, "提示", "请先完成函数检测后再保存。")
             return
         payload = self._strategy_payload()
@@ -839,16 +824,17 @@ class SingleStockBacktestView(QWidget):
         if not self.current_symbol:
             QMessageBox.information(self, "提示", "请先选择一只A股标的。")
             return
-        if self._program is None:
+        if not self._programs:
             QMessageBox.information(self, "提示", "请先完成函数检测。")
             return
-        buy_expr = self._current_condition(self.cb_buy_var, self.cb_buy_rule, self.spin_buy_val).strip()
-        sell_expr = self._current_condition(self.cb_sell_var, self.cb_sell_rule, self.spin_sell_val).strip()
+        buy_expr = (self.gate_buy.expression() or "").strip()
+        sell_expr = (self.gate_sell.expression() or "").strip()
         if not buy_expr or not sell_expr:
-            QMessageBox.warning(self, "条件缺失", "请先配置买卖条件。")
+            QMessageBox.warning(self, "条件缺失", "买入/卖出至少各配置一个有效条件。")
             return
         self._pending_run = (buy_expr, sell_expr)
         self._pending_params = self._parse_params_text(self.txt_params.text())
+        self._pending_risk = self._risk_config()
 
         df = self.data_lake.load_data("kline_daily", self.current_symbol)
         if df.empty:
@@ -869,7 +855,7 @@ class SingleStockBacktestView(QWidget):
     def _on_data_ready(self, df):
         params = getattr(self, '_pending_params', {})
         try:
-            results = execute_program(self._program, df, params)
+            results = execute_programs(self._programs, df, params)
         except FormulaProgramError as e:
             self._set_busy(False, "")
             QMessageBox.critical(self, "函数执行失败", f"在真实行情上执行函数失败：\n{e}")
@@ -886,12 +872,14 @@ class SingleStockBacktestView(QWidget):
             merged[name] = series.values
 
         buy_expr, sell_expr = self._pending_run
+        risk = getattr(self, '_pending_risk', {}) or {}
         self._last_df = merged.copy()
         self._set_busy(True, "回测计算中...")
         self._run_thread = _BacktestRunThread(
             merged, self.current_symbol, buy_expr, sell_expr,
             self.date_start.date().toString("yyyy-MM-dd"),
-            self.date_end.date().toString("yyyy-MM-dd"))
+            self.date_end.date().toString("yyyy-MM-dd"),
+            risk=risk)
         self._run_thread.finished_signal.connect(self._on_result)
         self._run_thread.start()
 
@@ -1085,11 +1073,13 @@ class SingleStockBacktestView(QWidget):
         for row, t in enumerate(result.trades):
             entry = pd.Timestamp(t.entry_date)
             exit_ = pd.Timestamp(t.exit_date)
+            reason = EXIT_REASON_LABELS.get(getattr(t, 'exit_reason', 'signal'), "卖出信号")
             values = [
                 str(row + 1), entry.strftime('%Y-%m-%d'), f"{t.entry_price:.2f}",
                 exit_.strftime('%Y-%m-%d'), f"{t.exit_price:.2f}",
                 str(t.days_held if t.days_held is not None else "-"),
                 f"￥{t.pnl:+,.2f}", f"{t.return_pct * 100:+.2f}%",
+                reason,
             ]
             for col, text in enumerate(values):
                 item = QTableWidgetItem(text)
@@ -1097,6 +1087,11 @@ class SingleStockBacktestView(QWidget):
                     item_color = settings.COLOR_PROFIT_TEXT if t.pnl > 0 else settings.COLOR_LOSS_TEXT
                     item.setForeground(QColor(item_color))
                     item.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+                if col == 8:
+                    item_color = _REASON_COLORS.get(getattr(t, 'exit_reason', 'signal'),
+                                                    settings.COLOR_TEXT_PRIMARY)
+                    item.setForeground(QColor(item_color))
+                    item.setToolTip(f"离场来源：{reason}")
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 self.trades_table.setItem(row, col, item)
         self._render_kline(result)

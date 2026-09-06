@@ -307,6 +307,23 @@ def _min_ab(ctx, a, b):
     return min(a, b)
 
 
+def _count_true(ctx, *conds) -> pd.Series:
+    """COUNT_TRUE(条件1, 条件2, ...)：逐日统计 N 个条件同时成立的数量。
+
+    用于「至少 N 个满足才触发」的多条件组合：
+        至少 1 个满足 -> COUNT_TRUE(...) >= 1  (等效 OR)
+        全部满足      -> COUNT_TRUE(...) >= 条件个数  (等效 AND)
+    相比在 UI 层做“组合展开”，该原语表达式恒定一行、任意条件数都不会爆炸。
+    """
+    total = None
+    for cond in conds:
+        truth = ctx.truth_series(cond).astype(int)
+        total = truth if total is None else total + truth
+    if total is None:
+        return pd.Series(0, index=ctx.df.index)
+    return total
+
+
 FUNCTIONS = {
     # 技术指标一律“满窗才算有效”：窗口前导区为 NaN，避免把“未满窗平均值”误当信号
     'MA': lambda ctx, x, n: ctx.ser(x).rolling(_period(ctx, n, 'MA'), min_periods=_period(ctx, n, 'MA')).mean(),
@@ -324,6 +341,7 @@ FUNCTIONS = {
     'ABS': lambda ctx, x: ctx.ser(x).abs(),
     'MAX': _max_ab,
     'MIN': _min_ab,
+    'COUNT_TRUE': _count_true,
 }
 
 # 元数声明: 函数名 -> (最少参数, 最多参数) —— 在求值前做统一参数个数校验
@@ -333,6 +351,8 @@ ARITY = {
     'IF': (3, 3), 'EVERY': (2, 2),
     'CROSS': (2, 2), 'BARSLAST': (1, 1), 'ABS': (1, 1),
     'MAX': (2, 2), 'MIN': (2, 2),
+    # 变参计数：至少 1 个条件
+    'COUNT_TRUE': (1, 99),
 }
 
 
