@@ -98,3 +98,134 @@ def format_fill_time(value) -> str:
     if not text or text.lower() in ('nan', 'nat', 'none'):
         return ""
     return text[:5]  # HH:MM 足够，秒级精度对复盘意义不大
+
+
+# ==========================================
+# v1.3 持仓时长工具 (Holding Duration)
+# ==========================================
+def _as_date(value):
+    """安全转成 datetime.date；失败返回 None"""
+    try:
+        parsed = pd.to_datetime(value)
+        return None if pd.isna(parsed) else parsed.date()
+    except Exception:
+        return None
+
+
+def _has_clock(value) -> bool:
+    """该时间点是否带有具体时分（非 00:00）"""
+    try:
+        t = pd.to_datetime(value)
+        if pd.isna(t):
+            return False
+        return bool(t.hour or t.minute or t.second)
+    except Exception:
+        return False
+
+
+def record_entry_has_clock(record) -> bool:
+    """开仓侧是否带有时分 —— 决定能否做精确到小时的时长计时"""
+    return _has_clock(record.get('entry_time'))
+
+
+def record_exit_has_clock(record) -> bool:
+    """平仓侧是否带有时分（exit_fill_time 优先，其次 trade_time 自身）"""
+    if format_fill_time(record.get('exit_fill_time')):
+        return True
+    return _has_clock(record.get('trade_time'))
+
+
+def record_holding_seconds(record) -> float | None:
+    """
+    精确持仓秒数：仅当开仓侧携带具体时分时才可精确计时。
+
+    【诚实原则】
+      - 开仓侧带时分、平仓侧有完整时刻 → 返回精确秒数
+      - 开仓侧只有日期（无时分）→ 返回 None，
+        因为"开仓在当天几点"未知，绝不能用 00:00 冒充，交给天级口径处理。
+    """
+    if not record_entry_has_clock(record):
+        return None
+    entry_raw = record.get('entry_time')
+    trade_raw = record.get('trade_time')
+    if entry_raw is None or trade_raw is None:
+        return None
+    try:
+        entry_dt = pd.to_datetime(entry_raw)
+        exit_dt = pd.to_datetime(trade_raw)
+        if pd.isna(entry_dt) or pd.isna(exit_dt):
+            return None
+        # 平仓若带时分（exit_fill_time），合成完整时刻；否则取当天零点（date-only）
+        fill = format_fill_time(record.get('exit_fill_time'))
+        if fill:
+            exit_dt = pd.to_datetime(f"{exit_dt:%Y-%m-%d} {fill}")
+        return float((exit_dt - entry_dt).total_seconds())
+    except Exception:
+        return None
+
+
+def trading_day_count(start, end, trading_dates) -> int | None:
+    """
+    在给定交易日历中，统计从 start 日到 end 日的「持仓跨度」（相隔多少个交易日）。
+
+    例：周五开仓、下周一平仓 → 跨 1 个交易日（自然日会误算成 3）。
+    当日开平 → 0（若开仓侧无时分，0 应显示为"当日·时分未知"，不得冒充精确）。
+    【诚实边界】start/end 任一不在日历中（停牌/本地无行情）时返回 None，
+    由调用方回退到自然日口径并如实标注，绝不硬凑。
+    """
+    start_d = _as_date(start)
+    end_d = _as_date(end)
+    if start_d is None or end_d is None:
+        return None
+    try:
+        dates = sorted({pd.to_datetime(d).date() for d in trading_dates})
+    except Exception:
+        return None
+    if not dates:
+        return None
+    if start_d not in dates or end_d not in dates:
+        return None
+    idx_start = dates.index(start_d)
+    idx_end = dates.index(end_d)
+    if idx_end < idx_start:
+        return None
+    return idx_end - idx_start
+
+
+def format_duration(seconds) -> str:
+    """
+    把持仓秒数渲染成人类可读文本：
+      <60 秒  → "N秒"
+      分钟级  → "N分" / "N分M秒"
+      小时级  → "N小时" / "N小时M分"
+      天级    → "N天N小时"
+    """
+    if seconds is None:
+        return "—"
+    try:
+        total = float(seconds)
+    except (TypeError, ValueError):
+        return "—"
+    if total < 0:
+        total = 0.0
+    if total < 60:
+        return f"{int(total)}秒"
+    if total < 3600:
+        minutes = int(total // 60)
+        secs = int(total % 60)
+        return f"{minutes}分{secs}秒" if secs else f"{minutes}分"
+    days = int(total // 86400)
+    hours = int((total % 86400) // 3600)
+    minutes = int((total % 3600) // 60)
+    if days:
+        return f"{days}天{hours}小时" if hours else f"{days}天"
+    if minutes:
+        return f"{hours}小时{minutes}分"
+    return f"{hours}小时"
+
+
+def format_days_count(days) -> str:
+    """渲染"跨 N 个交易日/自然日"的天级时长"""
+    if days is None:
+        return "—"
+    return f"{int(days)}个交易日" if days else "当日"

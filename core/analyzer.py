@@ -2,6 +2,7 @@
 import pandas as pd
 
 from config import settings
+from core.utils import record_entry_has_clock, record_holding_seconds
 
 
 class TradeAnalyzer:
@@ -13,8 +14,8 @@ class TradeAnalyzer:
     NUMERIC_COLUMNS = ['net_profit', 'commission', 'lots']
     # v1.2：成交价与合约乘数参与点数类统计，但缺失时保持 NaN（绝不填 0 冒充真实价格）
     PRICE_COLUMNS = ['entry_price', 'exit_price', 'multiplier']
-    # v1.1：交易只保留单一时间锚点 trade_time
-    TIME_COLUMNS = ['trade_time']
+    # v1.1：交易只保留单一时间锚点 trade_time；v1.2 补充开仓时刻
+    TIME_COLUMNS = ['trade_time', 'entry_time']
 
     def __init__(self, df: pd.DataFrame, initial_capital: float = None):
         self.initial_capital = settings.INITIAL_CAPITAL if initial_capital is None else initial_capital
@@ -28,6 +29,15 @@ class TradeAnalyzer:
         # 排除在权益之外，画出来的是一条系统性偏高的失真曲线。
         self.df['net_amount'] = self.df['net_profit'] - self.df['commission']
         self.df['equity'] = self.initial_capital + self.df['net_amount'].cumsum()
+
+        # 【v1.3 持仓时长】仅在开仓侧带有时分时才精确计时；
+        # 开仓侧仅日期的记录返回 NaN（交给交易日口径，绝不冒充精确时分）。
+        if {'entry_time', 'trade_time'}.issubset(self.df.columns):
+            self.df['has_entry_clock'] = self.df.apply(record_entry_has_clock, axis=1)
+            self.df['holding_seconds'] = self.df.apply(record_holding_seconds, axis=1)
+        else:
+            self.df['has_entry_clock'] = False
+            self.df['holding_seconds'] = None
 
     def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """统一的数据清洗与类型标准化管道"""
@@ -103,5 +113,17 @@ class TradeAnalyzer:
             "avg_win": avg_win,
             "avg_loss": avg_loss,
             "max_profit": df['net_amount'].max(),
-            "max_loss": df['net_amount'].min()
+            "max_loss": df['net_amount'].min(),
+            # ---- v1.3 持仓时长（诚实口径：只统计开仓侧带时分的记录）----
+            "holding_covered": int(pd.to_numeric(df['holding_seconds'], errors='coerce').notna().sum()),
+            "holding_total": int(len(df)),
+            "avg_holding_seconds": float(pd.to_numeric(df['holding_seconds'], errors='coerce').mean())
+                if pd.to_numeric(df['holding_seconds'], errors='coerce').notna().any() else None,
+            "min_holding_seconds": float(pd.to_numeric(df['holding_seconds'], errors='coerce').min())
+                if pd.to_numeric(df['holding_seconds'], errors='coerce').notna().any() else None,
+            "max_holding_seconds": float(pd.to_numeric(df['holding_seconds'], errors='coerce').max())
+                if pd.to_numeric(df['holding_seconds'], errors='coerce').notna().any() else None,
+            # 开仓侧仅日期、无法精确计时的记录数（交给交易日口径单独呈现）
+            "date_only_holds": int(((df.get('entry_time').notna()) & (~df['has_entry_clock'].fillna(False))).sum()
+                                   if 'entry_time' in df.columns else 0),
         }

@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLab
 from PyQt6.QtCore import Qt
 
 from config import settings
+from core.utils import format_duration
 
 class DashboardView(QWidget):
     # 中性态配色 (无数据 / 不参与盈亏着色的指标)
@@ -41,7 +42,9 @@ class DashboardView(QWidget):
             ("交易次数", "total_trades"), ("盈利次数", "winning_trades"),
             ("亏损次数", "losing_trades"), ("初始资金", "initial_capital"),
             ("平均盈利", "avg_win"), ("平均亏损", "avg_loss"),
-            ("最大单笔赚", "max_profit"), ("最大单笔亏", "max_loss")
+            ("最大单笔赚", "max_profit"), ("最大单笔亏", "max_loss"),
+            # v1.3 持仓时长（先加法：先展示，观察后不需要再减）
+            ("平均持仓", "avg_holding_seconds"), ("最长持仓", "max_holding_seconds")
         ]
         
         for i, (label_text, key) in enumerate(self.metric_keys):
@@ -126,6 +129,19 @@ class DashboardView(QWidget):
         self.set_metric_style(m["total_trades"], str(r['total_trades']), force_neutral=True)
         self.set_metric_style(m["winning_trades"], str(r['winning_trades']), force_neutral=True)
         self.set_metric_style(m["losing_trades"], str(r['losing_trades']), force_neutral=True)
+
+        # v1.3 持仓时长卡片 —— 诚实标注样本覆盖，绝不假装全量
+        covered = r.get('holding_covered', 0)
+        total = r.get('holding_total', 0)
+        date_only = r.get('date_only_holds', 0)
+        tip = (f"基于开仓带时分的 {covered}/{total} 笔精确计时；"
+               f"{date_only} 笔开仓仅日期（按交易日口径，见深度复盘页）。")
+        for key in ('avg_holding_seconds', 'max_holding_seconds'):
+            hs = r.get(key)
+            self.set_metric_style(m[key],
+                                  format_duration(hs) if hs is not None else "—",
+                                  force_neutral=True)
+            m[key].setToolTip(tip)
 
         equity_data = df['equity'].tolist()
         x_data = list(range(len(equity_data)))

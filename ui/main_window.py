@@ -21,7 +21,6 @@ from ui.views.backtest_module import BacktestModule
 from ui.dialogs.list_manager import ListManagerDialog
 from ui.dialogs.manual_entry import ManualEntryDialog
 from ui.dialogs.import_futures import FuturesImportDialog
-from ui.dialogs.import_stocks import ImportWizardDialog
 
 class JianMainWindow(QMainWindow):
     def __init__(self):
@@ -180,13 +179,6 @@ class JianMainWindow(QMainWindow):
             pkg = self.engine.commit_cfmmc(dialog.parsed_result)
             self.render_all_data()
             self._show_import_result(pkg['stats'], "闭环交易", pkg.get('gaps'))
-
-    def open_stock_import(self):
-        dialog = ImportWizardDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and getattr(dialog, 'final_trades', None):
-            stats = self.engine.add_trades(dialog.final_trades)
-            self.render_all_data()
-            self._show_import_result(stats, "映射交易")
 
     def open_manual_entry(self):
         # v1.2.1：归属账户只列出真实存在的账户（来自已导入数据），不预置虚构账户

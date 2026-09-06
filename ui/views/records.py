@@ -48,10 +48,7 @@ class RecordsView(QWidget):
         
         action_futures = import_menu.addAction("📊 导入期货交割单")
         action_futures.triggered.connect(self.main_win.open_futures_import)
-        
-        action_stocks = import_menu.addAction("📈 导入股票交割单")
-        action_stocks.triggered.connect(self.main_win.open_stock_import)
-        
+
         self.btn_import.setMenu(import_menu)
         
         self.btn_manual = QPushButton("✍️ 录入")

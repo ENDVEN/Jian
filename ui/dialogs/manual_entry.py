@@ -1,7 +1,8 @@
 # ui/dialogs/manual_entry.py
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QComboBox, QMessageBox, QFormLayout, QLineEdit,
-                             QDateTimeEdit, QDoubleSpinBox, QSpinBox, QLabel)
+                             QDateTimeEdit, QDoubleSpinBox, QSpinBox, QLabel,
+                             QCheckBox)
 from PyQt6.QtCore import QDateTime
 from models.trade import TradeRecord
 from core.preferences import TIME_SOURCE_DATE_ONLY, TIME_SOURCE_MANUAL
@@ -102,6 +103,21 @@ class ManualEntryDialog(QDialog):
         self.inp_time.setDisplayFormat("yyyy-MM-dd HH:mm")
         form.addRow("交易时间:", self.inp_time)
 
+        # v1.3 开仓时间（选填）：用于持仓时长统计。
+        # 勾选 = 记得实际开仓时刻；记不清就保持不勾选（时长如实显示为 —），
+        # 绝不因默认勾选而拿平仓时间冒充开仓时间。
+        self.chk_entry_time = QCheckBox("补记开仓时间（用于统计持仓时长）")
+        self.chk_entry_time.setStyleSheet(
+            "font-weight: normal; font-size: 12px; color: #616161;")
+        self.chk_entry_time.toggled.connect(self._on_entry_time_toggled)
+        form.addRow("", self.chk_entry_time)
+
+        self.inp_entry_time = QDateTimeEdit(QDateTime.currentDateTime())
+        self.inp_entry_time.setCalendarPopup(True)
+        self.inp_entry_time.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.inp_entry_time.setEnabled(False)
+        form.addRow("开仓时间:", self.inp_entry_time)
+
         # v1.2：价格属选填项。填了就能计算点数盈亏，留空按"无价格"显示。
         # 手工录入是直接填写结果，不是开平仓配对，因此不产生孤儿标记。
         self.inp_entry_price = QDoubleSpinBox()
@@ -149,6 +165,14 @@ class ManualEntryDialog(QDialog):
         btn_layout.addWidget(btn_submit)
         layout.addLayout(btn_layout)
 
+    def _on_entry_time_toggled(self, checked: bool):
+        """勾选后启用开仓时间编辑，并给一个可辨识的默认值供修改"""
+        self.inp_entry_time.setEnabled(checked)
+        if checked:
+            # 默认带到"交易时间"，用户必须改成真实开仓时刻；
+            # 不勾选则不写入，绝不默认使用该值。
+            self.inp_entry_time.setDateTime(self.inp_time.dateTime())
+
     def submit_data(self):
         account = self.inp_account.currentText().strip()
         symbol = self.inp_symbol.text().strip()
@@ -170,6 +194,15 @@ class ManualEntryDialog(QDialog):
         has_clock = bool(qtime.hour() or qtime.minute() or qtime.second())
         fill_time = qtime.toString("HH:mm:ss") if has_clock else ""
 
+        # v1.3 开仓时间（选填）：只有用户主动勾选并确认后才写入，
+        # 默认值虽预填了"交易时间"但必须在勾选确认下才生效（见 _on_entry_time_toggled）。
+        entry_dt = None
+        entry_has_clock = False
+        if self.chk_entry_time.isChecked():
+            entry_dt = self.inp_entry_time.dateTime().toPyDateTime()
+            e_qtime = self.inp_entry_time.time()
+            entry_has_clock = bool(e_qtime.hour() or e_qtime.minute() or e_qtime.second())
+
         record = TradeRecord(
             account=account,
             symbol=symbol,
@@ -181,8 +214,9 @@ class ManualEntryDialog(QDialog):
             strategy_tag=self.inp_strategy.currentText().strip() or settings.DEFAULT_STRATEGY,
             entry_price=entry_price,
             exit_price=exit_price,
+            entry_time=entry_dt,
             exit_fill_time=fill_time,
-            time_source=TIME_SOURCE_MANUAL if has_clock else TIME_SOURCE_DATE_ONLY,
+            time_source=TIME_SOURCE_MANUAL if (has_clock or entry_has_clock) else TIME_SOURCE_DATE_ONLY,
         )
         self.new_trades = [record]
         self.accept()

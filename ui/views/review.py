@@ -1,5 +1,7 @@
 # ui/views/review.py
+import math
 import calendar
+import numpy as np
 import pandas as pd
 from datetime import datetime
 
@@ -18,8 +20,10 @@ from ui.widgets.screenshot_gallery import ScreenshotGallery
 from ui.widgets.yearly_review import YearlyReviewPanel
 from config import settings
 from core.preferences import preferences
-from core.utils import (extract_root_symbol, format_fill_time, format_points,
-                        format_price, format_trade_time, row_points)
+from core.utils import (extract_root_symbol, format_duration, format_fill_time,
+                        format_points, format_price, format_trade_time,
+                        record_entry_has_clock, record_holding_seconds,
+                        row_points, trading_day_count)
 from data.market_db import DataLakeManager
 from core.indicators import TAEngine
 
@@ -39,7 +43,9 @@ class ReviewView(QWidget):
         
         # 实例化数据湖，随时准备抽取 K 线
         self.data_lake = DataLakeManager()
-        
+        # v1.3：交易日历缓存（只对"仅日期"的记录按需加载，避免无谓 IO）
+        self._trading_cal: dict[str, list] = {}
+
         self._setup_ui()
 
     def _apply_pokorny_style(self, chart: pg.PlotWidget, title: str = ""):
@@ -191,10 +197,14 @@ class ReviewView(QWidget):
         self.playback_chart = pg.PlotWidget()
         self._apply_pokorny_style(self.playback_chart)
 
+        # v1.3 持仓时长分布（v1.1 曾因无开仓时间而下线，现数据已补齐后重新引入）
+        self.review_duration_chart = pg.PlotWidget()
+        self._apply_pokorny_style(self.review_duration_chart)
+
         self.review_chart_tabs.addTab(self.review_pnl_chart, "📈 累计盈亏")
         self.review_chart_tabs.addTab(self.playback_chart, "🎯 交易回放")
         self.review_chart_tabs.addTab(self.review_kline_chart, "📊 资金 K线")
-        # NOTE(v1.1): "时长分析"依赖开/平仓双时间，交割单不再提供该数据，已整体下线
+        self.review_chart_tabs.addTab(self.review_duration_chart, "⏱ 持仓时长")
         
         chart_layout.addWidget(self.review_chart_tabs)
         
@@ -492,7 +502,8 @@ class ReviewView(QWidget):
             self.current_view_df = df[(df['trade_time'].dt.year == y) & (df['trade_time'].dt.month == m)].copy()
             self.lbl_cal_month_title.setText(f"📅 {y}年 {m}月 复盘热力图")
             self._render_calendar()
-            self._render_monthly_charts() 
+            self._render_monthly_charts()
+            self._render_duration_analysis()
 
     def _render_calendar(self):
         self.review_calendar.clearContents()
@@ -592,6 +603,114 @@ class ReviewView(QWidget):
             self.review_kline_chart.addItem(CandlestickItem(k_data))
             axis = self.review_kline_chart.getAxis('bottom')
             axis.setTicks([list(enumerate(day_labels))])
+
+    def _trading_dates_for(self, symbol: str) -> list:
+        """按需读取某品种主体的本地交易日历（带缓存），无本地数据返回空列表"""
+        root = extract_root_symbol(symbol)
+        if root in self._trading_cal:
+            return self._trading_cal[root]
+        dates: list = []
+        try:
+            if self.data_lake.exists("kline_daily", root):
+                df_k = self.data_lake.load_data("kline_daily", root)
+                if not df_k.empty and 'date' in df_k.columns:
+                    dates = list(pd.to_datetime(df_k['date']).dropna().unique())
+        except Exception:
+            dates = []
+        self._trading_cal[root] = dates
+        return dates
+
+    def _render_duration_analysis(self):
+        """
+        v1.3 持仓时长分析（v1.1 曾因无开仓时间而下线，数据补齐后重新引入）：
+          - 开仓带时分的记录 → 精确计时，按"分钟(对数)"绘制分布直方图；
+          - 开仓仅日期的记录 → 用本地交易日历按「交易日」计数（周末/节假日不虚增），
+            本地无行情时回退自然日并如实标注；
+          - 完全缺开仓时间 → 不参与统计，覆盖率始终明示。
+        """
+        chart = self.review_duration_chart
+        chart.clear()
+        df = self.current_view_df.copy()
+        if df.empty:
+            chart.setTitle("⏱ 当前区间暂无数据", color="#9E9E9E", size="11pt")
+            return
+
+        exact_minutes: list[float] = []
+        day_days: list[int] = []
+        day_natural_fallback = 0
+        unknown = 0
+        total = len(df)
+
+        for _, rec in df.iterrows():
+            entry_raw = rec.get('entry_time')
+            if entry_raw is None or pd.isna(entry_raw):
+                unknown += 1
+                continue
+            if record_entry_has_clock(rec):
+                secs = record_holding_seconds(rec)
+                if secs is not None and secs >= 0:
+                    exact_minutes.append(secs / 60.0)
+            else:
+                # 仅日期：交易日计数优先，日历不足回退自然日
+                cal = self._trading_dates_for(str(rec.get('symbol', '')))
+                days = trading_day_count(entry_raw, rec.get('trade_time'), cal) if cal else None
+                if days is None:
+                    try:
+                        a = pd.to_datetime(entry_raw).date()
+                        b = pd.to_datetime(rec.get('trade_time')).date()
+                        days = max(0, (b - a).days + 1)
+                        day_natural_fallback += 1
+                    except Exception:
+                        days = 0
+                day_days.append(days)
+
+        covered = len(exact_minutes)
+        if not exact_minutes and not day_days:
+            chart.setTitle(f"⏱ 无可计时持仓（{total} 笔均缺开仓时间）",
+                           color="#FF9800", size="11pt")
+            return
+
+        # 概要（覆盖率 / 中位 / 仅日期交易日口径）
+        summary = []
+        if exact_minutes:
+            median_min = float(np.median(exact_minutes))
+            summary.append(f"精确 {covered} 笔 · 中位 {format_duration(median_min * 60)}")
+        if day_days:
+            mean_day = float(np.mean(day_days))
+            label = f"仅日期 {len(day_days)} 笔 · 平均跨 {mean_day:.1f} 个交易日"
+            if day_natural_fallback:
+                label += "（其中部分因本地无行情按自然日计）"
+            summary.append(label)
+        if unknown:
+            summary.append(f"无开仓时间 {unknown} 笔")
+        chart.setTitle("⏱ " + " | ".join(summary), color="#1976D2", size="11pt")
+
+        if exact_minutes:
+            log_mins = [math.log10(max(m, 0.2)) for m in exact_minutes]
+            hi = max(math.log10(max(exact_minutes) * 1.05), math.log10(0.2))
+            bins = np.linspace(math.log10(0.2), hi, 16)
+            hist, edges = np.histogram(log_mins, bins=bins)
+            x_vals, y_vals = [], []
+            for i in range(len(edges) - 1):
+                x_vals += [edges[i], edges[i + 1]]
+                y_vals += [hist[i], hist[i]]
+            chart.plot(x_vals, y_vals, pen=pg.mkPen(color='#1976D2', width=2),
+                       fillLevel=0, fillBrush=pg.mkBrush((25, 118, 210, 90)))
+            chart.getAxis('left').setLabel('笔数')
+            chart.getAxis('bottom').setLabel('持仓时长（对数分钟）')
+
+            # 平均线参考
+            avg_min = float(np.mean(exact_minutes))
+            chart.addLine(x=math.log10(max(avg_min, 0.2)),
+                          pen=pg.mkPen(color='#FB8C00', width=1.5,
+                                       style=Qt.PenStyle.DashLine))
+
+            # 可读时间刻度
+            refs = [(0.5, "30秒"), (1, "1分"), (5, "5分"), (15, "15分"),
+                    (60, "1小时"), (240, "4小时"), (1440, "1天"), (10080, "7天")]
+            ticks = [[(math.log10(v), label) for v, label in refs
+                      if math.log10(v) <= hi]]
+            chart.getAxis('bottom').setTicks(ticks)
 
     def on_calendar_day_clicked(self, row, col):
         item = self.review_calendar.item(row, col)
