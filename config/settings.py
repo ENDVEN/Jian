@@ -6,8 +6,12 @@ from pathlib import Path
 # 基础配置 (Base Settings)
 # ==========================================
 APP_NAME = "Jian - 专业交易复盘系统"
-# v1.1: 交易时间契约重构 (entry_time/exit_time -> trade_time)
-APP_VERSION = "1.1.0"
+# 版本演进：v1.1 交易时间契约重构 → v1.2 交割单字段补全 → v1.2.1 微观测算修正
+#          → v1.3 范围聚焦 + 持仓时长三级口径回归
+#          → v1.4.0 回测能力总集（多函数段共享池 / 条件组 Gate / 风控离场器 / 指数 regime 门控）
+#                   + 单股回测 UX 硬化 + 年度面板净额口径统一 + Dashboard 每日净额日历
+# ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
+APP_VERSION = "1.4.0"
 
 # ==========================================
 # 界面配置 (UI Settings)

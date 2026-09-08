@@ -14,8 +14,11 @@ class YearlyReviewPanel(QWidget):
 
     职责单一：给定某一年全部交易的 DataFrame，渲染
       - 12 个月盈亏强度卡片
-      - 策略利润贡献条形图
+      - 策略净额贡献条形图
       - 年度资金净值曲线
+
+    【口径】以上三者一律使用净额 (net_profit − commission)，与复盘页月视图、
+    `core/analyzer`、Dashboard 保持完全一致（§5.3-B 净额铁律）。
     内部状态 (month_cards / 图表对象) 全部自持，宿主只负责喂数据。
     """
 
@@ -79,7 +82,7 @@ class YearlyReviewPanel(QWidget):
         bar_card.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
         bar_layout = QVBoxLayout(bar_card)
         self.yearly_bar_chart = pg.PlotWidget()
-        self._apply_pokorny_style(self.yearly_bar_chart, title="🏆 年度策略利润贡献度")
+        self._apply_pokorny_style(self.yearly_bar_chart, title="🏆 年度策略净额贡献度 (已扣手续费)")
         self.yearly_bar_chart.showGrid(x=False, y=False)
         bar_layout.addWidget(self.yearly_bar_chart)
         charts_splitter.addWidget(bar_card)
@@ -88,7 +91,7 @@ class YearlyReviewPanel(QWidget):
         curve_card.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
         curve_layout = QVBoxLayout(curve_card)
         self.yearly_curve_chart = pg.PlotWidget()
-        self._apply_pokorny_style(self.yearly_curve_chart, title="📈 年度资金净值曲线")
+        self._apply_pokorny_style(self.yearly_curve_chart, title="📈 年度资金净值曲线 (已扣手续费)")
         curve_layout.addWidget(self.yearly_curve_chart)
         charts_splitter.addWidget(curve_card)
 
@@ -101,6 +104,15 @@ class YearlyReviewPanel(QWidget):
     def render(self, df: pd.DataFrame):
         """依据全年已平仓记录刷新月度卡片与全部图表。空 DataFrame 时安全地清空画面。"""
         df = df.copy()  # 【防御】绝不修改宿主传入的 DataFrame
+
+        # 【v5.7 净额口径统一】真实到手 = 平仓盈亏 − 手续费。
+        # 修复前本面板三处直接用 net_profit，导致"年视图资金曲线比月视图系统性偏高"
+        # （差额恰好等于全年手续费），与 §5.3-B 净额铁律冲突。
+        if 'net_amount' not in df.columns:
+            profit = df['net_profit'] if 'net_profit' in df.columns else 0.0
+            fee = df['commission'].fillna(0) if 'commission' in df.columns else 0.0
+            df['net_amount'] = profit - fee
+
         self._render_month_cards(df)
         self._render_charts(df)
 
@@ -108,7 +120,7 @@ class YearlyReviewPanel(QWidget):
         monthly_stats = {}
         if not df.empty:
             df['month'] = df['trade_time'].dt.month
-            monthly_stats = df.groupby('month')['net_profit'].sum().to_dict()
+            monthly_stats = df.groupby('month')['net_amount'].sum().to_dict()
 
         for i in range(12):
             m = i + 1
@@ -133,7 +145,7 @@ class YearlyReviewPanel(QWidget):
             return
 
         df_sorted = df.sort_values(by='trade_time')
-        equity_curve = [0.0] + df_sorted['net_profit'].cumsum().tolist()
+        equity_curve = [0.0] + df_sorted['net_amount'].cumsum().tolist()
         x_data = list(range(len(equity_curve)))
         is_prof = equity_curve[-1] >= 0
 
@@ -142,7 +154,7 @@ class YearlyReviewPanel(QWidget):
         self.yearly_curve_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=color, width=3),
                                      fillLevel=0, fillBrush=fill)
 
-        strategy_pnl = df.groupby('strategy_tag')['net_profit'].sum().sort_values()
+        strategy_pnl = df.groupby('strategy_tag')['net_amount'].sum().sort_values()
         if strategy_pnl.empty:
             return
 

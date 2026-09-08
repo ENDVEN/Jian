@@ -33,7 +33,9 @@ import pandas as pd
 from core.formula import FormulaEngine
 
 # 默认回测数据起点：更早行情对量化回测参考意义有限 (产品决策)
-DEFAULT_START_DATE = "2018-01-01"
+# v5.6：下沿由 2018 放宽到 2016（用户要求更长样本窗）；
+#       必须与 ui/views/backtest.py 的「全部(2016起)」预设 + 起始日期 minimumDate 保持一致。
+DEFAULT_START_DATE = "2016-01-01"
 
 # 默认双边佣金率 (万3)
 DEFAULT_COMMISSION_RATE = 0.0003
@@ -161,7 +163,7 @@ class BacktestEngine:
                 data[col] = pd.to_numeric(data[col], errors='coerce')
         data = data.dropna(subset=['close', 'open'])
 
-        # 默认数据窗: 2018-01-01 起 (回测意义窗)，终点不设上限
+        # 默认数据窗: 2016-01-01 起 (回测意义窗)，终点不设上限
         start_ts = pd.Timestamp(start_date or DEFAULT_START_DATE)
         data = data[data['date'] >= start_ts]
         if end_date:

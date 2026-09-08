@@ -19,11 +19,18 @@ def main():
     df_f = AkShareFeed.fetch_futures_roster()
     print(f"✅ 获取到 {len(df_f)} 只 期货代码。")
     
-    # 3. 缝合兵力并入库
-    df_roster = pd.concat([df_a, df_f], ignore_index=True)
-    if df_roster.empty:
-        print("❌ 双市场花名册均为空 (疑似断网)，已中止入库以避免覆盖既有名册。")
+    # 3. 【安全闸】分市场判空，任一为空即中止
+    # 背景：`DatabaseManager.update_market_roster` 是 if_exists='replace' 的**全量覆写**。
+    # 期货名册是硬编码的必然非空，因此"只判断 concat 后整体是否为空"根本拦不住事故：
+    # A 股拉取一旦失败，就会用"只剩期货"的半份名册把整表覆盖掉，A 股名称全丢且无法自愈。
+    # 故这里必须逐个市场校验，任何一半缺失都保留数据库既有名册不动 (见 §9-G)。
+    if df_a.empty or df_f.empty:
+        missing = "、".join([m for m, d in (("A股", df_a), ("期货", df_f)) if d.empty])
+        print(f"❌ {missing}花名册为空 (疑似断网/接口变更)，已中止入库 —— "
+              f"数据库既有名册保持原样，未被覆盖。请恢复网络后重试。")
         return
+
+    df_roster = pd.concat([df_a, df_f], ignore_index=True)
     
     db = DatabaseManager()
     db.update_market_roster(df_roster)

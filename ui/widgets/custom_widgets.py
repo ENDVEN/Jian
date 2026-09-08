@@ -39,6 +39,22 @@ class NoWheelSpinBox(_NoWheelMixin, QSpinBox):
 class NoWheelDateEdit(_NoWheelMixin, QDateEdit):
     pass
 
+
+# ==========================================
+# 数值控件统一视觉契约 (v5.6 · 详见 JIAN_RULES.md §10-9)
+# ==========================================
+# 【为什么是空串 = 沿用原生】QSpinBox / QDoubleSpinBox 属于 Qt「复合控件」：
+# 一旦只给控件本体写 QSS（例：`QDoubleSpinBox { padding…; border-radius… }`）
+# 而没把 ::up-button / ::down-button / ::up-arrow / ::down-arrow 四个子控件写全，
+# Qt 就会退回「默认度量」重绘箭头，后果是：
+#   ① 箭头图标与其它位置的原生箭头不一致（历史 Bug：风控行 vs 买卖条件组）；
+#   ② 点击热区与视觉图标错位（历史 Bug：风控行「上箭头只有右半边能点」）。
+#
+# 【纪律】全 app 数值控件一律使用 NoWheelSpinBox / NoWheelDoubleSpinBox + 本常量，
+# 业务页面**禁止就地 setStyleSheet 半截样式**；确需改外观，必须写全四个子控件
+# 并把完整 QSS 收敛到本文件统一导出。
+SPINBOX_QSS = ""
+
 class HoverDeleteListWidget(QListWidget):
     def __init__(self, delete_callback, parent=None):
         super().__init__(parent)

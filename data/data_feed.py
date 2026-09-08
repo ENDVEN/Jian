@@ -960,5 +960,11 @@ def get_parser(name: str) -> BaseTradeParser:
 
 
 def parse_cfmmc_excel(file_path) -> list[TradeRecord]:
-    """解析 CFMMC 格式 Excel (向后兼容门面，UI 层已有调用)"""
+    """解析 CFMMC 格式 Excel (向后兼容门面)
+
+    NOTE(v5.7)：本门面及上方的 BaseTradeParser / CFMMCTradeParser / PARSER_REGISTRY /
+    get_parser 目前**全仓无外部调用**，是为"未来接入其它期货公司账单格式"预留的扩展点。
+    真实对外 API 只有 parse_cfmmc_files / legs_from_payload / detect_coverage_gaps 三个
+    （均由 core/engine.py 调用）。请勿误以为这里已有生产调用链。
+    """
     return CFMMCTradeParser().parse(file_path)

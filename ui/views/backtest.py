@@ -47,7 +47,8 @@ from data.akshare_feed import (AkShareFeed, INDEX_PRESETS,
                                is_index_symbol)
 from data.strategy_store import StrategyStore
 from ui.widgets.custom_widgets import (CandlestickItem, NoWheelComboBox,
-                                       NoWheelDateEdit, NoWheelDoubleSpinBox)
+                                       NoWheelDateEdit, NoWheelDoubleSpinBox,
+                                       SPINBOX_QSS)
 from ui.widgets.condition_gate import ConditionGate
 from ui.widgets.function_segments import FunctionSegments
 
@@ -75,11 +76,9 @@ _REASON_COLORS = {
     "force_close": "#8A94A6",
 }
 
-# 快捷区间
-RANGE_PRESETS = {
-    "近1年": ("last_1y",), "近3年": ("last_3y",), "全部(2018起)": ("all",),
-}
-_PRESET_ORDER = ["近1年", "近3年", "全部(2018起)"]
+# 快捷区间（数组顺序 = 下拉展示顺序，单一事实来源，不再另设无人使用的映射表）
+# 下沿 2016 与 core/backtest.DEFAULT_START_DATE 保持一致（回测意义窗）
+_PRESET_ORDER = ["近3个月", "近6个月", "近1年", "近3年", "近5年", "全部(2016起)"]
 
 _CARD_QSS = ("QFrame { background: white; border: 1px solid #E7EAF0; border-radius: 12px; }")
 
@@ -98,12 +97,19 @@ def _dummy_bars(n: int = 200) -> pd.DataFrame:
 
 
 def _date_from_preset(preset: str) -> QDate:
+    """快捷区间 -> 起始日期；未命中的一律回落到「回测意义窗」下沿 2016-01-01"""
     today = QDate.currentDate()
+    if preset == "近3个月":
+        return today.addMonths(-3)
+    if preset == "近6个月":
+        return today.addMonths(-6)
     if preset == "近1年":
         return today.addYears(-1)
     if preset == "近3年":
         return today.addYears(-3)
-    return QDate(2018, 1, 1)
+    if preset == "近5年":
+        return today.addYears(-5)
+    return QDate(2016, 1, 1)
 
 
 # ==========================================
@@ -493,9 +499,11 @@ class SingleStockBacktestView(QWidget):
         self.cmb_range_preset.addItems(_PRESET_ORDER)
         self.cmb_range_preset.currentTextChanged.connect(self._on_range_preset)
         run_lay.addWidget(self.cmb_range_preset)
-        self.date_start = NoWheelDateEdit(QDate(2018, 1, 1))
+        self.date_start = NoWheelDateEdit(QDate(2016, 1, 1))
         self.date_start.setCalendarPopup(True)
         self.date_start.setDisplayFormat("yyyy-MM-dd")
+        # 最早可回溯到 2016-01-01：与 core/backtest.DEFAULT_START_DATE 同源，避免两处漂移
+        self.date_start.setMinimumDate(QDate(2016, 1, 1))
         run_lay.addWidget(self.date_start)
         run_lay.addWidget(QLabel("至"))
         self.date_end = NoWheelDateEdit(QDate.currentDate())
@@ -627,10 +635,13 @@ class SingleStockBacktestView(QWidget):
         spin.setDecimals(decimals)
         spin.setValue(value)
         spin.setSingleStep(1 if decimals == 0 else 0.5)
-        spin.setMinimumWidth(64)
+        # 宽度留足：原生箭头 + 数值 + 边距，避免窄控件挤压箭头导致热区与图标不符
+        spin.setMinimumWidth(72)
         spin.setToolTip(tooltip)
-        spin.setStyleSheet("QDoubleSpinBox { padding: 0 6px; border: 1px solid #E0E4EC; "
-                           "border-radius: 8px; background: white; font-size: 12px; }")
+        # 【一致性】与买卖条件组的数值控件共用同一套样式（原生渲染）。
+        # 切勿在此就地写 QDoubleSpinBox 半截 QSS —— 会破坏子控件度量，
+        # 造成箭头图标不一致 + 上箭头只有部分区域可点（见 custom_widgets.SPINBOX_QSS）。
+        spin.setStyleSheet(SPINBOX_QSS)
         return spin
 
     def _risk_config(self) -> dict:

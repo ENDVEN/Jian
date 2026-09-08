@@ -1,11 +1,15 @@
 # ui/views/dashboard.py
 import numpy as np
+import pandas as pd
 import pyqtgraph as pg
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+                             QLabel, QFrame)
 from PyQt6.QtCore import Qt
 
 from config import settings
 from core.utils import format_duration
+from ui.widgets.calendar_heatmap import CalendarHeatmap
+from ui.widgets.custom_widgets import NoWheelComboBox
 
 class DashboardView(QWidget):
     # 中性态配色 (无数据 / 不参与盈亏着色的指标)
@@ -16,6 +20,8 @@ class DashboardView(QWidget):
         super().__init__()
         self.main_win = main_win 
         self.metric_widgets = {}
+        # C1 日历热力图数据源：{年份: ({日期: 当日净额}, {日期: 当日笔数})}
+        self._calendar_data = {}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -64,6 +70,12 @@ class DashboardView(QWidget):
     def create_charts_panel(self):
         panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        # C1：整年节奏总览（GitHub 风格每日净额日历）
+        layout.addWidget(self.create_calendar_panel())
+
         # v1.2：净值曲线已改为按"净额（扣手续费后）"累计，标题如实标注口径
         self.equity_chart = pg.PlotWidget(title="资金净值曲线 (已扣手续费)")
         self.equity_chart.showGrid(x=True, y=True, alpha=0.3)
@@ -72,6 +84,55 @@ class DashboardView(QWidget):
         layout.addWidget(self.equity_chart, 2)
         layout.addWidget(self.distribution_chart, 1)
         return panel
+
+    def create_calendar_panel(self):
+        """C1：每日净额日历热力图 + 年份切换 + 年度摘要"""
+        panel = QFrame()
+        panel.setStyleSheet("QFrame { background: white; border: 1px solid #E7EAF0; border-radius: 10px; }")
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(4)
+
+        head = QHBoxLayout()
+        title = QLabel("🗓 每日净额日历")
+        title.setStyleSheet("font-size: 13px; font-weight: bold; color: #5B6472;")
+        head.addWidget(title)
+        head.addSpacing(8)
+
+        self.cb_year = NoWheelComboBox()
+        self.cb_year.setFixedHeight(26)
+        self.cb_year.setMinimumWidth(96)
+        self.cb_year.setStyleSheet(
+            "QComboBox { padding: 0 8px; border: 1px solid #E0E4EC; border-radius: 8px; "
+            "background: white; font-size: 12px; color: #1F2430; }"
+            "QComboBox:focus { border: 1px solid #1976D2; }")
+        self.cb_year.currentIndexChanged.connect(self._render_calendar)
+        head.addWidget(self.cb_year)
+        head.addSpacing(12)
+
+        self.lbl_cal_summary = QLabel("—")
+        self.lbl_cal_summary.setStyleSheet("font-size: 12px; color: #8A94A6;")
+        head.addWidget(self.lbl_cal_summary)
+        head.addStretch()
+        head.addWidget(self._hint_icon(
+            "颜色 = 当日净额（已扣手续费），绿盈红亏，绝对值越大颜色越深；"
+            "灰色 = 当日无交易或净额为 0。鼠标悬停任意格子可看当日净额与成交笔数。"))
+        lay.addLayout(head)
+
+        self.heatmap = CalendarHeatmap()
+        lay.addWidget(self.heatmap)
+        return panel
+
+    @staticmethod
+    def _hint_icon(tooltip: str) -> QLabel:
+        """「?」小角标承载说明，避免长灰字占版面（与回测页同一手法）"""
+        icon = QLabel("?")
+        icon.setFixedSize(15, 15)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet("QLabel { background:#E3E7EF; color:#7A8392; border-radius:7px;"
+                           " font-size:10px; font-weight:bold; }")
+        icon.setToolTip(tooltip)
+        return icon
 
     @staticmethod
     def _rgba_bg(rgb: tuple, alpha: float = 0.1) -> str:
@@ -110,6 +171,67 @@ class DashboardView(QWidget):
         self.distribution_chart.clear()
         for widget in self.metric_widgets.values():
             self.set_metric_style(widget, "-", force_neutral=True)
+        self._calendar_data = {}
+        self.cb_year.blockSignals(True)
+        self.cb_year.clear()
+        self.cb_year.blockSignals(False)
+        self.heatmap.clear()
+        self.lbl_cal_summary.setText("—")
+
+    # ==========================================
+    # C1 每日净额日历热力图
+    # ==========================================
+    def _prepare_calendar(self, df):
+        """把日级净额聚合成 {年份: ({日期: 净额}, {日期: 笔数})}，供日历按年渲染。
+
+        【口径】与全站一致使用 net_amount = net_profit − commission（§5.3-B）。
+        """
+        self._calendar_data = {}
+        if df is None or df.empty or 'trade_time' not in df.columns:
+            return
+        work = df.copy()
+        work['trade_time'] = pd.to_datetime(work['trade_time'], errors='coerce')
+        work = work.dropna(subset=['trade_time'])
+        if work.empty or 'net_amount' not in work.columns:
+            return
+
+        grouped = work.groupby(work['trade_time'].dt.date)['net_amount'].agg(['sum', 'count'])
+        for day, row in grouped.iterrows():
+            values, counts = self._calendar_data.setdefault(day.year, ({}, {}))
+            values[day] = float(row['sum'])
+            counts[day] = int(row['count'])
+
+    def _refresh_calendar_years(self):
+        """重建年份下拉（倒序，默认停在最近有数据的年份）"""
+        years = sorted(self._calendar_data.keys(), reverse=True)
+        self.cb_year.blockSignals(True)
+        self.cb_year.clear()
+        for year in years:
+            self.cb_year.addItem(f"{year} 年", year)
+        if years:
+            self.cb_year.setCurrentIndex(0)
+        self.cb_year.blockSignals(False)
+        self._render_calendar()
+
+    def _render_calendar(self, *_args):
+        """按当前选中年份渲染热力图 + 年度摘要"""
+        year = self.cb_year.currentData()
+        if year is None:
+            self.heatmap.clear()
+            self.lbl_cal_summary.setText("—")
+            return
+        year = int(year)
+        values, counts = self._calendar_data.get(year, ({}, {}))
+        self.heatmap.set_year_data(year, values, counts)
+
+        wins = sum(1 for v in values.values() if v > 0)
+        losses = sum(1 for v in values.values() if v < 0)
+        total = sum(values.values())
+        tone = settings.COLOR_PROFIT_TEXT if total >= 0 else settings.COLOR_LOSS_TEXT
+        self.lbl_cal_summary.setText(
+            f"共 {len(values)} 个交易日　盈利 <b style='color:{settings.COLOR_PROFIT_TEXT};'>"
+            f"{wins}</b> 天　亏损 <b style='color:{settings.COLOR_LOSS_TEXT};'>{losses}</b> 天　"
+            f"年度净额 <b style='color:{tone};'>￥{total:+,.2f}</b>")
 
     def update_view(self, r, df):
         m = self.metric_widgets
@@ -163,3 +285,7 @@ class DashboardView(QWidget):
                 x_vals.extend([bin_edges[i], bin_edges[i+1]])
                 y_vals.extend([hist[i], hist[i]])
             self.distribution_chart.plot(x_vals, y_vals, pen=pg.mkPen(color=(33, 150, 243), width=2), fillLevel=0, fillBrush=pg.mkBrush((33, 150, 243, 100)))
+
+        # C1：日级净额聚合 -> 年度日历热力图（放在最后，与图表同一次刷新完成）
+        self._prepare_calendar(df)
+        self._refresh_calendar_years()
