@@ -92,6 +92,31 @@ class DataEngine:
 
         return {'stats': stats, 'report': result['report'], 'gaps': gaps}
 
+    # ==========================================
+    # 花名册门面 (Roster Facade)
+    # 【纪律】UI 一律经 DataEngine 检索标的，不许直接碰 DatabaseManager (§9-H)
+    # ==========================================
+    def search_symbol(self, keyword: str) -> pd.DataFrame:
+        """模糊检索代码 / 名称，返回 [symbol, name]"""
+        return self.db.search_symbol(keyword)
+
+    def list_stock_symbols(self) -> list[str]:
+        """全量 A 股代码列表（纯 6 位数字），供"全市场预下载"使用。
+
+        花名册为空时返回空列表 —— 上层必须据此提示用户先跑 sync_roster.py，
+        绝不能拿空列表去发起批量下载。
+        """
+        try:
+            df = self.db.load_roster()
+        except Exception:
+            return []
+        if df is None or df.empty or 'symbol' not in df.columns:
+            return []
+        return sorted({
+            str(s).strip() for s in df['symbol'].dropna()
+            if str(s).strip().isdigit() and len(str(s).strip()) == 6
+        })
+
     def confirm_coverage_gap(self, account: str, month: str):
         """用户确认某月为"有意跳过"，此后不再重复提醒"""
         self.db.add_gap(account, month)

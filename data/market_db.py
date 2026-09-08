@@ -1,7 +1,11 @@
 # data/market_db.py
 import os
 import logging
+from datetime import datetime
+
 import pandas as pd
+import pyarrow.parquet as pq
+
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -89,3 +93,131 @@ class DataLakeManager:
         if df.empty or date_col not in df.columns:
             return "20100101" # 默认从十年前开始拉取
         return pd.to_datetime(df[date_col]).max().strftime("%Y%m%d")
+
+    # ==========================================
+    # 清点 / 删除 (v5.8 · §7-A3 数据管理页)
+    # ==========================================
+    def folder_of(self, zone: str) -> str:
+        """该分区在磁盘上的真实目录（供管理页显示路径用）"""
+        return self._get_filepath(zone, "").rsplit(os.sep, 1)[0]
+
+    def list_zone(self, zone: str) -> list[str]:
+        """列出该分区已缓存的标的名（不含 .parquet 后缀）"""
+        folder = self.folder_of(zone)
+        if not os.path.isdir(folder):
+            return []
+        return sorted(
+            os.path.splitext(name)[0]
+            for name in os.listdir(folder)
+            if name.lower().endswith(".parquet")
+        )
+
+    def delete_data(self, zone: str, filename: str) -> bool:
+        """
+        删除单个标的的缓存。
+
+        【Windows 注意】若该文件正被读取（句柄未释放）会抛 PermissionError，
+        这里统一捕获为 False 并记日志 —— 上层按"可能被占用"提示用户，
+        绝不让一个删除动作把整个管理页搞崩。
+        """
+        path = self._get_filepath(zone, filename)
+        if not os.path.exists(path):
+            return False
+        try:
+            os.remove(path)
+            return True
+        except PermissionError:
+            logger.error(f"数据湖删除失败（文件被占用）[{zone}/{filename}]")
+            return False
+        except OSError as e:
+            logger.error(f"数据湖删除失败 [{zone}/{filename}]: {e}")
+            return False
+
+    def clear_zone(self, zone: str) -> tuple[int, int]:
+        """清空整个分区，返回 (成功删除数, 总数)"""
+        names = self.list_zone(zone)
+        ok = sum(1 for name in names if self.delete_data(zone, name))
+        return ok, len(names)
+
+    def inventory(self, zone: str, with_dates: bool = True) -> list[dict]:
+        """
+        清点某个分区：每个标的的行数 / 日期范围 / 体积 / 修改时间。
+
+        【性能要点】行数与日期范围一律从 parquet footer 的元数据与列统计里取，
+        **不把数据读进内存** —— 全市场 5000+ 个文件也能在秒级扫完。
+        """
+        folder = self.folder_of(zone)
+        items: list[dict] = []
+        if not os.path.isdir(folder):
+            return items
+
+        for name in sorted(os.listdir(folder)):
+            if not name.lower().endswith(".parquet"):
+                continue
+            path = os.path.join(folder, name)
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            rows, first, last = (0, None, None)
+            if with_dates:
+                rows, first, last = self._peek(path)
+            items.append({
+                "name": os.path.splitext(name)[0],
+                "rows": rows,
+                "first_date": first,
+                "last_date": last,
+                "bytes": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            })
+        return items
+
+    def zone_stats(self) -> dict:
+        """各分区的 (条目数, 字节数) 汇总，供左侧清单显示"""
+        stats = {}
+        for zone in self.zones:
+            folder = self.folder_of(zone)
+            count = total = 0
+            if os.path.isdir(folder):
+                for name in os.listdir(folder):
+                    if not name.lower().endswith(".parquet"):
+                        continue
+                    try:
+                        total += os.path.getsize(os.path.join(folder, name))
+                        count += 1
+                    except OSError:
+                        continue
+            stats[zone] = {"count": count, "bytes": total}
+        return stats
+
+    # ---------------- 内部工具 ----------------
+    @staticmethod
+    def _peek(path: str) -> tuple[int, str | None, str | None]:
+        """只读 parquet footer 取 (行数, 首日, 末日)；任何异常都安全降级为 (0,None,None)"""
+        try:
+            pf = pq.ParquetFile(path)
+            meta = pf.metadata
+            rows = meta.num_rows
+            names = list(pf.schema_arrow.names)
+            if "date" not in names or meta.num_row_groups == 0:
+                return rows, None, None
+
+            idx = names.index("date")
+            first_rg = meta.row_group(0).column(idx).statistics
+            last_rg = meta.row_group(meta.num_row_groups - 1).column(idx).statistics
+            first = first_rg.min if (first_rg is not None and first_rg.has_min_max) else None
+            last = last_rg.max if (last_rg is not None and last_rg.has_min_max) else None
+            return rows, _fmt_day(first), _fmt_day(last)
+        except Exception as e:  # noqa: BLE001 —— 清点绝不能因单个坏文件中断
+            logger.debug(f"数据湖清点失败，已跳过 [{path}]: {e}")
+            return 0, None, None
+
+
+def _fmt_day(value) -> str | None:
+    """把 parquet 统计里的日期值规整成 YYYY-MM-DD；失败返回 None"""
+    if value is None:
+        return None
+    try:
+        return pd.to_datetime(value).strftime("%Y-%m-%d")
+    except Exception:  # noqa: BLE001
+        return None

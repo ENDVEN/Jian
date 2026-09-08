@@ -4,14 +4,15 @@ import pandas as pd
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QLineEdit, QMessageBox, QCheckBox,
                              QSplitter)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 from pyqtgraph import QtGui
 
 from config import settings
-from data.akshare_feed import AkShareFeed
 from data.market_db import DataLakeManager
+from data.sync_service import ZONE_KLINE, friendly_fetch_message
 from ui.widgets.custom_widgets import CandlestickItem
+from ui.workers import SingleSyncWorker
 from core.indicators import TAEngine
 
 # 主图均线序列：(列名, 配色)。需与 TAEngine.add_ma 的默认窗口 (5/20/60) 保持一致
@@ -30,30 +31,6 @@ DEFAULT_VISIBLE_BARS = 150
 # 趋势线默认横向跨度 (起点比例, 终点比例)
 TRENDLINE_SPAN = (0.2, 0.8)
 
-
-class FetchDataThread(QThread):
-    """
-    行情拉取工作线程 (只负责调度，不感知任何数据源细节)。
-    【架构纪律】市场路由与数据清洗全部收敛在 data/akshare_feed.py，UI 层不做接口判断。
-    """
-    finished_signal = pyqtSignal(bool, str, pd.DataFrame, str)
-    def __init__(self, symbol: str, name: str):
-        super().__init__()
-        self.symbol = symbol
-        self.name = name
-
-    def run(self):
-        df = pd.DataFrame()
-        try:
-            df = AkShareFeed.fetch_daily_auto(self.symbol)
-            if not df.empty:
-                DataLakeManager().save_data("kline_daily", self.symbol, df)
-        except Exception as e:
-            logging.error(f"行情拉取线程异常 [{self.symbol}]: {e}")
-            df = pd.DataFrame()
-
-        # 无论成功失败都保证回传一次结果，主线程据此恢复按钮状态
-        self.finished_signal.emit(not df.empty, self.symbol, df, self.name)
 
 class MarketView(QWidget):
     def __init__(self, main_win):
@@ -177,7 +154,7 @@ class MarketView(QWidget):
         keyword = self.txt_search.text().strip()
         if not keyword: return
         
-        res_df = self.main_win.engine.db.search_symbol(keyword)
+        res_df = self.main_win.engine.search_symbol(keyword)   # 经 DataEngine 门面，UI 不碰 DAO
         if res_df.empty:
             QMessageBox.warning(self, "未找到", "未找到该标的，请确认花名册已更新。")
             return
@@ -199,23 +176,33 @@ class MarketView(QWidget):
             QMessageBox.information(self, "提示", "请先搜索并选中一个标的，再进行云端同步。")
             return
         self.btn_sync.setEnabled(False)
-        self.fetch_thread = FetchDataThread(self.current_symbol, self.current_name)
-        self.fetch_thread.finished_signal.connect(self._on_sync_finished)
+        # 【架构纪律】UI 不发网络请求：统一走 SingleSyncWorker → MarketSyncService。
+        # force_full=True 对应"☁️ 云端同步"的语义（用户就是想重拉一遍）。
+        self.fetch_thread = SingleSyncWorker(self.current_symbol, zone=ZONE_KLINE,
+                                             force_full=True, parent=self)
+        self.fetch_thread.finished.connect(self._on_sync_finished)
         self.fetch_thread.start()
 
-    def _on_sync_finished(self, success, symbol, df, name):
+    def _on_sync_finished(self, result: dict):
         self.btn_sync.setEnabled(True)
-        
+        symbol = str(result.get("symbol", self.current_symbol) or self.current_symbol)
+
         # 【竞态防护】拉取期间用户可能已切换到其他标的，过期结果必须丢弃
         if symbol != self.current_symbol:
             return
-            
-        if success and not df.empty:
-            self.current_df = df
-            if name: self.current_name = name
-            self.render_charts()
-        else:
-            QMessageBox.critical(self, "错误", f"{symbol} 行情拉取失败。\n请检查网络连接或标的代码是否正确。")
+
+        if not result.get("ok"):
+            # 用"人话"说明失败原因：网络？还是代码有误 / 该股已退市？(v5.10)
+            QMessageBox.warning(self, "行情同步失败", friendly_fetch_message(symbol, result))
+            return
+
+        df = self.data_lake.load_data(ZONE_KLINE, symbol)
+        if df.empty:
+            QMessageBox.critical(self, "错误", f"{symbol} 行情拉取失败（未取得数据）。")
+            return
+
+        self.current_df = df
+        self.render_charts()
 
     def render_charts(self):
         """按当前指标开关重建整个图表矩阵 (幂等设计，可安全重复调用)"""

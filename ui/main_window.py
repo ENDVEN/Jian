@@ -16,6 +16,7 @@ from ui.views.records import RecordsView
 from ui.views.review import ReviewView
 from ui.views.market import MarketView
 from ui.views.backtest_module import BacktestModule
+from ui.views.data_manager import DataManagerView
 
 # 【高内聚、低耦合的体现】：从各自独立的文件中按需引入模块
 from ui.dialogs.list_manager import ListManagerDialog
@@ -57,8 +58,10 @@ class JianMainWindow(QMainWindow):
         self.btn_review = QPushButton("💡 深度复盘")
         self.btn_market = QPushButton("📈 市场行情")
         self.btn_backtest = QPushButton("📐 市场回测")
+        self.btn_data = QPushButton("🗄 数据管理")
         
-        for btn in [self.btn_overview, self.btn_records, self.btn_review, self.btn_market, self.btn_backtest]:
+        for btn in [self.btn_overview, self.btn_records, self.btn_review, self.btn_market,
+                    self.btn_backtest, self.btn_data]:
             btn.setProperty("class", "NavBtn")
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
@@ -75,12 +78,14 @@ class JianMainWindow(QMainWindow):
         self.page_review = ReviewView(self) 
         self.page_market = MarketView(self)
         self.page_backtest = BacktestModule(self)
+        self.page_data = DataManagerView(self)
         
         self.content_area.addWidget(self.page_overview)
         self.content_area.addWidget(self.page_records)
         self.content_area.addWidget(self.page_review) 
         self.content_area.addWidget(self.page_market)
         self.content_area.addWidget(self.page_backtest)
+        self.content_area.addWidget(self.page_data)
         
         main_layout.addWidget(sidebar)
         main_layout.addWidget(self.content_area)
@@ -90,6 +95,7 @@ class JianMainWindow(QMainWindow):
         self.btn_review.clicked.connect(lambda: self.content_area.setCurrentIndex(2))
         self.btn_market.clicked.connect(lambda: self.content_area.setCurrentIndex(3))
         self.btn_backtest.clicked.connect(lambda: self.content_area.setCurrentIndex(4))
+        self.btn_data.clicked.connect(lambda: self.content_area.setCurrentIndex(5))
         
         self.render_all_data()
         self.check_for_updates()

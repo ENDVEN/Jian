@@ -459,6 +459,11 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path) as conn:
             df.to_sql('market_symbols', conn, if_exists='replace', index=False)
             
+    def load_roster(self) -> pd.DataFrame:
+        """读取全量花名册（供"全市场预下载"取代码列表；只读，不做任何改写）"""
+        with sqlite3.connect(self.db_path) as conn:
+            return pd.read_sql_query("SELECT * FROM market_symbols", conn)
+
     def search_symbol(self, keyword: str) -> pd.DataFrame:
         """
         智能模糊搜索代码或中文名称。

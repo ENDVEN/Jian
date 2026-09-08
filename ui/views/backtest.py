@@ -43,12 +43,15 @@ from core.formula.program import (parse_program, execute_programs,
 from core.backtest import BacktestEngine
 from core.utils import align_by_date
 from data.market_db import DataLakeManager
-from data.akshare_feed import (AkShareFeed, INDEX_PRESETS,
-                               is_index_symbol)
+# 说明：INDEX_PRESETS / is_index_symbol 是纯常量与纯校验函数（无副作用、不联网），
+#      因此允许被 UI 直接引用；但**任何联网抓取**都必须走 MarketSyncService（见下方 worker）。
+from data.akshare_feed import INDEX_PRESETS, is_index_symbol, is_stock_code
 from data.strategy_store import StrategyStore
+from data.sync_service import (ZONE_KLINE, ZONE_INDEX, friendly_fetch_message)
 from ui.widgets.custom_widgets import (CandlestickItem, NoWheelComboBox,
                                        NoWheelDateEdit, NoWheelDoubleSpinBox,
                                        SPINBOX_QSS)
+from ui.workers import SingleSyncWorker
 from ui.widgets.condition_gate import ConditionGate
 from ui.widgets.function_segments import FunctionSegments
 
@@ -115,46 +118,6 @@ def _date_from_preset(preset: str) -> QDate:
 # ==========================================
 # 后台线程
 # ==========================================
-class _StockSyncThread(QThread):
-    finished_signal = pyqtSignal(bool, str, object)
-
-    def __init__(self, symbol: str):
-        super().__init__()
-        self.symbol = symbol
-
-    def run(self):
-        df = pd.DataFrame()
-        try:
-            df = AkShareFeed.fetch_daily_auto(self.symbol)
-            if not df.empty:
-                DataLakeManager().save_data("kline_daily", self.symbol, df)
-        except Exception as e:
-            logger.error(f"市场回测-行情拉取异常 [{self.symbol}]: {e}")
-            df = pd.DataFrame()
-        self.finished_signal.emit(not df.empty, self.symbol, df)
-
-
-class _IndexSyncThread(QThread):
-    """大盘指数日线同步线程 (阶段C)：拉取并回写数据湖 index_daily zone"""
-
-    finished_signal = pyqtSignal(bool, str, object)
-
-    def __init__(self, symbol: str):
-        super().__init__()
-        self.symbol = symbol
-
-    def run(self):
-        df = pd.DataFrame()
-        try:
-            df = AkShareFeed.fetch_index_daily(self.symbol, min_date="20050101")
-            if not df.empty:
-                DataLakeManager().save_data("index_daily", self.symbol, df)
-        except Exception as e:
-            logger.error(f"市场回测-指数拉取异常 [{self.symbol}]: {e}")
-            df = pd.DataFrame()
-        self.finished_signal.emit(not df.empty, self.symbol, df)
-
-
 class _BacktestRunThread(QThread):
     finished_signal = pyqtSignal(object)
 
@@ -990,13 +953,13 @@ class SingleStockBacktestView(QWidget):
         if not keyword:
             QMessageBox.information(self, "提示", "请输入股票代码或名称。")
             return
-        res_df = self.main_win.engine.db.search_symbol(keyword)
+        res_df = self.main_win.engine.search_symbol(keyword)   # 经 DataEngine 门面，UI 不碰 DAO
         if res_df.empty:
             QMessageBox.warning(self, "未找到", f"花名册中没有 '{keyword}'。")
             return
         symbol = str(res_df.iloc[0]['symbol'])
         name = str(res_df.iloc[0]['name'])
-        if not AkShareFeed.is_stock_code(symbol):
+        if not is_stock_code(symbol):
             QMessageBox.warning(self, "仅支持A股", f"'{name} ({symbol})' 不是A股标的。")
             return
         self.current_symbol = symbol
@@ -1045,36 +1008,47 @@ class SingleStockBacktestView(QWidget):
             self._prepare_stock_then_run()
             return
         symbol = self._pending_index["symbol"]
-        idx_df = self.data_lake.load_data("index_daily", symbol)
+        idx_df = self.data_lake.load_data(ZONE_INDEX, symbol)
         if idx_df.empty:
             self._set_busy(True, f"本地无指数 {symbol} 数据，正在联网同步...")
-            self._index_thread = _IndexSyncThread(symbol)
-            self._index_thread.finished_signal.connect(self._on_index_synced)
+            self._index_thread = SingleSyncWorker(symbol, zone=ZONE_INDEX, parent=self)
+            self._index_thread.finished.connect(self._on_index_synced)
             self._index_thread.start()
         else:
             self._prepare_stock_then_run()
 
-    def _on_index_synced(self, ok, symbol, df):
-        if not ok or df.empty:
+    def _on_index_synced(self, result: dict):
+        if not result.get("ok"):
             self._set_busy(False, "")
-            QMessageBox.critical(self, "指数同步失败", f"无法获取指数 {symbol} 数据，请检查网络。")
+            symbol = str(result.get("symbol", ""))
+            QMessageBox.warning(
+                self, "指数同步失败",
+                friendly_fetch_message(symbol, result)
+                + "\n\n（指数代码须形如 sh000001 / sz399001）")
             return
         self._prepare_stock_then_run()
 
     def _prepare_stock_then_run(self):
-        df = self.data_lake.load_data("kline_daily", self.current_symbol)
+        df = self.data_lake.load_data(ZONE_KLINE, self.current_symbol)
         if df.empty:
             self._set_busy(True, "本地无日线，正在联网同步...")
-            self._sync_thread = _StockSyncThread(self.current_symbol)
-            self._sync_thread.finished_signal.connect(self._on_synced)
+            self._sync_thread = SingleSyncWorker(self.current_symbol, zone=ZONE_KLINE,
+                                                 parent=self)
+            self._sync_thread.finished.connect(self._on_synced)
             self._sync_thread.start()
         else:
             self._on_data_ready(df)
 
-    def _on_synced(self, ok, symbol, df):
-        if not ok or df.empty:
+    def _on_synced(self, result: dict):
+        symbol = str(result.get("symbol", self.current_symbol) or self.current_symbol)
+        if not result.get("ok"):
+            self._set_busy(False, "行情同步失败。")
+            QMessageBox.warning(self, "同步失败", friendly_fetch_message(symbol, result))
+            return
+        df = self.data_lake.load_data(ZONE_KLINE, symbol)
+        if df.empty:
             self._set_busy(False, "行情同步失败，请检查网络。")
-            QMessageBox.critical(self, "同步失败", "无法获取该股票日线数据。")
+            QMessageBox.critical(self, "同步失败", f"无法获取 {symbol} 日线数据。")
             return
         self._on_data_ready(df)
 

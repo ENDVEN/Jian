@@ -62,6 +62,16 @@ def is_index_symbol(symbol: str) -> bool:
     return len(sym) == 8 and sym[:2] in ("sh", "sz", "bj") and sym[2:].isdigit()
 
 
+def is_stock_code(symbol: str) -> bool:
+    """智能识别市场归属：纯 6 位数字为 A 股，含字母为期货。
+
+    【为什么是模块级函数】它是纯判断、无副作用、不联网，
+    UI 层可以安全直接引用（与 is_index_symbol 同一手法），
+    而**任何真正的抓取**都必须经 data/sync_service.MarketSyncService（§9-H）。
+    """
+    return str(symbol).strip().isdigit()
+
+
 class AkShareFeed:
     """
     数据源接入层 (Data Fetcher)。
@@ -113,11 +123,6 @@ class AkShareFeed:
     # ==========================================
     # 日线行情 (Daily K-Line)
     # ==========================================
-    @staticmethod
-    def is_stock_code(symbol: str) -> bool:
-        """智能识别市场归属：纯 6 位数字为 A 股，含字母为期货"""
-        return str(symbol).strip().isdigit()
-
     @staticmethod
     def _normalize_ohlcv(df: pd.DataFrame, rename_map: dict, symbol_value: str) -> pd.DataFrame:
         """
@@ -221,14 +226,60 @@ class AkShareFeed:
         return pd.DataFrame()
 
     @staticmethod
-    def fetch_daily_auto(symbol: str) -> pd.DataFrame:
+    def fetch_daily_auto(symbol: str, start_date: str = None,
+                         end_date: str = None) -> pd.DataFrame:
         """
         【智能路由】根据代码形态自动选择数据源。
         纯数字 (600519) -> A股接口；含字母 (RB) -> 期货主力接口。
+
+        :param start_date: 增量拉取起点 (YYYYMMDD)。A股支持；期货主力接口不支持，
+                           传入时会被忽略（仍返回全量），由上层统一做合并去重。
         """
-        if AkShareFeed.is_stock_code(symbol):
-            return AkShareFeed.fetch_a_share_daily(symbol)
+        if is_stock_code(symbol):
+            return AkShareFeed.fetch_a_share_daily(symbol, start_date=start_date,
+                                                   end_date=end_date)
         return AkShareFeed.fetch_futures_daily(symbol)
+
+    # ==========================================
+    # 指数成分股 (批量预下载用)
+    # ==========================================
+    @staticmethod
+    def fetch_index_constituents(code: str) -> pd.DataFrame:
+        """
+        拉取指数成分股代码列表（如 000300 沪深300 / 000905 中证500）。
+
+        【容错】akshare 的成分股接口历史上换过多次名字，这里按优先级逐个试，
+        任一成功即返回；全部失败返回空 DF，由上层提示用户改用其它来源，
+        绝不抛异常打断批量任务。
+        """
+        code = str(code or "").strip()
+        if not code:
+            return pd.DataFrame()
+
+        candidates = (
+            ("index_stock_cons", {"symbol": code}),
+            ("index_stock_cons_csindex", {"symbol": code}),
+            ("index_stock_cons_sina", {"symbol": code}),
+        )
+        for func_name, kwargs in candidates:
+            func = getattr(ak, func_name, None)
+            if func is None:
+                continue
+            try:
+                df = func(**kwargs)
+                if df is None or df.empty:
+                    continue
+                col = next((c for c in df.columns if "代码" in str(c)), None)
+                if col is None:
+                    continue
+                symbols = (df[col].astype(str).str.strip()
+                           .str.extract(r"(\d{6})", expand=False).dropna().unique().tolist())
+                if symbols:
+                    return pd.DataFrame({"symbol": sorted(set(symbols))})
+            except Exception as e:  # noqa: BLE001
+                logging.warning(f"指数成分股接口 {func_name} 失败 [{code}]: {e}")
+        logging.error(f"指数成分股拉取失败: {code} (所有候选接口均不可用)")
+        return pd.DataFrame()
 
     # ==========================================
     # 大盘指数日线 (Index Daily) 阶段C
