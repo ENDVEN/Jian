@@ -1,41 +1,20 @@
 # ui/dialogs/import_futures.py
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
                              QFileDialog, QMessageBox, QRadioButton, QGroupBox)
-from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.preferences import (
     TIME_PRECISION_DATE,
     TIME_PRECISION_FILL,
     preferences,
 )
+# 【架构纪律 v5.12 · §9-O2】线程一律用 ui/workers.py 的，弹窗不自造 QThread
+from ui.workers import FuturesImportWorker
 
 # 时间精度偏好的人类可读名称
 _PRECISION_TITLE = {
     TIME_PRECISION_DATE: "日期优先（只显示到某一天）",
     TIME_PRECISION_FILL: "精确到时分（显示真实成交时刻）",
 }
-
-
-class FuturesImportWorker(QThread):
-    """
-    后台解析交割单。
-
-    【职责边界】只做耗时的 Excel 解析，落库交给 UI 主线程执行，
-    避免子线程写 SQLite 与主线程读数据争抢同一份内存状态。
-    """
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
-
-    def __init__(self, engine, file_paths):
-        super().__init__()
-        self.engine = engine
-        self.file_paths = file_paths
-
-    def run(self):
-        try:
-            self.finished.emit(self.engine.parse_cfmmc(self.file_paths))
-        except Exception as e:
-            self.error.emit(str(e))
 
 
 class FuturesImportDialog(QDialog):
@@ -198,7 +177,7 @@ class FuturesImportDialog(QDialog):
         self.lbl_status.setText(f"⏳ 正在后台解析 {len(file_paths)} 个文件，请稍候...")
         self.lbl_status.setStyleSheet("font-weight: bold; color: #FF9800;")
 
-        self.worker = FuturesImportWorker(self.main_win.engine, file_paths)
+        self.worker = FuturesImportWorker(self.main_win.engine, file_paths, self)
         self.worker.finished.connect(self.on_process_success)
         self.worker.error.connect(self.on_process_error)
         self.worker.start()

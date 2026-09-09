@@ -16,6 +16,7 @@ from PyQt6.QtCore import Qt, QDate, QTimer
 from PyQt6.QtGui import QColor, QFont
 
 from ui.widgets.custom_widgets import CandlestickItem, NoWheelComboBox
+from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
 from ui.widgets.screenshot_gallery import ScreenshotGallery
 from ui.widgets.yearly_review import YearlyReviewPanel
 from config import settings
@@ -49,24 +50,8 @@ class ReviewView(QWidget):
         self._setup_ui()
 
     def _apply_pokorny_style(self, chart: pg.PlotWidget, title: str = ""):
-        chart.setBackground('w')
-        if title:
-            chart.setTitle(title, color="#424242", size="11pt", bold=True)
-            
-        plot_item = chart.getPlotItem()
-        plot_item.hideAxis('top')
-        plot_item.hideAxis('right')
-        chart.showGrid(x=True, y=True, alpha=0.15)
-        
-        pen = pg.mkPen(color='#E0E0E0', width=1)
-        text_pen = pg.mkPen(color='#9E9E9E')
-        
-        for axis_name in ['left', 'bottom']:
-            axis = plot_item.getAxis(axis_name)
-            axis.setPen(pen)
-            axis.setTextPen(text_pen)
-            
-        plot_item.getViewBox().setContentsMargins(15, 15, 15, 15)
+        """委托给 ui/widgets/chart_style.py —— 全 app 图表轴样式唯一来源 (v5.12 · §9-O7)"""
+        return apply_pokorny_style(chart, title)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -140,6 +125,8 @@ class ReviewView(QWidget):
         top_bar_2.addWidget(QLabel("结果:"))
         self.cb_rev_result = NoWheelComboBox()
         self.cb_rev_result.addItems(["全部", "仅盈利", "仅亏损"])
+        self.cb_rev_result.setToolTip("按「净额 = 平仓盈亏 − 手续费」判断（真实到手），"
+                                      "与绩效统计口径一致")
         self.cb_rev_result.currentIndexChanged.connect(self.update_review_view)
         top_bar_2.addWidget(self.cb_rev_result)
 
@@ -347,7 +334,10 @@ class ReviewView(QWidget):
         if self.is_yearly_view:
             self.btn_mode_toggle.setText("切换月视图 🔍")
             self.btn_mode_toggle.setStyleSheet(f"QPushButton {{ font-size: 14px; font-weight: bold; color: {settings.COLOR_PROFIT_TEXT}; padding: 5px 15px; border: 1px solid #A5D6A7; border-radius: 6px; background: #E8F5E9; margin-right: 15px;}} QPushButton:hover {{ background: #C8E6C9; }}")
-            self.review_stack.setCurrentIndex(1) 
+            self.review_stack.setCurrentIndex(1)
+            # 【v5.12 修正 · §9-O8】年视图不存在"交易回放"，切过去必须清空画布，
+            # 否则下次切回月视图会残留上一次的 K 线回放（看起来像"数据没刷新"）。
+            self.playback_chart.clear()
         else:
             self.btn_mode_toggle.setText("切换年视图 📅")
             self.btn_mode_toggle.setStyleSheet("QPushButton { font-size: 14px; font-weight: bold; color: #FF9800; padding: 5px 15px; border: 1px solid #FFCC80; border-radius: 6px; background: #FFF3E0; margin-right: 15px;} QPushButton:hover { background: #FFE0B2; }")
@@ -450,9 +440,14 @@ class ReviewView(QWidget):
         self.orphan_bar.setVisible(False)
 
         self.current_editing_idx = None
-        
-        if self.main_win.engine.df.empty: return
-        
+
+        # 【v5.12 修正 · §9-O8】数据为空时也必须刷新时间选择器：
+        # 旧代码在这里直接 return，导至清空账户/删完最后一条后，
+        # 下拉框仍残留着已经不存在的月份项（陈旧 UI）。
+        if self.main_win.engine.df.empty:
+            self.refresh_time_picker(self.is_yearly_view)
+            return
+
         self.refresh_time_picker(self.is_yearly_view)
         
         self.cb_time_picker.blockSignals(True)
@@ -471,7 +466,14 @@ class ReviewView(QWidget):
         self.cb_time_picker.blockSignals(False)
         
         df = self.main_win.engine.df.copy()
-        
+
+        # 【v5.12 · §9-O1 净额口径统一】"仅盈利 / 仅亏损"按真实到手判断，
+        # 与流水页、Dashboard、core/analyzer 保持同一口径（§5.3-B）。
+        if {'net_profit', 'commission'}.issubset(df.columns):
+            df['net_amount'] = df['net_profit'] - df['commission'].fillna(0)
+        else:
+            df['net_amount'] = df['net_profit']
+
         acc_sel = self.cb_rev_account.currentData()
         if acc_sel != "ALL" and acc_sel is not None: df = df[df['account'] == acc_sel]
         
@@ -488,8 +490,8 @@ class ReviewView(QWidget):
         elif dir_sel == "做空": df = df[df['direction'] == 'SHORT']
             
         res_sel = self.cb_rev_result.currentText()
-        if res_sel == "仅盈利": df = df[df['net_profit'] > 0]
-        elif res_sel == "仅亏损": df = df[df['net_profit'] <= 0]
+        if res_sel == "仅盈利": df = df[df['net_amount'] > 0]
+        elif res_sel == "仅亏损": df = df[df['net_amount'] <= 0]
             
         df['trade_time'] = pd.to_datetime(df['trade_time'])
         
@@ -576,13 +578,8 @@ class ReviewView(QWidget):
         df_sorted = df.sort_values(by='trade_time').copy()
         df_sorted['net_amount'] = df_sorted['net_profit'] - df_sorted['commission'].fillna(0)
         equity_curve = [0.0] + df_sorted['net_amount'].cumsum().tolist()
-        x_data = list(range(len(equity_curve)))
-        is_prof = equity_curve[-1] >= 0
-
-        col = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
-        fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
-        self.review_pnl_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=col, width=2),
-                                   fillLevel=0, fillBrush=fill)
+        # 累计盈亏曲线：统一走 chart_style（v5.12 · §9-O7），基准线 0
+        plot_equity_curve(self.review_pnl_chart, equity_curve, fill_base=0.0, width=2)
 
         # 资金 K 线：把同一天的多笔交易聚合成一根蜡烛 (当日权益的开高低收)
         df_sorted['day'] = df_sorted['trade_time'].dt.day
@@ -661,7 +658,10 @@ class ReviewView(QWidget):
                         days = max(0, (b - a).days + 1)
                         day_natural_fallback += 1
                     except Exception:
-                        days = 0
+                        # 【v5.12 修正 · §9-O8】旧代码在此把 0 天计入均值，
+                        # 与"算不出来就不参与统计"的设计自相矛盾（会系统性拉低均值）。
+                        # 算不出来就如实跳过，绝不拿 0 冒充。
+                        continue
                 day_days.append(days)
 
         covered = len(exact_minutes)

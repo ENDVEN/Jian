@@ -126,6 +126,8 @@ class RecordsView(QWidget):
         top_bar_2.addWidget(QLabel("盈亏结果:"))
         self.cb_res = NoWheelComboBox()
         self.cb_res.addItems(["全部", "仅盈利", "仅亏损"])
+        self.cb_res.setToolTip("按「净额 = 平仓盈亏 − 手续费」判断（真实到手），"
+                               "与绩效统计口径一致")
         self.cb_res.currentIndexChanged.connect(self.apply_filters)
         top_bar_2.addWidget(self.cb_res)
 
@@ -251,6 +253,14 @@ class RecordsView(QWidget):
         else:
             df['is_orphan'] = 0
 
+        # 【v5.12 · §9-O1 净额口径统一】"仅盈利 / 仅亏损"必须按真实到手判断。
+        # 旧代码直接用 net_profit(毛利)，会把"毛利为正、手续费吃掉后实际亏损"的
+        # 单子算进「仅盈利」，与 §5.3-B 净额铁律及 Dashboard 的口径自相矛盾。
+        if {'net_profit', 'commission'}.issubset(df.columns):
+            df['net_amount'] = df['net_profit'] - df['commission'].fillna(0)
+        else:
+            df['net_amount'] = df['net_profit']
+
         self._update_orphan_banner(df)
 
         # 1. 账户过滤
@@ -269,10 +279,10 @@ class RecordsView(QWidget):
         if "买入开仓" in dir_sel: df = df[df['direction'] == 'LONG']
         elif "卖出开仓" in dir_sel: df = df[df['direction'] == 'SHORT']
             
-        # 4. 盈亏过滤
+        # 4. 盈亏过滤 —— 按净额 (真实到手)，见上方 §9-O1
         res_sel = self.cb_res.currentText()
-        if res_sel == "仅盈利": df = df[df['net_profit'] > 0]
-        elif res_sel == "仅亏损": df = df[df['net_profit'] <= 0]
+        if res_sel == "仅盈利": df = df[df['net_amount'] > 0]
+        elif res_sel == "仅亏损": df = df[df['net_amount'] <= 0]
 
         # 5. 数据完整度过滤
         stitch_sel = self.cb_stitch.currentText()

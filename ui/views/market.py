@@ -11,6 +11,7 @@ from pyqtgraph import QtGui
 from config import settings
 from data.market_db import DataLakeManager
 from data.sync_service import ZONE_KLINE, friendly_fetch_message
+from ui.widgets.chart_style import apply_pokorny_style
 from ui.widgets.custom_widgets import CandlestickItem
 from ui.workers import SingleSyncWorker
 from core.indicators import TAEngine
@@ -74,9 +75,19 @@ class MarketView(QWidget):
         
         self.btn_sync = QPushButton("☁️ 云端同步")
         self.btn_sync.setStyleSheet("QPushButton { font-size: 14px; font-weight: bold; color: #1976D2; background: #E3F2FD; padding: 8px 15px; border: 1px solid #BBDEFB; border-radius: 6px; margin-left: 10px; }")
-        self.btn_sync.clicked.connect(self.force_sync_cloud)
+        self.btn_sync.setToolTip(
+            "本地有数据 → 只补下载缺失的最新几天（快）；\n"
+            "本地没数据 → 直接整段抓取。\n\n"
+            "需要「丢弃本地重新整段下载」时，请到「🗄 数据管理」页用「重新全量下载」\n"
+            "（日常用不到，只在怀疑本地数据异常时才需要）。")
+        self.btn_sync.clicked.connect(self.sync_cloud)
         top_bar.addWidget(self.btn_sync)
-        
+
+        # 同步结果回执（成功/已是最新/失败都要给用户一个明确交代，不能点了没反应）
+        self.lbl_sync_status = QLabel("")
+        self.lbl_sync_status.setStyleSheet("font-size: 12px; color: #8A94A6; margin-left: 8px;")
+        top_bar.addWidget(self.lbl_sync_status)
+
         layout.addLayout(top_bar)
         
         # ==========================================
@@ -138,17 +149,23 @@ class MarketView(QWidget):
         
         main_splitter.addWidget(control_panel)
         main_splitter.addWidget(self.chart_container)
-        main_splitter.setSizes([200, 1000]) 
-        
-        layout.addWidget(main_splitter)
+        main_splitter.setSizes([200, 1000])
 
-    def _apply_pokorny_axis(self, plot_item):
-        plot_item.hideAxis('top'); plot_item.hideAxis('right')
-        plot_item.showGrid(x=True, y=True, alpha=0.15)
-        pen = pg.mkPen(color='#E0E0E0', width=1); text_pen = pg.mkPen(color='#9E9E9E')
-        for axis_name in ['left', 'bottom']:
-            axis = plot_item.getAxis(axis_name)
-            axis.setPen(pen); axis.setTextPen(text_pen)
+        # 【v5.13 修复 · Qt 布局坑】必须给 main_splitter 显式 stretch=1：
+        # 顶部栏里一旦出现 vertical=Preferred 的控件（如本页新增的 lbl_sync_status QLabel，
+        # 或将来任何 QLabel 后缀），Qt 会把整段富余高度全部分给顶部栏（实测把 34px 的
+        # 顶栏拉成 401px，标题占据大半页）。显式 stretch 让富余空间永远归主区，不再受
+        # 子布局启发式分配影响。类似结构的新页面务必照抄这句。
+        layout.addWidget(main_splitter, 1)
+
+    @staticmethod
+    def _apply_pokorny_axis(plot_item):
+        """委托给 ui/widgets/chart_style.py —— 全 app 图表轴样式唯一来源 (v5.12 · §9-O7)
+
+        注意：本页的图表来自 `GraphicsLayoutWidget.addPlot()`，拿到的是 PlotItem
+        而非 PlotWidget，chart_style 内部已兼容这两种类型。
+        """
+        return apply_pokorny_style(plot_item, background=None, margins=0)
 
     def search_and_load(self):
         keyword = self.txt_search.text().strip()
@@ -168,18 +185,33 @@ class MarketView(QWidget):
             if not self.current_df.empty:
                 self.render_charts()
                 return
-            
-        self.force_sync_cloud()
 
-    def force_sync_cloud(self):
+        # 本地没数据（或文件为空）→ 直接抓取；sync_cloud 内部会自动走"全量"分支
+        self.sync_cloud()
+
+    def sync_cloud(self):
+        """
+        把当前标的同步到最新。
+
+        NOTE(v5.12)：方法名由 `force_sync_cloud` 改为 `sync_cloud` ——
+        它已不再是"强制全量"，名字必须如实反映行为（§10-10 面向用户说人话，
+        同样适用于面向未来的我的命名）。
+
+        【v5.12 修正 · §9-O4】语义改为与用户直觉一致：
+          · 本地有数据 → 增量：只补下载缺失的最新几天（秒级完成）
+          · 本地没数据 → 全量：整段抓取（force_full 与否结果相同，因为本地是空的）
+        旧代码恒传 force_full=True，导致对已缓存标的点一次就从 2010 整段重下，
+        又慢又浪费请求额度。真正需要"丢弃本地重下"的场景，
+        统一去「🗄 数据管理」页用「重新全量下载」（§10-10 危险/耗时动作隔离）。
+        """
         if not self.current_symbol:
             QMessageBox.information(self, "提示", "请先搜索并选中一个标的，再进行云端同步。")
             return
         self.btn_sync.setEnabled(False)
+        self.lbl_sync_status.setText("正在同步…")
         # 【架构纪律】UI 不发网络请求：统一走 SingleSyncWorker → MarketSyncService。
-        # force_full=True 对应"☁️ 云端同步"的语义（用户就是想重拉一遍）。
         self.fetch_thread = SingleSyncWorker(self.current_symbol, zone=ZONE_KLINE,
-                                             force_full=True, parent=self)
+                                             force_full=False, parent=self)
         self.fetch_thread.finished.connect(self._on_sync_finished)
         self.fetch_thread.start()
 
@@ -189,12 +221,22 @@ class MarketView(QWidget):
 
         # 【竞态防护】拉取期间用户可能已切换到其他标的，过期结果必须丢弃
         if symbol != self.current_symbol:
+            self.lbl_sync_status.setText("")
             return
 
         if not result.get("ok"):
+            self.lbl_sync_status.setText("同步失败")
             # 用"人话"说明失败原因：网络？还是代码有误 / 该股已退市？(v5.10)
             QMessageBox.warning(self, "行情同步失败", friendly_fetch_message(symbol, result))
             return
+
+        # 同步成功：把"到底发生了什么"明确回执给用户，避免"点了没反应"的错觉
+        if result.get("skipped"):
+            self.lbl_sync_status.setText("已是最新，无需更新")
+        else:
+            added = int(result.get("added", 0) or 0)
+            self.lbl_sync_status.setText(
+                f"已更新，新增 {added} 行" if added > 0 else "已更新")
 
         df = self.data_lake.load_data(ZONE_KLINE, symbol)
         if df.empty:

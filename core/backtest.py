@@ -48,6 +48,50 @@ REASON_TRAILING = "trailing"
 REASON_MAX_BARS = "max_bars"
 REASON_FORCE_CLOSE = "force_close"
 
+# 离场原因 -> 中文标签 / 配色（v5.15：从 UI 层上收到 core，供 明细表/CSV/PNG报告图 同源使用，
+# 禁止任何 UI 文件再各自定义一份 —— §9-O7 同类教训）
+EXIT_REASON_LABELS = {
+    REASON_SIGNAL: "卖出信号",
+    REASON_STOP_LOSS: "固定止损",
+    REASON_TAKE_PROFIT: "固定止盈",
+    REASON_TRAILING: "移动止盈",
+    REASON_MAX_BARS: "超时强平",
+    REASON_FORCE_CLOSE: "收盘强平",
+}
+EXIT_REASON_COLORS = {
+    REASON_SIGNAL: "#1976D2",       # 蓝：主观卖出
+    REASON_STOP_LOSS: "#F44336",    # 红：亏损离场
+    REASON_TAKE_PROFIT: "#4CAF50",  # 绿：止盈离场
+    REASON_TRAILING: "#2E7D32",     # 深绿：保盈离场
+    REASON_MAX_BARS: "#FB8C00",     # 橙：管理型超时
+    REASON_FORCE_CLOSE: "#9AA3B2",  # 灰：期末强平
+}
+
+
+def risk_summary(risk: dict | None) -> str:
+    """风控参数 → 人话一句话（CSV 表头 / PNG 报告共用同一来源，勿在 UI 再写一份）。
+
+    输入与 UI 一致：百分比为"8 表示 8%"，max_bars 为根数；全关/空返回「全部关闭」。
+    """
+    risk = risk or {}
+
+    def num(key: str) -> float:
+        try:
+            return float(risk.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    parts = []
+    max_bars = int(num("max_bars"))
+    if max_bars:
+        parts.append(f"最长持仓 {max_bars} 根")
+    for label, key in (("固定止损", "stop_loss_pct"), ("固定止盈", "take_profit_pct"),
+                       ("移动止盈回撤", "trailing_pct")):
+        value = num(key)
+        if value:
+            parts.append(f"{label} {value:g}%")
+    return "；".join(parts) if parts else "全部关闭"
+
 
 def normalize_risk(risk: dict | None) -> dict:
     """把 UI/外部传入的风控参数归一为引擎内部小数口径，非法值一律回落 0 (关闭)。

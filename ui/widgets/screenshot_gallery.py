@@ -84,7 +84,10 @@ class ScreenshotGallery(QWidget):
         if not raw or raw == 'nan':
             return
         for path in raw.split(self.PATH_SEPARATOR):
-            if path and os.path.exists(path):
+            if path:
+                # 【v5.12 修正 · §9-O8】旧代码在这里静默丢弃磁盘上已失效的路径：
+                # 用户毫无感知，而下次"保存复盘"会把丢过的路径写回库 = 变相删数据。
+                # 现在一律保留条目，只是把它标成「已丢失」由用户自己决定要不要清。
                 self._add_thumbnail(path)
 
     def get_paths(self) -> str:
@@ -110,8 +113,15 @@ class ScreenshotGallery(QWidget):
         return os.path.join(settings.SCREENSHOT_DIR, f"{owner}_{timestamp}.{ext}")
 
     def _add_thumbnail(self, filepath):
-        item = QListWidgetItem(QtGui.QIcon(filepath), "")
+        missing = not os.path.exists(filepath)
+        # 文件已不在磁盘上时不画缩略图，但要保留条目 + 明确标注，
+        # 让"数据里记着、磁盘上没了"这件事对用户可见。
+        icon = QtGui.QIcon() if missing else QtGui.QIcon(filepath)
+        item = QListWidgetItem(icon, "⚠ 已丢失" if missing else "")
         item.setData(Qt.ItemDataRole.UserRole, filepath)
+        if missing:
+            item.setToolTip(f"该截图文件已不存在于磁盘：\n{filepath}\n"
+                            f"（如需彻底移除，请点缩略图右上角的删除按钮）")
         self.list_widget.addItem(item)
 
     def paste_image(self):

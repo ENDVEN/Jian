@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame,
 from PyQt6.QtCore import Qt
 
 from config import settings
+from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
 
 
 class YearlyReviewPanel(QWidget):
@@ -31,23 +32,8 @@ class YearlyReviewPanel(QWidget):
     # UI 构建
     # ==========================================
     def _apply_pokorny_style(self, chart: pg.PlotWidget, title: str = ""):
-        chart.setBackground('w')
-        if title:
-            chart.setTitle(title, color="#424242", size="11pt", bold=True)
-
-        plot_item = chart.getPlotItem()
-        plot_item.hideAxis('top')
-        plot_item.hideAxis('right')
-        chart.showGrid(x=True, y=True, alpha=0.15)
-
-        pen = pg.mkPen(color='#E0E0E0', width=1)
-        text_pen = pg.mkPen(color='#9E9E9E')
-        for axis_name in ['left', 'bottom']:
-            axis = plot_item.getAxis(axis_name)
-            axis.setPen(pen)
-            axis.setTextPen(text_pen)
-
-        plot_item.getViewBox().setContentsMargins(15, 15, 15, 15)
+        """委托给 ui/widgets/chart_style.py —— 全 app 图表轴样式唯一来源 (v5.12 · §9-O7)"""
+        return apply_pokorny_style(chart, title)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -146,13 +132,8 @@ class YearlyReviewPanel(QWidget):
 
         df_sorted = df.sort_values(by='trade_time')
         equity_curve = [0.0] + df_sorted['net_amount'].cumsum().tolist()
-        x_data = list(range(len(equity_curve)))
-        is_prof = equity_curve[-1] >= 0
-
-        color = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
-        fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
-        self.yearly_curve_chart.plot(x_data, equity_curve, pen=pg.mkPen(color=color, width=3),
-                                     fillLevel=0, fillBrush=fill)
+        # 年度资金净值曲线：统一走 chart_style (v5.12 · §9-O7)，基准线 0
+        plot_equity_curve(self.yearly_curve_chart, equity_curve, fill_base=0.0, width=3)
 
         strategy_pnl = df.groupby('strategy_tag')['net_amount'].sum().sort_values()
         if strategy_pnl.empty:

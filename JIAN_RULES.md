@@ -33,6 +33,83 @@
 > 且 `ItemIsSelectable`+`SelectRows` 带来蓝色行高亮。最终方案：**彻底放弃 Qt 原生 checkbox**，
 > 第 0 列自绘 ☐/☑ 字符 + 整格点击=唯一切换入口 + `NoSelection`（消除行高亮）。
 > 已用 QTest **真实鼠标事件**验证单点/连点/取消均稳定（§9-N1 修订）。
+> v5.12：**第二次全仓通读核对（模型切换后的"陌生代码"复查）**。本次**未改任何业务代码**，
+> 只做"文档 ↔ 磁盘"的逐项对账，产出 §9-O 系列 10 项发现：
+> ① 口径漂移：流水/复盘的「仅盈利/仅亏损」过滤器仍用毛利（O-1）；
+> ② 架构债残留：`ui/workers.py` 只收口了"行情同步类"线程，回测/成分股/导入/版本检测
+>   4 个 QThread 仍散落在各自文件（O-2）；③ `sync_service` 的 docstring 把数据起点写成
+>   2016，与实际的 2010 冲突，是 §9-M3 的**回归隐患**（O-3）；
+> ④ 行情页「☁️ 云端同步」恒为全量重拉、与管理页双按钮体验不一致（O-4）；
+> ⑤ 回测页同步结果缺竞态守卫（O-5）；⑥ §4 目录树行数/版本号全面过时（O-6）；
+> ⑦ 图表样式重复从 2 处变成 3 处（O-7）；⑧ §9-J 小坑确认仍在 + 一处文档描述有误（O-8）；
+> ⑨ Dashboard KPI 实为 17 项非 18 项（O-9）；⑩ 复盘页回放 K 线反复全量读 Parquet（O-10）。
+> **本节最底部的 §11.6 已据此刷新"下一步推荐顺序"。**
+> v5.13：**第一 / 第二梯队全部落地**（用户已批准"筛选改净额"，并明确云端同步语义
+> = "本地有数据就更新、没数据就抓取"）。改动清单（全部通过 25 项冒烟断言 +
+> 离屏构造主窗口/全部弹窗）：
+>   · **O-3** `data/sync_service.py` docstring 起点改回 2010-01-01 并写明"数据窗≠评估窗"；
+>   · **O-5** `backtest.py` `_on_synced` / `_on_index_synced` 补竞态守卫（照抄 market.py）；
+>   · **O-7** 新增 **`ui/widgets/chart_style.py`**，把**四份**重复的 Pokorny 轴样式与
+>     资金/净值曲线绘制收敛为 `apply_pokorny_style` + `plot_equity_curve` 两个函数；
+>     （⚠ 通读时漏数了一份：`ui/views/market.py` 也有，且它传的是 **PlotItem** 不是
+>     PlotWidget —— 新函数两种类型都兼容）；
+>   · **O-2** 三个 UI 线程（`_BacktestRunThread` / `_ConstituentsWorker` /
+>     `FuturesImportWorker`）迁入 `ui/workers.py`，改名 `BacktestRunWorker` /
+>     `ConstituentsWorker` / `FuturesImportWorker`；§2 表述已改为准确版本；
+>   · **O-8** 四项小坑：`review.py` 空数据也刷新时间选择器 / `days=0` 改 `continue` /
+>     切年视图清空回放图 / 画廊不再静默丢弃失效截图路径（改为标注「⚠ 已丢失」）；
+>   · **O-1（用户拍板）** 流水页 + 复盘页「仅盈利/仅亏损」改为 **净额** 口径，
+>     两处下拉加 tooltip 说明口径；
+>   · **O-4（用户拍板）** 行情页 `force_sync_cloud` → 改名 `sync_cloud`，
+>     `force_full` 恒为 **False**：本地有数据=增量、没数据=全量；
+>     新增 `lbl_sync_status` 回执（已是最新 / 已更新新增 N 行 / 同步失败）。
+>     "重新全量下载"仍只存在于「🗄 数据管理」页（§10-10 危险动作隔离）。
+>     **v5.13 修订**：O-4 新增的同步状态 QLabel 触发了 Qt 布局坑（顶部栏末尾 QLabel
+>     会把富余高度全吞掉、标题被拉成 400px），已给 main_splitter 显式 `stretch=1` 根治，
+>     固化为 §11.5 第 13 条。
+> v5.14：**回测结果导出落地（§7-A2 半程）** —— 用户拍板"**只做导出、不做删除**"，
+> 并把「结果历史存档」列为**远期方案**（见 §7-A4，留给后续会话）。
+>   · 回测页「K线控制行」右侧新增「导出明细」按钮；
+>   · 新增 **`_last_meta` 参数快照**：`start_backtest` 发起瞬间定格 标的/区间/策略名/
+>     函数段/参数/买卖表达式/风控/指数门控，导出永远对应当前 `_last_result`，
+>     不掺导出瞬间的编辑框内容；
+>   · **`_compose_result_csv`**（纯函数，14 项断言全过）= 注释头 + 逐笔明细；
+>     `utf-8-sig` 落盘，Excel 可直接打开。
+>     ⚠ **v5.16 推翻 v5.14 的"注释头裸写"方案**：裸写会让含英文逗号的函数源码行
+>     （如 `STICKLINE(A, B, C, 3, 0), COLORFF0000;`、`MA(C, 5)`）被 Excel/WPS
+>     当多列拆开 → 用户实测"第三部分：图形绘制"乱码不可读。正确做法见 v5.16。
+> v5.15：**导出升级 · PNG 报告图 + 共享常量上收**（用户拍板：CSV 移除净值行 /
+> PNG 加离场原因饼图 / 下拉菜单入口）。
+>   · **CSV 精简**：移除 200+ 行「每日净值明细」段 —— 它既是可读性低的主因、又可由
+>     引擎用相同参数复现；溯源义务交给『参数 + 逐笔』，净值曲线视觉化由 PNG 承担。
+>   · **新增 `ui/widgets/backtest_report.py`**（SRP，218 行，零新增第三方依赖）：
+>     单页 PNG 报告图 = 标题（品种/区间/策略）+ KPI 四卡 + 净值曲线 + **离场原因饼图** +
+>     参数/风控/指数门控简表；复用 `chart_style.plot_equity_curve`；QWidget 离屏
+>     grab() 渲染，中文依赖系统字体（沙箱缺 CJK 字体会显方框，属环境非代码问题）。
+>   · **共享常量上收到 `core/backtest.py`**：`EXIT_REASON_LABELS` / `EXIT_REASON_COLORS`
+>     / `risk_summary(...)` —— 明细表着色、CSV 表头、PNG 图例与饼图色彩**三处同源**，
+>     禁止任何 UI 文件再各写一份（§9-O7 教训）。
+>   · **下拉菜单取代单按钮**：`📄 导出 CSV 明细…` / `🖼 导出结果图 PNG…`，
+>     未来加 XLSX 只需在 `_export_menu` 新增 action。
+>   · **16 项断言全过**（CSV 无净值段且数据行=逐笔数、PNG 尺寸 1120×660、菜单结构、
+>     共享常量、空 equity 容错）。报告图单页 1120×660。
+> v5.16：**CSV 导出兼容性修复（用户用 WPS 实测反馈）** —— "函数源码第三部分含英文
+> 逗号的行在表格软件里被拆列成乱码"。
+>   · 根因：v5.14/5.15 把"注释/表头行"**裸写**（不走 csv 转义），而函数源码里
+>     `STICKLINE(..., DYN_INDEX, DYN_INDEX, 3, 0), COLORFF0000;` 这类行含英文逗号，
+>     Excel/WPS 打开时会当成多列拆分，表现为"图像绘制段看不到内容"。
+>   · 修法：`_compose_result_csv` 里**每一行都作为单格字段走 csv.writer**
+>     （含逗号行自动加引号 → 表格软件还原为单格；不含逗号行保持裸写；空行用
+>     `writerow([])` 产生真·空行，不再出现 `""` 假空行）。
+>   · 校验：**9 项断言** —— csv.reader 严格重解析整份文件：表头区每非空行 = 1 格、
+>     逐笔区 = 8 列 × 成交数、中文离场原因可解析、无 `""` 假空行。
+>   · **导出文件对任何遵循 CSV 规范的软件（Excel / WPS / 编辑器）均适配**。
+> v6.0（规划定稿）：**§7-B3 公式统一绘图（引擎级 · 最高优先级 P0 · 无代码变更）** ——
+> 用户复盘发现"函数里 STICKLINE/DRAWICON 画出的指标从没出现过"，根因是 `program.py`
+> 长期 SKIP 绘图语句（历史 §7-B3 欠账），而 CSV/PNG/回测K线都没有能画它的底层管线。
+> 用户定稿：以"**引擎产出统一绘图 IR + 唯一渲染器 OverlayPainter**"为长远架构，
+> 避免未来优化各图表时逐图一对一手改；M0 契约层 / M1 求值层 / M2 渲染+回测页 /
+> M3 收尾 / M4 远期全图复用。完整规格与验收见 §7-B3 主案，优先级见 §11.6。
 > 状态图例：`[x]` 完成 · `[~]` 部分/半成品 · `[ ]` 未开始/占位。
 
 ---
@@ -57,7 +134,7 @@
 | 业务库 | SQLite，`INSERT OR IGNORE` 幂等 + MD5 确定性主键 | `core/database.py` |
 | 时序湖 | pyarrow Parquet 分区数据湖（DataLake） | `data/market_db.py` |
 | 偏好/策略库 | JSON 原子写（tmp + os.replace） | `core/preferences.py`、`data/strategy_store.py` |
-| 并发 | 耗时 I/O 一律 QThread Worker | 导入解析 / 行情同步 / 回测 / 数据湖扫描 / 版本检测 —— **线程统一收口在 `ui/workers.py`**，页面不再自造线程类 |
+| 并发 | 耗时 I/O 一律 QThread Worker | ✅ v5.13 已收口：`ui/workers.py` 是全 app **唯一的 QThread 定义处**（ScanWorker / SyncWorker / SingleSyncWorker / BacktestRunWorker / ConstituentsWorker / FuturesImportWorker），页面与弹窗一律不自造线程类。**唯一例外**：`core/updater.py` 的 `UpdateCheckerThread` 属 core 层（版本检测不是 UI 职责），不搬进 ui/ |
 
 **用户数据目录（物理隔离，勿在仓库存业务数据）:** `~/.jian_data/`
 （`jian_trades.db`、`preferences.json`、`backtest_strategies.json`、`data_lake/`、`screenshots/`）。
@@ -68,7 +145,7 @@
 
 | 导航页 | 类（文件） | 完成度 | 能力摘要 |
 |---|---|---|---|
-| 📊 资金与表现 | `DashboardView` | [x] | 18 项净额口径 KPI 网格 + **每日净额日历热力图(53×7, 可切年份)** + 净值曲线 + 单笔净额分布直方图 |
+| 📊 资金与表现 | `DashboardView` | [x] | **17 项**净额口径 KPI 网格（v5.12 实测，非 18 项，见 §9-O9）+ **每日净额日历热力图(53×7, 可切年份)** + 净值曲线 + 单笔净额分布直方图 |
 | 📝 交易流水 | `RecordsView` | [x] | 11 列明细表、五维过滤器、孤儿黄条、CSV 全量导出、时间精度切换 |
 | 💡 深度复盘 | `ReviewView` | [x] | 月/年双模态、月历热力图、累计盈亏/交易回放/资金K线/持仓时长四页签、孤儿手工补录、截图画廊 |
 | 📈 市场行情 | `MarketView` | [x] | 代码查询、数据湖优先+联网兜底、K线+MA/BOLL+量+MACD、趋势线(不持久) |
@@ -84,54 +161,77 @@
 
 ---
 
-## 4. 目录结构与代码地图（v5.0 与磁盘一致）
+## 4. 目录结构与代码地图（v5.12 与磁盘逐文件核对，行数为实测值）
 
 ```text
 Jian/
-├── main.py              # 唯一启动入口：建数据目录、pg 抗锯齿、装配 MainWindow
-├── sync_roster.py       # 独立花名册同步脚本(__main__)：A股+期货名册→DB market_symbols，纯手动运行
-├── requirements.txt     # PyQt6 / pyqtgraph / pandas / numpy / pyarrow / akshare / openpyxl
-├── version.json         # ⚠ 远端版本探测用（见 §9 债务-D）
-├── JIAN_RULES.md        # 本文件
+├── main.py              # 34行 唯一启动入口：建数据目录、pg 抗锯齿、装配 MainWindow
+├── sync_roster.py       # 47行 独立花名册同步脚本(__main__)：A股+期货名册→DB market_symbols，纯手动运行
+├── requirements.txt     #     PyQt6 / pyqtgraph / pandas / numpy / pyarrow / akshare / openpyxl
+├── version.json         #     ⚠ 远端版本探测用；必须与 settings.APP_VERSION 同步（见 §9-A）
+├── JIAN_RULES.md        #     本文件
+├── .gitignore           #     已忽略 __pycache__ / screenshots / *.db / 实例*.xlsx / 实例函数.txt 等隐私
 ├── config/
-│   └── settings.py      # 全局常量：APP_NAME、APP_VERSION=1.1.0(⚠)、颜色、INITIAL_CAPITAL=1e6、
-│                        #   USER_DATA_DIR=~/.jian_data、UPDATE_CHECK_URL
+│   └── settings.py      # 51行 全局常量：APP_NAME、APP_VERSION=1.4.1(与 version.json 同步)、颜色、
+│                        #      INITIAL_CAPITAL=1e6、USER_DATA_DIR=~/.jian_data、UPDATE_CHECK_URL
 ├── models/
-│   └── trade.py         # TradeRecord dataclass —— 全链路唯一闭环交易契约（字段见 §5.1）
+│   └── trade.py         # 103行 TradeRecord dataclass —— 全链路唯一闭环交易契约（字段见 §5.1）
 ├── core/                # 【纯计算层：零 UI 零网络】
-│   ├── engine.py        # DataEngine 中央门面(157行)：UI唯一数据入口，编排解析→落库→报告；
-│   │                    #    reload/clear/delete/stitch/coverage 全覆盖
-│   ├── database.py      # DatabaseManager(479行)：trades+open_legs+import_coverage+coverage_gaps
-│   │                    #    +market_symbols 五表 DAO；INSERT OR IGNORE；旧库自动迁移(备份/加列)
-│   ├── indicators.py    # TAEngine：MA(5/20/60)/BOLL/MACD 向量化注册表
-│   ├── analyzer.py      # TradeAnalyzer：净额口径统计(raw_report) + 持仓时长三级口径聚合
-│   ├── backtest.py      # BacktestEngine/BacktestTrade/BacktestResult：LONG-only 单股回测；
-│   │                    #   条件为真即触发 + 阶段B风控离场器(risk参数/exit_reason)
-│   ├── formula/         # 通达信 DSL（详见 §5.2）
-│   ├── utils.py         # 无副作用纯函数：品种去根/诚实时间/持仓秒/交易日跨度/格式化/日期对齐(align_by_date)
-│   ├── preferences.py   # Preferences 单例：~/.jian_data/preferences.json（唯一键 time_precision）
-│   └── updater.py       # UpdateCheckerThread(QThread)：远端 version.json 异步比对，静默失败
+│   ├── engine.py        # 158行 DataEngine 中央门面：UI唯一数据入口，编排解析→落库→报告；
+│   │                    #      reload/clear/delete/stitch/coverage + search_symbol/list_stock_symbols
+│   ├── database.py      # 437行 DatabaseManager：trades+open_legs+import_coverage+coverage_gaps
+│   │                    #      +market_symbols 五表 DAO；INSERT OR IGNORE；旧库自动迁移(备份/加列)
+│   ├── indicators.py    #  66行 TAEngine：MA(5/20/60)/BOLL/MACD 向量化注册表
+│   ├── analyzer.py      # 110行 TradeAnalyzer：净额口径统计(raw_report) + 持仓时长三级口径聚合
+│   ├── backtest.py      # 289行 BacktestEngine/BacktestTrade/BacktestResult：LONG-only 单股回测；
+│   │                    #      条件为真即触发 + 阶段B风控离场器(risk参数/exit_reason)
+│   │                    #      + 离场原因 标签/配色/risk_summary 共享常量（v5.15 上收于此）
+│   ├── formula/         # 695行 通达信 DSL 共 5 文件（详见 §5.2）
+│   │   ├── __init__.py  #  39行 FormulaEngine 门面：validate/parse/evaluate/signal
+│   │   ├── tokens.py    #  67行 词法
+│   │   ├── parser.py    # 178行 递归下降 → AST（优先级 NOT > 比较 > AND > OR）
+│   │   ├── runtime.py   # 298行 EvalContext + FUNCTIONS(17)/ARITY 注册表
+│   │   └── program.py   # 113行 整段程序：assign/output/skip 三态 + execute_programs 共享变量池
+│   ├── utils.py         # 230行 无副作用纯函数：品种去根/诚实时间/持仓秒/交易日跨度/格式化/align_by_date
+│   ├── preferences.py   #  85行 Preferences 单例：~/.jian_data/preferences.json（唯一键 time_precision）
+│   └── updater.py       #  62行 UpdateCheckerThread(QThread)：远端 version.json 异步比对，静默失败
 ├── data/                # 【数据获取/存储层】
-│   ├── data_feed.py     # CFMMC 解析(965行)：纯函数无副作用；成交/持仓/结算月报三页签；
-│   │                    #   BaseTradeParser+PARSER_REGISTRY；FIFO 缝合与孤儿分配；漏月检测
-│   ├── akshare_feed.py  # AkShareFeed：A股新浪/东财兜底、期货主连、指数日线(阶段C)、花名册、清洗路由
-│   │                    #   ⚠ 供 UI 引用的仅限纯函数：is_stock_code/is_index_symbol/INDEX_PRESETS
-│   ├── market_db.py     # DataLakeManager：parquet 分区存取(exists/save/load/get_latest_date)
-│   │                    #   + v5.8 清点删除(delete_data/clear_zone/list_zone/inventory 只读footer/zone_stats)
-│   ├── sync_service.py  # MarketSyncService(v5.8)：行情同步唯一门面 = 增量合并去重 + 温柔抓取
-│   │                    #   ThrottlePolicy(间隔/抖动/重试/熔断/断点续传)；纯 Python 零 Qt 依赖
-│   └── strategy_store.py# StrategyStore：回测策略 JSON CRUD + 每标的 metrics 档案(同股对比)
+│   ├── data_feed.py     # 827行 CFMMC 解析：纯函数无副作用；成交/持仓/结算月报三页签；
+│   │                    #      BaseTradeParser+PARSER_REGISTRY(扩展预留，无人调用，见 §9-K)；
+│   │                    #      FIFO 缝合与孤儿分配；漏月检测
+│   ├── akshare_feed.py  # 254行 AkShareFeed：A股新浪/东财兜底、期货主连、指数日线(阶段C)、花名册、清洗路由
+│   │                    #      ⚠ 供 UI 引用的仅限纯函数：is_stock_code/is_index_symbol/INDEX_PRESETS(29项)
+│   ├── market_db.py     # 201行 DataLakeManager：parquet 分区存取(exists/save/load/get_latest_date)
+│   │                    #      + v5.8 清点删除(delete_data/clear_zone/list_zone/inventory 只读footer/zone_stats)
+│   ├── sync_service.py  # 224行 MarketSyncService(v5.8)：行情同步唯一门面 = 增量合并去重 + 温柔抓取
+│   │                    #      ThrottlePolicy(间隔/抖动/重试/熔断/断点续传)；纯 Python 零 Qt 依赖
+│   │                    #      + friendly_fetch_message / short_fetch_reason 失败分类文案
+│   └── strategy_store.py# 139行 StrategyStore：回测策略 JSON CRUD + 每标的 metrics 档案(同股对比)
 └── ui/                  # 【表现层：只做展示，禁 SQL/爬虫】(见 §3)
-    ├── main_window.py   # JianMainWindow：6页装配 + 弹窗调度 + render_all_data + CSV导出 + 漏月告警
-    ├── workers.py       # 共享 QThread(v5.8)：ScanWorker(扫湖)/SyncWorker(批量同步)/SingleSyncWorker(单只)
-    ├── widgets/         # custom_widgets.py(K线图元/NoWheel控件族/悬浮删除) / screenshot_gallery.py
-    │                    #   / yearly_review.py / condition_gate.py(买卖条件组Gate)
-    │                    #   / function_segments.py(多段函数编辑器)
-    │                    #   / calendar_heatmap.py(Dashboard 每日净额日历热力图, C1)
-    ├── dialogs/         # import_futures / manual_entry / list_manager / bulk_download(批量预下载)
-    └── views/           # dashboard / records / review / market / backtest_module(+backtest)
-                         #   / data_manager(🗄数据管理, v5.8)
+    ├── main_window.py   # 233行 JianMainWindow：6页装配 + 弹窗调度 + render_all_data + CSV导出 + 漏月告警
+    ├── workers.py       # 153行 全 app 唯一的 QThread 定义处(v5.13)：ScanWorker(扫湖)/
+    │                    #      SyncWorker(批量)/SingleSyncWorker(单只)/BacktestRunWorker(回测)/
+    │                    #      ConstituentsWorker(成分股)/FuturesImportWorker(交割单)
+    ├── widgets/         # custom_widgets.py(119 K线图元/NoWheel控件族/悬浮删除/SPINBOX_QSS)
+    │                    #   / screenshot_gallery.py(161) / yearly_review.py(118)
+    │                    #   / condition_gate.py(295 买卖条件组Gate)
+    │                    #   / function_segments.py(121 多段函数编辑器)
+    │                    #   / calendar_heatmap.py(245 Dashboard 每日净额日历热力图, C1)
+    │                    #   / chart_style.py(63 ★v5.13 图表样式唯一收敛点，见 §9-O7)
+    │                    #   / backtest_report.py(218 ★v5.15 PNG 报告图渲染, 见 §7-A2)
+    ├── dialogs/         # import_futures(169) / manual_entry(192) / list_manager(48)
+    │                    #   / bulk_download(399 批量预下载)
+    └── views/           # dashboard(259) / records(361) / review(1119) / market(346)
+                         #   / backtest_module(83) + backtest(1427, ⚠ 超 1400 待拆分, §9-L)
+                         #   / data_manager(473 🗄数据管理, v5.8)
 ```
+
+**体积红黑榜（v5.15 实测，>400 行即需警惕继续堆功能）：**
+`ui/views/backtest.py 1427` > `ui/views/review.py 1119` > `data/data_feed.py 827` >
+`ui/views/data_manager.py 473` > `ui/views/records.py 361` > `ui/views/market.py 346` >
+`ui/widgets/backtest_report.py 218`（新模块）、`ui/widgets/condition_gate.py 295`。
+（v5.15 增量：backtest +10（入口/方法壳，PNG 渲染逻辑全在新模块）、
+core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
 
 ---
 
@@ -184,8 +284,10 @@ Jian/
 - **A. 时间双轨制**：`trade_time` 永远纯日期；原生 `*_fill_time` 完整入库；
   用户「时间精度」偏好只控显示/排序（`preferences.time_precision`：DATE_ONLY/FILL_TIME），
   首次导入**强制选择**、流水页可随时切换。
-- **B. 净额口径**：胜率/盈亏比/单笔极值/净值曲线一律用 `net_profit − commission`；
+- **B. 净额口径**：胜率/盈亏比/单笔极值/净值曲线/**盈亏筛选**一律用 `net_profit − commission`；
   毛利与手续费单列对照（实测净额胜率 45.2% vs 毛利 51.6%）。
+  ✅ v5.13：流水页 / 复盘页的「仅盈利 / 仅亏损」筛选器已由毛利改净额（§9-O1 已修），
+  现在**全站再无例外**。新建任何"盈利/亏损"判定时，务必先算 `net_amount`。
 - **C. 范围聚焦**：**交易流水/深度复盘只做期货**（股票导入链路已整体删除）；
   股票仅保留「市场行情」「市场回测」侧的行情/回测能力。
 - **D. 持仓时长三级口径（v1.3 回归）**：① 开仓带时分→精确计时；② 仅日期→本地交易日历
@@ -254,6 +356,11 @@ Jian/
 - [x] **签名含指数门控（阶段C）**：`_signature` 计入 `index`；未启用/条件空与旧档等价。
 - [x] 稳定性：缺参友好提示；非法周期不穿透 UI；UI 始终 QThread 执行拉数与回测
   （含指数日线同步）。
+- [x] **回测结果导出（v5.14/v5.15 · §7-A2 半程）**：结果区「导出结果 ▾」下拉菜单 =
+  `📄 导出 CSV 明细…`（表头参数块 + 逐笔明细，**无净值行**，utf-8-sig，溯源用）+
+  `🖼 导出结果图 PNG…`（`ui/widgets/backtest_report.py`：KPI + 净值曲线 + 离场饼图 +
+  参数简表，1120×660）。均基于 `_last_meta`（发起回测瞬间定格的配置快照）。
+  **不做删除 / 不做存档**，详见 §7-A2 与 §7-A4。
 
 ### 6.4 基础设施与演进
 - [x] SQLite 迁移链：旧双时间表自动备份重建（COALESCE 归并）；v1.2 增量列走 `ALTER TABLE` 零损加列。
@@ -266,9 +373,14 @@ Jian/
   增量 = 本地末日+1 天起拉 → concat → 按 `date` 去重(keep=last，**新数据优先=顺带修正前复权漂移**)
   → 排序落盘；「强制全量重拉」入口必须保留（增量修不回历史价格）。
   `ThrottlePolicy` 温柔抓取：间隔+随机抖动 / 指数退避重试 / 连续失败熔断 / 跳过已最新(断点续传)。
-- [~] 代码物理拆分纪律：**弹窗全独立、`DataEngine` 单一门面**已达标；
-  但 UI 层仍有边界松动（直连 `AkShareFeed` / `engine.db`），见 §9-H。
-  `backtest.py` 1403 行 / `review.py` 1248 行偏大，是下一步拆分重点（§9-L）。
+- [x] **代码物理拆分纪律**（v5.13 复核）：
+  - [x] **弹窗全独立、`DataEngine` 单一门面**；
+  - [x] **UI 直连底层已收敛**（§9-H）：`market.py` / `backtest.py` 均走 `SingleSyncWorker`，
+    两处 `engine.db.search_symbol` 已改走 `engine.search_symbol`。
+  - [x] **线程收口完成（v5.13 · §9-O2）**：`ui/workers.py` 是全 app 唯一 QThread 定义处，
+    唯一例外是 core 层的 `UpdateCheckerThread`（非 UI 职责）。
+  - [x] **图表样式 4 合 1（v5.13 · §9-O7）**：统一到 `ui/widgets/chart_style.py`。
+  - [ ] **大文件拆分未动**：`backtest.py 1417`（⚠ v5.14 因导出重回 1400+）/ `review.py 1119`（§9-L，第三梯队）。
 
 ---
 
@@ -342,9 +454,24 @@ Jian/
 ### A 类 · 半成品闭环（有代码入口/雏形，缺最后一公里 —— 建议优先）
 - **A1 [~] 行情涂鸦板持久化** `ui/views/market.py`：画线已可交互，但 `drawn_lines` 随重渲染清空、
   无落盘。**收尾定义**：选定存储(DB 附表或 JSON) + 代码维度去重 + 复盘页/行情页复用。
-- **A2 [~] 回测结果导出/删除** `ui/views/backtest.py` + `data/strategy_store.py`：
-  `record_result` 已归档每标的 metrics 且同股对比可用，但**结果集无导出/删除 UI**。
-  **收尾定义**：结果明细入库 + 列表管理 + CSV 导出（对齐主链路 `export_data` 体验）。
+- **A2 [~] 回测结果导出（半程）** `ui/views/backtest.py`：
+  ✅ **v5.14 已做"导出当前结果"**（§6.3）：CSV 含表头参数块 + 逐笔明细 + 净值曲线。
+  **明确不做**：结果删除 —— 用户判断"当前没有显式保存、结果会被覆盖，删除没有对象可删"。
+  `StrategyStore.record_result` 仍是自动归档的缩略指标（同股对比用），不属于"可管理的结果集"。
+- **A4 [ ] 回测结果历史存档（远期 · 由用户 v5.14 明确"找机会再做"）**：
+  **为什么**：结果本质上是"易逝的"（同 策略×标的 每次回测静默覆盖旧缩略指标），
+  用户迟早会问"上周那组参数跑出来的明细去哪了"。
+  **设计要点（动工前先与用户对齐，勿直接照做）**：
+  ① 每次回测生成一份**不可变存档**：`_last_meta`（配置快照，v5.14 已就绪）+
+    `BacktestResult`（逐笔明细 + 净值）序列化到 `~/.jian_data/backtest_results/`
+    （JSON 或 CSV，文件命名 = 时间戳 + 策略 + 标的 + 区间）；
+  ② UI 新增「回测历史」列表（可参考「策略对比」页签的入口，或独立页签）：
+    查看/复用参数（载入回编辑器）/打开明细，删除放这里但按 §10-10 做隔离 + 二次确认
+    （此时"删除"才有明确对象 = 一份存档文件，可与"保存"配对）；
+  ③ 若只想要"可复现"，也可只存档轻量 JSON（参数 + 函数文本）以便"一键重跑"，
+     不必把整份净值曲线也存了 —— 先问用户要的是"复现"还是"留档"。
+  **前置**：§6.3 的导出（v5.14）已把 `_last_meta` / `_compose_result_csv` 铺好路。
+
 - **[x] A3 P0 数据管理页（v5.8 已完成）**：`DataLakeManager` 补删除/清点原语 +
   第 6 导航页 `ui/views/data_manager.py` + 批量预下载弹窗 `ui/dialogs/bulk_download.py` +
   同步门面 `data/sync_service.py`。
@@ -355,8 +482,10 @@ Jian/
   依赖 A3（预下载全市场湖）。需 `scan_cache` zone（公式哈希+日期维中间结果缓存）。
 - **B2 [ ] M3 全市场广度家数折线 + 指数双轴叠加**：`page_breadth` 占位；指数日线能力已就绪
   （阶段C：`fetch_index_daily`/`index_daily`），缺广度统计实现与双轴 UI。
-- **B3 [ ] P1b+ 公式绘制补强** `core/formula/program.py`：STICKLINE/DRAWICON/颜色线型现被 SKIP。
-  收尾：实现真执行（产出绘图指令序列）→ UI 叠加到 K线图；扩展函数子集 + 函数模板库。
+- **B3 [ ] ⭐最高优先级（P0 · v6.0 用户定稿）公式统一绘图** ——
+  完整主案见下方「§7-B3 主案规格」，含 引擎 IR → 统一渲染器 → 回测页接入 三步。
+  现状（待消除）：`program.py` 把 `STICKLINE/DRAWICON/颜色线型` 一律 SKIP，
+  导致用户的 QSD/GLX/状态柱"算得出、没得画"——K线页签与导出 PNG 均看不到。
 - **B4 [ ] P1c 回测进阶（部分）**：结果长期入库已有雏形(A2)，缺 复用 `TradeAnalyzer` 绩效维度
   与每回合明细的持久化侧写。
 
@@ -371,6 +500,83 @@ Jian/
 - **D1 [ ] Python 脚本沙箱（AST 白名单）第二作者模式**：接入点预留在 `core/formula`。
 - **D2 [ ] 期货侧回测**：`BacktestEngine` 明确 LONG-only/A股，做空与期货为远期。
 - **D3 [ ] `kline_min` 高频分时数据湖 zone**（已 mkdir，功能预留）。
+
+### §7-B3 主案规格：统一绘图 IR（v6.0 设计稿 · 最高优先级 P0 · 用户 2026-09-10 定稿）
+
+> **定位一句话**：让"公式怎么画"从一行行散落在各 UI 文件里的手工绘图，变成
+> **引擎产出统一"绘图指令"（IR）→ 唯一渲染器解释** —— 以后任何图表
+> （回测 K线 / 市场行情 / 未来其它图）要展示公式叠层，都走同一条底层管线，
+> 想改样式/改语义只改引擎 IR 或渲染器一处，绝不对着每个页面挨个改。
+
+**为什么是引擎级（而不是在 UI 层"读函数文本再猜"）**
+- 绘图语句依赖**同一共享变量池**（STATE_BLUE/DYN_INDEX/最终优选…），只能在
+  `EvalContext` 求值现场拿到真值；UI 层事后重读文本 = 二次解析 + 语义分裂。
+- 引擎不画图，只产出**数据**；UI 不解析函数，只**消费 IR**。职责与 §10-3 一致。
+
+**1) 语句分类（`core/formula/program.py` 改造）**
+`_classify` 由 3 态扩为 **4 态**（ASSIGN / OUTPUT / **DRAW** / SKIP→移除）：
+- `DRAW` = 语句以已知绘图函数开头：一期 **STICKLINE / DRAWICON**；预留 DRAWTEXT。
+- OUTPUT 语句（`NAME: expr`）逗号后缀解析出绘制属性 → 得到 **line 输出**：
+  `QSD: DYN_INDEX, COLORWHITE, LINETHICK2;` = kind=line + color=白 + thickness=2；
+  `最终优选: ..., NODRAW, COLORRED;` = kind=hidden（NODRAW 只算不画，但变量照常供 Gate 用）。
+- 属性后缀（颜色/线型/NODRAW）用轻量 tokenize，不引入第二套解析。
+- 未知绘图函数名（如 DRAWTEXT 未实现前）→ 明确报错并列出已支持清单，**绝不静默跳过**
+  （这正是用户踩的坑：现在 SKIP 让 DRAW 静默消失）。
+- 变量语义零回归：ASSIGN/OUTPUT 产生的变量名照旧进共享池（`execute_programs` 契约不变）。
+
+**2) 契约层（新增 `core/formula/draw.py`，纯计算，零 Qt）**
+- `COLOR_TABLE`：通达信颜色名→hex（RED/GREEN/BLUE/YELLOW/WHITE/BLACK/GRAY/LIGRAY…）
+  + `COLORRRGGBB` 直通；未知颜色抛友好错。
+- `@dataclass DrawSpec`（编译期）：kind∈{line,stick,icon,hidden}、color、thickness、
+  style(预留 DOTLINE 等)、各表达式的 AST。
+- `@dataclass DrawData`（运行期）：kind、color、x(date/np)、数组
+  （line: y；stick: cond×lo×hi×width；icon: cond×pos×icon_id）+ 常量备注。
+- 执行 API（**与现有 execute_programs 兼容并存**）：
+  - `execute_programs(...)` 保持不变（只出变量，供检测/条件）；
+  - 新增 `execute_programs_with_draws(programs, df, params) -> (variables, draws)`
+    —— 同一 EvalContext 顺序执行一遍同时产出两者，**不二次求值**；
+  - 绘制语句的 cond/price 求值错误与变量同样以 `FormulaProgramError` 抛给 UI 展示。
+
+**3) 渲染层（新增 `ui/widgets/draw_overlay.py`，本软件的"图表叠层唯一窗口"）**
+- 对外唯一入口：`OverlayPainter(plot_item, bars_x, draws)` —— bars_x 是宿主已切好的
+  x（bar 序号数组），draws 在整段数据轴求值、由宿主按 date_index 切片后喂入，
+  防止"画错位/跨窗口漂移"（复用回测页 K线切窗那一套日期→索引映射思路）。
+- 内部实现（与 CandlestickItem 同一套 Pokorny 画法：QPicture + 抗锯齿 + 去描边）：
+  - line → `pg.PlotDataItem`（color/thickness）；预留 DOTLINE 样式表；
+  - stick → 自绘 GraphicsObject（cond 为真处画 lo→hi 竖段，width=1 画细线、
+    width>1 画小实体），K线配色纪律（去描边、单色高对比）照旧；
+  - icon → `ScatterPlotItem`：`DRAWICON(cond, price, id)` 的 id→符号映射表（一期常用子集），
+    未知 id 用默认菱形并 tooltip 提示，不崩溃；
+  - 一律走 `chart_style` 的配色/抗锯齿约定，禁就地 inline 样式。
+- 宿主只负责三件事：切窗口、喂 x 数组、把 y 范围扩到能盖住叠层（stick/icon 超出K线
+  高低价时要纳入 range）。
+
+**4) 消费方接入（首个落地点 = 回测页「🕯 K线买卖点」页签）**
+- `_on_data_ready` 已把输出变量 merge 成整段 df 列（.values 与整段对齐）；
+  执行时改调 `execute_programs_with_draws`，把 draws 与 `_last_df` 一并保存。
+- `_render_kline` 切窗口时按 date_index 抽取出窗口内 draws，调 `OverlayPainter` 一次；
+  提供「显示公式叠层」开关（默认开）；stack 顺序：K线→叠层线→状态柱→买卖点标记。
+- y 自适应：叠层最大/最小纳入视口范围计算。
+
+**5) 验收 / 冒烟断言（必须，参照历史 §9-N1 风格）**
+- 编译期：STICKLINE/DRAWICON 正反宽度、COLOR 名/hex、LINETHICK、NODRAW、未知颜色与
+  未知函数各自报友好错；
+- 求值期：draws 与变量同一次执行、分批/重复执行结果稳定；空 cond 不产出图形对象；
+- 渲染期：离屏构造回测页 → 叠加 QSD/GLX/状态柱后 grab PNG 非空，x 对齐与 K线窗口一致
+  （抽样断言若干 bar 的像素色/位置）。
+- 回归：`execute_programs` 旧调用方（检测/条件/指数门控）行为不变（同断言）。
+
+**6) 里程碑（按此顺序推进，每个完成即回写本文档）**
+- **M0 契约层**：`core/formula/draw.py`（dataclass + COLOR_TABLE + 校验）+ program.py
+  4 态分类与 attrs 解析；纯单测（无 UI）。
+- **M1 求值层**：`execute_programs_with_draws` 产出 draws（含 STICKLINE/DRAWICON 求值），
+  断言覆盖清单见上。
+- **M2 渲染层 + 回测页接入**：`ui/widgets/draw_overlay.py` + K线页签叠层 + 开关 + y 自适应；
+  离屏截图验收。
+- **M3 收尾**：错误文案收敛；§11.4 速查表登记"以后给图表加叠层 = 引擎 draw.py +
+  draw_overlay.py 两处"；B3 标 [x]。
+- **M4（远期 hook）**：市场行情页等其余图表接入同一 `OverlayPainter`（用户未来
+  优化行情图表时的统一修改窗口已就位，不需逐图改）。
 
 ---
 
@@ -392,6 +598,12 @@ Jian/
 | v5.6(文档v5.6) | 回测 UX 补强 | 风控行箭头统一为原生（根治"上箭头只有右半边可点"）+ 区间下沿 2018→2016 + 新增近3月/近6月/近5年三档；新增 §10-9 控件一致性铁律 |
 | v1.4.0 | 回测总集 + 甲方案收尾 | 多函数段共享池 / 条件组 Gate / 风控离场器 / 指数 regime 门控；年度面板净额口径统一；花名册覆写安全闸；Dashboard 每日净额日历(C1)；`APP_VERSION` 与 `version.json` 同步升 1.4.0 |
 | v1.4.1 | 数据管理页 + 同步收敛 | A3 落地：数据湖删除/清点原语；`MarketSyncService` 同步门面（增量合并 + 温柔抓取 ThrottlePolicy）；`ui/workers.py` 统一线程；第 6 导航页 + 批量预下载弹窗；§9-H 架构债清账；**含 v5.9 独立复查加固**（§9-M1~M4 时效/空增量/起点/竞态） |
+| v5.12(文档v5.12) | 全仓通读对账（**无代码变更**） | 第二次"陌生代码"复查：核对 30 个 .py，产出 §9-O 系列 10 项发现；校正 §3/§4 的 KPI 项数与全量行数；§4 补 `.gitignore` 与 `core/formula/` 五个子文件；刷新 §11.6 下一步顺序 |
+| v5.13(文档v5.13) | 第一/第二梯队落地 | O-1 盈亏筛选改净额（用户拍板）；O-2 三个 UI 线程迁入 `ui/workers.py`；O-3 同步 docstring 起点改 2010；O-4 云端同步改默认增量（本地有=增量/没数据=全量，改名 `sync_cloud`）+ 状态回执；O-5 回测页补竞态守卫×2；O-7 新增 `ui/widgets/chart_style.py`（4 合 1，PlotWidget/PlotItem 兼容）；O-8 复盘页三小坑 + 画廊失效路径不再静默丢弃。**25 项冒烟断言 + 离屏构造主窗口/全部弹窗通过**。APP_VERSION 未动（仍 1.4.1）。**修订**：O-4 新增的同步状态 QLabel 触发了 Qt 布局坑（顶部栏末尾 QLabel 会吞掉主区高度），已给 main_splitter 加 `stretch=1` 根治，并固化为 §11.5 第 13 条 |
+| v5.14(文档v5.14) | §7-A2 导出落地（半程） | 回测页「导出明细」按钮 + `_last_meta` 配置快照（start_backtest 定格）+ `_compose_result_csv`（逐笔明细 + 净值曲线，utf-8-sig）。**只导出、不删除**（用户拍板）；「结果历史存档」列为 §7-A4 远期方案。**14 项导出断言全过** + 全仓编译通过。APP_VERSION 未动（仍 1.4.1）。⚠ 其"注释头裸写"做法已被 v5.16 推翻 |
+| v5.15(文档v5.15) | 导出升级：PNG 报告图 | 用户拍板：① CSV 移除 200+ 行净值段（溯源=参数+逐笔，曲线由图承担）；② PNG 报告图含离场原因饼图；③ 导出按钮改下拉菜单（CSV/PNG 两动作）。新增 `ui/widgets/backtest_report.py`（单页 1120×660 = 标题 + KPI + 净值曲线 + 饼图 + 参数简表，离屏 grab 渲染）；离场原因 标签/配色/风控文案上收 `core/backtest.py` 三处同源。**16 项断言全过** + 全仓编译通过。APP_VERSION 未动（仍 1.4.1） |
+| v5.16(文档v5.16) | CSV 兼容性修复（WPS 实测） | 用户用 WPS 打开 CSV 发现"函数段·第三部分图形绘制"被拆列成乱码：根因 = 表头注释行裸写，含英文逗号的 `STICKLINE(...), COLORFF0000;` 被表格软件当多列。修复：`_compose_result_csv` **逐行单格 csv 转义**（含逗号自动引号、空行 writerow([])）。**9 项 csv.reader 重解析断言全过**。APP_VERSION 未动（仍 1.4.1） |
+| v6.0(规划) | §7-B3 公式统一绘图（**P0 · 设计定稿，无代码**） | 用户复盘定位"绘图语句从没被画出来"= `program.py` 长期 SKIP 的历史欠账；定稿"引擎产出统一绘图 IR + 唯一 OverlayPainter"为全图表统一修改窗口（避免未来逐图一对一改）。里程碑 M0 契约层 / M1 求值层 / M2 渲染+回测页 / M3 收尾 / M4 远期全图复用。完整规格见 §7-B3 主案；优先级见 §11.6 |
 | 远期 | 排期 | 组合级多标的引擎（指数择时后全市场挑股+资金分配，见 §6.5） |
 
 ---
@@ -516,6 +728,125 @@ Jian/
 
 【固化到 §10-10 的新铁律】危险动作物理隔离 + 面向用户说人话（见下）。
 
+### v5.12 全仓通读核对产出（第二次"陌生代码"复查，10 项）
+
+> 背景：会话中再次更换过语言模型。按 §9-M 立下的规矩——**跨会话/跨模型的改动，
+> 提交前必须做一次"不信自己人"的复查**——本次把全部 30 个 .py 重读一遍，
+> 逐项对账"文档说的"与"代码做的"。结论：**核心链路（净额/幂等/FIFO/孤儿/同步语义）
+> 全部健在**，下面 10 项都是"边缘漂移"，不影响主链路正确性。
+
+> **✅ v5.13 状态：O-1 ~ O-8 全部已修**（共 25 项冒烟断言 + 离屏构造主窗口/全部弹窗通过）。
+> 下面保留原文是为了让未来的我知道"当时为什么这么改"；每项标题后标了最终做法。
+
+- **O-1【口径漂移】✅ 已修（改为净额）** —— 流水页 / 复盘页的「仅盈利 / 仅亏损」过滤器
+  用的是毛利 `net_profit`，违反 §5.3-B 净额铁律：
+  - `ui/views/records.py:274-275`（`仅盈利`→`net_profit > 0`；`仅亏损`→`net_profit <= 0`）
+  - `ui/views/review.py:491-492`（同样的两行）
+  - 后果：一笔"毛利 +100、手续费 150"的交易真实净额是 **−50**，却会被算进「仅盈利」，
+    与 Dashboard / `core/analyzer.py` 的净额口径**自相矛盾**（用户会看到"盈利筛选里
+    混着亏钱的单子"）。
+  - 修法：改为先算 `net_amount = net_profit − commission.fillna(0)` 再判正负。
+  - ✅ **v5.13 用户拍板：改净额**。两处均先算 `net_amount` 再判正负，
+    并给下拉加 tooltip「按净额 = 平仓盈亏 − 手续费判断」。断言：毛利 +100 / 手续费 150
+    的单子现在正确落进「仅亏损」。
+
+- **O-2【架构债残留】✅ 已修（三个线程迁入 workers.py）** ——
+  `ui/workers.py` 只收口了"行情同步类"线程，§2 的宣称不成立：
+  以下 4 个 QThread 仍定义在各自业务文件里 ——
+  | 线程 | 位置 | 用途 |
+  |---|---|---|
+  | `_BacktestRunThread` | `ui/views/backtest.py:121` | 回测计算 |
+  | `_ConstituentsWorker` | `ui/dialogs/bulk_download.py:47` | 指数成分股解析 |
+  | `FuturesImportWorker` | `ui/dialogs/import_futures.py:19` | 交割单解析（子线程内还读 SQLite） |
+  | `UpdateCheckerThread` | `core/updater.py:9` | 版本检测（落点在 core，非 UI） |
+
+  **现状判定**：`ui/workers.py` 现有 `ScanWorker` / `SyncWorker` / `SingleSyncWorker` 三个，
+  全是"数据湖同步"这一类。所以准确说法是**"行情同步类线程已收口"**，不是"线程已收口"。
+  ✅ **v5.13 修法：② 全搬**（三个 UI 线程都进 workers.py，`UpdateCheckerThread` 留在
+  core/updater.py 因为它本就不属于 UI 层；§2 表述已同步改成准确版本）。
+  新名字：`BacktestRunWorker` / `ConstituentsWorker` / `FuturesImportWorker`。
+
+- **O-3【文档字符串失真 · 回归隐患】✅ 已修** ——
+  `data/sync_service.py:118` 把数据起点写成了 2016-01-01：
+  `refresh_one` 的 docstring 写着 `默认 DEFAULT_MIN_DATE(2016-01-01)`，而该文件第 47 行的
+  实际值是 `DEFAULT_MIN_DATE = "20100101"`（§9-M3 修正后的正确值）。
+  **危害不在当下在未来**：下一个人（或下个模型的我）照着 docstring 就会把起点"修"回 2016，
+  §9-M3 的数据静默缩水**原样复发**。
+  ✅ **v5.13 已改**：docstring 改成 2010-01-01，并显式注明"数据窗 2010 ≠ 评估窗 2016"。
+
+- **O-4【行为与文案不符】✅ 已修（改默认增量）** ——
+  行情页「☁️ 云端同步」恒为全量重拉，用户没有增量选项：
+  `ui/views/market.py:174-184` 的 `force_sync_cloud()` 固定传 `force_full=True`，
+  所以对**已缓存**的标的点一次 = 从 2010 整段重下一次（慢、浪费请求、有被限流风险）。
+  这与数据管理页已经做好的「🔄 更新到最新 / ⟳ 重新全量下载」双按钮体验**不一致**。
+  ✅ **v5.13 已修**：`force_sync_cloud` 改名 `sync_cloud`（名字不再撒谎），
+  `force_full` 恒为 **False** —— 本地有数据=增量补最新、没数据=自动全量。
+  另加 `lbl_sync_status` 回执（「已是最新，无需更新」/「已更新，新增 N 行」/「同步失败」），
+  杜绝"点了没反应"。全量下载仍只在「🗄 数据管理」页（§10-10）。
+
+- **O-5【竞态防护缺失】✅ 已修** —— 回测页的同步结果没有"标的是否已被切换"的校验：
+  `ui/views/backtest.py:1042-1053` `_on_synced` 拿到结果就直接落库渲染；
+  而 `market.py:190-192` 有一模一样场景却写了守卫（`if symbol != self.current_symbol: return`）。
+  后果：拉取期间用户切了标的，旧标的的数据会渲染到新标的上。
+  ✅ **v5.13 已修**：`_on_synced` 比对 `symbol != self.current_symbol` 即丢弃并复位 busy；
+  `_on_index_synced` 比对 `result["symbol"] != self._pending_index["symbol"]` 即丢弃。
+  **这是"同一类防护只做了一半"的典型** —— 加防护时务必全局搜一遍同一场景还有几处
+  （已固化为 §11.5 第 11 条）。
+
+- **O-6【文档过时】✅ 已修** —— §4 目录树的行数与版本号全面与磁盘不符：
+  `data_feed.py` 文档 965 / 实际 827，`database.py` 479/437，`backtest.py` 1403/1253，
+  `review.py` 1248/1122，`engine.py` 157/158；`config/settings.py` 的 `APP_VERSION`
+  早就是 **1.4.1**，旧文档仍写 1.1.0(⚠)。**§4 现在带行数，每次大改后务必重跑一次行数统计。**
+
+- **O-7【重复代码】✅ 已修（4 合 1）** —— 图表样式函数被复制了 **四份**（通读时只数出三份，
+  漏了 market.py；**教训：数重复要全局 grep 函数名，别靠记忆**）：
+  - `_apply_pokorny_style`：`ui/views/review.py` 与 `ui/widgets/yearly_review.py`
+  - `_apply_pokorny_axis`：`ui/views/backtest.py` 与 `ui/views/market.py`
+  - 净值"排序→cumsum→按盈亏选色→plot+fillLevel"：review / yearly_review / backtest / dashboard
+  - ✅ **v5.13**：新增 **`ui/widgets/chart_style.py`**，收敛为
+    `apply_pokorny_style(chart, title, background, grid_alpha, margins)` 与
+    `plot_equity_curve(chart, values, fill_base, width, positive)`。
+    ⚠ **坑**：行情页的 `GraphicsLayoutWidget.addPlot()` 返回的是 **PlotItem** 不是 PlotWidget，
+    所以新函数两种类型都要能吃（`hasattr(chart,'getPlotItem')` 分流）。
+    改外观请只改 chart_style.py。
+
+- **O-8【小坑】✅ 已修（4 项全清）** —— §9-J 三项未修 + 一处文档描述有误：
+  - ✅ `review.py`：`engine.df` 为空时也走 `refresh_time_picker`（不再残留陈旧月份项）。
+  - ✅ `review.py`：「仅日期」分支解析异常改为 `continue`（算不出就不参与统计，绝不塞 0）。
+  - ✅ `review.py`：`toggle_review_mode` 切到年视图时先 `playback_chart.clear()`，
+    杜绝回放残留。
+  - 文档纠错（v5.12 已记录，v5.13 顺带处理）：`screenshot_gallery.py` 的
+    `path.rsplit('.', 1)[-1]` 对无扩展名文件**不会抛 IndexError**（`rsplit` 返回整串），
+    只是拿到错误的"扩展名"。
+  - ✅ `screenshot_gallery.py`：`set_paths` 不再静默丢弃磁盘上已失效的截图路径 ——
+    现在**保留条目并标注「⚠ 已丢失」+ tooltip 给出文件路径**，由用户自己决定是否删除；
+    `get_paths` 照常序列化，杜绝"用户无感知、保存时把路径写没"的变相删数据。
+
+- **O-9【文档过时】✅ 已修（§3 改 17 项）** —— Dashboard KPI 是 17 项，不是 18 项：
+  `ui/views/dashboard.py` 的 `metric_keys` 实测 17 个
+  （净额/毛利/手续费/收益率/胜率/盈亏比/最大回撤/交易次数/盈利次数/亏损次数/初始资金/
+  平均盈利/平均亏损/最大单笔赚/最大单笔亏/平均持仓/最长持仓）。
+
+- **O-10【性能 · 未动，列入第三梯队】复盘页回放与交易日历反复全量读 Parquet**：
+  `_render_trade_playback`（`review.py:999-1007`）每选中一笔交易就
+  `data_lake.load_data("kline_daily", root)` 读整份历史；
+  `_trading_dates_for`（`:607-621`）首次访问某品种时也要读一份（虽有 `_trading_cal` 缓存日期，
+  但读文件这一步没省）。同月内连点 20 笔交易 = 20 次全量 IO。
+  建议：按 symbol 做一份 LRU 缓存（只缓存 df 或只缓存 date 列），或至少复用
+  `_trading_dates_for` 已经读过的那份。
+
+- **✅ v5.12 已逐项核对"通过"（未来的我不必再查）**：
+  ① 净额口径：`analyzer.py` / `dashboard.py` / `review.py` 图表 / `yearly_review.py` 四处全对；
+  ② 幂等：`INSERT OR IGNORE` + `internal_id` MD5（切片 `#i` 盐）仍在；
+  ③ FIFO 全局排序只跑一次（`data_feed.py:767-771`）；
+  ④ 孤儿四层防御齐全（标记/黄条/补录/自动缝合）；
+  ⑤ 同步两大铁则：`fresh_within_days=0`、空增量=skipped 均健在（`sync_service.py:68/159-186`）；
+  ⑥ 数据起点 2010 未被改回；
+  ⑦ 勾选中自绘 ☐/☑ + 唯一切换入口 + `NoSelection`（`data_manager.py:202/360/403`）；
+  ⑧ 危险动作隔离 + 键入「清空」二次确认；
+  ⑨ 退市/无数据的人话文案（`friendly_fetch_message`）已接入 4 处；
+  ⑩ 版本号两处同步（1.4.1 = 1.4.1）；⑪ `scan_cache` zone 仍不存在（属 B1 前置，非欠账）。
+
 ---
 
 ## 10. AI 协作最高指令（不可妥协）
@@ -557,6 +888,12 @@ Jian/
      「重新全量下载」），细节差异放 tooltip / 次要文案。
    - **报错要"分类安抚"而非"统一吓唬"**：失败提示必须区分"网络/限流"与"数据本身没有
      （退市、停牌、代码错）"，后者明确告诉用户这不是他的错、且本地历史仍可用（§9-N5）。
+11. **【统一绘图窗口 · v6.0 B3】凡"公式驱动的叠层"只能走一条底层管线**：
+   引擎侧 = `core/formula/draw.py`（语句分类 + DrawSpec/DrawData IR + COLOR_TABLE），
+   渲染侧 = `ui/widgets/draw_overlay.py`（唯一 `OverlayPainter`）。
+   **任何页面（回测 K线、市场行情、未来新图）展示 STICKLINE/DRAWICON/公式线/状态柱，
+   都禁止自己写绘图逻辑**；想改样式/语义 = 改引擎 IR 或 OverlayPainter 一处，
+   杜绝"每个图表一对一地改"。底层契约见 §7-B3 主案规格。
 
 ---
 
@@ -579,7 +916,8 @@ Excel(交割单) →data/data_feed.py 解析+FIFO缝合→ models/trade.py Trade
 AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
         →core/formula 通达信 DSL 求值 → core/backtest.py 单股回测 → ui/views/backtest.py
 ```
-**UI 永远不许跳过 DataEngine 去碰 SQL**（现状有 3 处违规，见 §9-H，正在收敛中）。
+**UI 永远不许跳过 DataEngine 去碰 SQL**（v5.12 复核：§9-H 的 3 处违规**已全部修完**，
+`market.py` / `backtest.py` 现在都走 `engine.search_symbol` + `SingleSyncWorker`，**保持住**）。
 
 ### 11.3 用户数据在哪（改代码时别把仓库当数据库）
 | 内容 | 路径 |
@@ -607,12 +945,17 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 改 Dashboard 日历热力图 | `ui/widgets/calendar_heatmap.py`（纯手绘控件）+ `dashboard.py` 的 `_prepare_calendar` / `_render_calendar` |
 | 增删/清理数据湖缓存 | 原语在 `data/market_db.py`；页面在 `ui/views/data_manager.py`（⚠ 删完要 `_rescan` 刷新） |
 | 改行情同步/抓取节流 | `data/sync_service.py`（增量合并 + `ThrottlePolicy` 都在这里，**勿在 UI 里另起炉灶**） |
-| 给页面加后台任务 | `ui/workers.py`（`ScanWorker` / `SyncWorker` / `SingleSyncWorker`，**禁止页面自造线程类**） |
+| 给页面加后台任务 | `ui/workers.py` —— 全 app 唯一 QThread 定义处（Scan/Sync/SingleSync/BacktestRun/Constituents/FuturesImport 六个 Worker），**禁止页面自造线程类**（§9-O2） |
 | 改版本号 | `config/settings.py` 的 `APP_VERSION` **和** 仓库 `version.json`（两处必须同步） |
-| 回测页 UI | `ui/views/backtest.py`（⚠ 1403 行，先想清楚插在哪一段） |
+| 回测页 UI | `ui/views/backtest.py`（⚠ **1417 行**，先想清楚插在哪一段；结构顺序=顶部工具栏→①函数→②条件→③指数→运行条→风控行→KPI→K线控制→结果页签→导出按钮） |
+| 复盘页 UI | `ui/views/review.py`（⚠ **1119 行**；`_build_monthly_mode` 月视图 / `YearlyReviewPanel` 年视图 / `_render_trade_playback` 回放三块最重） |
 | M2/M3 新子页 | `ui/views/backtest_module.py` 里换掉 `_ComingSoonPage` |
+| 改图表轴样式 / 净值曲线绘制 | **`ui/widgets/chart_style.py`（唯一来源，v5.13）** —— `apply_pokorny_style`（PlotWidget/PlotItem 都兼容）+ `plot_equity_curve`；业务页面**禁止就地写轴样式** |
+| 给图表加"公式叠层"（STICKLINE/公式线/状态柱/DRAWICON） | **两条路都唯一**：引擎语义改 `core/formula/draw.py`；画图改 `ui/widgets/draw_overlay.py` 的 `OverlayPainter`（§7-B3 主案，v6.0 P0）。**禁止任何页面自己读函数文本再画** |
+| 改行情页"云端同步"行为 | `ui/views/market.py` 的 `sync_cloud`（v5.13 起默认增量：本地有数据=增量、没数据=全量；全量重下在「🗄 数据管理」页） |
+| 改回测结果导出 | CSV：`ui/views/backtest.py` `_compose_result_csv`（纯函数）+ `_last_meta`（配置快照，`start_backtest` 定格）；PNG 报告图：**`ui/widgets/backtest_report.py`**（离屏 grab 渲染）；标签/配色/风控文案只改 **`core/backtest.py`**（三处同源） |
 
-### 11.5 六个最容易踩的坑（血泪，别重犯）
+### 11.5 最容易踩的坑（血泪，别重犯，持续累积到 12 条）
 1. **净额 = `net_profit − commission`**。任何"结果类"指标（胜率/盈亏比/极值/净值曲线）
    漏掉手续费就是造假。已知 `yearly_review.py` 就踩了这个坑（§9-F）。
 2. **`trade_time` 永远是纯日期 00:00:00**，绝不自动填时分；真实时刻放 `*_fill_time`。
@@ -632,13 +975,38 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 9. **别让两套机制同时 toggle 同一个选择状态**（§9-N1）：Qt 原生 indicator 点击会**自动切换**，
    若你再监听 `cellClicked` 手动切换一次 = 双重触发 = 等于没点。要么只用原生、要么（推荐）
    完全自绘（☐/☑ 字符 + 整格点击唯一入口），且关掉行选择以免出现难看的选中高亮。
+10. **别照着 docstring 改常量**（§9-O3 血的教训）：`sync_service.refresh_one` 的 docstring
+    一度把数据起点写成 2016 而实际常量是 2010（v5.13 已改正）。**改任何常量前先看代码本体，
+    再从代码反向修文档**；反过来做就是"静默回归"。
+11. **同类防护要做就做全套**：`market.py` 有"同步结果 vs 当前标的"的竞态守卫，
+    `backtest.py` 同场景却漏了（§9-O5，v5.13 已补齐）。加防护时全局搜一遍同一场景还有几处。
+12. **图表样式只改 `ui/widgets/chart_style.py`**（§9-O7）：此前 4 处重复、改一处漏三处。
+    且行情页传的是 **PlotItem**（`GraphicsLayoutWidget.addPlot()` 的返回值）不是 PlotWidget ——
+    给图表封装公共函数前先想清楚"调用方手里到底是哪种类型"。
+13. **【v5.13 修订 · Qt 布局坑】顶部栏末尾的 `QLabel` 会"吞掉"主区高度**：
+    页面顶部一条 `QHBoxLayout`（搜索栏/标题/工具按钮），下方是 `QSplitter` 主区，
+    只要顶部栏的**末尾**多了一个 `QLabel`（vertical sizePolicy = Preferred，而按钮/复选框是 Fixed），
+    Qt 会把整段富余垂直空间全部分给顶部栏，标题会被拉到几百像素高、主区被压成 sizeHint。
+    触发条件是"QLabel 在末尾"，换位置/换按钮都不会。
+    **根治**：主区 widget 永远显式 `layout.addWidget(main_widget, 1)` 给 stretch>0，
+    富余空间才不受 Qt 启发式影响。`backtest.py` 本来就这么写所以没翻车，
+    `market.py` 原本忘了写，被 v5.13 新增的同步状态 QLabel 一脚踢翻。
 
-### 11.6 当前"下一步做什么"的推荐顺序（v5.8 刷新）
-- ✅ ~~§9-F / §9-G / §7-C1~~（v5.7）· ✅ ~~§7-A3 数据管理页 / §9-H UI 直连~~（v5.8）
-- **→ 1. §7-A2 回测结果导出/删除**（A1 已无前置，A2 是"结果长期留存"最有用户价值的一块）
-- 2. §7-A1 行情涂鸦板持久化（需先定存储，可复用 A3 已建的管理页做删除入口）
-- 3. §9-I 抽 `ui/widgets/chart_style.py`（顺手清理两处重复）→ §9-L 大文件拆分
-- 4. §7-B1/B2（M2/M3 真实功能）——A3 前置已清，可随时启动；B1 需先建 `scan_cache` zone
+### 11.6 当前"下一步做什么"的推荐顺序（v6.0 刷新）
+
+> ✅ ~~第一梯队 O-3/O-5/O-7/O-2/O-8~~（v5.13） · ✅ ~~第二梯队 O-1/O-4~~（v5.13）
+> ✅ ~~§7-A2 导出当前结果（CSV+PNG）~~（v5.14/5.15/5.16）
+> **→ ⭐ [P0] §7-B3 公式统一绘图（引擎级，2026-09-10 用户定稿为最高优先级）** ——
+> 规格见 §7-B3 主案：M0 契约层 → M1 求值层 → M2 渲染层+回测页接入 → M3 收尾 →
+> M4 远期（市场行情等全图复用同一 OverlayPainter）。
+> 之后才是下面**常规功能清单**（每项先聊方案再动手）：
+
+- 2. §7-A1 行情涂鸦板持久化（需先定存储；可复用「🗄 数据管理」页做删除入口）。
+- 3. **§7-A4 回测结果历史存档** —— 设计要点见 §7-A4，动工前先问要"复现"还是"留档"。
+- 4. §9-O10 复盘页 Parquet 读取加 LRU 缓存（体验向）。
+- 5. §9-L 大文件拆分（`backtest.py` / `review.py`）—— 与功能改动错开窗口做纯重构。
+- 6. §7-B1/B2（M2/M3 真实功能）—— A3 前置已清；B1 需先建 `scan_cache` zone。
+- 7. §6.5「远期」组合级多标的引擎 —— 全新模块，勿并入 M1。
 
 ### 11.7 收工前自检清单
 - [ ] 改动的模块状态（`[x]` / `[~]` / `[ ]`）在 §6 / §7 同步了吗？
@@ -647,3 +1015,6 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] 虚构数据了吗？（时间 / 价格 / 持仓）
 - [ ] 耗时 I/O 走 QThread 了吗？
 - [ ] 新发现的技术债写进 §9 了吗？本次摘要写进 §8 了吗？
+- [ ] **改了常量/数值，同文件与跨文件的 docstring / 注释同步改了吗？**（§9-O3、§11.5-10）
+- [ ] **改了文件规模，§4 的行数要不要重刷？**（§4 现在带实测行数）
+- [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）

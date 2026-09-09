@@ -11,12 +11,29 @@
   · data/sync_service.py —— 纯 Python，**干活的**（拉数 / 合并 / 落盘 / 节流）
   · ui/workers.py        —— Qt，**调度的**（把活丢到后台线程，用信号回报进度）
   两者严格分层：service 零 Qt 依赖，可单测、可被未来 CLI 复用。
+
+【收口范围 (v5.12 · §9-O2)】
+  本文件是全 app **唯一的 QThread 定义处**（页面与弹窗一律不得自造线程类）：
+    · ScanWorker          扫数据湖分区
+    · SyncWorker          批量同步
+    · SingleSyncWorker    同步单只
+    · BacktestRunWorker   回测计算
+    · ConstituentsWorker  解析指数成分股
+    · FuturesImportWorker 解析期货交割单
+  ⚠ 唯一的例外是 `core/updater.py` 的 UpdateCheckerThread —— 它属于 core 层
+    （版本检测不是 UI 职责），不搬进 ui/。
 """
+import logging
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from core.backtest import BacktestEngine
+from data.akshare_feed import AkShareFeed
 from data.market_db import DataLakeManager
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
                                short_fetch_reason)
+
+logger = logging.getLogger(__name__)
 
 
 class ScanWorker(QThread):
@@ -123,3 +140,76 @@ class SingleSyncWorker(QThread):
             self._symbol, zone=self._zone, force_full=self._force_full,
             min_date=self._min_date, policy=self._policy)
         self.finished.emit(result)
+
+
+class BacktestRunWorker(QThread):
+    """回测计算（市场回测页）。
+
+    异常一律在线程内吞掉并记日志，用 `None` 回包让 UI 给出统一的失败提示 ——
+    绝不让异常穿透 QThread 造成静默失败或崩溃。
+    """
+
+    finished_signal = pyqtSignal(object)   # BacktestResult | None
+
+    def __init__(self, df, symbol: str, buy_expr: str, sell_expr: str,
+                 start_date: str, end_date: str, risk: dict = None, parent=None):
+        super().__init__(parent)
+        self.df = df
+        self.symbol = symbol
+        self.buy_expr = buy_expr
+        self.sell_expr = sell_expr
+        self.start_date = start_date
+        self.end_date = end_date
+        self.risk = risk or {}
+
+    def run(self):
+        result = None
+        try:
+            result = BacktestEngine().run(
+                self.df, self.buy_expr, self.sell_expr, symbol=self.symbol,
+                start_date=self.start_date, end_date=self.end_date, risk=self.risk)
+        except Exception as e:  # noqa: BLE001 —— 回测异常绝不穿透线程
+            logger.error(f"市场回测-计算异常 [{self.symbol}]: {e}")
+        self.finished_signal.emit(result)
+
+
+class ConstituentsWorker(QThread):
+    """解析指数成分股（网络操作，必须后台执行）"""
+
+    finished_signal = pyqtSignal(object)   # list[str]
+
+    def __init__(self, index_code: str, parent=None):
+        super().__init__(parent)
+        self._code = index_code
+
+    def run(self):
+        try:
+            df = AkShareFeed.fetch_index_constituents(self._code)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"指数成分股解析异常 [{self._code}]: {e}")
+            df = None
+        self.finished_signal.emit(
+            [] if df is None or df.empty else df["symbol"].tolist())
+
+
+class FuturesImportWorker(QThread):
+    """
+    后台解析期货交割单。
+
+    【职责边界】只做耗时的 Excel 解析，落库交给 UI 主线程执行，
+    避免子线程写 SQLite 与主线程读数据争抢同一份内存状态。
+    """
+
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, engine, file_paths, parent=None):
+        super().__init__(parent)
+        self.engine = engine
+        self.file_paths = file_paths
+
+    def run(self):
+        try:
+            self.finished.emit(self.engine.parse_cfmmc(self.file_paths))
+        except Exception as e:  # noqa: BLE001
+            self.error.emit(str(e))

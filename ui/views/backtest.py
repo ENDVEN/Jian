@@ -20,13 +20,12 @@
 隐私与职责边界同前：不内置任何私有公式；解析在 core/formula，
 回测在 core/backtest，行情抓取在 data/，持久化在 data/strategy_store。
 """
-import logging
 import re
 
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import QCompleter
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -34,13 +33,14 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QMessageBox, QTabWidget, QTableWidget,
                              QTableWidgetItem, QHeaderView,
                              QComboBox, QCheckBox, QSplitter,
-                             QInputDialog, QApplication)
+                             QInputDialog, QApplication, QFileDialog, QMenu)
 
 from config import settings
 from core.formula import FormulaEngine
 from core.formula.program import (parse_program, execute_programs,
                                   FormulaProgramError, missing_parameter_names)
-from core.backtest import BacktestEngine
+# v5.15：离场原因标签/配色/风控文案从 core.backtest 统一导入（CSV 表头 / 明细着色 / PNG 报告同源）
+from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS, risk_summary)
 from core.utils import align_by_date
 from data.market_db import DataLakeManager
 # 说明：INDEX_PRESETS / is_index_symbol 是纯常量与纯校验函数（无副作用、不联网），
@@ -51,33 +51,19 @@ from data.sync_service import (ZONE_KLINE, ZONE_INDEX, friendly_fetch_message)
 from ui.widgets.custom_widgets import (CandlestickItem, NoWheelComboBox,
                                        NoWheelDateEdit, NoWheelDoubleSpinBox,
                                        SPINBOX_QSS)
-from ui.workers import SingleSyncWorker
+from ui.workers import BacktestRunWorker, SingleSyncWorker
+from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
 from ui.widgets.condition_gate import ConditionGate
 from ui.widgets.function_segments import FunctionSegments
-
-logger = logging.getLogger(__name__)
+# v5.15：PNG 报告图渲染下沉到独立模块（SRP，回测页只负责入口与文件对话框）
+from ui.widgets.backtest_report import render_result_png
 
 PLACEHOLDER = "-"
 MARKER_MARGIN = 0.03
 RECENT_BARS = 150
 
-# 离场原因 -> 中文文案 (阶段B 风控离场器)
-EXIT_REASON_LABELS = {
-    "signal": "卖出信号",
-    "stop_loss": "固定止损",
-    "take_profit": "固定止盈",
-    "trailing": "移动止盈",
-    "max_bars": "超时强平",
-    "force_close": "收盘强平",
-}
-_REASON_COLORS = {
-    "signal": settings.COLOR_TEXT_PRIMARY,
-    "stop_loss": settings.COLOR_LOSS_TEXT,
-    "take_profit": settings.COLOR_PROFIT_TEXT,
-    "trailing": settings.COLOR_PROFIT_TEXT,
-    "max_bars": "#E65100",
-    "force_close": "#8A94A6",
-}
+# NOTE(v5.15)：EXIT_REASON_LABELS / EXIT_REASON_COLORS 已上收到 core/backtest.py，
+# 本页与 PNG 报告图共用同一来源，禁止在此再定义副本。
 
 # 快捷区间（数组顺序 = 下拉展示顺序，单一事实来源，不再另设无人使用的映射表）
 # 下沿 2016 与 core/backtest.DEFAULT_START_DATE 保持一致（回测意义窗）
@@ -118,29 +104,8 @@ def _date_from_preset(preset: str) -> QDate:
 # ==========================================
 # 后台线程
 # ==========================================
-class _BacktestRunThread(QThread):
-    finished_signal = pyqtSignal(object)
-
-    def __init__(self, df: pd.DataFrame, symbol: str, buy_expr: str, sell_expr: str,
-                 start_date: str, end_date: str, risk: dict = None):
-        super().__init__()
-        self.df = df
-        self.symbol = symbol
-        self.buy_expr = buy_expr
-        self.sell_expr = sell_expr
-        self.start_date = start_date
-        self.end_date = end_date
-        self.risk = risk or {}
-
-    def run(self):
-        result = None
-        try:
-            result = BacktestEngine().run(
-                self.df, self.buy_expr, self.sell_expr, symbol=self.symbol,
-                start_date=self.start_date, end_date=self.end_date, risk=self.risk)
-        except Exception as e:
-            logger.error(f"市场回测-计算异常 [{self.symbol}]: {e}")
-        self.finished_signal.emit(result)
+# 【架构纪律 v5.12 · §9-O2】回测计算线程已从本文件迁入 ui/workers.py。
+# 页面与弹窗不再自造 QThread —— 全 app 的线程统一在 ui/workers.py 定义。
 
 
 class _MetricCard(QFrame):
@@ -178,6 +143,9 @@ class SingleStockBacktestView(QWidget):
 
         self._last_df = pd.DataFrame()
         self._last_result = None
+        # 【v5.14 导出】本次运行的"参数快照"（在 start_backtest 时定格，随 _last_result 一起换）。
+        # 导出的必须是你真正跑出来的那次配置，而不是导出瞬间编辑框里的内容。
+        self._last_meta = None
         self._sync_thread = None
         self._index_thread = None      # 阶段C：指数同步线程
         self._run_thread = None
@@ -197,16 +165,11 @@ class SingleStockBacktestView(QWidget):
     # ==========================================
     # UI 构建
     # ==========================================
-    def _apply_pokorny_axis(self, plot_item):
-        plot_item.hideAxis('top')
-        plot_item.hideAxis('right')
-        plot_item.showGrid(x=True, y=True, alpha=0.15)
-        pen = pg.mkPen(color='#E0E0E0', width=1)
-        text_pen = pg.mkPen(color='#9E9E9E')
-        for axis_name in ('left', 'bottom'):
-            axis = plot_item.getAxis(axis_name)
-            axis.setPen(pen)
-            axis.setTextPen(text_pen)
+    # NOTE(v5.12 · §9-O7): 图表轴样式已统一下沉到 ui/widgets/chart_style.py。
+    # 本页图表嵌在白色卡片里，故 background=None（不重刷背景）、margins=0（不设内边距）。
+    @staticmethod
+    def _style_chart(chart):
+        return apply_pokorny_style(chart, background=None, margins=0)
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
@@ -543,16 +506,43 @@ class SingleStockBacktestView(QWidget):
         self.btn_fit_last.clicked.connect(self._fit_kline_recent)
         kview.addWidget(self.btn_fit_last)
         kview.addStretch()
+
+        # v5.14/v5.15：导出本次回测结果（仅导出，不删除/存档，见 §7-A2）。
+        # 下拉菜单承载多种格式：CSV 明细（专业溯源）/ PNG 报告图（一图看懂）；
+        # 未来要加 XLSX 等格式只需在此新增一个 action。
+        self.btn_export_result = QPushButton("导出结果 ▾")
+        self.btn_export_result.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_export_result.setStyleSheet(
+            "QPushButton { color:#1976D2; background:transparent; border:1px solid #BBDEFB; "
+            "border-radius:6px; padding:4px 12px; font-weight:bold; font-size:12px; }"
+            "QPushButton:hover { background:#E3F2FD; }"
+            "QPushButton::menu-indicator { image: none; padding-left: 4px; }")
+        self.btn_export_result.setToolTip(
+            "导出本次回测：CSV 明细供逐笔/参数溯源核查；PNG 报告图一图看懂结论。")
+        self._export_menu = QMenu(self.btn_export_result)
+        self._export_menu.setStyleSheet(
+            "QMenu { background:white; border:1px solid #E0E0E0; border-radius:6px; padding:4px; }"
+            "QMenu::item { padding:6px 18px; font-size:13px; color:#1F2430; border-radius:4px; }"
+            "QMenu::item:selected { background:#E3F2FD; color:#1976D2; }")
+        act_csv = self._export_menu.addAction("📄 导出 CSV 明细…")
+        act_csv.setToolTip("逐笔成交 + 参数快照 + 风控 + 指数门控（无净值行，溯源用）")
+        act_csv.triggered.connect(self.export_result)
+        act_png = self._export_menu.addAction("🖼 导出结果图 PNG…")
+        act_png.setToolTip("单页报告图：KPI + 净值曲线 + 离场原因饼图 + 参数简表，打开即懂")
+        act_png.triggered.connect(self.export_result_png)
+        self.btn_export_result.setMenu(self._export_menu)
+        kview.addWidget(self.btn_export_result)
+
         bottom_lay.addLayout(kview)
 
         # 结果页签
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("QTabWidget::pane { border:1px solid #E7EAF0; border-radius:10px; background:white; top:-1px;} QTabBar::tab { background:transparent; color:#8A94A6; padding:8px 18px; font-weight:bold; } QTabBar::tab:selected { color:#1976D2; border-bottom:3px solid #1976D2; }")
         self.equity_chart = pg.PlotWidget()
-        self._apply_pokorny_axis(self.equity_chart.getPlotItem())
+        self._style_chart(self.equity_chart)
         self.tabs.addTab(self.equity_chart, "📈 净值曲线")
         self.kline_chart = pg.PlotWidget()
-        self._apply_pokorny_axis(self.kline_chart.getPlotItem())
+        self._style_chart(self.kline_chart)
         self.tabs.addTab(self.kline_chart, "🕯️ K线买卖点")
         self.compare_tab = QWidget()
         self._build_compare_tab()
@@ -640,7 +630,7 @@ class SingleStockBacktestView(QWidget):
         lay.addWidget(desc)
 
         self.compare_chart = pg.PlotWidget()
-        self._apply_pokorny_axis(self.compare_chart.getPlotItem())
+        self._style_chart(self.compare_chart)
         self.compare_chart.getPlotItem().setLabel('left', '累计收益')
         lay.addWidget(self.compare_chart, 1)
 
@@ -1000,6 +990,25 @@ class SingleStockBacktestView(QWidget):
                 index_cfg = {"symbol": symbol, "expr_buy": idx_buy, "expr_sell": idx_sell}
         self._pending_index = index_cfg
 
+        # 【v5.14 导出】在发起回测这一刻定格参数快照（此后编辑框怎么改都不影响导出内容）
+        strategy_name = ""
+        if self._active_strategy_id:
+            saved = self.store.get(self._active_strategy_id)
+            strategy_name = str(saved.get("name", "")) if saved else ""
+        self._last_meta = {
+            "symbol": self.current_symbol,
+            "name": self.current_name,
+            "strategy_name": strategy_name,
+            "start_date": self.date_start.date().toString("yyyy-MM-dd"),
+            "end_date": self.date_end.date().toString("yyyy-MM-dd"),
+            "segments": [t.strip() for t in self.segments.texts() if t.strip()],
+            "params_text": self.txt_params.text().strip(),
+            "buy_expr": buy_expr,
+            "sell_expr": sell_expr,
+            "risk": self._risk_config(),
+            "index": index_cfg,
+        }
+
         self._prepare_index_then_stock()
 
     def _prepare_index_then_stock(self):
@@ -1018,6 +1027,10 @@ class SingleStockBacktestView(QWidget):
             self._prepare_stock_then_run()
 
     def _on_index_synced(self, result: dict):
+        # 【竞态防护】同步期间用户可能改了指数代码，过期结果必须丢弃 (v5.12 · §9-O5)
+        pending = getattr(self, '_pending_index', None) or {}
+        if str(result.get("symbol", "")) != str(pending.get("symbol", "")):
+            return
         if not result.get("ok"):
             self._set_busy(False, "")
             symbol = str(result.get("symbol", ""))
@@ -1041,6 +1054,11 @@ class SingleStockBacktestView(QWidget):
 
     def _on_synced(self, result: dict):
         symbol = str(result.get("symbol", self.current_symbol) or self.current_symbol)
+        # 【竞态防护】拉取期间用户可能已切到别的标的，过期结果必须丢弃 (v5.12 · §9-O5)。
+        # 与 ui/views/market.py 的 _on_sync_finished 同一手法 —— 同类防护要做就做全套。
+        if symbol != self.current_symbol:
+            self._set_busy(False, "")
+            return
         if not result.get("ok"):
             self._set_busy(False, "行情同步失败。")
             QMessageBox.warning(self, "同步失败", friendly_fetch_message(symbol, result))
@@ -1090,7 +1108,7 @@ class SingleStockBacktestView(QWidget):
 
         self._last_df = merged.copy()
         self._set_busy(True, "回测计算中...")
-        self._run_thread = _BacktestRunThread(
+        self._run_thread = BacktestRunWorker(
             merged, self.current_symbol, buy_expr, sell_expr,
             self.date_start.date().toString("yyyy-MM-dd"),
             self.date_end.date().toString("yyyy-MM-dd"),
@@ -1169,6 +1187,140 @@ class SingleStockBacktestView(QWidget):
         self.btn_detect.setEnabled(not busy)
         if text:
             self.lbl_run_status.setText(text)
+
+    # ==========================================
+    # 结果导出 (v5.14 · §7-A2)
+    # ==========================================
+    @staticmethod
+    def _risk_readable(risk: dict) -> str:
+        """风控人话文案 —— v5.15 起统一走 core/backtest.risk_summary，避免两处漂移"""
+        return risk_summary(risk)
+
+    def _compose_result_csv(self, result, meta: dict) -> str:
+        """把一次回测结果渲染成规范 CSV 文本（表头参数块 + 逐笔成交明细）。
+
+        拆成纯函数便于断言：导出的东西必须等于"这次跑出来的结果"，不掺现编。
+        v5.15 起**不再输出每日净值行**（用户拍板，见文件尾注释）。
+
+        【v5.16 为什么连"注释头行"都走 csv.writer 转义】
+        函数源码里很多行含**英文逗号**（`STICKLINE(A, B, C, 3, 0), COLORFF0000;`、
+        `MA(C, 5)`）。若像 v5.15 那样"裸写"，Excel/WPS 打开时会把这类行
+        按逗号拆成多列，"第三部分：图形绘制"看起来就是碎成一格格的乱码。
+        正确做法：每个逻辑行作为一个**单格字段**交给 csv.writer —— 含逗号的
+        行被规范加引号（任何表格软件都把它还原成"一格"），不含逗号的行原样单格；
+        空行用 `writerow([])`（真·空行，不会产生 `""` 假空行）。
+        """
+        import csv
+        import io
+
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+
+        def row(text: str):
+            writer.writerow([text])   # 单格行：csv 自动决定是否加引号
+
+        def blank():
+            writer.writerow([])       # 真·空行，避免产生 `""`
+
+        # ---- 表头：参数快照（来自 start_backtest 定格的那份）----
+        row("# 交易品种: {name} ({symbol})".format(
+            name=meta.get("name") or "-", symbol=meta.get("symbol") or "-"))
+        row(f"# 回测区间: {meta.get('start_date')} ~ {meta.get('end_date')}")
+        row(f"# 策略: {meta.get('strategy_name') or '（未保存）'}")
+        if meta.get("segments"):
+            row("# 函数段:（以下每行一段，多段在同一个变量池顺序执行）")
+            for seg in meta["segments"]:
+                for seg_line in str(seg).splitlines():
+                    row("    " + seg_line)
+        row(f"# 函数参数: {meta.get('params_text') or '（无）'}")
+        row(f"# 买入表达式: {meta.get('buy_expr')}")
+        row(f"# 卖出表达式: {meta.get('sell_expr')}")
+        row(f"# 风控: {self._risk_readable(meta.get('risk') or {})}")
+        index = meta.get("index")
+        if index:
+            row("# 指数门控: 已启用 {symbol}（买入许可: {b} / 卖出破位: {s}）".format(
+                symbol=index.get("symbol"),
+                b=index.get("expr_buy") or "—",
+                s=index.get("expr_sell") or "—"))
+        else:
+            row("# 指数门控: 未启用")
+
+        # ---- KPI ----
+        summary = result.summary()
+        row(f"# KPI: 总成交 {summary['total_trades']} 笔 | 胜率 {summary['win_rate'] * 100:.2f}% | "
+            f"累计收益 {summary['cumulative_return'] * 100:+.2f}% | "
+            f"平均单笔 {summary['avg_return_pct'] * 100:+.2f}%")
+        blank()
+
+        # ---- 逐笔成交明细（数值列保持裸数值，方便 Excel 二次计算）----
+        writer.writerow(["买入日期", "买入价", "卖出日期", "卖出价", "持有天数",
+                         "盈亏", "收益率", "离场原因"])
+        for t in result.trades:
+            entry = pd.Timestamp(t.entry_date).strftime("%Y-%m-%d")
+            exit_ = pd.Timestamp(t.exit_date).strftime("%Y-%m-%d")
+            writer.writerow([
+                entry, f"{t.entry_price:.2f}", exit_, f"{t.exit_price:.2f}",
+                str(t.days_held if t.days_held is not None else ""),
+                f"{t.pnl:.2f}", f"{t.return_pct:.4f}",
+                EXIT_REASON_LABELS.get(getattr(t, "exit_reason", "signal"), "卖出信号"),
+            ])
+        # NOTE(v5.15 · 用户拍板)：不再输出 200+ 行的「每日净值明细」——
+        #   ① 它是 CSV 可读性低的主因；② 专业投资者要核查的确定性事实是 参数+逐笔，
+        #   引擎可用相同参数复现净值序列；③ 净值曲线的可视化由「导出结果图 PNG」承担。
+        return buf.getvalue()
+
+    def export_result(self):
+        """把"当前这份 _last_result"导出为 CSV（仅导出，不落库、不删除 —— 见 §7-A2）"""
+        if self._last_result is None:
+            QMessageBox.information(self, "提示", "请先完成一次回测，再导出明细。")
+            return
+        meta = self._last_meta or {}
+        symbol = meta.get("symbol") or self.current_symbol or "标的"
+        name = meta.get("name") or self.current_name or symbol
+        default_name = f"回测_{name}_{symbol}_{meta.get('start_date') or ''}~{meta.get('end_date') or ''}.csv"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出回测明细", default_name, "CSV 数据表 (*.csv)")
+        if not file_path:
+            return
+        try:
+            text = self._compose_result_csv(self._last_result, meta)
+            with open(file_path, "w", encoding="utf-8-sig", newline="") as f:
+                f.write(text)
+        except OSError as e:
+            QMessageBox.critical(self, "导出失败", f"文件写入失败：\n{e}")
+            return
+        QMessageBox.information(
+            self, "导出成功",
+            f"本次回测明细已导出（共 {len(self._last_result.trades)} 笔成交）：\n\n{file_path}")
+
+    def export_result_png(self):
+        """把"当前这份 _last_result"渲染成单页 PNG 报告图（v5.15）。
+
+        只做入口 + 文件对话框；真正的渲染在 ui/widgets/backtest_report.py（可被
+        未来的「结果历史存档」复用）。
+        """
+        if self._last_result is None:
+            QMessageBox.information(self, "提示", "请先完成一次回测，再导出结果图。")
+            return
+        meta = self._last_meta or {}
+        symbol = meta.get("symbol") or self.current_symbol or "标的"
+        name = meta.get("name") or self.current_name or symbol
+        default_name = f"回测报告_{name}_{symbol}_{meta.get('start_date') or ''}~{meta.get('end_date') or ''}.png"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出结果图", default_name, "PNG 图片 (*.png)")
+        if not file_path:
+            return
+        try:
+            ok = render_result_png(meta, self._last_result, file_path)
+        except Exception as e:  # noqa: BLE001 —— 渲染异常要给反馈，绝不静默
+            QMessageBox.critical(self, "导出失败", f"生成报告图时发生错误：\n{e}")
+            return
+        if not ok:
+            QMessageBox.critical(self, "导出失败", f"报告图保存失败：\n{file_path}")
+            return
+        QMessageBox.information(
+            self, "导出成功",
+            f"回测报告图已导出（共 {len(self._last_result.trades)} 笔成交）：\n\n{file_path}")
 
     # ==========================================
     # 编辑区折叠 (①函数 / ②条件 可最小化，专注回测结果)
@@ -1337,12 +1489,8 @@ class SingleStockBacktestView(QWidget):
         if not result.equity.empty:
             eq = result.equity
             dates = pd.to_datetime(eq['date'])
-            x = list(range(len(eq)))
-            last = eq['equity'].iloc[-1]
-            col = settings.RGB_PROFIT if last >= 1.0 else settings.RGB_LOSS
-            fill = settings.RGB_PROFIT_FILL if last >= 1.0 else settings.RGB_LOSS_FILL
-            self.equity_chart.plot(x, eq['equity'], pen=pg.mkPen(color=col, width=2),
-                                   fillLevel=1.0, fillBrush=fill)
+            # 净值曲线基准线 = 1.0（归一化起点），绘制统一走 chart_style（v5.12 · §9-O7）
+            plot_equity_curve(self.equity_chart, eq['equity'], fill_base=1.0, width=2)
             self.equity_chart.addLine(y=1.0, pen=pg.mkPen(color='#BDBDBD', style=Qt.PenStyle.DashLine))
             self._equity_state = {'dates': dates.tolist()}
             self._refresh_equity_axis()
@@ -1366,8 +1514,8 @@ class SingleStockBacktestView(QWidget):
                     item.setForeground(QColor(item_color))
                     item.setFont(QFont("Arial", 10, QFont.Weight.Bold))
                 if col == 8:
-                    item_color = _REASON_COLORS.get(getattr(t, 'exit_reason', 'signal'),
-                                                    settings.COLOR_TEXT_PRIMARY)
+                    item_color = EXIT_REASON_COLORS.get(
+                        getattr(t, 'exit_reason', 'signal'), "#212121")
                     item.setForeground(QColor(item_color))
                     item.setToolTip(f"离场来源：{reason}")
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)

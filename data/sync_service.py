@@ -114,8 +114,12 @@ class MarketSyncService:
 
         :param force_full: True = 忽略本地已有数据，从 min_date 全量重拉。
                            用于修正"前复权历史价格漂移"——增量永远修不回历史，
-                           所以这个开关必须保留（UI 上叫「强制全量重拉」）。
-        :param min_date:   首次拉取的起点 (YYYYMMDD)，默认 DEFAULT_MIN_DATE(2016-01-01)
+                           所以这个开关必须保留（UI 上叫「重新全量下载」）。
+        :param min_date:   首次拉取的起点 (YYYYMMDD)，默认 DEFAULT_MIN_DATE = **2010-01-01**。
+                           ⚠ 注意别写成 2016：2016 是"回测评估窗"
+                           (core/backtest.DEFAULT_START_DATE)，不是"数据窗"。
+                           数据窗必须保持 2010（个股全历史），写成 2016 会让用户
+                           曾经能看到的 2010~2016 K 线凭空消失（§9-M3 回归，勿犯）。
         :return: {ok, symbol, zone, rows, added, skipped, first, last, message}
         """
         symbol = str(symbol or "").strip()

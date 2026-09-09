@@ -16,7 +16,7 @@
 本弹窗只做参数收集与进度展示，真正干活的是 ui/workers.SyncWorker
 → data/sync_service.MarketSyncService。
 """
-from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QRadioButton, QButtonGroup, QPlainTextEdit,
                              QCheckBox, QProgressBar, QListWidget,
@@ -27,7 +27,8 @@ from data.sync_service import (ThrottlePolicy, ZONE_KLINE, ZONE_INDEX,
                                estimate_seconds)
 from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
                                        NoWheelDoubleSpinBox, NoWheelSpinBox)
-from ui.workers import SyncWorker
+# 【架构纪律 v5.12 · §9-O2】线程一律用 ui/workers.py 的，弹窗不自造 QThread
+from ui.workers import ConstituentsWorker, SyncWorker
 
 # 成分股可选指数（代码 -> 展示名）
 CONSTITUENT_INDEXES = {
@@ -44,25 +45,6 @@ _FLAT_BTN = ("QPushButton { color:#1976D2; background:transparent; border:none; 
              "QPushButton:disabled { color:#B4BECB; }")
 
 
-class _ConstituentsWorker(QThread):
-    """解析指数成分股（网络操作，必须后台执行）"""
-
-    finished_signal = pyqtSignal(object)   # list[str]
-
-    def __init__(self, index_code: str, parent=None):
-        super().__init__(parent)
-        self._code = index_code
-
-    def run(self):
-        from data.akshare_feed import AkShareFeed
-        try:
-            df = AkShareFeed.fetch_index_constituents(self._code)
-        except Exception:
-            df = None
-        self.finished_signal.emit(
-            [] if df is None or df.empty else df["symbol"].tolist())
-
-
 class BulkDownloadDialog(QDialog):
     """批量预下载：选来源 → 调参数 → 看进度 → 可中断"""
 
@@ -73,7 +55,7 @@ class BulkDownloadDialog(QDialog):
         self._failures: list[str] = []
         self._zone = ZONE_KLINE
         self._worker: SyncWorker | None = None
-        self._cons_worker: _ConstituentsWorker | None = None
+        self._cons_worker: ConstituentsWorker | None = None
         self._cons_token = 0   # 成分股请求序号：快速连点时只接受最后一次的结果
 
         self.setWindowTitle("⬇ 批量预下载")
@@ -325,7 +307,7 @@ class BulkDownloadDialog(QDialog):
         self.btn_resolve.setEnabled(False)
         self.lbl_cons.setText("解析中…")
         self._cons_token += 1
-        worker = _ConstituentsWorker(code, self)
+        worker = ConstituentsWorker(code, self)
         token = self._cons_token
         worker.finished_signal.connect(
             lambda symbols, t=token: self._on_constituents(symbols, t))

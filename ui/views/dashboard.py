@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt
 from config import settings
 from core.utils import format_duration
 from ui.widgets.calendar_heatmap import CalendarHeatmap
+from ui.widgets.chart_style import plot_equity_curve
 from ui.widgets.custom_widgets import NoWheelComboBox
 
 class DashboardView(QWidget):
@@ -266,14 +267,11 @@ class DashboardView(QWidget):
             m[key].setToolTip(tip)
 
         equity_data = df['equity'].tolist()
-        x_data = list(range(len(equity_data)))
         self.equity_chart.clear()
         if equity_data:
-            is_prof = equity_data[-1] >= equity_data[0]
-            # 【进化】使用配置中心的 RGB 元组
-            col = settings.RGB_PROFIT if is_prof else settings.RGB_LOSS
-            fill = settings.RGB_PROFIT_FILL if is_prof else settings.RGB_LOSS_FILL
-            self.equity_chart.plot(x_data, equity_data, pen=pg.mkPen(color=col, width=2.5), fillLevel=equity_data[0], fillBrush=fill)
+            # 基准线 = 初始资金（equity_data[0]），绘制统一走 chart_style (v5.12 · §9-O7)
+            plot_equity_curve(self.equity_chart, equity_data,
+                              fill_base=equity_data[0], width=2.5)
 
         # 分布图同样改用净额，直方图形态才与真实到手盈亏一致
         profits = df['net_amount'].values
