@@ -20,8 +20,6 @@
 隐私与职责边界同前：不内置任何私有公式；解析在 core/formula，
 回测在 core/backtest，行情抓取在 data/，持久化在 data/strategy_store。
 """
-import re
-
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
@@ -38,10 +36,11 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from config import settings
 from core.formula import FormulaEngine
 from core.formula.program import (parse_program, execute_programs,
-                                  FormulaProgramError, missing_parameter_names)
+                                  execute_programs_with_draws,
+                                  probe_missing_parameters, FormulaProgramError)
 # v5.15：离场原因标签/配色/风控文案从 core.backtest 统一导入（CSV 表头 / 明细着色 / PNG 报告同源）
 from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS, risk_summary)
-from core.utils import align_by_date
+from core.utils import align_by_date, parse_params_text, synthetic_bars
 from data.market_db import DataLakeManager
 # 说明：INDEX_PRESETS / is_index_symbol 是纯常量与纯校验函数（无副作用、不联网），
 #      因此允许被 UI 直接引用；但**任何联网抓取**都必须走 MarketSyncService（见下方 worker）。
@@ -53,6 +52,9 @@ from ui.widgets.custom_widgets import (CandlestickItem, NoWheelComboBox,
                                        SPINBOX_QSS)
 from ui.workers import BacktestRunWorker, SingleSyncWorker
 from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
+# v6.4 / §7-B3 P3：公式叠层渲染全 app 唯一入口（引擎 DrawData → 图元），本页只负责切窗口
+from ui.widgets.chart_pane import ChartPane
+from ui.widgets.draw_overlay import OverlayPainter, overlay_extent, slice_draws
 from ui.widgets.condition_gate import ConditionGate
 from ui.widgets.function_segments import FunctionSegments
 # v5.15：PNG 报告图渲染下沉到独立模块（SRP，回测页只负责入口与文件对话框）
@@ -76,13 +78,12 @@ _CARD_QSS = ("QFrame { background: white; border: 1px solid #E7EAF0; border-radi
 # 数据/工具
 # ==========================================
 def _dummy_bars(n: int = 200) -> pd.DataFrame:
-    x = np.arange(n)
-    close = 100 + 8 * np.sin(x * 0.2) + x * 0.01
-    dates = pd.bdate_range(end="2024-12-31", periods=n)
-    return pd.DataFrame({
-        "date": dates, "open": close - 0.1, "high": close + 0.5,
-        "low": close - 0.5, "close": close, "volume": 10000 + x * 10,
-    })
+    """哑行情（仅供公式自检试跑）。
+
+    v6.6：实现上收到 `core.utils.synthetic_bars` —— 行情页的「公式叠加」自检
+    也要同一份，两处各存一份必然漂移（§11.5-12）。
+    """
+    return synthetic_bars(n)
 
 
 def _date_from_preset(preset: str) -> QDate:
@@ -150,6 +151,10 @@ class SingleStockBacktestView(QWidget):
         self._index_thread = None      # 阶段C：指数同步线程
         self._run_thread = None
         self._kline_state = None
+        # v6.4 / §7-B3 P3：本次运行的公式叠层（引擎 IR，与 _last_df 行序一致）
+        self._last_draws: list = []
+        self._kline_win_draws: list = []   # 按 K 线窗口切片后的叠层
+        self._overlay_items: list = []     # 已渲染的叠层图元（供"显示公式叠层"开关切换）
 
         self._equity_state = None
         self._collapsed = {}   # id(body) -> bool：编辑区 ①/②/③ 折叠状态
@@ -499,6 +504,12 @@ class SingleStockBacktestView(QWidget):
         self.chk_log = QCheckBox("对数价格")
         self.chk_log.toggled.connect(self._on_log_toggled)
         kview.addWidget(self.chk_log)
+        # v6.4 / §7-B3 P3：公式叠层开关（默认开）。切换只改可见性，不重置缩放。
+        self.chk_overlay = QCheckBox("显示公式叠层")
+        self.chk_overlay.setChecked(True)
+        self.chk_overlay.setToolTip("叠加函数里的公式线 / STICKLINE 状态柱 / DRAWICON 图标")
+        self.chk_overlay.toggled.connect(self._on_overlay_toggled)
+        kview.addWidget(self.chk_overlay)
         self.btn_fit_full = QPushButton("适应全量")
         self.btn_fit_full.clicked.connect(self._fit_kline_full)
         kview.addWidget(self.btn_fit_full)
@@ -647,10 +658,8 @@ class SingleStockBacktestView(QWidget):
     # ==========================================
     @staticmethod
     def _parse_params_text(text: str) -> dict:
-        params = {}
-        for match in re.finditer(r"([A-Za-z_]\w*)\s*=\s*(-?\d+(?:\.\d+)?)", text or ""):
-            params[match.group(1).upper()] = float(match.group(2))
-        return params
+        """（v6.6 起委托 core.utils.parse_params_text —— 行情页参数框共用同一份）"""
+        return parse_params_text(text)
 
     def detect_function(self, quiet: bool = False):
         """多段函数：逐段解析 + 共享 context 试运行 + 缺参自动探测 (阶段A)"""
@@ -678,37 +687,40 @@ class SingleStockBacktestView(QWidget):
 
         params = self._parse_params_text(self.txt_params.text())
         dummy = _dummy_bars()
-        missing = []
-        attempt_params = dict(params)
-        for _ in range(60):
-            try:
-                execute_programs(programs, dummy, attempt_params)
-                break
-            except FormulaProgramError as e:
-                names = missing_parameter_names(e)
-                if names and names[0] not in missing:
-                    missing.append(names[0])
-                    # 用合法占位值试跑 (窗口类函数要求周期>=1，0 会让 pandas 裸抛 ValueError)
-                    attempt_params[names[0]] = 5.0
-                    continue
-                self._set_detect(False, f"❌ {e}")
-                return
+        try:
+            # v6.4：检测阶段就走"变量 + 绘图"入口，函数段里写错的绘图语句**当场**报出。
+            # v6.6：缺参探测上收到引擎层（probe_missing_parameters）—— 行情页共用同一份口径，
+            #       免得同一函数"行情页能跑、回测页缺参"（§11.5-11 同类防护做全套）。
+            missing, _ = probe_missing_parameters(programs, params, dummy)
+        except FormulaProgramError as e:
+            self._set_detect(False, f"❌ {e}")
+            return
         if missing:
             self._set_detect(False,
                 f"❌ 缺少参数: {'、'.join(missing)}。请在「函数参数」中填写后重新检测。")
             return
         try:
-            execute_programs(programs, dummy, params)
+            execute_programs_with_draws(programs, dummy, params)
         except FormulaProgramError as e:
             self._set_detect(False, f"❌ {e}")
             return
 
         self._programs = programs
         self._variables = variables
-        self._set_detect(
-            True,
+        # v6.5（§9-Q）：已知但本期不渲染的绘图语句 —— **不阻断运行**，只汇总成提示，
+        # 避免"存量已保存的函数因为一行暂时画不出的语句而彻底跑不起来"。
+        unsupported, unsupported_count = [], 0
+        for program in programs:
+            unsupported_count += program.unsupported_count
+            for name in program.unsupported:
+                if name not in unsupported:
+                    unsupported.append(name)
+        message = (
             f"✓ 可运行。识别 {len(self._variables)} 个共享变量: {', '.join(self._variables[:10])}"
             f"{' …' if len(self._variables) > 10 else ''}")
+        if unsupported:
+            message += f"　⚠ 本期不渲染 {unsupported_count} 处: {'、'.join(unsupported)}"
+        self._set_detect(True, message)
         self.gate_buy.set_variables(self._variables)
         self.gate_sell.set_variables(self._variables)
         # 指数门控的变量池：同一批函数段在大盘上求值，产出 IDX_ 前缀变量 (阶段C)
@@ -719,6 +731,8 @@ class SingleStockBacktestView(QWidget):
 
     def _set_detect(self, ok: bool, message: str):
         self.lbl_detect.setText(message)
+        # 单行标签放不下会长提示会被省略号截断 —— 完整内容一律进 tooltip
+        self.lbl_detect.setToolTip(message)
         self.lbl_detect.setStyleSheet(
             f"font-size: 12px; color: {'#4CAF50' if ok else '#F44336'}; font-weight: bold;")
 
@@ -1073,11 +1087,13 @@ class SingleStockBacktestView(QWidget):
     def _on_data_ready(self, df):
         params = getattr(self, '_pending_params', {})
         try:
-            results = execute_programs(self._programs, df, params)
+            # v6.4 / §7-B3 P3：同一次求值**同时**产出 变量 + 绘图 IR（不二次求值）
+            results, draws = execute_programs_with_draws(self._programs, df, params)
         except FormulaProgramError as e:
             self._set_busy(False, "")
             QMessageBox.critical(self, "函数执行失败", f"在真实行情上执行函数失败：\n{e}")
             return
+        self._last_draws = draws
 
         merged = df.copy()
         collisions = sorted(set(results) & set(merged.columns))
@@ -1463,6 +1479,16 @@ class SingleStockBacktestView(QWidget):
             vis_low = state['low'][i0:i1 + 1]
             if len(vis_high):
                 lo_p, hi_p = float(vis_low.min()), float(vis_high.max())
+                # v6.4：把公式叠层（线 / 状态柱 / 图标）也纳入视口 —— 否则超出 K 线高低价的
+                # 叠层会被裁掉。这是"宿主第三件事"（§7-B3 B③）。
+                ov_lo = state.get('overlay_lo')
+                ov_hi = state.get('overlay_hi')
+                if ov_lo is not None and len(ov_lo) == len(dates):
+                    seg_lo, seg_hi = ov_lo[i0:i1 + 1], ov_hi[i0:i1 + 1]
+                    if np.isfinite(seg_lo).any():
+                        lo_p = min(lo_p, float(np.nanmin(seg_lo)))
+                    if np.isfinite(seg_hi).any():
+                        hi_p = max(hi_p, float(np.nanmax(seg_hi)))
                 pad = (hi_p - lo_p) * 0.06 or (abs(hi_p) * 0.01 or 1.0)
                 view_box.setYRange(lo_p - pad, hi_p + pad)
 
@@ -1525,21 +1551,29 @@ class SingleStockBacktestView(QWidget):
     def _render_kline(self, result):
         self.kline_chart.clear()
         self._kline_state = None
+        self._overlay_items = []
+        self._kline_win_draws = []
         df = self._last_df
         if df.empty or not result.trades:
             self.kline_chart.getPlotItem().setTitle("请回测后查看买卖点标注", color="#9AA3B2", size="11pt")
             return
         data = df.copy()
         data['date'] = pd.to_datetime(data['date'])
-        data = data.sort_values('date').reset_index(drop=True)
+        # 【v6.4 关键】叠层是在**整段 df 的原行序**上求值的，而这里为稳妥会按日期重排；
+        # 因此必须记下"排序后位置 → 原始行号"的映射，否则公式线会整体错位
+        # （就是 §7-B3 强调的"跨窗口漂移"）。restore 后仍与 _last_df 行序严格对应。
+        order = np.argsort(data['date'].to_numpy(), kind='stable')
+        data = data.iloc[order].reset_index(drop=True)
 
         first_entry = pd.Timestamp(result.trades[0].entry_date)
         last_exit = pd.Timestamp(result.trades[-1].exit_date)
-        window = data[(data['date'] >= first_entry - pd.Timedelta(days=90))
-                      & (data['date'] <= last_exit + pd.Timedelta(days=30))]
-        if window.empty:
+        mask = ((data['date'] >= first_entry - pd.Timedelta(days=90))
+                & (data['date'] <= last_exit + pd.Timedelta(days=30))).to_numpy()
+        win_pos = np.nonzero(mask)[0]
+        if win_pos.size == 0:
             return
-        window = window.reset_index(drop=True)
+        window = data.iloc[win_pos].reset_index(drop=True)
+        src_rows = order[win_pos]
         date_index = {d: i for i, d in enumerate(window['date'])}
 
         title = (f"<span style='color:#1F2430; font-size:15px; font-weight:bold;'>{self.current_name} "
@@ -1548,6 +1582,9 @@ class SingleStockBacktestView(QWidget):
         k_data = [(i, row['open'], row['close'], row['low'], row['high'])
                   for i, row in window.iterrows()]
         self.kline_chart.addItem(CandlestickItem(k_data))
+
+        # ---- 公式叠层：K线之后、买卖点之前（§7-B3 P3 堆叠顺序）----
+        self._paint_overlays(src_rows, len(window))
 
         buy_x, buy_y, sell_x, sell_y = [], [], [], []
         for t in result.trades:
@@ -1567,13 +1604,55 @@ class SingleStockBacktestView(QWidget):
             self.kline_chart.addItem(pg.ScatterPlotItem(
                 x=sell_x, y=sell_y, symbol='d', size=15, brush=pg.mkBrush(settings.COLOR_LOSS), pen='w'))
 
+        ov_lo = ov_hi = None
+        if self._kline_win_draws and self.chk_overlay.isChecked():
+            ov_lo, ov_hi = overlay_extent(self._kline_win_draws, len(window))
         self._kline_state = {
             'dates': window['date'].tolist(),
             'high': window['high'].to_numpy(dtype=float),
             'low': window['low'].to_numpy(dtype=float),
+            'overlay_lo': ov_lo,
+            'overlay_hi': ov_hi,
         }
         lo = max(0, date_index.get(first_entry, 0) - 60)
         hi = min(len(window) - 1, date_index.get(last_exit, len(window) - 1) + 10)
         self.kline_chart.getPlotItem().setXRange(lo, hi, padding=0.02)
         self._on_log_toggled()
+        self._refresh_kline_view()
+
+    # ==========================================
+    # 公式叠层（v6.4 · §7-B3 P3）
+    # ==========================================
+    def _paint_overlays(self, src_rows, bar_count: int):
+        """把引擎绘图 IR（整段）按 K 线窗口切片后渲染到 K 线窗格上。
+
+        宿主只做三件事（§7-B3 B③）：**切窗口 / 喂 x 数组 / 把 y 范围扩到盖住叠层**；
+        "IR → 图元" 全部在 `ui/widgets/draw_overlay.py`（全 app 唯一渲染器），
+        本页**不得**自己写任何绘图逻辑（§10-11）。
+        """
+        self._kline_win_draws = []
+        if not self._last_draws or bar_count <= 0:
+            return
+        win_draws = slice_draws(self._last_draws, src_rows)
+        self._kline_win_draws = win_draws
+        if not self.chk_overlay.isChecked():
+            return
+        painter = OverlayPainter(
+            ChartPane.wrap(self.kline_chart, name="kline", role="main"),
+            np.arange(bar_count))
+        self._overlay_items = painter.render(win_draws)
+
+    def _on_overlay_toggled(self):
+        """「显示公式叠层」开关：只切可见性 + 重算 y 范围，**不重置用户的缩放**。"""
+        visible = self.chk_overlay.isChecked()
+        for item in self._overlay_items:
+            item.setVisible(visible)
+        state = self._kline_state
+        if state is None:
+            return
+        if visible and self._kline_win_draws:
+            lo, hi = overlay_extent(self._kline_win_draws, len(state['dates']))
+        else:
+            lo = hi = None
+        state['overlay_lo'], state['overlay_hi'] = lo, hi
         self._refresh_kline_view()

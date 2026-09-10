@@ -110,6 +110,117 @@
 > 用户定稿：以"**引擎产出统一绘图 IR + 唯一渲染器 OverlayPainter**"为长远架构，
 > 避免未来优化各图表时逐图一对一手改；M0 契约层 / M1 求值层 / M2 渲染+回测页 /
 > M3 收尾 / M4 远期全图复用。完整规格与验收见 §7-B3 主案，优先级见 §11.6。
+> v6.1（图表架构总纲 · 用户 2026-09-10 拍板 · **无业务代码变更**）：
+> 「§7-B3 公式统一绘图」**升级为「图表架构总纲」** —— 不再只解决"公式叠层画不出来"，
+> 而是把绘图底层拆成**四层**（① 引擎 IR `core/formula/draw.py`；② 图表宿主
+> `ui/widgets/chart_pane.py` + `chart_host.py`；③ 渲染器 `ui/widgets/draw_overlay.py`；
+> ④ 标注对象 `data/annotations.py` + `ui/widgets/annotation_layer.py`），并厘清
+> **两条互不相同的管线**：**A 公式叠层**（随数据/参数重算、**不持久**）与
+> **B 用户标注**（持久到 `(标的,周期)`、**逐个独立删除**）。
+> 终极形态 = **通达信级行情工作台**（主图/副图用户函数 + 画线工具 + 按标的持久化）。
+> **四项拍板**：① `ChartPane` 抽象**插在 M2 之前**（防"单图写死"返工）；② 首个落地验证场
+> 用**回测页**（P3），**行情页放 P4**；③ 标注存储**先 JSON、按可迁 DB 设计**（API 与存储解耦）；
+> ④ **内置指标与用户公式在渲染层统一为一套"图层协议"**。
+> 完整四层架构 + P0–P8 路线图见 §7-B3 总纲；铁律见 §10-12；"改 X 动哪"见 §11.4。
+> v6.2（**P0+P1 落地** · 用户 2026-09-10 批准开工）：
+> **P0 图表宿主最小抽象** `ui/widgets/chart_pane.py`(76 行)—— `ChartPane` 把「一个窗格」=
+> PlotItem + 公式叠层容器 + 用户标注容器 固定下来；渲染器从此**只认 `ChartPane`**（防单图写死）。
+> **P1 引擎 IR 契约 + 求值**：新增 `core/formula/draw.py`(124 行：COLOR_TABLE + DrawSpec/DrawData
+> + 属性校验)；`core/formula/program.py` 113→**265 行**，语句分类 **3 态 → 4 态**
+> （ASSIGN / OUTPUT / DRAW；旧 SKIP **移除** —— 无法识别的语句/绘图函数一律报错，绝不静默）；
+> 新增 `execute_programs_with_draws()`（与 `execute_programs` **同一 EvalContext、不二次求值**）。
+> 新增可复跑冒烟脚本 **`smoke_chart.py`**（P2 起扩展为"图表架构"统一冒烟入口）。
+> **核心回归保证**：`execute_programs` 行为逐位不变 → 条件组 Gate / 函数检测 / 指数门控零影响。
+> v6.3（**P2 多窗格落地**）：新增 `ui/widgets/chart_host.py`(262 行) —— `ChartHost` =
+> **主图 + N 副图**（x 轴联动 `setXLink` / 只有最下窗格显示底部轴 / 窗格增删与高度权重 /
+> `pg.DateAxisItem` 日期轴 / **跨窗格同步十字光标 + 数值回执**）；`chart_style.py` 抽出
+> `style_axis()` 作为"换轴后重新着色"的唯一来源，并新增 `CROSSHAIR_COLOR`。
+> `smoke_chart.py` 扩到 **97 项断言全过**；全仓 compileall + 主窗口离屏构造通过。
+> v6.4（**P3 渲染器 + 回测页接入落地**）：新增 `ui/widgets/draw_overlay.py`(210 行) ——
+> **全 app 唯一** `OverlayPainter(pane, bars_x).render(draws)`：line→`PlotDataItem`、
+> stick→自绘 `_StickItem`（TDX 语义：width≤1 细线 / >1 实体 / 第5参=空心）、icon→`ScatterPlotItem`
+> （图标号映射表 + 未知号默认菱形）；附 `slice_draws()` / `overlay_extent()` 两个宿主工具。
+> **新增 `chart_style.ensure_contrast()` 对比度守卫**（通达信公式按黑底写的 `COLORWHITE`
+> 搬到白底会"画了看不见"—— 保留色相地压暗/提亮到 WCAG 3:1 且亮度差 ≥0.30）。
+> **回测页 `🕯 K线买卖点` 接入**：`_on_data_ready` 改走 `execute_programs_with_draws`
+> （不二次求值）；`_render_kline` 按 **"排序后位置→原始行号"映射**切窗口喂叠层（防漂移）；
+> 新增「显示公式叠层」开关（只切可见性、不重置缩放）；y 范围纳入叠层（超 K 线高低价不被裁）；
+> **函数检测阶段也走同入口** → 写错的绘图语句"检测时"就报错。
+> **验收**：`smoke_chart.py` **126 项** + `smoke_backtest_overlay.py` **20 项页面级**（含
+> 离屏 grab 像素差异证明"真画上去了"）全过；全仓 compileall + 主窗口离屏构造通过。
+> v6.5（**事故修复：存量函数回归** · 用户 2026-09-10 实测反馈）：用户在软件里报
+> "之前能正常用的保存好的函数突然跑不了"，报错 `无法识别的语句 'STICKLINE(...), COLORFF0000':`
+> `公式末尾存在无法解析的内容: ','`。**根因 = v6.4(P1) 引入的回归**：`_compile_draw` 把整条
+> 绘图语句（含**尾部颜色属性**）直接喂给 `parse()`，而通达信本来就允许
+> `STICKLINE(条件,价1,价2,宽,0), COLORFF0000;` —— 旧版整行 SKIP 所以"能用"，新版必炸；
+> 且 `start_backtest` 依赖检测成功 ⇒ 函数**彻底跑不起来**（详见 §9-Q）。
+> **修三处**：① 新增 `_split_draw_attrs()`，先按**顶层逗号**把尾部属性切出去再解析
+> （与输出语句属性解析同源，不引入第二套文本解析）；
+> ② 已知但未渲染的绘图函数（DRAWTEXT/DRAWBAND…）**不再硬报错**，登记成 `kind='unsupported'`，
+> 由检测结果给出**非阻断提示** —— 既看得见、又不掐死存量函数；
+> ③ `STICKLINE(状态, P, P, w, 0)`（价1==价2）原来会退化成 0 高度矩形 → **什么都看不见**，
+> 改为画**横杠**（用户那 4 根彩色状态柱正是这个写法）。
+> 已用**用户真实函数**（根目录 `实例函数.txt`，L1=5/L2=20）端到端复验：解析通过、27 个变量、
+> 2 线 + 4 色状态柱 + 1 图标、横杠有宽度。
+> 断言：`smoke_chart.py` **134 项** + `smoke_backtest_overlay.py` **25 项** 全过。
+> v6.6（**P4 落地：行情页公式叠加 + 内置/用户指标统一图层**）：
+> 新增 `ui/dialogs/formula_overlay.py`(144 行) 公式编辑器（复用 `FunctionSegments`，
+> 自检口径与回测页**同源**）；`ui/views/market.py` 新增「🧮 自定义公式」区（开关 + 编辑 + 状态），
+> 并把 **MA/BOLL 与用户公式都翻成 `DrawData`** 交给**同一个** `OverlayPainter` ——
+> §7-B3 D4「像 MA 一样显示用户函数」落地为**架构事实**，而不是给用户公式单开分支
+> （连开关行为都与均线/布林带一致：同一个 `render_charts`）。
+> 为消除跨页重复，抽出三件**共用件**：`core.utils.parse_params_text`、
+> `core.utils.synthetic_bars`、`core.formula.program.probe_missing_parameters` ——
+> 回测页与公式编辑器**共用同一份**，免得同一函数"行情页能跑、回测页缺参"（§11.5-11/12）。
+> `smoke_backtest_overlay.py` **更名 `smoke_pages_overlay.py`**（现在也覆盖行情页）。
+> 断言：`smoke_chart.py` **146 项** + `smoke_pages_overlay.py` **36 项** 全过；
+> 全仓 compileall + 主窗口离屏构造通过。
+> 下一步 = **P5 副图指标（附图）**。⚠ 注意 `market.py` 已到 425 行，**P5/P8 必须新建文件**。
+> v6.7（**P5 前置 + 对话框返工 + 共用组件修 Bug** · 用户实测反馈驱动）：
+> ① **`ui/widgets/function_segments.py` 两个真实 Bug**（回测页因在滚动容器里没显形，
+>    对话框给出大高度才暴露）：
+>    · **僵尸段** —— `set_texts()` 的 `removeWidget + deleteLater()` 只把控件移出布局，
+>      在事件循环真正删除前它**仍是可见子控件** ⇒ 对话框里出现两个"函数段 1"（用户截图）；
+>      修法：先 `setParent(None)` 立刻脱离父级，再 `deleteLater()`。
+>    · **排版塌陷** —— 编辑框 `setFixedHeight(96)`，父级分到多余高度时**无人承接** ⇒
+>      段标题被顶到最上、编辑框被推到几百像素之外（"标签与框之间一大片空白"）；
+>      修法：`Expanding` 纵向策略 + 最小高度，让多余高度**变成编辑面积**。
+> ② **公式对话框返工**（`ui/dialogs/formula_overlay.py` → 246 行）：去重复、补引导、收拾版面 ——
+>    新增**目标窗格**（主图/副图）+ 随选动态说明 + **示例模板菜单**（主图/副图各一套，
+>    "用例子教"比堆说明文字有效）；编辑区放进 `QScrollArea`，段多也不撑爆。
+> ③ **支持副图叠加**（P5 前置）：`market.py` 在既有窗格体系上新增「**公式副图**」窗格
+>    （`setXLink` 联动主图、**y 轴独立**、数值跨 0 时给零轴参考线）——
+>    副图量级的函数（MACD/RSI/成交量）从此**不会再把 K 线压扁**。
+> ④ **量级引导**：新增 `ui/widgets/chart_layers.py`(65 行，图层公共件) ——
+>    `builtin_indicator_layers()`（内置指标→IR，页面不再自己换算）+
+>    `layer_value_range()` + `scale_mismatch_hint()`（数值与股价差 3 倍或完全错位 →
+>    在面板明说"建议改用副图"，完整解释进 tooltip）。
+> 断言：`smoke_chart.py` **161 项** + `smoke_pages_overlay.py` **58 项** 全过；
+> 全仓 compileall + 主窗口离屏构造通过。
+> 下一步 = **P5 剩余部分**（多副图 / 内置指标也可放副图）→ P6 → P7 → P8。
+> v6.8（**P5 落地：多副图 + 窗格编排收编 ChartHost**）：
+> ① **每段可选目标窗格**（主图 / 副图 1/2/3）—— 对话框把"目标"下放到每个函数段右侧；
+>    `FunctionSegments` 新增 `accessory_factory`（每段附件控件；回测页不传 ⇒ 行为零变化）。
+> ② **引擎新增 `execute_programs_with_draws_grouped`**：draws **按函数段分组**返回 ——
+>    各段必须共用**同一个变量池**（后段引用前段变量），所以"每段不同目标"只能
+>    **一次求值、再按段归位**，绝不能按目标分组各跑一遍（那会把共享池打断）；
+>    顺带把三个执行入口收敛到唯一的 `_run_programs` 循环（消除三处重复）。
+> ③ **行情页窗格编排迁移到 ChartHost**（§10-12 的违规清账）：market.py 不再自己
+>    `addPlot` 拼窗格；`ChartHost` 补齐 `fixed_height`（钉死附图 150px 旧观感）、
+>    `bottom_axis_mode`（hide / no_values，行情页用后者保住轴线）、`clear_sub_panes()`、
+>    `clear_pane_content()`（比 `PlotItem.clear()` 安全 —— 不会把十字光标一起删掉）、`setBackground()`。
+> ④ **多副图按需创建**：有目标为副图的图层才建窗格；量能/振荡指标各占一格、互不压扁。
+> ⑤ **内置副图内容搬出页面**：新增 `ui/widgets/indicator_panes.py`（成交量 / MACD 内容构建）。
+>    ⚠ 量柱/MACD 仍是原生 `BarGraphItem`（逐柱配色是它的强项），**尚未**并入图层协议 ——
+>    这是 P5 明确保留的例外（不为架构一致性去改两张已经好用的图，P8 统一）。
+> 断言：`smoke_chart.py` **161 项** + `smoke_pages_overlay.py` **63 项** 全过
+> （含"跨段共享变量池仍可用""窗格顺序/x 联动/y 独立""刻度值只在最下窗格"）。
+> **market.py 463→448（首次下降）**。下一步 = **P6 标注持久化** → P7 → P8。
+> v6.8 追记（收工前用户反馈 · **立项 §7-B4 坐标轴自适应**）：
+> 行情数据中心放大看局部时间时，横轴只剩一个无意义刻度（截图中的"A"）、纵轴量程不随可视窗口
+> 重算（副图整段历史被压成一条线）。经排查这是**全 App 普遍性缺陷**（§9-S：行情/复盘全是静态
+> ticks，只有回测页手写对了），已立项 **§7-B4 主案 + 实施步骤** —— **P0–P8 步骤完成后立即做**，
+> 方案与验收见 §7-B4。今日进度（P4/P5 前置/P5 + §9-Q/§9-R）已全部同步至 §4/§6/§7/§8/§9/§11。
 > 状态图例：`[x]` 完成 · `[~]` 部分/半成品 · `[ ]` 未开始/占位。
 
 ---
@@ -148,7 +259,7 @@
 | 📊 资金与表现 | `DashboardView` | [x] | **17 项**净额口径 KPI 网格（v5.12 实测，非 18 项，见 §9-O9）+ **每日净额日历热力图(53×7, 可切年份)** + 净值曲线 + 单笔净额分布直方图 |
 | 📝 交易流水 | `RecordsView` | [x] | 11 列明细表、五维过滤器、孤儿黄条、CSV 全量导出、时间精度切换 |
 | 💡 深度复盘 | `ReviewView` | [x] | 月/年双模态、月历热力图、累计盈亏/交易回放/资金K线/持仓时长四页签、孤儿手工补录、截图画廊 |
-| 📈 市场行情 | `MarketView` | [x] | 代码查询、数据湖优先+联网兜底、K线+MA/BOLL+量+MACD、趋势线(不持久) |
+| 📈 市场行情 | `MarketView` | [x] | 代码查询、数据湖优先+联网兜底、K线+MA/BOLL+量+MACD、**🧮 自定义公式叠加**(与内置指标同一图层协议；**每段可选主图/副图 1/2/3**，多副图按需创建，v6.6–v6.8)、趋势线(**仅内存、不持久**) —— ⚠ 仍待做：画线工具持久化+逐个删除(P6) / 页面重做(P8)，见 §7-B3 |
 | 📐 市场回测 | `BacktestModule` | [~] | M1 单股回测完整；M2 全市场筛选 / M3 广度统计为 **ComingSoon 占位** |
 | 🗄 数据管理 | `DataManagerView` | [x] | 数据湖 8 分区清单(行数/日期范围/体积/更新时间)、搜索过滤、勾选删除、清空分区(隔离+键入确认)、「更新到最新」「重新全量下载」、批量预下载 |
 
@@ -161,12 +272,14 @@
 
 ---
 
-## 4. 目录结构与代码地图（v5.12 与磁盘逐文件核对，行数为实测值）
+## 4. 目录结构与代码地图（v6.8 与磁盘逐文件核对，行数为实测值）
 
 ```text
 Jian/
 ├── main.py              # 34行 唯一启动入口：建数据目录、pg 抗锯齿、装配 MainWindow
 ├── sync_roster.py       # 47行 独立花名册同步脚本(__main__)：A股+期货名册→DB market_symbols，纯手动运行
+├── smoke_chart.py       # 386行 图表架构冒烟断言（P0–P4 + §9-Q/§9-R 回归 共 161 项，`py smoke_chart.py`）
+├── smoke_pages_overlay.py # 248行 回测页/行情页叠层**页面级**验收（63 项，真建主窗口 + 离屏 grab；⚠ 会打开用户库，勿与 app 同时跑）
 ├── requirements.txt     #     PyQt6 / pyqtgraph / pandas / numpy / pyarrow / akshare / openpyxl
 ├── version.json         #     ⚠ 远端版本探测用；必须与 settings.APP_VERSION 同步（见 §9-A）
 ├── JIAN_RULES.md        #     本文件
@@ -183,16 +296,23 @@ Jian/
 │   │                    #      +market_symbols 五表 DAO；INSERT OR IGNORE；旧库自动迁移(备份/加列)
 │   ├── indicators.py    #  66行 TAEngine：MA(5/20/60)/BOLL/MACD 向量化注册表
 │   ├── analyzer.py      # 110行 TradeAnalyzer：净额口径统计(raw_report) + 持仓时长三级口径聚合
-│   ├── backtest.py      # 289行 BacktestEngine/BacktestTrade/BacktestResult：LONG-only 单股回测；
+│   ├── backtest.py      # 315行 BacktestEngine/BacktestTrade/BacktestResult：LONG-only 单股回测；
 │   │                    #      条件为真即触发 + 阶段B风控离场器(risk参数/exit_reason)
 │   │                    #      + 离场原因 标签/配色/risk_summary 共享常量（v5.15 上收于此）
-│   ├── formula/         # 695行 通达信 DSL 共 5 文件（详见 §5.2）
+│   ├── formula/         # 1035行 通达信 DSL 共 6 文件（详见 §5.2 / §7-B3）
 │   │   ├── __init__.py  #  39行 FormulaEngine 门面：validate/parse/evaluate/signal
 │   │   ├── tokens.py    #  67行 词法
 │   │   ├── parser.py    # 178行 递归下降 → AST（优先级 NOT > 比较 > AND > OR）
-│   │   ├── runtime.py   # 298行 EvalContext + FUNCTIONS(17)/ARITY 注册表
-│   │   └── program.py   # 113行 整段程序：assign/output/skip 三态 + execute_programs 共享变量池
-│   ├── utils.py         # 230行 无副作用纯函数：品种去根/诚实时间/持仓秒/交易日跨度/格式化/align_by_date
+│   │   ├── runtime.py   # 298行 EvalContext + FUNCTIONS(16)/ARITY 注册表
+│   │   ├── draw.py      # 126行 ★P1 绘图 IR：COLOR_TABLE + DrawSpec/DrawData(hollow) + 属性校验
+│   │   │                #      + DEFERRED_DRAW_FUNCTIONS（已知未渲染→不阻断，§9-Q-2）
+│   │   └── program.py   # 329行 ★P1 整段程序：ASSIGN/OUTPUT/DRAW **4 态**（SKIP 已移除）
+│   │                    #      + _split_draw_attrs（先摘属性尾巴再解析，§9-Q-1）
+│   │                    #      + execute_programs / execute_programs_with_draws
+│   │                    #      + execute_programs_with_draws_grouped★v6.8（draws 按段分组，多副图用）
+│   │                    #      + probe_missing_parameters★v6.6（缺参探测，回测页/行情页共用）
+│   ├── utils.py         # 254行 无副作用纯函数：品种去根/诚实时间/持仓秒/交易日跨度/格式化/align_by_date
+│   │                    #      + v6.6 跨页共用件：parse_params_text / synthetic_bars（哑行情，仅自检用）
 │   ├── preferences.py   #  85行 Preferences 单例：~/.jian_data/preferences.json（唯一键 time_precision）
 │   └── updater.py       #  62行 UpdateCheckerThread(QThread)：远端 version.json 异步比对，静默失败
 ├── data/                # 【数据获取/存储层】
@@ -203,35 +323,49 @@ Jian/
 │   │                    #      ⚠ 供 UI 引用的仅限纯函数：is_stock_code/is_index_symbol/INDEX_PRESETS(29项)
 │   ├── market_db.py     # 201行 DataLakeManager：parquet 分区存取(exists/save/load/get_latest_date)
 │   │                    #      + v5.8 清点删除(delete_data/clear_zone/list_zone/inventory 只读footer/zone_stats)
-│   ├── sync_service.py  # 224行 MarketSyncService(v5.8)：行情同步唯一门面 = 增量合并去重 + 温柔抓取
+│   ├── sync_service.py  # 266行 MarketSyncService(v5.8)：行情同步唯一门面 = 增量合并去重 + 温柔抓取
 │   │                    #      ThrottlePolicy(间隔/抖动/重试/熔断/断点续传)；纯 Python 零 Qt 依赖
 │   │                    #      + friendly_fetch_message / short_fetch_reason 失败分类文案
-│   └── strategy_store.py# 139行 StrategyStore：回测策略 JSON CRUD + 每标的 metrics 档案(同股对比)
+│   ├── strategy_store.py# 139行 StrategyStore：回测策略 JSON CRUD + 每标的 metrics 档案(同股对比)
+│   └── annotations.py   # 【P6 待建】用户手绘标注持久化（JSON 先行；API 与存储解耦，可迁 DB）
 └── ui/                  # 【表现层：只做展示，禁 SQL/爬虫】(见 §3)
     ├── main_window.py   # 233行 JianMainWindow：6页装配 + 弹窗调度 + render_all_data + CSV导出 + 漏月告警
-    ├── workers.py       # 153行 全 app 唯一的 QThread 定义处(v5.13)：ScanWorker(扫湖)/
+    ├── workers.py       # 171行 全 app 唯一的 QThread 定义处(v5.13)：ScanWorker(扫湖)/
     │                    #      SyncWorker(批量)/SingleSyncWorker(单只)/BacktestRunWorker(回测)/
     │                    #      ConstituentsWorker(成分股)/FuturesImportWorker(交割单)
     ├── widgets/         # custom_widgets.py(119 K线图元/NoWheel控件族/悬浮删除/SPINBOX_QSS)
-    │                    #   / screenshot_gallery.py(161) / yearly_review.py(118)
+    │                    #   / screenshot_gallery.py(172) / yearly_review.py(124)
     │                    #   / condition_gate.py(295 买卖条件组Gate)
-    │                    #   / function_segments.py(121 多段函数编辑器)
+    │                    #   / function_segments.py(137 多段函数编辑器，v6.8 支持每段附件控件)
     │                    #   / calendar_heatmap.py(245 Dashboard 每日净额日历热力图, C1)
-    │                    #   / chart_style.py(63 ★v5.13 图表样式唯一收敛点，见 §9-O7)
-    │                    #   / backtest_report.py(218 ★v5.15 PNG 报告图渲染, 见 §7-A2)
+    │                    #   / chart_style.py(147 ★v5.13 收敛点 + v6.3 style_axis/CROSSHAIR + v6.4 对比度守卫
+    │                    #        + v6.6 MA_SERIES/BOLL_LINE_COLOR —— 内置指标配色唯一来源)
+    │                    #   / backtest_report.py(233 ★v5.15 PNG 报告图渲染, 见 §7-A2)
+    │                    #   / chart_pane.py(78 ★P0 已建) / chart_host.py(310 ★P2 已建，v6.8 承接行情页窗格)
+    │                    #   / draw_overlay.py(218 ★P3 已建，全 app 唯一叠层渲染器)
+    │                    #   / indicator_panes.py(30 ★v6.8 成交量/MACD 副图内容构建)
+    │                    #   / chart_layers.py(65 ★v6.7 图层公共件：内置指标→IR + 量级引导)
+    │                    #   / annotation_layer.py【P6 待建】
     ├── dialogs/         # import_futures(169) / manual_entry(192) / list_manager(48)
-    │                    #   / bulk_download(399 批量预下载)
-    └── views/           # dashboard(259) / records(361) / review(1119) / market(346)
-                         #   / backtest_module(83) + backtest(1427, ⚠ 超 1400 待拆分, §9-L)
+    │                    #   / bulk_download(412 批量预下载)
+    │                    #   / formula_overlay.py(247 ★v6.7 行情页公式编辑器：每段目标窗格+示例模板)
+    └── views/           # dashboard(259) / records(361) / review(1119)
+                         #   / market(448 ⚠ 已超 400 —— P6/P8 必须新建文件, 见 §9-L)
+                         #   / backtest_module(83) + backtest(1507, ⚠ 超 1500 待拆分, §9-L)
                          #   / data_manager(473 🗄数据管理, v5.8)
 ```
 
-**体积红黑榜（v5.15 实测，>400 行即需警惕继续堆功能）：**
-`ui/views/backtest.py 1427` > `ui/views/review.py 1119` > `data/data_feed.py 827` >
-`ui/views/data_manager.py 473` > `ui/views/records.py 361` > `ui/views/market.py 346` >
-`ui/widgets/backtest_report.py 218`（新模块）、`ui/widgets/condition_gate.py 295`。
-（v5.15 增量：backtest +10（入口/方法壳，PNG 渲染逻辑全在新模块）、
-core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
+**体积红黑榜（v6.8 实测，>400 行即需警惕继续堆功能）：**
+`ui/views/backtest.py 1507` > `ui/views/review.py 1119` > `data/data_feed.py 827` >
+`ui/views/data_manager.py 473` > ⚠ `ui/views/market.py 448` > `ui/dialogs/bulk_download.py 412` >
+`ui/views/records.py 361` > `ui/widgets/chart_host.py 310` > `core/formula/program.py 329` >
+`core/backtest.py 315` > `data/sync_service.py 266` > `ui/dialogs/formula_overlay.py 247`。
+（v6.6：`market.py` 350→425（公式叠加接线，越线）、`program.py` +27（缺参探测上收）、`utils.py` +24。
+v6.7：`market.py` 425→463（副图窗格，越线更深）、新增 `chart_layers.py` 65。
+v6.8：**`market.py` 463→448（首次下降：窗格编排迁 ChartHost、副图内容搬 indicator_panes.py）**、
+`chart_host.py` 262→310（承接行情页窗格编排）。
+**⚠ `market.py` 仍越线：P6/P8 一律新建文件，不许再往里堆**（§9-L）。
+行数为实测值，每次大改后按 §11.7 重刷。）
 
 ---
 
@@ -263,7 +397,8 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
 
 ### 5.2 通达信公式引擎（`core/formula/`）
 
-- 分层：`tokens`(词法) → `parser`(递归下降→AST) → `runtime`(函数求值) → `program`(整段程序)。
+- 分层：`tokens`(词法) → `parser`(递归下降→AST) → `runtime`(函数求值) → `program`(整段程序)
+  → **`draw`**(绘图 IR 契约，v6.2/P1 新增：`COLOR_TABLE` + `DrawSpec`/`DrawData` + 属性校验)。
 - 门面 `FormulaEngine`：`validate/parse/evaluate/signal`；报错分 `FormulaCompileError`/`FormulaEvalError`。
 - 内置函数（16 个）：MA EMA SMA REF HHV LLV COUNT SUM IF EVERY CROSS BARSLAST ABS MAX MIN
   **COUNT_TRUE**；多输出内置 MACD(DIF/DEA/HIST,×2) 与 KDJ(K/D/J)；列别名 C/O/H/L/V；
@@ -271,8 +406,21 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
   - **`COUNT_TRUE(条件1, 条件2, ...)`**：逐日统计 N 个条件同时成立的数量（变参 1~99）。
     它是「条件组 Gate · 至少 N 个满足」的翻译目标：表达式恒定一行，任意条件数都不爆炸。
     （等效：`>=1` 即 OR，`>=条件总数` 即 AND。）
-- 整段程序三态语句：`X:=...` 赋值、`X:...,COLOR...` 输出（**属性被忽略，仅取值**）、
-  `STICKLINE/DRAWICON/...` **一律 SKIP 跳过不执行**（⚠ 绘制尚未实现）。
+- 整段程序 **4 态**（v6.2 · P1）：`X:=...` 赋值、`X:...,COLOR...` 输出（属性**不再忽略** ——
+  解析成 line/hidden 绘图规格，变量取值行为不变）、`STICKLINE/DRAWICON(...)` **绘图指令**
+  （编译成 `DrawSpec`，求值产出 `DrawData`）；旧 `SKIP` 已移除。
+- **属性尾巴要先摘掉再解析**（v6.5 · §9-Q-1）：`STICKLINE(...), COLORFF0000;` 是**合法写法**，
+  顶层逗号之后的 `COLORFF0000` 是**绘制属性**、不属于表达式 —— 把整条语句直接送 `parse()`
+  会让**存量已保存的函数当场报错**（真实事故）。
+- **报错边界（v6.5 修订 v6.0 的"一律报错"）**：`STICKLINE/DRAWICON` 参数错 → 报错；
+  已知但本期不实现的绘图函数（DRAWTEXT/DRAWBAND…）→ 登记 `kind='unsupported'` +
+  **非阻断提示**（绝不 hard fail）；只有**完全不像函数调用**的语句才报错。
+  绘图 IR 见 `draw.py`，纪律见 §11.5-14。
+- 求值入口三枚（都走唯一的 `_run_programs` 循环，永不各写一遍）：`execute_programs`（只出变量，
+  **行为与旧版逐位一致**，供检测/条件/指数门控）、`execute_programs_with_draws`（同一 EvalContext
+  一遍同时出 `(变量, [DrawData])`，供渲染）、`execute_programs_with_draws_grouped`（v6.8：
+  draws **按函数段分组**返回 —— 行情页"每段可选目标窗格"的引擎依据；
+  ⚠ 各段仍共用一个变量池，**勿**按目标分组各跑一遍）。
 - **多函数段共享执行（阶段A）**：`program.execute_programs(programs, df, params)` 让多段函数
   在【同一个 EvalContext】按序执行 ⇒ 共享变量池；后段可引用前段产出变量；同名后者覆盖，
   语义 = 各段文本以分号拼接成一段后执行，完全一致。`execute_program` 单段入口兼容保留。
@@ -329,7 +477,15 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
 ### 6.2 市场行情（股票/期货浏览）
 - [x] 花名册检索（`search_symbol` 模糊）+ 数据湖优先 → 联网兜底(AkShare 智能路由) → 自动回写数据湖。
 - [x] pyqtgraph K线(`CandlestickItem`)+MA/BOLL+成交量+MACD 联动渲染（本地缓存数据正常渲染）。
-- [~] 趋势线绘制（`LineSegmentROI` 添加/清除）—— **仅内存态，重渲染即清空，未持久化**（见 §7-A1）。
+- [~] 趋势线绘制（`LineSegmentROI` 添加/清除）—— **仅内存态，重渲染即清空，未持久化**（见 §7-B3 P6）。
+- [x] **自定义公式叠加（v6.6–v6.8 · §7-B3 P4 + P5）**：`🧮 自定义公式` 区
+  （开关 + 「编辑公式…」+ 状态回执）；编辑器复用 `FunctionSegments`（多段共享变量池）+ 参数框，
+  自检口径与回测页**同源**（`probe_missing_parameters`）。**内置指标与用户公式统一图层协议**：
+  MA/BOLL 与公式都产出 `DrawData` → 同一个 `OverlayPainter`，对比度守卫/线型/空值处理自动一致。
+  **每段可选目标窗格**（v6.8）：主图 或 副图 1/2/3（按需创建、独立 y 轴、x 联动、跨 0 给零轴）——
+  副图量级函数（MACD/RSI/量能）不再把 K 线压扁；若误选主图，面板会提示改用副图
+  （判据 `chart_layers.scale_mismatch_hint`）。**各段共用同一个变量池**（引擎一次求值、按段归位）。
+  公式在某标的算不出来时**不打断整页渲染**，只在面板给 ❌ 提示。
 
 ### 6.3 市场回测 M1 单股（`ui/views/backtest.py`）
 - [x] **多函数段编辑（阶段A）**：① 卡为 `ui/widgets/function_segments.py`，可增删多段；检测时
@@ -361,6 +517,11 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
   `🖼 导出结果图 PNG…`（`ui/widgets/backtest_report.py`：KPI + 净值曲线 + 离场饼图 +
   参数简表，1120×660）。均基于 `_last_meta`（发起回测瞬间定格的配置快照）。
   **不做删除 / 不做存档**，详见 §7-A2 与 §7-A4。
+- [x] **公式绘图落地（v6.4 · §7-B3 P1+P3）**：`execute_programs_with_draws` 同一次求值产出
+  `(变量, [DrawData])`；回测页 K 线页签叠加公式线 / STICKLINE 状态柱 / DRAWICON 图标，
+  带「显示公式叠层」开关与 y 自适应；渲染唯一走 `ui/widgets/draw_overlay.py`。
+  对比度守卫保证黑底公式（COLORWHITE/COLORYELLOW）在白底上依然可见。
+  验收：`smoke_chart.py` + `smoke_pages_overlay.py`（两脚本断言数随阶段递增，见 §11.7 自检清单）。
 
 ### 6.4 基础设施与演进
 - [x] SQLite 迁移链：旧双时间表自动备份重建（COALESCE 归并）；v1.2 增量列走 `ALTER TABLE` 零损加列。
@@ -380,7 +541,7 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
   - [x] **线程收口完成（v5.13 · §9-O2）**：`ui/workers.py` 是全 app 唯一 QThread 定义处，
     唯一例外是 core 层的 `UpdateCheckerThread`（非 UI 职责）。
   - [x] **图表样式 4 合 1（v5.13 · §9-O7）**：统一到 `ui/widgets/chart_style.py`。
-  - [ ] **大文件拆分未动**：`backtest.py 1417`（⚠ v5.14 因导出重回 1400+）/ `review.py 1119`（§9-L，第三梯队）。
+  - [ ] **大文件拆分未动**：`backtest.py 1507`（⚠ v6.4/v6.5 叠层接线 +88、v6.6 改共用件 −13）/ `review.py 1119`（§9-L，第三梯队）。
 
 ---
 
@@ -501,27 +662,85 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
 - **D2 [ ] 期货侧回测**：`BacktestEngine` 明确 LONG-only/A股，做空与期货为远期。
 - **D3 [ ] `kline_min` 高频分时数据湖 zone**（已 mkdir，功能预留）。
 
-### §7-B3 主案规格：统一绘图 IR（v6.0 设计稿 · 最高优先级 P0 · 用户 2026-09-10 定稿）
+### §7-B3 主案规格：图表架构总纲（v6.7：**P0–P4 已落地 + P5 前半（公式副图）** · 最高优先级 P0）
 
-> **定位一句话**：让"公式怎么画"从一行行散落在各 UI 文件里的手工绘图，变成
-> **引擎产出统一"绘图指令"（IR）→ 唯一渲染器解释** —— 以后任何图表
-> （回测 K线 / 市场行情 / 未来其它图）要展示公式叠层，都走同一条底层管线，
-> 想改样式/改语义只改引擎 IR 或渲染器一处，绝不对着每个页面挨个改。
+> **定位一句话**：把"公式 / 指标 / 画线怎么显示"从**散落在各 UI 文件的手工绘图**，
+> 收成一条管线：**引擎产出统一"绘图指令"（IR）→ 图表宿主安排窗格 → 唯一渲染器解释**。
+> 终极形态 = **通达信级行情工作台**：主图叠加用户函数（像 MA/BOLL）、副图显示用户指标、
+> 画线工具按标的持久化并可**逐个独立删除**、行情页调好的函数**一键送去做回测**。
+> ⚠ v6.1 是把 v6.0 的"公式叠层单点方案"**升级为骨架**：补上原规格完全没有的
+> **图表宿主（多窗格）** 与 **用户标注对象** 两根柱子，并厘清"两条管线"。
 
-**为什么是引擎级（而不是在 UI 层"读函数文本再猜"）**
+#### A. 为什么必须引擎级（v6.0 结论，不变）
 - 绘图语句依赖**同一共享变量池**（STATE_BLUE/DYN_INDEX/最终优选…），只能在
   `EvalContext` 求值现场拿到真值；UI 层事后重读文本 = 二次解析 + 语义分裂。
-- 引擎不画图，只产出**数据**；UI 不解析函数，只**消费 IR**。职责与 §10-3 一致。
+- 引擎不画图，只产出**数据**；UI 不解析函数，只**消费 IR**（职责与 §10-3 一致）。
+
+#### B. 四层架构（v6.1 · 铁律见 §10-12）
+
+| 层 | 文件 | 职责 | 阶段 |
+|---|---|---|---|
+| ① 引擎 IR 层 | ✅ `core/formula/draw.py`（124 行） | 4 态语句分类 + `COLOR_TABLE` + `DrawSpec`/`DrawData`；只出数据，零 Qt | **P1 已完成** |
+| ② 图表宿主层 | ✅ `ui/widgets/chart_pane.py`(76) + `chart_host.py`(262) | pane = 一个 PlotItem + 叠层/标注容器；host 管 主图 + N 副图 + **x 轴联动** + 日期轴 + 十字光标 | **P0 / P2 已完成** |
+| ③ 渲染器层 | ✅ `ui/widgets/draw_overlay.py`(210) | **全 app 唯一** `OverlayPainter(pane, bars_x).render(draws)`：IR → pyqtgraph 图元 | **P3 已完成** |
+| ④ 标注对象层 | `data/annotations.py`（待建）+ `ui/widgets/annotation_layer.py`（待建） | 用户手绘对象模型（含 id）+ 持久化 CRUD + 选中/逐个删除 | P6 |
+
+#### C. 两条管线（**最重要的一条纪律，防"混为一谈"**）
+
+| | 管线 A · 公式叠层 | 管线 B · 用户标注 |
+|---|---|---|
+| 来源 | 用户函数求值出的 `DrawData` | 用户鼠标手绘 |
+| 生命周期 | **随数据/参数重算，不持久** | **持久化到 `(标的, 周期)`** |
+| 例子 | QSD 线 / STICKLINE 状态柱 / DRAWICON | 趋势线 / 水平线 / 斐波那契 / 文字 |
+| 删除 | 关掉公式 / 换函数 | **逐个独立删除**（对象列表 / 右键） |
+| 落点 | ①→②→③ | ④ |
+
+> 二者**只共用「图表宿主」这块舞台**；禁止塞进同一个数据结构、禁止共用同一套生命周期。
+
+#### D. 用户决策记录（2026-09-10 拍板 · 不得擅自回退）
+1. **`ChartPane` 抽象（P0）插在 M2 之前** —— 避免渲染器一落地就写死成单图（否则 P4/P5 必返工）。
+2. **首个落地验证场 = 回测页**（P3，改动面最小）；**行情页 = P4** 再上。
+3. **标注存储先 JSON**（原子写 tmp+os.replace，与 `preferences`/`strategy_store` 同源）；
+   但 `data/annotations.py` 的**对外 API 必须与存储实现解耦**
+   （`load/list/upsert/delete` 按 `(symbol, period, id)` 键）——将来数据量大时**只换实现、不动调用方**（迁 DB 附表）。
+4. **内置指标（`core/indicators.py` 的 MA/BOLL/MACD/KDJ）与用户公式在渲染层统一为一套"图层协议"**
+   （都产出 `Series`/`DrawData` → 同一 pane 渲染）："像 MA 一样显示用户函数"是架构自然结果，
+   **不得退化成特例硬编码**。
+
+#### E. 阶段路线图 P0–P8（每阶段完成即回写本文档状态）
+
+| 阶段 | 内容 | 产出 | 依赖 |
+|---|---|---|---|
+| **P0** ✅ | 图表宿主最小抽象 `ChartPane`（v6.2 已完成） | `ui/widgets/chart_pane.py`(76) | — |
+| **P1** ✅ | 引擎 IR 契约 + 求值（= 原 M0+M1，**设计不变**；v6.2 已完成） | `core/formula/draw.py`(124) + `execute_programs_with_draws`；57 项断言全过 | — |
+| **P2** ✅ | 宿主完整版：主图+N副图、x 联动、日期轴、十字光标、pane 增删/高度（v6.3 已完成） | `ui/widgets/chart_host.py`(262) | P0 |
+| **P3** ✅ | 渲染器 + **回测页 K线页签**接入（叠层开关 + y 自适应）（v6.4 已完成） | `ui/widgets/draw_overlay.py`(210) + `backtest.py` 接线 | P1,P0 |
+| **P4** ✅ | **行情页公式叠层**：函数段编辑器复用 + 参数 + 主图叠加；内置/用户指标统一图层（v6.6 已完成） | `ui/dialogs/formula_overlay.py`(144) + `ui/views/market.py` | P2,P3 |
+| **P5** ✅ | **副图（附图指标）**：✅ 用户公式**每段可选**主图 / 副图 1/2/3（v6.8：多副图按需创建、独立 y 轴、x 联动）；⚠ 量柱/MACD 仍用原生 BarGraphItem（P5 明确保留的例外，P8 统一） | 基于 P2 | P2 |
+| **P6** | **标注对象 + 持久化 + 独立删除**（吸收并升级 §7-A1） | `data/annotations.py`、`annotation_layer.py` | P0 |
+| **P7** | **函数配置资产化 + 行情↔回测互送** | 复用 `strategy_store` 思路 | P4 |
+| **P8** | **行情页整体重做**（通达信对标：布局/周期/复权/画线工具栏/自选） | 新建 `ui/views/` + `ui/widgets/chart_*` | P4,P5,P6 |
+
+> **P8 纪律**：那是"换壳不换芯" —— P0–P7 已把能力做成独立组件；**必须新建文件**，
+> 禁止在 350 行的 `market.py` / 1432 行的 `backtest.py` 上继续堆（§9-L 体积债）。
 
 **1) 语句分类（`core/formula/program.py` 改造）**
 `_classify` 由 3 态扩为 **4 态**（ASSIGN / OUTPUT / **DRAW** / SKIP→移除）：
-- `DRAW` = 语句以已知绘图函数开头：一期 **STICKLINE / DRAWICON**；预留 DRAWTEXT。
+- `DRAW` = 语句以"调用式"开头：一期 **STICKLINE / DRAWICON**；其余已知 TDX 绘图函数见下条。
 - OUTPUT 语句（`NAME: expr`）逗号后缀解析出绘制属性 → 得到 **line 输出**：
   `QSD: DYN_INDEX, COLORWHITE, LINETHICK2;` = kind=line + color=白 + thickness=2；
   `最终优选: ..., NODRAW, COLORRED;` = kind=hidden（NODRAW 只算不画，但变量照常供 Gate 用）。
-- 属性后缀（颜色/线型/NODRAW）用轻量 tokenize，不引入第二套解析。
-- 未知绘图函数名（如 DRAWTEXT 未实现前）→ 明确报错并列出已支持清单，**绝不静默跳过**
-  （这正是用户踩的坑：现在 SKIP 让 DRAW 静默消失）。
+- **属性尾巴必须先摘掉再解析**（v6.5 · §9-Q-1）：`STICKLINE(...), COLORFF0000;` 是**合法写法**，
+  顶层逗号之后是绘制属性。`_split_draw_attrs()` 与 OUTPUT 属性解析**同源**
+  （都用括号深度扫描），绝不把整条语句送进 `parse()` —— 这正是让存量函数"突然全废"的元凶。
+- **报错边界（v6.5 修订 v6.0 的"未知绘图函数一律报错"）**：
+  ① `STICKLINE/DRAWICON` 参数 / 元数错 → **报错**；
+  ② 已知但本期不实现的绘图函数（DRAWTEXT/DRAWBAND/DRAWLINE…）+ 尚未收录的调用式语句
+     → 登记 `DrawSpec(kind='unsupported')`，**不阻断运行**，由 UI 汇总成
+     "⚠ 本期不渲染 N 处: …"（完整文案进 tooltip）；
+  ③ 只有**完全不像函数调用**的语句才报错（那才是真语法错误）。
+- **零高度 STICKLINE 要画横杠**（v6.5 · §9-Q-3）：`STICKLINE(cond, P, P, w, 0)` 的 TDX 语义是
+  "在该价位画一段横杠"，退化成 0 高度矩形会"什么都看不见"；渲染器须走 cosmetic 水平线分支。
 - 变量语义零回归：ASSIGN/OUTPUT 产生的变量名照旧进共享池（`execute_programs` 契约不变）。
 
 **2) 契约层（新增 `core/formula/draw.py`，纯计算，零 Qt）**
@@ -551,12 +770,17 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
 - 宿主只负责三件事：切窗口、喂 x 数组、把 y 范围扩到能盖住叠层（stick/icon 超出K线
   高低价时要纳入 range）。
 
-**4) 消费方接入（首个落地点 = 回测页「🕯 K线买卖点」页签）**
-- `_on_data_ready` 已把输出变量 merge 成整段 df 列（.values 与整段对齐）；
-  执行时改调 `execute_programs_with_draws`，把 draws 与 `_last_df` 一并保存。
-- `_render_kline` 切窗口时按 date_index 抽取出窗口内 draws，调 `OverlayPainter` 一次；
-  提供「显示公式叠层」开关（默认开）；stack 顺序：K线→叠层线→状态柱→买卖点标记。
-- y 自适应：叠层最大/最小纳入视口范围计算。
+**4) 消费方接入（首个落地点 = 回测页「🕯 K线买卖点」页签）· ✅ v6.4 已落地**
+- ⚠ **入口铁律**：`OverlayPainter` 的宿主参数是 **`ChartPane`**（P0 产物），**不是裸 PlotItem**。
+- `_on_data_ready` / `detect_function` 改走 `execute_programs_with_draws`（同一次求值出
+  `(变量, draws)`；**检测期**就能报出写错的绘图语句）。
+- `_render_kline` **不用 date_index 直接切** —— 它先按日期 `argsort` 得到
+  「排序后位置 → 原始行号」映射，再取窗口行号喂 `slice_draws`；这样即使底层 df 未排序，
+  叠层也与 K 线**严格同格**（§7-B3 反复强调的"跨窗口漂移"就是这么堵死的）。
+- 提供「显示公式叠层」开关（默认开，**只切可见性、不重置缩放**）；
+  stack 顺序：K线 → 公式叠层 → 买卖点标记。
+- y 自适应：`overlay_extent()` 逐 bar 求叠层最低/最高，并入 `chk_follow` 的视口计算，
+  超出 K 线高低价的叠层不会被裁。
 
 **5) 验收 / 冒烟断言（必须，参照历史 §9-N1 风格）**
 - 编译期：STICKLINE/DRAWICON 正反宽度、COLOR 名/hex、LINETHICK、NODRAW、未知颜色与
@@ -566,17 +790,51 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
   （抽样断言若干 bar 的像素色/位置）。
 - 回归：`execute_programs` 旧调用方（检测/条件/指数门控）行为不变（同断言）。
 
-**6) 里程碑（按此顺序推进，每个完成即回写本文档）**
-- **M0 契约层**：`core/formula/draw.py`（dataclass + COLOR_TABLE + 校验）+ program.py
-  4 态分类与 attrs 解析；纯单测（无 UI）。
-- **M1 求值层**：`execute_programs_with_draws` 产出 draws（含 STICKLINE/DRAWICON 求值），
-  断言覆盖清单见上。
-- **M2 渲染层 + 回测页接入**：`ui/widgets/draw_overlay.py` + K线页签叠层 + 开关 + y 自适应；
-  离屏截图验收。
-- **M3 收尾**：错误文案收敛；§11.4 速查表登记"以后给图表加叠层 = 引擎 draw.py +
-  draw_overlay.py 两处"；B3 标 [x]。
-- **M4（远期 hook）**：市场行情页等其余图表接入同一 `OverlayPainter`（用户未来
-  优化行情图表时的统一修改窗口已就位，不需逐图改）。
+**6) 里程碑映射（v6.1 起以 §7-B3E 的 P0–P8 为准）**
+- 原 **M0 契约层 + M1 求值层** = 现 **P1**，**设计不变**（`core/formula/draw.py` +
+  `program.py` 4 态 + `execute_programs_with_draws`；纯单测、无 UI）。
+- 原 **M2 渲染层 + 回测页接入** 拆为：**P0**（先抽 `ChartPane`）→ **P3**（渲染器 + 回测页）。
+- 原 **M3 收尾** = P3 完成后的收敛（错误文案 + §11.4 登记 + §7-B3 标 [x]）。
+- 原 **M4 远期全图复用** = **P4（行情页）→ P5（副图）→ P6（标注）→ P7（函数资产）→ P8（重做）**。
+
+---
+
+### §7-B4 主案规格：坐标轴自适应（v6.8 立项 · 全 App 普遍性缺陷 · **P0–P8 完成后立即做**）
+
+> **定位一句话**：让全 App 的图表在**放大/缩小时，横轴刻度、纵轴量程、刻度密度与数字精度**
+> 都跟着"用户此刻看到了什么"自动变化 —— 而不是渲染时一次性算好就固定不动。
+> 根因与波及面见 §9-S；本节只写"怎么修、按什么顺序修、怎么验收"。
+
+**方案（唯一来源 = 新增 `ui/widgets/adaptive_axis.py`，纯 UI、零业务、零网络）**
+
+| 件 | 职责 |
+|---|---|
+| `attach_date_axis(pane, dates, *, target_ticks=8)` | 监听 `view_box.sigXRangeChanged`；每次按**可视 bar 区间**重算底部轴 ticks：按 `axis.width()` 估算能放几个刻度 → 自适应格式（跨年 `%Y-%m` / 同年 `%m-%d` / 将来日内 `%m-%d %H:%M`）。幂等、可重复 attach、可 detach。 |
+| `follow_y(pane, provider, *, pad=0.06)` | 监听同一信号；按**可视窗口内**的数据极值重算 y 范围（= 把回测页「价格轴跟随可视区间」推广到所有窗格）。`provider(i0, i1)` 由页面给"该窗格在可视 bar 区间内的 (lo, hi)"——因为每个窗格的数据形状不同（K线用 high/low、公式用叠层 extent）。 |
+| `attach_all(host, dates_by_pane, providers_by_pane)` | 便捷入口：给 ChartHost 的每个窗格一次性挂上。⚠ x 联动的窗格**只需最下者算 ticks**（其余横轴不显示值），但 **y 跟随必须逐窗格**。 |
+
+**参考实现 = `backtest.py:1397-1475`**（`_refresh_kline_view` 的"重算 ticks + 自适应格式 +
+按可视 bar 重算 y"）。**别重新发明，把它抽出来**。
+
+**实施步骤（严格按序，每步有断言）**：
+1. **抽公共件** `adaptive_axis.py`（纯函数 + 信号挂接；离屏可测）。
+2. **回测页收敛**：`_refresh_kline_view` / `_refresh_equity_view` 的 ticks 逻辑改调公共件
+   （**行为不变**，现有断言保护；「价格轴跟随可视区间」开关语义保留）。
+3. **行情页接入**（这一步直接治好用户截图的两个问题）：主图 + vol/macd/公式副图全部
+   `attach_date_axis` + `follow_y`。
+4. **复盘页接入**：K 线回放图、资金 K 线图。
+5. **验收断言**（进 `smoke_chart.py`）：离屏构造 → `setXRange` 到一个窄窗口 → 断言
+   ① 底部轴 ticks **全部落在可视范围内**且格式正确（不再出现"A"）；
+   ② 每个窗格的 y 范围 == 该窗格**可视数据极值** ± padding（副图不再压成一条线）；
+   ③ `grab()` 像素随缩放变化（轴真的变了，不是嘴上说）。
+6. **回写文档**：§11.4 登记"给图表加自适应坐标轴 = `adaptive_axis.py` 一处"；§11.5-16 落坑。
+
+**边界（明确不修）**：
+- 类别轴（策略对比图的"策略名"、年度复盘的"策略名"）**静态是合理的**，不改造。
+- 回测页「价格轴跟随可视区间」的**开关语义保留**（用户可以关）。
+- ChartHost 的十字光标与此**正交**，互不影响。
+- 若将来做日内/分钟线（`kline_min` zone），只需在 `attach_date_axis` 加一种格式分支，
+  **不改任何页面**（这正是抽公共件的意义）。
 
 ---
 
@@ -604,6 +862,14 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
 | v5.15(文档v5.15) | 导出升级：PNG 报告图 | 用户拍板：① CSV 移除 200+ 行净值段（溯源=参数+逐笔，曲线由图承担）；② PNG 报告图含离场原因饼图；③ 导出按钮改下拉菜单（CSV/PNG 两动作）。新增 `ui/widgets/backtest_report.py`（单页 1120×660 = 标题 + KPI + 净值曲线 + 饼图 + 参数简表，离屏 grab 渲染）；离场原因 标签/配色/风控文案上收 `core/backtest.py` 三处同源。**16 项断言全过** + 全仓编译通过。APP_VERSION 未动（仍 1.4.1） |
 | v5.16(文档v5.16) | CSV 兼容性修复（WPS 实测） | 用户用 WPS 打开 CSV 发现"函数段·第三部分图形绘制"被拆列成乱码：根因 = 表头注释行裸写，含英文逗号的 `STICKLINE(...), COLORFF0000;` 被表格软件当多列。修复：`_compose_result_csv` **逐行单格 csv 转义**（含逗号自动引号、空行 writerow([])）。**9 项 csv.reader 重解析断言全过**。APP_VERSION 未动（仍 1.4.1） |
 | v6.0(规划) | §7-B3 公式统一绘图（**P0 · 设计定稿，无代码**） | 用户复盘定位"绘图语句从没被画出来"= `program.py` 长期 SKIP 的历史欠账；定稿"引擎产出统一绘图 IR + 唯一 OverlayPainter"为全图表统一修改窗口（避免未来逐图一对一改）。里程碑 M0 契约层 / M1 求值层 / M2 渲染+回测页 / M3 收尾 / M4 远期全图复用。完整规格见 §7-B3 主案；优先级见 §11.6 |
+| v6.1(文档v6.1) | 图表架构总纲（**升级 B3 为骨架，无业务代码**） | 用户拍板：把 §7-B3 从"公式叠层单点方案"升级为**四层架构**（① 引擎 IR `core/formula/draw.py`；② 图表宿主 `chart_pane.py`+`chart_host.py`；③ 渲染器 `draw_overlay.py`；④ 标注对象 `data/annotations.py`+`annotation_layer.py`）；厘清**两条管线**（A 公式叠层=重算不持久 / B 用户标注=持久可单删）；定 **P0–P8 路线**（P0 ChartPane 插在 M2 之前 / P2 ChartHost 多窗格 / P3 回测页验证 / P4 行情页公式叠层 / P5 副图 / P6 标注 JSON 先行且 API 与存储解耦 / P7 函数资产互送 / P8 通达信式重做）；内置指标与用户公式**统一图层协议**（D4）。另据第三次核对新增 §9-P（净额展示层残留 / 行数漂移 / FUNCTIONS 计数）；§4 行数按 v6.1 实测重刷 |
+| v6.2(文档v6.2) | **P0 + P1 落地** | §7-B3 总纲开工第一批。**P1**：新增 `core/formula/draw.py`(124 行：`COLOR_TABLE` 含 COLORRRGGBB 直通 / `DrawSpec`/`DrawData` IR / 属性校验)；`program.py` 113→**265 行**，语句分类 **3 态→4 态**（ASSIGN/OUTPUT/DRAW，**SKIP 移除**，未知函数/颜色/属性/元数一律报错）；新增 `execute_programs_with_draws()`（同一 EvalContext 一遍同时出变量+draws）。**P0**：新增 `ui/widgets/chart_pane.py`(76 行)，`ChartPane` = PlotItem + 公式叠层容器 + 标注容器，渲染器入参从此固定为 pane。**验收**：新增 `smoke_chart.py` 冒烟入口（当时 57 项断言全过）；全仓 compileall 通过；主窗口离屏构造通过；`execute_programs` 旧行为逐位不变（Gate/检测/指数门控零影响）。APP_VERSION 未动（仍 1.4.1）。下一步 P2/P3 |
+| v6.3(文档v6.3) | **P2 多窗格落地** | 新增 `ui/widgets/chart_host.py`(262 行)：`ChartHost` = 主图 + **N 副图**，x 轴联动（`setXLink`，pyqtgraph 0.14 用 `ViewBox.linkedView(axis)` 判联动）、**只有最下窗格显示底部轴**、窗格增删（`QGraphicsGridLayout` 不自动塌缩 → 删后重排行）与行高度权重、`pg.DateAxisItem` 日期轴切换、**跨窗格同步十字光标**（竖线贯穿全部窗格 / 横线只留悬停窗格 / 顶部数值回执）。`chart_style.py` 抽出 `style_axis()`（换轴后重新着色的唯一来源，防 §10-9 类问题）+ `CROSSHAIR_COLOR`。十字光标**不进** `ChartPane` 的叠层/标注容器（否则 `clear_overlays()` 会误删）。**验收**：`smoke_chart.py` 扩到 **97 项断言全过**；全仓 compileall + 主窗口离屏构造通过。APP_VERSION 未动（仍 1.4.1）。下一步 P3 |
+| v6.4(文档v6.4) | **P3 公式叠层渲染 + 回测页接入** | 新增 `ui/widgets/draw_overlay.py`(210 行)＝全 app 唯一叠层渲染器：`OverlayPainter(pane, bars_x).render(draws)`（line→PlotDataItem、stick→自绘 `_StickItem` 支持 width/空心、icon→ScatterPlotItem + 图标号映射），附 `slice_draws` / `overlay_extent` 宿主工具。新增 `chart_style.ensure_contrast()` **对比度守卫**（黑底公式的 COLORWHITE/COLORYELLOW 在白底仍可见；判据 = 亮度差 ≥0.30 且 WCAG 对比度 ≥3:1，不足则**保留色相**地压暗/提亮）。`chart_pane` 持有源控件强引用（防 Qt 对象被 GC）。**回测页接线**：`_on_data_ready`/`detect_function` 改走 `execute_programs_with_draws`（不二次求值、错语句检测期即报）；`_render_kline` 用 **"排序后位置→原始行号"映射**切窗口（防错位漂移）；`🕯 K线买卖点` 新增「显示公式叠层」开关（只切可见性不重置缩放）；y 范围纳入叠层。**验收**：`smoke_chart.py` **126 项** + 新增 `smoke_backtest_overlay.py` **20 项页面级**（含离屏 grab 像素差异证明真画上去）全过；全仓 compileall + 主窗口离屏构造通过。APP_VERSION 未动（仍 1.4.1）。下一步 P4 |
+| v6.5(文档v6.5) | **事故修复：存量函数回归** | 用户实测反馈"已保存的函数突然跑不了"，报错 `无法识别的语句 'STICKLINE(...), COLORFF0000': 公式末尾存在无法解析的内容: ','`。**根因 = v6.4 回归**：`_compile_draw` 把整条绘图语句（含**尾部颜色属性**）直接喂 `parse()`，而通达信允许 `STICKLINE(...), COLORFF0000;`；旧版整行 SKIP 所以"能用"，且 `start_backtest` 依赖检测成功 ⇒ 函数彻底跑不起来（§9-Q-1）。**修三处**：① 新增 `_split_draw_attrs()` 按顶层逗号摘掉属性尾巴再解析（与 OUTPUT 同源）；② 未实现绘图函数**不再 hard fail**，登记 `kind='unsupported'` + 检测期非阻断提示（`CompiledProgram.unsupported`/`unsupported_count`，`_set_detect` 文案进 tooltip）；③ `STICKLINE(cond,P,P,w,0)` 零高度时改画 **cosmetic 横杠**（Q-3）。用**用户真实函数**端到端复验通过（解析 OK / 27 变量 / 2 线 + 4 色柱 + 1 图标）。断言：`smoke_chart.py` **134 项** + `smoke_backtest_overlay.py` **25 项** 全过；全仓 compileall 通过。APP_VERSION 未动（仍 1.4.1） |
+| v6.6(文档v6.6) | **P4 落地：行情页公式叠加** | 新增 `ui/dialogs/formula_overlay.py`(144 行)：公式编辑器（复用 `FunctionSegments` + 参数框 + 检测/清空/应用），自检口径与回测页同源。`ui/views/market.py` 新增「🧮 自定义公式」区：`cb_formula`（与均线/布林带**同一个 `render_charts` 开关行为**）+「编辑公式…」+ 状态回执。**核心 = §7-B3 D4 统一图层**：`_builtin_layers()` 把 MA/BOLL 翻成 `DrawData`，`_formula_layers()` 把用户公式求值成 `DrawData`，二者交给**同一个 `OverlayPainter`** 上到同一个 `ChartPane` —— 对比度守卫/线型/粗细/空白处理**自动一视同仁**。抽出三件共用件消除跨页重复：`core.utils.parse_params_text`、`core.utils.synthetic_bars`、`core.formula.program.probe_missing_parameters`（`backtest.py` 全部改为委托，删除本地副本与 `import re`）。公式在某标的执行失败**不打断整页渲染**，只在面板给 ❌ 提示。`smoke_backtest_overlay.py` 更名 **`smoke_pages_overlay.py`**。**验收**：`smoke_chart.py` **146 项** + `smoke_pages_overlay.py` **36 项** 全过；全仓 compileall + 主窗口离屏构造通过。⚠ `market.py` 350→**425 行**（已越 400 线，P5/P8 必须新建文件）。APP_VERSION 未动（仍 1.4.1） |
+| v6.7(文档v6.7) | **P5 前置：公式副图 + 对话框返工 + 共用组件修 Bug** | 用户实测驱动。**修 `ui/widgets/function_segments.py` 两个真实 Bug**：① 僵尸段（`removeWidget+deleteLater` 留下可见重复控件 → 对话框出现两个"函数段 1"）改为先 `setParent(None)`；② 版面塌陷（编辑框 `setFixedHeight` 让多余高度变成标签-编辑框之间的大空档）改为 `Expanding` + 最小高度 110，多余高度变成编辑区。**重做 `ui/dialogs/formula_overlay.py`**：删重复文案、加**目标窗格** + 随选动态说明 + **示例模板菜单**（选模板自动切目标）+ 编辑区入 `QScrollArea`。**行情页支持副图叠加**：`market.py` 新增「公式副图」窗格（x 联动、y 独立、跨 0 给零轴）。**新增 `ui/widgets/chart_layers.py`(65 行)**：`builtin_indicator_layers` + `layer_value_range` + `scale_mismatch_hint`。**验收**：`smoke_chart.py` **161 项** + `smoke_pages_overlay.py` **58 项** 全过。APP_VERSION 未动（仍 1.4.1） |
+| v6.8(文档v6.8) | **P5 落地：多副图 + 窗格编排收编 ChartHost** | ① 每段可选目标窗格（主图/副图 1/2/3）：`FunctionSegments` 新增 `accessory_factory`（每段附件控件，回测页不传 ⇒ 零影响）。② 引擎新增 **`execute_programs_with_draws_grouped`**（draws 按函数段分组）—— 各段共用**同一个变量池**，所以"每段不同目标"只能**一次求值、再按段归位**；三个执行入口收敛到唯一的 `_run_programs`。③ **行情页窗格编排迁移到 ChartHost**（§10-12 违规清账）：`ChartHost` 补 `fixed_height` / `bottom_axis_mode`(hide/no_values) / `clear_sub_panes()` / `clear_pane_content()`（不会误删十字光标）/ `setBackground()`。④ **多副图按需创建**。⑤ 新增 `ui/widgets/indicator_panes.py`（成交量/MACD 内容构建搬出页面）；量柱/MACD 仍用原生 BarGraphItem（P5 明确保留的例外）。**验收**：`smoke_chart.py` **161 项** + `smoke_pages_overlay.py` **63 项** 全过（含跨段共享池/窗格顺序/x 联动/y 独立/钉死高度/刻度值只在最下窗格）。**market.py 463→448（首次下降）**。APP_VERSION 未动（仍 1.4.1） |
 | 远期 | 排期 | 组合级多标的引擎（指数择时后全市场挑股+资金分配，见 §6.5） |
 
 ---
@@ -847,6 +1113,123 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
   ⑨ 退市/无数据的人话文案（`friendly_fetch_message`）已接入 4 处；
   ⑩ 版本号两处同步（1.4.1 = 1.4.1）；⑪ `scan_cache` zone 仍不存在（属 B1 前置，非欠账）。
 
+### v6.1 第三次核对产出（"文档 ↔ 磁盘"第三次全仓对账 · 无业务代码变更）
+
+> 背景：为 §7-B3 新架构动工前做的一次全仓复核。**结论：核心链路（净额统计 / 幂等 /
+> FIFO / 孤儿 / 同步语义 / 线程收口 / 导出 / 图表样式收敛）全部健在**，下列均为
+> "展示层 / 文档"级别漂移。
+
+- **P-1【口径漂移 · 净额】⚠️ 待修（v6.1 记录，本次未动代码）** —— §5.3-B 宣称"全站再无例外"，
+  但**逐笔展示层**仍有 3 处用毛利 `net_profit` 判正负：
+  - `ui/views/records.py:389`：盈亏列**着色** `net_profit > 0`；
+  - `ui/views/review.py:731/746/752`：当日交易列表的 `+` 前缀与颜色；
+  - `ui/views/review.py:1062-1063`：回放图标记色 / 高亮带方向。
+  后果：毛利 +100、手续费 150 的单子（净额 −50）会显示成**绿色盈利**。
+  修法：先算 `net_amount = net_profit − commission.fillna(0)` 再判正负（纯展示层小改、无耦合）。
+- **P-2【文档数字错】** §4 曾写 `FUNCTIONS(17)`，实际 `core/formula/runtime.py` 注册表
+  为 **16 个**（§5.2 的"16 个"是对的）。**§4 已改**。
+- **P-3【行数漂移】** §4 / §6.4 / §11.4 的行数已按 v6.1 实测重刷（见 §4）。
+
+### v6.5 事故记录（存量函数回归 —— 由 v6.4 的"静默→报错"改造引发）
+
+> 本项目迄今**用户体感最差**的一次回归，完整记录以便永不再犯。
+> 触发链：v6.4(P1) 把 SKIP 改成"报错" → 用户**已保存的函数**报错 → 检测失败 →
+> `start_backtest` 依赖检测成功、直接 return ⇒ 用户感受是"函数突然全废"。
+
+- **Q-1【根因·解析】绘图语句的"尾部颜色属性"没被摘掉就送进了解析器**
+  通达信允许 `STICKLINE(状态, P1, P2, 3, 0), COLORFF0000;` —— 逗号后的 `COLORFF0000`
+  是**绘制属性**，不属于表达式。v6.4 的 `_compile_draw` 却把**整条语句**丢给 `parse()`，
+  解析器在顶层逗号处必炸：`公式末尾存在无法解析的内容: ',' (位置 49)`。
+  旧版整行 SKIP（虽然"画不出图"，但至少能跑），所以这是**行为收窄导致的破坏性回归**。
+  **修法**：新增 `_split_draw_attrs()`，先按**顶层逗号**（`_find_top_level`，括号外）
+  把尾巴切出来交给 `draw.parse_attrs()`，只把 `call_text` 送进 `parse()`。
+  **纪律（§11.5-14①）**：OUTPUT 与 DRAW 都**必须先摘属性尾巴再解析**。
+
+- **Q-2【策略】"未知绘图函数硬报错"过于激进**
+  v6.0 定稿时写的是"未知绘图函数一律报错"，但真实存量函数里含 `DRAWTEXT/DRAWBAND`
+  这类**本期不实现**的函数时，用户会再次"全废"。
+  **修法（v6.5 修订 v6.0 该条）**：已知但未渲染的绘图函数 + 尚未收录的"调用式"语句 →
+  登记 `DrawSpec(kind='unsupported')`，UI 在检测结果里给**非阻断提示**
+  （"⚠ 本期不渲染 N 处: DRAWTEXT、DRAWBAND"，完整文案进 tooltip）。
+  只有**完全不像函数调用**的语句才报错 —— 这样"绝不静默"与"不掐死存量"同时成立。
+
+- **Q-3【隐患·渲染】`STICKLINE(cond, P, P, w, 0)`（价1==价2）会画出"看不见的图"**
+  这种写法在通达信里是"在该价位画一段**横杠**"（用户那 4 根彩色状态柱就是这么写的），
+  而 v6.4 的 `_StickItem` 会得到 0 高度矩形 → 渲染为空 ⇒ 即便解析修好了，
+  用户**依然看不到状态柱**。**修法**：`y1-y0 ≈ 0` 时改画 cosmetic（像素宽、不随缩放变粗）
+  的**水平线**，粗细按 `width` 取 1~3 px —— 既忠于 TDX 语义、又保证可见。
+
+- **Q-4【流程教训】"把警告升级为错误"的改动，必须拿存量样本回归**
+  本次是靠用户实测才暴露的。此后任何影响 `parse_program` 行为的改动，
+  **上线前必须拿 `实例函数.txt` 端到端跑一遍**（已加入 §11.7 自检清单）。
+  ⚠ 同时注意 §10-6 隐私铁律：用户私有公式**不得**写进仓库/示例/smoke 脚本，
+  只能临时脚本验证后立即删除。
+
+### v6.7 用户实测反馈产出（P5 前置 · 对话框返工）
+
+> 用户原话："自定义公式叠加里的 UI 存在重大的设计与排版问题……内容重复，使用无引导，
+> 界面设计丑陋"；以及"函数只能添加到主图……副图函数叠加到主图，坐标轴差距特别大时严重影响使用"。
+> 下面 3 条都是**真实缺陷**（不是审美偏好），已修并固化成断言。
+
+- **R-1【Bug · 僵尸控件】`FunctionSegments.set_texts()` 会留下可见的重复段**
+  现象：对话框里出现两个「· 函数段 1」（用户截图）。
+  根因：`layout.removeWidget(w) + w.deleteLater()` —— `removeWidget` 只解除**布局管理**，
+  控件仍是父控件的**可见子对象**，直到事件循环真正删除它。诊断证据：
+  `_seg_box` 下 2 个 `has_editor=True` 且 `isVisible=True` 的子控件，而布局只管理 1 个。
+  **修法**：`w.setParent(None)`（立刻脱离父级 → 不可见）**再** `deleteLater()`。
+  同一处 `_remove_segment()` 一并修。**固化**：断言"直接子控件数 == 布局管理数"。
+
+- **R-2【Bug · 版面塌陷】多余高度被塞进段内部，标签与编辑框之间出现大片空白**
+  现象：`wrap` 实测高度 **378**，而其 `sizeHint` 只有 **115**（膨胀 3.3 倍）；
+  标签停在顶部、编辑框被推到下面。根因：编辑框 `setFixedHeight(96)` ⇒
+  段容器分到多余高度时**没有任何子控件能承接**，Qt 只能把空档摊在段内部。
+  为什么回测页没发现：那里 `FunctionSegments` 包在 `QScrollArea` 里，子控件只拿到 sizeHint。
+  **修法**：`Expanding` 纵向策略 + `setMinimumHeight(110)` —— 多余高度**直接变成编辑面积**。
+  **固化**：断言"编辑框 top < 60"且"编辑框高度 ≥ 110"。
+
+- **R-3【设计 · 无引导】用户不知道该把函数放主图还是副图 ⇒ 主图被压扁**
+  现象："副图函数叠加到主图，坐标轴差距特别大，严重影响使用"。
+  **修法（三层）**：
+  ① **入口引导**：对话框新增「目标窗格」下拉 + **随选动态说明**（选主图/副图分别解释适用场景）；
+  ② **示例模板**：📋 菜单内置「主图指标示例（均线叠加）」与「副图指标示例（MACD 柱+线）」，
+     选模板会**自动把目标窗格切到对应值** —— 用例子教，比堆说明文字有效；
+  ③ **事后兜底**：应用后若目标=主图但数值量级明显不对（差 3 倍 / 完全错位），
+     面板直接提示"⚠ 数值与股价量级相差很大 · 建议改用副图"，完整解释进 tooltip。
+  判据落在纯函数 `ui/widgets/chart_layers.scale_mismatch_hint()`（可单测）。
+
+- **R-4【能力 · 副图叠加】公式从"只能进主图"升级为"可选主图/副图"**
+  `market.py` 在既有窗格体系上新增「公式副图」窗格：`setXLink` 联动主图、
+  **y 轴独立**（这正是治好"压扁 K 线"的根因）、数值跨 0 时给一条零轴参考线。
+  渲染仍走**同一个** `OverlayPainter`，只是换了 pane —— 没有为副图新开一条绘制路径（§10-11）。
+  ⚠ 该窗格沿用 market.py 既有的 `addPlot` 写法（与 vol/macd 一致）；
+  **P8 重做时统一收编进 `ChartHost`**（§10-12），此处不为赶进度做半截迁移。
+
+### v6.8 收工前用户反馈（全 App 坐标轴普遍性缺陷 · 立项 §7-B4）
+
+> 用户原话："行情数据中心的图表确实抓取了很完整的股票数据，也顺利展现了出来，
+> 但用户一旦**放大去看局部时间**，对应的**横竖坐标轴都会固定**……关键坐标轴数据标注不清，
+> 放大后的**比例控制完全失衡**。这一点不仅在这个地方，在 Jian 里**普遍存在**。"
+> （附两张截图：全量视图正常；放大后横轴只剩一个无意义刻度"A"、公式副图整段历史压成一条线。）
+
+- **S-1【横轴 · 静态刻度表】** `AxisItem.setTicks([...])` 在渲染时按**全量数据**算一次，
+  之后**不随缩放更新**。放大到局部后，预设刻度全落在可视范围之外 → 横轴没有可读时间。
+  波及：`ui/views/market.py`（行情主图，`range(0, len(df), step)` + `%Y-%m` 一次性写死）、
+  `ui/views/review.py`（K 线回放 / 资金 K 线，两处）。
+- **S-2【纵轴 · 量程不随可视窗口重算】** pyqtgraph 的 autoRange 天然"装下全部数据"，
+  **不会**因为 x 被放大就重算 y。放大时间轴后 y 轴"固定"在全量极值上 ——
+  副图最明显：跨 6 年的公式指标被压成一条看不见的线。
+  波及：行情页（无任何 y 跟随）、复盘页。**只有回测页做了**
+  （「价格轴跟随可视区间」`chk_follow` → 按可视 bar 的 high/low 重算 y）。
+- **S-3【密度与精度不自适应】** 横轴日期格式（年/月/日）、纵轴小数位都是写死的；
+  缩放级别变了，刻度该变密/变疏、该换格式，但没人管。
+- **为什么"普遍"**：全 App 的 x 轴都是 **bar 序号**，日期只是"序号 → 文本"的映射，
+  pyqtgraph 不知道这层映射；而我们只在**回测页**手写对了一次
+  （`backtest.py:1397-1475`：`sigXRangeChanged → 重算 ticks + 自适应格式`）——
+  **正确方案存在，但没抽成公共件**，于是"改一处漏三处"（§9-O7 的同款教训）。
+  ✅ 已对（参考实现）：回测页 K 线页签 + 净值曲线。
+  ❌ 静态（要修）：行情页主图、复盘页 K 线回放、复盘页资金 K 线。
+  ➖ 静态但**合理**（不修）：策略对比图的"策略名"轴、年度复盘的"策略名"轴 —— 类别轴本就静态。
+
 ---
 
 ## 10. AI 协作最高指令（不可妥协）
@@ -894,6 +1277,21 @@ core/backtest +33（离场原因标签/配色/risk_summary 共享常量）。）
    **任何页面（回测 K线、市场行情、未来新图）展示 STICKLINE/DRAWICON/公式线/状态柱，
    都禁止自己写绘图逻辑**；想改样式/语义 = 改引擎 IR 或 OverlayPainter 一处，
    杜绝"每个图表一对一地改"。底层契约见 §7-B3 主案规格。
+12. **【图表架构四层 + 两条管线 · v6.1 新增 · 总纲见 §7-B3】**
+   - **四层唯一落点**：① 引擎 IR = `core/formula/draw.py`；② 图表宿主 =
+     `ui/widgets/chart_pane.py` / `chart_host.py`；③ 渲染器 = `ui/widgets/draw_overlay.py`；
+     ④ 用户标注 = `data/annotations.py` + `ui/widgets/annotation_layer.py`。
+     **新增任何图表能力，先归位到这四层之一，绝不新起一条并行管线。**
+   - **两条管线不得混用**：**公式叠层（A）**随数据/参数**重算且不持久**；
+     **用户标注（B）**持久化到 `(标的, 周期)` 且必须能**逐个独立删除**。
+     二者只共用图表宿主这块舞台；禁止同一数据结构、禁止同一生命周期。
+   - **渲染器入参是 `ChartPane` 不是 `PlotItem`**（P0 铁律）：防止"单图写死"——一旦写死，
+     副图 / 行情页 / 复盘回放三处都要返工。
+   - **内置指标（`core/indicators.py`）与用户公式在渲染层同一套"图层协议"**：
+     都产出 `Series`/`DrawData` 交给同一 pane，禁止为"用户函数"单开特例分支。
+   - **存储留退路**：标注先 JSON（原子写），但 `data/annotations.py` 对外 API 按
+     `(symbol, period, id)` 抽象，将来迁 DB **只换实现、不动调用方**。
+   - **P8 之前不得在旧页面继续堆功能**：新能力一律新建组件文件（§9-L 体积债）。
 
 ---
 
@@ -947,15 +1345,27 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 改行情同步/抓取节流 | `data/sync_service.py`（增量合并 + `ThrottlePolicy` 都在这里，**勿在 UI 里另起炉灶**） |
 | 给页面加后台任务 | `ui/workers.py` —— 全 app 唯一 QThread 定义处（Scan/Sync/SingleSync/BacktestRun/Constituents/FuturesImport 六个 Worker），**禁止页面自造线程类**（§9-O2） |
 | 改版本号 | `config/settings.py` 的 `APP_VERSION` **和** 仓库 `version.json`（两处必须同步） |
-| 回测页 UI | `ui/views/backtest.py`（⚠ **1417 行**，先想清楚插在哪一段；结构顺序=顶部工具栏→①函数→②条件→③指数→运行条→风控行→KPI→K线控制→结果页签→导出按钮） |
+| 回测页 UI | `ui/views/backtest.py`（⚠ **1507 行**，先想清楚插在哪一段；结构顺序=顶部工具栏→①函数→②条件→③指数→运行条→风控行→KPI→K线控制→结果页签→导出按钮。**§9-L 拆分已进入第三梯队**） |
+| 行情页 UI / 公式叠加 | `ui/views/market.py`（⚠ **463 行，已越线 —— P5/P8 必须新建文件**）+ 编辑器 `ui/dialogs/formula_overlay.py`(246) |
+| 内置指标 → 绘图 IR / "该放主图还是副图" | **`ui/widgets/chart_layers.py`**（v6.7）：`builtin_indicator_layers()` / `layer_value_range()` / `scale_mismatch_hint()`。**别在页面里自己算**（页面只留开关与窗格编排） |
+| 多段函数编辑器（含"段"的增删） | **`ui/widgets/function_segments.py`** —— 回测页与行情页公式编辑器**共用**；⚠ 改它前请读 §11.5-15（删控件必须 `setParent(None)`；容器给多余高度时必须有可伸缩子控件） |
 | 复盘页 UI | `ui/views/review.py`（⚠ **1119 行**；`_build_monthly_mode` 月视图 / `YearlyReviewPanel` 年视图 / `_render_trade_playback` 回放三块最重） |
 | M2/M3 新子页 | `ui/views/backtest_module.py` 里换掉 `_ComingSoonPage` |
 | 改图表轴样式 / 净值曲线绘制 | **`ui/widgets/chart_style.py`（唯一来源，v5.13）** —— `apply_pokorny_style`（PlotWidget/PlotItem 都兼容）+ `plot_equity_curve`；业务页面**禁止就地写轴样式** |
-| 给图表加"公式叠层"（STICKLINE/公式线/状态柱/DRAWICON） | **两条路都唯一**：引擎语义改 `core/formula/draw.py`；画图改 `ui/widgets/draw_overlay.py` 的 `OverlayPainter`（§7-B3 主案，v6.0 P0）。**禁止任何页面自己读函数文本再画** |
+| 给图表加"公式叠层"（STICKLINE/公式线/状态柱/DRAWICON） | **两条路都唯一**：引擎语义改 `core/formula/draw.py`；画图改 `ui/widgets/draw_overlay.py` 的 `OverlayPainter`（**入参 = `ChartPane`**，§7-B3）。宿主只做三件事：切窗口（`slice_draws`）、喂 x、扩 y（`overlay_extent`）。**禁止任何页面自己读函数文本再画** |
+| 叠层颜色看不清 / 与背景撞色 | **`ui/widgets/chart_style.py` 的 `ensure_contrast()`**（唯一裁决点）。通达信公式按黑底写，本软件是白底 —— 白字黄字必须自动压暗；**不要**在页面里手改颜色 |
+| 加"窗格 / 副图 / 主图-副图联动" | **`ui/widgets/chart_host.py`**（310 行，P2 已完成；v6.8 起行情页窗格也由它编排）+ 最小 `chart_pane.py`(78)；x 联动/底部轴策略/日期轴/十字光标/钉死高度都在这；**禁止在业务页面自己 `addPlot` 拼窗格**（§10-12） |
+| 行情页"成交量 / MACD"副图内容 | **`ui/widgets/indicator_panes.py`**（v6.8）：`fill_volume_pane` / `fill_macd_pane` —— 只往给定 PlotItem 画图元，不建窗格 |
+| 改轴外观 / 换轴后重新着色 | **`ui/widgets/chart_style.py` 的 `style_axis()`**（v6.3 抽出，唯一来源）—— 图表宿主切换 `DateAxisItem` 后**必须**调用，否则新轴会退回 Qt 默认黑粗线 |
+| 求值时把 draws **按函数段分组** | `core/formula/program.execute_programs_with_draws_grouped`（v6.8）—— 多副图的引擎侧依据；**各段仍共用一个变量池**，勿按目标分组各跑一遍 |
+| 加"用户手绘标注"（趋势线/水平线/斐波那契/文字） | **`data/annotations.py`**（模型+持久化，JSON 先 / DB 可迁）+ **`ui/widgets/annotation_layer.py`**（交互）；**逐个独立删除**是硬要求（§7-B3 B/C） |
+| 在行情页显示用户函数（像 MA/BOLL） | ✅ **P4 已完成**：编辑器 `ui/dialogs/formula_overlay.py`；图层统一在 `ui/views/market.py` 的 `_builtin_layers()` / `_formula_layers()` → **同一个 `OverlayPainter`**。加新内置指标 = 在 `_builtin_layers()` 多产一个 `DrawData`，**不要另开绘制分支**（D4） |
+| 改内置指标（MA/BOLL）配色 | **`ui/widgets/chart_style.py` 的 `MA_SERIES` / `BOLL_LINE_COLOR`**（v6.6 起唯一来源，原在 market.py） |
+| 改"函数参数"输入格式 / 缺参探测口径 | **`core/utils.parse_params_text`** + **`core/formula/program.probe_missing_parameters`**（v6.6 起两页共用**同一份**，别在页面里重写正则或探测循环 —— 否则同一函数会"这页能跑那页缺参"） |
 | 改行情页"云端同步"行为 | `ui/views/market.py` 的 `sync_cloud`（v5.13 起默认增量：本地有数据=增量、没数据=全量；全量重下在「🗄 数据管理」页） |
 | 改回测结果导出 | CSV：`ui/views/backtest.py` `_compose_result_csv`（纯函数）+ `_last_meta`（配置快照，`start_backtest` 定格）；PNG 报告图：**`ui/widgets/backtest_report.py`**（离屏 grab 渲染）；标签/配色/风控文案只改 **`core/backtest.py`**（三处同源） |
 
-### 11.5 最容易踩的坑（血泪，别重犯，持续累积到 12 条）
+### 11.5 最容易踩的坑（血泪，别重犯，持续累积到 16 条）
 1. **净额 = `net_profit − commission`**。任何"结果类"指标（胜率/盈亏比/极值/净值曲线）
    漏掉手续费就是造假。已知 `yearly_review.py` 就踩了这个坑（§9-F）。
 2. **`trade_time` 永远是纯日期 00:00:00**，绝不自动填时分；真实时刻放 `*_fill_time`。
@@ -991,22 +1401,64 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
     **根治**：主区 widget 永远显式 `layout.addWidget(main_widget, 1)` 给 stretch>0，
     富余空间才不受 Qt 启发式影响。`backtest.py` 本来就这么写所以没翻车，
     `market.py` 原本忘了写，被 v5.13 新增的同步状态 QLabel 一脚踢翻。
+14. **【v6.5 · 最贵的一条】把"静默跳过"改成"报错"之前，先问一句"存量函数会不会被掐死"**
+    （真实事故，详见 §9-Q）：P1 为了让"画不出图"不再静默，把 `program.py` 的 SKIP 换成报错
+    —— 结果**用户已保存的函数**里 `STICKLINE(...), COLORFF0000;`（通达信允许的**尾部颜色属性**）
+    被解析器拒收，而 `start_backtest` 依赖检测成功 ⇒ 用户"函数突然全废"。
+    三条纪律：
+    ① **解析任何语句前，先把"属性尾巴"摘掉**（顶层逗号之后），别把整条语句喂给 `parse()`；
+    ② **容忍优先于报错**：已知但本期不实现的绘图函数 → 登记成"未渲染"并**提示**，
+       不要 hard fail；只有"完全不像函数调用"的垃圾才报错；
+    ③ 任何"把警告升级成错误"的改动，**上线前必须拿存量样本跑一遍**（本次是 `实例函数.txt`）。
+15. **【v6.7 · Qt 动态控件的两条硬纪律】**（真实 Bug，用户截图驱动，见 §9-R）
+    - **删除子控件必须 `setParent(None)` 再 `deleteLater()`**：只写
+      `layout.removeWidget(w) + w.deleteLater()` 的话，在事件循环真正删除前，
+      `w` 仍作为**可见子控件**挂在父控件上（只是不再受布局管理）—— 表现为
+      "界面上凭空多出一个一模一样的控件"（本次 = 对话框里两个"函数段 1"）。
+      **自检**：`parent.findChildren(QWidget, FindDirectChildrenOnly)` 的个数
+      必须等于"布局里管着的个数"。
+    - **容器分到多余高度时，必须有可伸缩的子控件来承接**：若子控件都是固定高度，
+      Qt 会把空档**塞进容器内部**（标签被顶到最上、输入框被推到几百像素之外）。
+      修法二选一：① 让真正该变大的控件 `Expanding`（**优先**，多余空间变成可用面积）；
+      ② 在末尾 `addStretch(1)`（保底，只把空档赶到尾部）。
+      ⚠ 这类问题**在滚动容器里不会显形**（子控件拿到的是 sizeHint），
+      同一个组件搬到普通对话框就会暴露 —— 所以**给容器换环境时要重新看版面**。
+16. **【v6.8 · pyqtgraph 坐标轴的三个默认行为，全都不是我们要的】**（全 App 普遍缺陷，§7-B4/§9-S）
+    ① `AxisItem.setTicks([...])` 是**一次性静态数据**，**不会随缩放更新** —— 我们的 x 是
+    "bar 序号 + 日期映射"，pyqtgraph 不知道这层映射；放大后预设刻度全跑到可视范围外，
+    横轴就只剩一个无意义刻度。**必须自己监听 `sigXRangeChanged` 重算**。
+    ② `ViewBox` 的 autoRange 以**全量数据**为基准，**不随可视 x 窗口重算** —— 放大时间轴后
+    y 轴"看起来坏了/固定了"，其实是没人告诉它"用户现在只看得到这一段"。
+    ③ 刻度密度与数字精度**不会**随缩放级别自适应，得按 `axis.width()` 和可视跨度自己算。
+    → **统一解法 = `ui/widgets/adaptive_axis.py`（§7-B4）**；
+    **禁止再在业务页面里手写 `setTicks`**（全 App 现存 4 处静态 ticks 待收敛到公共件）。
 
-### 11.6 当前"下一步做什么"的推荐顺序（v6.0 刷新）
+### 11.6 当前"下一步做什么"的推荐顺序（v6.2 刷新）
 
-> ✅ ~~第一梯队 O-3/O-5/O-7/O-2/O-8~~（v5.13） · ✅ ~~第二梯队 O-1/O-4~~（v5.13）
-> ✅ ~~§7-A2 导出当前结果（CSV+PNG）~~（v5.14/5.15/5.16）
-> **→ ⭐ [P0] §7-B3 公式统一绘图（引擎级，2026-09-10 用户定稿为最高优先级）** ——
-> 规格见 §7-B3 主案：M0 契约层 → M1 求值层 → M2 渲染层+回测页接入 → M3 收尾 →
-> M4 远期（市场行情等全图复用同一 OverlayPainter）。
-> 之后才是下面**常规功能清单**（每项先聊方案再动手）：
+> ✅ ~~O-3/O-5/O-7/O-2/O-8 · O-1/O-4~~（v5.13） · ✅ ~~§7-A2 导出（CSV+PNG）~~（v5.14/5.15/5.16）
+> **→ ⭐ 唯一主线 = §7-B3 图表架构总纲（P0–P8，2026-09-10 用户拍板）**：
+> ✅ ~~**P0** `ChartPane` 最小抽象~~ · ✅ ~~**P1** 引擎 IR + 求值~~（v6.2 落地）
+> ✅ ~~**P2** `ChartHost` 多窗格（主图+N副图 / x 联动 / 日期轴 / 十字光标）~~（v6.3 落地）
+> ✅ ~~**P3** 渲染器 `draw_overlay.py` + 回测页 K 线接入（叠层开关 + y 自适应）~~（v6.4 落地）
+> ✅ ~~**P4** 行情页公式叠层 + 内置/用户指标统一图层~~（v6.6 落地）
+> ✅ ~~**P5** 多副图 + 窗格编排收编 ChartHost~~（v6.8 落地；量柱/MACD 仍用原生 BarGraphItem
+>    是**明确保留的例外**，P8 统一）
+> **→ 下一步：P6 标注持久化**（图形对象模型 + 按 `(标的, 周期)` 存 JSON + **逐个独立删除**；
+> P0 的 ChartPane 已就位）→ **P7** 函数资产互送（公式配置持久化，顺手解决"公式重启就丢"）
+> → **P8** 行情页重做。
+> **→ P8 之后立即：§7-B4 坐标轴自适应**（全 App 普遍性缺陷；用户 2026-09-10 明确要求
+>   "改完 P 步骤后一定要全面解决"）—— 行情页/复盘页的静态 ticks + 纵轴不随可视窗口重算。
+> （⚠ `market.py` 仍 448 行越线：P6/P8 一律新建文件，不许再往里堆。）
+> 主线之外的小修 / 常规项（**每项先聊方案再动手**）：
 
-- 2. §7-A1 行情涂鸦板持久化（需先定存储；可复用「🗄 数据管理」页做删除入口）。
-- 3. **§7-A4 回测结果历史存档** —— 设计要点见 §7-A4，动工前先问要"复现"还是"留档"。
-- 4. §9-O10 复盘页 Parquet 读取加 LRU 缓存（体验向）。
-- 5. §9-L 大文件拆分（`backtest.py` / `review.py`）—— 与功能改动错开窗口做纯重构。
-- 6. §7-B1/B2（M2/M3 真实功能）—— A3 前置已清；B1 需先建 `scan_cache` zone。
-- 7. §6.5「远期」组合级多标的引擎 —— 全新模块，勿并入 M1。
+- 0. **§9-P1 净额残留 3 处**（records 着色 / review 当日清单 / review 回放标记）——
+   纯展示层小改、无耦合，可随时插入主线之间。
+- 1. §7-A4 回测结果历史存档（远期；动工前先问要"复现"还是"留档"）。
+- 2. §9-O10 复盘页 Parquet LRU 缓存（体验向）。
+- 3. §9-L 大文件拆分（`backtest.py 1432` / `review.py 1119`）—— 纯重构，与功能错开。
+- 4. §7-B1/B2（M2/M3 真实功能）—— B1 需先建 `scan_cache` zone。
+- 5. §6.5「远期」组合级多标的引擎 —— 全新模块，勿并入 M1。
+> ⚠ §7-A1 涂鸦板持久化 **已被 §7-B3 的 P6 吸收并升级**（见总纲 B/C 两根柱子），不再单列。
 
 ### 11.7 收工前自检清单
 - [ ] 改动的模块状态（`[x]` / `[~]` / `[ ]`）在 §6 / §7 同步了吗？
@@ -1018,3 +1470,10 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] **改了常量/数值，同文件与跨文件的 docstring / 注释同步改了吗？**（§9-O3、§11.5-10）
 - [ ] **改了文件规模，§4 的行数要不要重刷？**（§4 现在带实测行数）
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
+- [ ] **改了公式引擎 / 图表渲染 / 图层公共件，跑过 `py smoke_chart.py` 吗？**（161 项，纯组件、离屏）
+- [ ] **改了回测页/行情页的叠层、检测、图层开关、公式对话框、窗格编排，跑过 `py smoke_pages_overlay.py` 吗？**（63 项，页面级）
+- [ ] **改了 `ui/widgets/function_segments.py` 吗？**（回测页与行情页**共用**）
+      → 两个 smoke 都要跑，并按 §11.5-15 检查"子控件数 == 布局管理数"
+- [ ] ⚠ **动了 `parse_program` 的接受/拒绝行为（尤其"警告升级为报错"），
+      拿根目录 `实例函数.txt` 端到端跑过一遍吗？**（§9-Q-4 事故教训：用户存量函数不能被打断；
+      验证用临时脚本，跑完即删 —— 用户私有公式不入仓库，§10-6）

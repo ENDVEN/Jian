@@ -5,6 +5,7 @@
 """
 import re
 
+import numpy as np
 import pandas as pd
 
 
@@ -16,6 +17,35 @@ def extract_root_symbol(symbol) -> str:
     text = str(symbol)
     match = re.match(r'^[A-Za-z]+', text)
     return match.group().upper() if match else text.upper()
+
+
+def synthetic_bars(n: int = 200) -> pd.DataFrame:
+    """生成一段"哑行情"，供公式**语法自检 / 缺参探测**试跑用。
+
+    ⚠ 它**不是行情数据**：只用于"这段公式能不能算出来"，绝不落库、绝不展示。
+    列名与真实日线一致（date/open/high/low/close/volume），
+    与回测页历史上那份 `_dummy_bars` **完全同形**（v6.5 上收到此处 —— 行情页的
+    「公式叠加」也要同一份，两处各存一份迟早漂移，§11.5-12）。
+    """
+    x = np.arange(n)
+    close = 100 + 8 * np.sin(x * 0.2) + x * 0.01
+    return pd.DataFrame({
+        "date": pd.bdate_range(end="2024-12-31", periods=n),
+        "open": close - 0.1, "high": close + 0.5,
+        "low": close - 0.5, "close": close, "volume": 10000 + x * 10,
+    })
+
+
+def parse_params_text(text: str) -> dict:
+    """把「L1=5, L2=20」这类函数参数文本解析成 `{大写名: float}`。
+
+    **行情页与回测页共用同一份**（§7-B3 D4「内置指标与用户公式统一图层协议」的一部分）——
+    两处各写一套正则迟早行为漂移（§11.5-12 的教训）。
+    """
+    params: dict[str, float] = {}
+    for match in re.finditer(r"([A-Za-z_]\w*)\s*=\s*(-?\d+(?:\.\d+)?)", text or ""):
+        params[match.group(1).upper()] = float(match.group(2))
+    return params
 
 
 def format_trade_time(value) -> str:

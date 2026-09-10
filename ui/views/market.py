@@ -1,27 +1,34 @@
 # ui/views/market.py
 import logging
+
+import numpy as np
 import pandas as pd
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QFrame, QLineEdit, QMessageBox, QCheckBox,
-                             QSplitter)
+                             QSplitter, QDialog)
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
-from pyqtgraph import QtGui
 
-from config import settings
+from core.formula.program import (FormulaProgramError, execute_programs_with_draws_grouped,
+                                  parse_program)
+from core.indicators import TAEngine
+from core.utils import parse_params_text
 from data.market_db import DataLakeManager
 from data.sync_service import ZONE_KLINE, friendly_fetch_message
+from ui.dialogs.formula_overlay import FormulaOverlayDialog
+# v6.6/P4：内置指标与用户公式**都产出 DrawData**，交给唯一渲染器 OverlayPainter；
+# v6.7：换算与"该放主图还是副图"的判断搬到 ui/widgets/chart_layers.py；
+# v6.8：**窗格编排交给 ChartHost**（§10-12），本页不再自己 addPlot 拼窗格，
+#       并支持**多张公式副图**（每段可选 副图 1/2/3）。
+from ui.widgets.chart_host import AXIS_NO_VALUES, ChartHost
+from ui.widgets.chart_layers import (builtin_indicator_layers, layer_value_range,
+                                     scale_mismatch_hint)
+from ui.widgets.chart_pane import ChartPane
 from ui.widgets.chart_style import apply_pokorny_style
 from ui.widgets.custom_widgets import CandlestickItem
+from ui.widgets.draw_overlay import OverlayPainter
+from ui.widgets.indicator_panes import fill_macd_pane, fill_volume_pane
 from ui.workers import SingleSyncWorker
-from core.indicators import TAEngine
-
-# 主图均线序列：(列名, 配色)。需与 TAEngine.add_ma 的默认窗口 (5/20/60) 保持一致
-MA_SERIES = (
-    ('MA_5',  '#2196F3'),
-    ('MA_20', '#FF9800'),
-    ('MA_60', '#9C27B0'),
-)
 
 # 附图 (成交量 / MACD) 统一高度
 SUB_PLOT_HEIGHT = 150
@@ -44,7 +51,18 @@ class MarketView(QWidget):
         
         self.main_plot = None
         self.drawn_lines = [] 
-        
+
+        # v6.6 / §7-B3 P4：主图"统一图层"（内置指标 + 用户公式 → 同一个渲染器）
+        self._layer_builtin: list = []
+        self._layer_formula: dict = {}       # 目标窗格 -> [DrawData]
+        self._layer_bars = 0
+        self._layer_items: list = []
+        self._formula_segments: list = []    # [(函数文本, 目标窗格)]
+        self._formula_params_text = ""
+        self._formula_programs: list = []
+        self._formula_error = ""
+        self.formula_plots: dict = {}        # 目标窗格 -> PlotItem（副图按需创建）
+
         self._setup_ui()
 
     def _setup_ui(self):
@@ -138,15 +156,51 @@ class MarketView(QWidget):
         control_layout.addWidget(self.btn_draw_line)
         control_layout.addWidget(self.btn_clear_lines)
 
+        # ── 自定义公式（v6.6 · §7-B3 P4）──────────────────────────────
+        # 与「均线 / 布林带」并列成一个开关：勾上就在主图显示，而且长得一样 ——
+        # 因为它们**本来就是同一条图层管线**（都产出 DrawData → OverlayPainter）。
+        control_layout.addSpacing(25)
+        lbl_formula = QLabel("🧮 自定义公式")
+        lbl_formula.setStyleSheet("font-weight:bold; color:#757575;")
+        control_layout.addWidget(lbl_formula)
+
+        self.cb_formula = QCheckBox("显示公式叠加")
+        self.cb_formula.setChecked(True)
+        self.cb_formula.setStyleSheet(
+            "QCheckBox { font-size: 13px; color: #424242; margin-top: 5px; }")
+        self.cb_formula.setToolTip("显示/隐藏函数画出的线、状态柱、图标（与均线/布林带同一套开关行为）")
+        self.cb_formula.stateChanged.connect(self.render_charts)
+        control_layout.addWidget(self.cb_formula)
+
+        self.btn_edit_formula = QPushButton("✏️ 编辑公式…")
+        self.btn_edit_formula.setStyleSheet(
+            "QPushButton { background-color: #F5F5F5; border: 1px solid #E0E0E0; "
+            "border-radius: 4px; padding: 6px; font-weight:bold; color: #424242;}")
+        self.btn_edit_formula.setToolTip("粘贴通达信式函数，叠加到当前标的的主图上")
+        self.btn_edit_formula.clicked.connect(self.edit_formula)
+        control_layout.addWidget(self.btn_edit_formula)
+
+        self.lbl_formula_status = QLabel("未设置")
+        self.lbl_formula_status.setWordWrap(True)
+        self.lbl_formula_status.setStyleSheet(
+            "font-size: 11px; color: #8A94A6; margin-top: 4px;")
+        control_layout.addWidget(self.lbl_formula_status)
+
         self.chart_container = QFrame()
         self.chart_container.setStyleSheet("QFrame { background: white; border: 1px solid #E0E0E0; border-radius: 8px; }")
         chart_layout = QVBoxLayout(self.chart_container)
         chart_layout.setContentsMargins(5, 5, 5, 5)
-        
-        self.graphics_layout = pg.GraphicsLayoutWidget()
-        self.graphics_layout.setBackground('w')
-        chart_layout.addWidget(self.graphics_layout)
-        
+
+        # v6.8：窗格编排交给 ChartHost（§10-12）—— 本页不再自己 addPlot 拼窗格。
+        # bottom_axis_mode=no_values 沿用旧观感：非最下窗格保留轴线、只隐藏刻度值。
+        self.host = ChartHost(bottom_axis_mode=AXIS_NO_VALUES)
+        self.host.setBackground('w')
+        chart_layout.addWidget(self.host)
+
+        # 主图窗格**常驻**（不再每次重渲染都重建），K 线等内容每次重画
+        self.main_plot = self.host.main_pane.plot_item
+        self._apply_pokorny_axis(self.main_plot)
+
         main_splitter.addWidget(control_panel)
         main_splitter.addWidget(self.chart_container)
         main_splitter.setSizes([200, 1000])
@@ -248,10 +302,14 @@ class MarketView(QWidget):
 
     def render_charts(self):
         """按当前指标开关重建整个图表矩阵 (幂等设计，可安全重复调用)"""
-        self.graphics_layout.clear()
+        self.host.clear_sub_panes()
+        self.formula_plots = {}
         self.drawn_lines.clear()
-        self.main_plot = None
-        
+        self._layer_builtin = []
+        self._layer_formula = {}
+        self._layer_items = []
+        self.host.clear_pane_content('main')   # 保留窗格与十字光标，只清内容
+
         if self.current_df.empty: return
         
         # 使用 copy 保护原始数据
@@ -282,82 +340,175 @@ class MarketView(QWidget):
                  f"{display_name} ({self.current_symbol})</span> "
                  f"<span style='color:#757575; font-size:12px;'> 日线 | {end_date}</span>")
         
-        self.main_plot = self.graphics_layout.addPlot(row=0, col=0, title=title)
-        self._apply_pokorny_axis(self.main_plot)
-        
+        self.main_plot.setTitle(title)
         k_data = [(i, row['open'], row['close'], row['low'], row['high']) for i, row in df.iterrows()]
         self.main_plot.addItem(CandlestickItem(k_data))
         
-        if self.cb_ma.isChecked():
-            for column, color in MA_SERIES:
-                if column in df.columns:
-                    self.main_plot.plot(x_data, df[column], pen=pg.mkPen(color=color, width=1.5))
+        # ---- 统一图层：先算数据（§7-B3 D4），窗格全部建完后再一次性绘制（见本函数尾部）----
+        # 内置指标（MA/BOLL）与用户公式**都翻成 DrawData**，交给同一个 OverlayPainter；
+        # 换算在 ui/widgets/chart_layers.py（页面只留开关与窗格编排）。
+        self._layer_builtin = builtin_indicator_layers(
+            df, ma=self.cb_ma.isChecked(), boll=self.cb_boll.isChecked())
+        self._layer_formula = self._formula_layers(df)
+        self._layer_bars = len(df)
+        self._report_formula_status(df)
         
-        if self.cb_boll.isChecked():
-            boll_pen = pg.mkPen(color='#90CAF9', width=1, style=Qt.PenStyle.DashLine)
-            self.main_plot.plot(x_data, df['BOLL_UP'], pen=boll_pen)
-            self.main_plot.plot(x_data, df['BOLL_DOWN'], pen=boll_pen)
 
-        # 附图按添加顺序入列，最后一个负责显示时间轴
-        sub_plots = []
-        row_idx = 1
-        
-        # ==========================================
-        # 窗口 2：成交量
-        # ==========================================
+        # ---- 副图（编排交给 ChartHost §10-12；内容构建在 ui/widgets/indicator_panes.py）----
         if self.cb_vol.isChecked():
-            vol_plot = self.graphics_layout.addPlot(row=row_idx, col=0)
-            self._apply_pokorny_axis(vol_plot)
-            vol_plot.setMaximumHeight(SUB_PLOT_HEIGHT) 
-            vol_plot.setXLink(self.main_plot)
-            
-            colors = [settings.COLOR_PROFIT if close >= open else settings.COLOR_LOSS for open, close in zip(df['open'], df['close'])]
-            brushes = [pg.mkBrush(c) for c in colors]
-            pens = [pg.mkPen(c) for c in colors]
-            
-            vol_item = pg.BarGraphItem(x=x_data, height=df['volume'], width=0.6, brushes=brushes, pens=pens)
-            vol_plot.addItem(vol_item)
-            sub_plots.append(vol_plot)
-            row_idx += 1
+            vol_plot = self.host.add_pane('vol', fixed_height=SUB_PLOT_HEIGHT)
+            self._apply_pokorny_axis(vol_plot.plot_item)
+            fill_volume_pane(vol_plot.plot_item, df, x_data)
+
+        if self.cb_macd.isChecked():
+            macd_plot = self.host.add_pane('macd', fixed_height=SUB_PLOT_HEIGHT)
+            self._apply_pokorny_axis(macd_plot.plot_item)
+            fill_macd_pane(macd_plot.plot_item, df, x_data)
 
         # ==========================================
-        # 窗口 3：MACD
+        # 窗口 N：公式副图（v6.8 · **多副图**，每段可选 副图 1/2/3）
         # ==========================================
-        if self.cb_macd.isChecked():
-            macd_plot = self.graphics_layout.addPlot(row=row_idx, col=0)
-            self._apply_pokorny_axis(macd_plot)
-            macd_plot.setMaximumHeight(SUB_PLOT_HEIGHT)
-            macd_plot.setXLink(self.main_plot) 
-            macd_plot.addLine(y=0, pen=pg.mkPen(color='#BDBDBD', style=Qt.PenStyle.DashLine))
-            
-            macd_plot.plot(x_data, df['MACD_line'], pen=pg.mkPen(color='#212121', width=1.5))
-            macd_plot.plot(x_data, df['MACD_signal'], pen=pg.mkPen(color='#FF9800', width=1.5))
-            
-            hist = df['MACD_hist']
-            hist_colors = [settings.COLOR_PROFIT if v > 0 else settings.COLOR_LOSS for v in hist]
-            hist_brushes = [pg.mkBrush(QtGui.QColor(c).lighter(120)) for c in hist_colors]
-            hist_pens = [pg.mkPen(c) for c in hist_colors]
-            macd_hist_item = pg.BarGraphItem(x=x_data, height=hist, width=0.5, brushes=hist_brushes, pens=hist_pens)
-            macd_plot.addItem(macd_hist_item)
-            sub_plots.append(macd_plot)
-            
+        # 副图量级的函数（MACD/RSI/成交量）叠在主图会把 K 线压扁 —— 给它**独立坐标轴**的一格。
+        # 渲染仍是同一个 OverlayPainter，只是换了 pane（§10-11）。
+        if self.cb_formula.isChecked():
+            for target in sorted(self._layer_formula):
+                if target == 'main' or not self._layer_formula[target]:
+                    continue
+                pane = self.host.add_pane(target, fixed_height=SUB_PLOT_HEIGHT)
+                self._apply_pokorny_axis(pane.plot_item)
+                span = layer_value_range(self._layer_formula[target])
+                if span and span[0] <= 0 <= span[1]:
+                    # 穿越 0 的振荡型指标给一条零轴参考线（不穿越就不画，免得误导）
+                    pane.plot_item.addLine(
+                        y=0, pen=pg.mkPen(color='#BDBDBD', style=Qt.PenStyle.DashLine))
+                self.formula_plots[target] = pane.plot_item
+
         # ==========================================
         # 格式化日期刻度 (仅最底部的图表显示时间轴)
         # ==========================================
-        bottom_plot = sub_plots[-1] if sub_plots else self.main_plot
+        bottom_plot = self.host.panes[-1].plot_item
         axis = bottom_plot.getAxis('bottom')
         ticks = []
         step = max(1, len(df) // 10)
         for i in range(0, len(df), step):
             ticks.append((i, df['date'].iloc[i].strftime('%Y-%m')))
         axis.setTicks([ticks])
-        
-        # 除最底部图表外，其余图表的横轴刻度值全部隐藏，保持画面干净
-        for plot in [self.main_plot] + sub_plots[:-1]:
-            plot.getAxis('bottom').setStyle(showValues=False)
+
+        # 非最下窗格的"隐藏刻度值"由 ChartHost 统一处理（bottom_axis_mode=no_values）
+
+        # 窗格全部就位后才落笔（唯一渲染器，§10-11）
+        self._paint_layers()
 
         if len(df) > DEFAULT_VISIBLE_BARS:
             self.main_plot.getViewBox().setXRange(len(df) - DEFAULT_VISIBLE_BARS, len(df))
+
+    # ==========================================
+    # 统一图层（v6.6 · §7-B3 P4）
+    # ==========================================
+    def edit_formula(self):
+        """打开公式编辑器；应用后立刻在当前标的上重新求值并叠加。"""
+        dlg = FormulaOverlayDialog(self, segments=self._formula_segments,
+                                   params_text=self._formula_params_text)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._formula_segments = dlg.result_segments()
+        self._formula_params_text = dlg.params_text()
+        self._compile_formula()
+        self.render_charts()
+
+    def _compile_formula(self):
+        """把 (函数文本, 目标窗格) 编译成 programs（顺序与 `_formula_segments` 一一对应）。"""
+        self._formula_programs = []
+        self._formula_error = ""
+        if not self._formula_segments:
+            self._set_formula_status(True, "未设置")
+            return
+        for idx, (text, _target) in enumerate(self._formula_segments, start=1):
+            try:
+                self._formula_programs.append(parse_program(text))
+            except FormulaProgramError as e:
+                self._formula_error = f"函数段 {idx}: {e}"
+                return
+
+    def _formula_layers(self, df) -> dict:
+        """按目标窗格分组求值。**失败不打断整页渲染**，只把原因写进面板状态。
+
+        ⚠ 各段仍共用**同一个变量池**（后段引用前段变量，这是多段共享池的核心契约）——
+        所以引擎**只求值一次**，再按段归位（`execute_programs_with_draws_grouped`）。
+        """
+        targets: dict = {}
+        if not self._formula_programs:
+            if self._formula_error:
+                self._set_formula_status(False, f"❌ {self._formula_error}")
+            return targets
+        params = parse_params_text(self._formula_params_text)
+        try:
+            _variables, groups = execute_programs_with_draws_grouped(
+                self._formula_programs, df, params)
+        except FormulaProgramError as e:
+            self._set_formula_status(False, f"❌ 执行失败: {e}")
+            return targets
+        for (_text, target), draws in zip(self._formula_segments, groups):
+            targets.setdefault(target, []).extend(draws)
+        return targets
+
+    def _paint_layers(self):
+        """把「内置指标 + 用户公式」画到各自窗格 —— 全 app 唯一渲染器（§10-11）。
+
+        内置指标固定进主图；用户公式按**每段选的目标窗格**落位（主图或某张副图）。
+        两者在渲染层**没有任何区别**（都是 DrawData → OverlayPainter），这正是 §7-B3 D4 的效果。
+        """
+        x = np.arange(self._layer_bars)
+        items: list = []
+
+        main_pane = self.host.main_pane
+        main_pane.clear_overlays()
+        OverlayPainter(main_pane, x).render(self._layer_builtin)
+        if self.cb_formula.isChecked():
+            OverlayPainter(main_pane, x).render(self._layer_formula.get('main', []))
+        items += main_pane.overlay_items
+
+        if self.cb_formula.isChecked():
+            for target, plot_item in self.formula_plots.items():
+                pane = ChartPane.wrap(plot_item, name=target, role='sub')
+                pane.clear_overlays()
+                OverlayPainter(pane, x).render(self._layer_formula.get(target, []))
+                items += pane.overlay_items
+
+        self._layer_items = items
+
+    def _report_formula_status(self, df):
+        """写面板状态：图层数 + 落点分布，必要时补一句"该放副图"的引导。
+
+        引导判据是纯函数 `ui/widgets/chart_layers.scale_mismatch_hint`（可单测）。
+        """
+        if not self._formula_programs:
+            return
+        if not any(self._layer_formula.values()):
+            return          # 已由 _formula_layers 写过 ❌，不覆盖
+        main_count = len(self._layer_formula.get('main', []))
+        sub_targets = sorted(t for t in self._layer_formula
+                             if t != 'main' and self._layer_formula[t])
+        message = (f"✓ {sum(len(v) for v in self._layer_formula.values())} 个图层 · "
+                   f"主图 {main_count} · 副图 {len(sub_targets)} 格")
+        hint = None
+        if main_count and not df.empty:
+            hint = scale_mismatch_hint(self._layer_formula.get('main', []),
+                                       float(df['low'].min()), float(df['high'].max()))
+        if hint:
+            # 面板只有 200px 宽：标签上留一句短的，完整解释进 tooltip（§10-10）
+            self._set_formula_status(
+                True, message + "\n⚠ 主图部分与股价量级相差很大 · 建议改用副图", warn=True)
+            self.lbl_formula_status.setToolTip(hint)
+        else:
+            self._set_formula_status(True, message)
+
+    def _set_formula_status(self, ok: bool, message: str, *, warn: bool = False):
+        self.lbl_formula_status.setText(message)
+        self.lbl_formula_status.setToolTip(message)   # 窄面板会截断，完整内容进 tooltip
+        color = '#E65100' if warn else ('#4CAF50' if ok else '#F44336')
+        self.lbl_formula_status.setStyleSheet(
+            f"font-size: 11px; color: {color}; margin-top: 4px;")
 
     def add_trendline(self):
         if self.main_plot is None: return
