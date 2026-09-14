@@ -28,7 +28,6 @@ import logging
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.backtest import BacktestEngine
-from data.akshare_feed import AkShareFeed
 from data.market_db import DataLakeManager
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
                                short_fetch_reason)
@@ -174,9 +173,15 @@ class BacktestRunWorker(QThread):
 
 
 class ConstituentsWorker(QThread):
-    """解析指数成分股（网络操作，必须后台执行）"""
+    """解析指数成分股（网络操作，必须后台执行）。
 
-    finished_signal = pyqtSignal(object)   # list[str]
+    【v6.9 收编 · §9-T4-①】此前本线程**直接 import 行情源**发请求，绕过了
+    `MarketSyncService` —— 与 §9-H 的红线（"任何联网抓取必须经该门面"）冲突。
+    现在改为调用 `MarketSyncService.fetch_index_constituents()`：本线程只负责
+    "把活丢到后台"，联网细节与失败分类文案全部归门面（§10-3）。
+    """
+
+    finished_signal = pyqtSignal(object)   # {"ok", "symbols", "index_code", "reason", "message"}
 
     def __init__(self, index_code: str, parent=None):
         super().__init__(parent)
@@ -184,12 +189,12 @@ class ConstituentsWorker(QThread):
 
     def run(self):
         try:
-            df = AkShareFeed.fetch_index_constituents(self._code)
-        except Exception as e:  # noqa: BLE001
+            result = MarketSyncService().fetch_index_constituents(self._code)
+        except Exception as e:  # noqa: BLE001 —— 兜底，绝不让异常穿透线程
             logger.warning(f"指数成分股解析异常 [{self._code}]: {e}")
-            df = None
-        self.finished_signal.emit(
-            [] if df is None or df.empty else df["symbol"].tolist())
+            result = {"ok": False, "symbols": [], "index_code": self._code,
+                      "reason": "error", "message": str(e)}
+        self.finished_signal.emit(result)
 
 
 class FuturesImportWorker(QThread):

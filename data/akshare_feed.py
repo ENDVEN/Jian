@@ -16,6 +16,17 @@ KLINE_CN_RENAME = {
 # 东财接口超时上限 (秒)：作为兜底源时不允许无限期挂起
 EM_TIMEOUT_SECONDS = 15
 
+# ==========================================
+# 复权口径（v6.13 · P8 复权切换）
+# ==========================================
+# 取值直接照抄 akshare 的 `adjust` 参数（新浪/东财两家一致），**不要自己造枚举**：
+#   ADJUST_QFQ  "qfq" 前复权 —— 全 app 历史默认行为，随除权整体漂移；
+#   ADJUST_NONE ""    不复权 —— 保留真实历史成交价（看历史缺口/缺口回补用）。
+# ⚠ UI 层**不要**从这里 import（§9-H：ui/ 不得出现 AkShareFeed/本模块依赖）——
+#    请用 `data/sync_service.py` 里重新导出的 ADJUST_* 与 `zone_for_adjust()`。
+ADJUST_QFQ = "qfq"
+ADJUST_NONE = ""
+
 # 常用大盘/行业指数预设 (供 UI 下拉 + 名称展示；symbol 即新浪指数接口代码)。
 # 分组仅供可读性；顺序即下拉展示顺序。已按真实接口逐一代测确认可用 (2026-09)。
 INDEX_PRESETS = {
@@ -182,12 +193,13 @@ class AkShareFeed:
         return ""
 
     @staticmethod
-    def _fetch_a_share_via_em(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    def _fetch_a_share_via_em(symbol: str, start_date: str, end_date: str,
+                              adjust: str = ADJUST_QFQ) -> pd.DataFrame:
         """东财日线 (兜底源)：兼容北交所等新浪未覆盖的标的"""
         try:
             df = ak.stock_zh_a_hist(
                 symbol=symbol, period="daily", start_date=start_date,
-                end_date=end_date, adjust="qfq", timeout=EM_TIMEOUT_SECONDS,
+                end_date=end_date, adjust=adjust or "", timeout=EM_TIMEOUT_SECONDS,
             )
             return df if df is not None else pd.DataFrame()
         except Exception as e:
@@ -195,30 +207,36 @@ class AkShareFeed:
             return pd.DataFrame()
 
     @staticmethod
-    def fetch_a_share_daily(symbol: str, start_date: str = "20100101", end_date: str = None) -> pd.DataFrame:
+    def fetch_a_share_daily(symbol: str, start_date: str = "20100101", end_date: str = None,
+                            adjust: str = ADJUST_QFQ) -> pd.DataFrame:
         """
-        拉取 A 股历史日线数据 (前复权)。
+        拉取 A 股历史日线数据。
 
         【数据源路由】主源 = 新浪 (stock_zh_a_daily)，与期货主力接口同源，
         在国内多数网络环境（含受限代理）均可直达；
         新浪失败/无法识别的市场 (如北交所) 自动降级到东财 (stock_zh_a_hist)。
+        **两个源都按同一个 `adjust` 取值拉取** —— 复权口径必须整条链路一致，
+        否则"主源失败降级"会静默换一种复权（这是最阴的数据事故）。
+
+        :param adjust: `ADJUST_QFQ` 前复权（默认，全 app 既有行为）/
+                       `ADJUST_NONE` 不复权（P8 新增，存 `kline_daily_raw` 分区）。
         """
         if not end_date: end_date = datetime.now().strftime("%Y%m%d")
-        logging.info(f"开始拉取 A股 {symbol} 日线数据...")
+        logging.info(f"开始拉取 A股 {symbol} 日线数据 (adjust={adjust or 'none'})...")
 
         # 1) 主源：新浪 (需带市场前缀)
         sina_symbol = AkShareFeed._to_sina_stock_symbol(symbol)
         if sina_symbol:
             try:
                 df = ak.stock_zh_a_daily(symbol=sina_symbol, start_date=start_date,
-                                         end_date=end_date, adjust="qfq")
+                                         end_date=end_date, adjust=adjust or "")
                 if df is not None and not df.empty:
                     return AkShareFeed._normalize_ohlcv(df, KLINE_CN_RENAME, symbol)
             except Exception as e:
                 logging.warning(f"A股日线新浪源失败 [{sina_symbol}]: {e}")
 
         # 2) 兜底：东财 (覆盖北交所与新浪暂未支持的标的)
-        em_df = AkShareFeed._fetch_a_share_via_em(symbol, start_date, end_date)
+        em_df = AkShareFeed._fetch_a_share_via_em(symbol, start_date, end_date, adjust=adjust)
         if not em_df.empty:
             return AkShareFeed._normalize_ohlcv(em_df, KLINE_CN_RENAME, symbol)
 
@@ -226,18 +244,19 @@ class AkShareFeed:
         return pd.DataFrame()
 
     @staticmethod
-    def fetch_daily_auto(symbol: str, start_date: str = None,
-                         end_date: str = None) -> pd.DataFrame:
+    def fetch_daily_auto(symbol: str, start_date: str = None, end_date: str = None,
+                         adjust: str = ADJUST_QFQ) -> pd.DataFrame:
         """
         【智能路由】根据代码形态自动选择数据源。
         纯数字 (600519) -> A股接口；含字母 (RB) -> 期货主力接口。
 
         :param start_date: 增量拉取起点 (YYYYMMDD)。A股支持；期货主力接口不支持，
                            传入时会被忽略（仍返回全量），由上层统一做合并去重。
+        :param adjust: 仅对 A 股有效（期货无复权概念，参数被忽略）—— 见 `fetch_a_share_daily`。
         """
         if is_stock_code(symbol):
             return AkShareFeed.fetch_a_share_daily(symbol, start_date=start_date,
-                                                   end_date=end_date)
+                                                   end_date=end_date, adjust=adjust)
         return AkShareFeed.fetch_futures_daily(symbol)
 
     # ==========================================

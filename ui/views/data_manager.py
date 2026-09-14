@@ -31,16 +31,17 @@ from PyQt6.QtGui import QColor, QFont
 
 from data.market_db import DataLakeManager
 from data.sync_service import (MarketSyncService, ThrottlePolicy,
-                               ZONE_KLINE, ZONE_INDEX)
+                               ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX)
 from ui.dialogs.bulk_download import BulkDownloadDialog
 from ui.widgets.custom_widgets import NoWheelDoubleSpinBox
 from ui.workers import ScanWorker, SyncWorker
 
 # 分区中文名（顺序即左侧清单顺序）
-ZONE_ORDER = ["kline_daily", "index_daily", "kline_min", "macro_eco",
+ZONE_ORDER = ["kline_daily", "kline_daily_raw", "index_daily", "kline_min", "macro_eco",
               "fin_report", "valuation", "sentiment", "hot_topic"]
 ZONE_LABELS = {
     "kline_daily": "日线行情",
+    "kline_daily_raw": "日线行情 (不复权)",
     "index_daily": "大盘/行业指数",
     "kline_min": "分钟行情 (预留)",
     "macro_eco": "宏观经济",
@@ -49,8 +50,8 @@ ZONE_LABELS = {
     "sentiment": "市场情绪",
     "hot_topic": "热门题材",
 }
-# 只有这两个区当前具备"联网同步"能力
-SYNCABLE = (ZONE_KLINE, ZONE_INDEX)
+# 当前具备"联网同步"能力的区（v6.13 起含"不复权日线"：它同样走 MarketSyncService）
+SYNCABLE = (ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX)
 
 _COLUMNS = ["☑", "标的", "行数", "起始", "结束", "大小", "更新时间"]
 _COL_CHECK, _COL_NAME = 0, 1

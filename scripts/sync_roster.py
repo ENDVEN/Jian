@@ -1,8 +1,17 @@
-# sync_roster.py
+# scripts/sync_roster.py —— 独立运维脚本（人工运行，不被 app import）
+#   用法：py scripts/sync_roster.py  （在仓库根目录执行）
+import os
+import sys
 import time
+
 import pandas as pd
-from data.akshare_feed import AkShareFeed
-from core.database import DatabaseManager
+
+# 本文件在 scripts/ 子目录里，**仓库根 = 本文件的父目录**：
+# 由 `__file__` 反推而非相对路径 —— 否则 `from data...` 会去 scripts/ 里找包（§10-13）。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from data.akshare_feed import AkShareFeed  # noqa: E402
+from core.database import DatabaseManager  # noqa: E402
 
 def main():
     print("========================================")

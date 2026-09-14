@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from data.akshare_feed import AkShareFeed
+from data.akshare_feed import ADJUST_NONE, ADJUST_QFQ, AkShareFeed
 from data.market_db import DataLakeManager
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,33 @@ logger = logging.getLogger(__name__)
 # 数据湖分区
 ZONE_KLINE = "kline_daily"
 ZONE_INDEX = "index_daily"
+# ★v6.13/P8 复权切换：**不复权**日线单独一个分区（两份数据无法互相推导，只能各存一份）
+ZONE_KLINE_RAW = "kline_daily_raw"
+
+# 复权口径（从数据源层重新导出给 UI 用，见本文件头"UI 只认门面"的纪律）
+# ⚠ ui/ 必须从这里 import，**禁止**直接 import data.akshare_feed（§9-H 红线）
+__all__ = ["MarketSyncService", "ThrottlePolicy", "ADJUST_QFQ", "ADJUST_NONE",
+           "ADJUST_CHOICES", "ADJUST_LABELS", "adjust_label", "zone_for_adjust",
+           "ZONE_KLINE", "ZONE_KLINE_RAW", "ZONE_INDEX", "estimate_seconds",
+           "short_fetch_reason", "friendly_fetch_message", "friendly_constituent_message",
+           "DEFAULT_MIN_DATE"]
+
+ADJUST_CHOICES = (ADJUST_QFQ, ADJUST_NONE)
+ADJUST_LABELS = {ADJUST_QFQ: "前复权", ADJUST_NONE: "不复权"}
+
+
+def adjust_label(adjust: str) -> str:
+    """复权口径的中文名（未知回落"前复权"，与全局默认一致）。"""
+    return ADJUST_LABELS.get(str(adjust or ""), ADJUST_LABELS[ADJUST_QFQ])
+
+
+def zone_for_adjust(adjust: str) -> str:
+    """复权口径 -> 数据湖分区。
+
+    **UI 只认这个函数，别自己拼字符串**（§11.5-19：跨模块的"键"必须有规范化入口，
+    否则"切了不复权却读了前复权分区"这类串档不会报错、只会静默显示错数据）。
+    """
+    return ZONE_KLINE if str(adjust or "").strip().lower() == ADJUST_QFQ else ZONE_KLINE_RAW
 
 # 【数据起点】个股/指数的默认拉取起点 = 2010-01-01（全历史）。
 # 注意：它与"回测评估窗"(core/backtest.DEFAULT_START_DATE=2016) 是两回事 ——
@@ -79,15 +106,61 @@ class ThrottlePolicy:
 
 
 class MarketSyncService:
-    """行情同步门面：状态查询 + 增量/全量刷新 + 合并去重落盘。
+    """行情同步门面：状态查询 + 增量/全量刷新 + 合并去重落盘 + 名册类查询。
 
     对外 API:
         status(symbol, zone)          -> {cached, last_date}
         refresh_one(symbol, zone, ...) -> {ok, symbol, rows, added, skipped, message, ...}
+        fetch_index_constituents(code) -> {ok, symbols, reason, message}   # v6.9 收编
     """
 
     def __init__(self):
         self.lake = DataLakeManager()
+
+    # ==========================================
+    # 名册类查询（成分股等"名单"，非行情序列）
+    # ==========================================
+    def fetch_index_constituents(self, index_code: str, policy: ThrottlePolicy = None,
+                                 sleep_fn=time.sleep) -> dict:
+        """抓取指数成分股名单 —— **联网抓取的唯一入口**（§9-H 红线）。
+
+        【为什么必须收编到这里】成分股不是时间序列（不落数据湖），但它同样是
+        **联网抓取**。§9-H 划的红线是"任何联网抓取必须经本门面"—— 若 UI 线程
+        自己 `import AkShareFeed` 发请求，就重演了当初 kline 直连的老问题
+        （§9-T4-①：`ConstituentsWorker` 曾直接调行情源）。
+        收编之后 `ui/` 全层**不再出现 `AkShareFeed` 符号**，且有源码级断言守门。
+
+        :return: {"ok": bool, "symbols": [str], "index_code": str,
+                  "reason": "ok"/"no_data"/"network"/"error", "message": str}
+        """
+        index_code = str(index_code or "").strip()
+        result = {"ok": False, "symbols": [], "index_code": index_code,
+                  "reason": "", "message": ""}
+        if not index_code:
+            result["message"] = "未指定指数代码"
+            return result
+
+        policy = policy or ThrottlePolicy()
+        try:
+            # 与行情同步共用同一套温柔节流：名单接口也不破例猛拉
+            policy.sleep(sleep_fn)
+            df = AkShareFeed.fetch_index_constituents(index_code)
+        except Exception as e:  # noqa: BLE001 —— 网络层异常绝不外泄到 UI
+            logger.warning(f"指数成分股解析异常 [{index_code}]: {e}")
+            result["reason"] = _classify_error(e)
+            result["message"] = str(e)
+            return result
+
+        symbols = []
+        if df is not None and not df.empty and "symbol" in df.columns:
+            symbols = [str(s).strip() for s in df["symbol"].dropna().tolist() if str(s).strip()]
+        if not symbols:
+            # 行情源"没有这个指数的名单"与"网络挂了"是两回事，必须区分（§10-10）
+            result.update(reason="no_data", message="接口未返回成分股")
+            return result
+
+        result.update(ok=True, symbols=symbols, reason="ok", message="OK")
+        return result
 
     # ==========================================
     # 状态查询
@@ -214,8 +287,13 @@ class MarketSyncService:
     def _fetch(symbol: str, zone: str, start_date: str) -> pd.DataFrame:
         if zone == ZONE_INDEX:
             return AkShareFeed.fetch_index_daily(symbol, min_date=start_date or DEFAULT_MIN_DATE)
+        if zone == ZONE_KLINE_RAW:
+            # 复权切换（v6.13）：同一套源、换一个 adjust；期货无复权概念，参数被忽略
+            return AkShareFeed.fetch_daily_auto(symbol, start_date=start_date,
+                                                adjust=ADJUST_NONE)
         if zone == ZONE_KLINE:
-            return AkShareFeed.fetch_daily_auto(symbol, start_date=start_date)
+            return AkShareFeed.fetch_daily_auto(symbol, start_date=start_date,
+                                                adjust=ADJUST_QFQ)
         return pd.DataFrame()
 
     @staticmethod
@@ -310,3 +388,24 @@ def friendly_fetch_message(symbol: str, result: dict) -> str:
                 f"③ 次新/特殊标的，两个行情源暂未收录。")
     return (f"{symbol} 未能同步：{result.get('message', '未知原因')}\n\n"
             f"建议稍后重试；若反复失败请到「🗄 数据管理」查看是否已停止更新。")
+
+
+def friendly_constituent_message(index_code: str, result: dict) -> str:
+    """指数成分股解析失败时的人话提示（§10-10：分类安抚，而非统一吓唬）。
+
+    同样区分"网络类失败"与"行情源本来就没收录这个指数" —— 后者不是用户的错，
+    且明确告诉他可行的替代来源。
+    """
+    index_code = str(index_code or "")
+    reason = (result or {}).get("reason")
+    if reason == "network":
+        return (f"未能获取 {index_code} 的成分股：网络请求失败。\n\n"
+                f"可能原因：① 当前断网；② 请求超时；③ 请求过于频繁被临时限流。\n"
+                f"建议稍后重试。")
+    if reason == "no_data":
+        return (f"未能获取 {index_code} 的成分股：行情源未返回名单。\n\n"
+                f"可能原因：① 代码有误；② 该指数不在行情源收录范围内"
+                f"（部分行业/主题指数常缺）；③ 接口临时变更。\n"
+                f"建议：改用「粘贴代码列表」或「全市场 A 股」。")
+    return (f"未能获取 {index_code} 的成分股：{result.get('message', '未知原因')}\n\n"
+            f"建议：① 稍后重试；② 改用「粘贴代码列表」或「全市场 A 股」。")

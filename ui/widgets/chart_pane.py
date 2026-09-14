@@ -95,6 +95,25 @@ class ChartPane:
         self._annotation_items.append(item)
         return item
 
+    def remove_annotation(self, item) -> bool:
+        """摘掉**一个**用户标注图元（与 `add_annotation` 成对）。
+
+        ⚠ 不要用 `pane.plot_item.removeItem()` 绕过本方法：那样图元虽然从图上消失，
+        但会**留在 `_annotation_items` 列表里**，`clear_annotations()` 时再去删一个
+        已脱离的图元（虽然被 try 兜住，但容器与真实图元开始不一致 —— §11.5-15 同类教训）。
+        """
+        removed = False
+        for index, existing in enumerate(self._annotation_items):
+            if existing is item:
+                self._annotation_items.pop(index)
+                removed = True
+                break
+        try:
+            self._plot_item.removeItem(item)
+        except Exception:  # noqa: BLE001 —— 已脱离时不致命
+            pass
+        return removed
+
     def clear_annotations(self):
         for item in self._annotation_items:
             try:

@@ -10,7 +10,7 @@ from config import settings
 from core.utils import format_duration
 from ui.widgets.calendar_heatmap import CalendarHeatmap
 from ui.widgets.chart_style import plot_equity_curve
-from ui.widgets.custom_widgets import NoWheelComboBox
+from ui.widgets.custom_widgets import COMBO_QSS_SMALL, NoWheelComboBox
 
 class DashboardView(QWidget):
     # 中性态配色 (无数据 / 不参与盈亏着色的指标)
@@ -103,10 +103,7 @@ class DashboardView(QWidget):
         self.cb_year = NoWheelComboBox()
         self.cb_year.setFixedHeight(26)
         self.cb_year.setMinimumWidth(96)
-        self.cb_year.setStyleSheet(
-            "QComboBox { padding: 0 8px; border: 1px solid #E0E4EC; border-radius: 8px; "
-            "background: white; font-size: 12px; color: #1F2430; }"
-            "QComboBox:focus { border: 1px solid #1976D2; }")
+        self.cb_year.setStyleSheet(COMBO_QSS_SMALL)
         self.cb_year.currentIndexChanged.connect(self._render_calendar)
         head.addWidget(self.cb_year)
         head.addSpacing(12)

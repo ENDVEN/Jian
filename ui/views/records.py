@@ -10,12 +10,13 @@ from ui.widgets.custom_widgets import NoWheelComboBox
 from config import settings
 from core.preferences import TIME_PRECISION_DATE, TIME_PRECISION_FILL, preferences
 from core.utils import (extract_root_symbol, format_fill_time, format_points,
-                        format_price, format_trade_time, row_points)
+                        format_price, format_trade_time, record_net_amount,
+                        row_points)
 
 # 表格列定义（单一事实来源：新增/调整列只需改这里）
-COLUMNS = ["单号", "账户", "品种", "买卖", "开仓价", "平仓价", "点数", "交易时间", "手数", "盈亏", "手续费"]
+COLUMNS = ["单号", "账户", "品种", "买卖", "开仓价", "平仓价", "点数", "交易时间", "手数", "净盈亏", "手续费"]
 COL_POINTS = COLUMNS.index("点数")
-COL_PNL = COLUMNS.index("盈亏")
+COL_PNL = COLUMNS.index("净盈亏")
 
 
 class RecordsView(QWidget):
@@ -363,6 +364,12 @@ class RecordsView(QWidget):
 
             points = row_points(record)
 
+            # 【v6.9 · §9-P1 收尾】本列显示并着色**净额**（平仓盈亏 − 手续费，真实到手）。
+            # 旧版显示毛利却被净额口径的筛选器/统计对照，会出现"数字是 +100、行是红的"
+            # 这类自相矛盾（毛利 +100 / 手续费 150 ⇒ 净额 −50）。毛利 = 净额 + 手续费，
+            # 右列「手续费」即对照项，Dashboard 仍单列毛利 KPI。
+            net_amount = record_net_amount(record)
+
             items = [
                 QTableWidgetItem(str(record.get('trade_id', '-'))), 
                 QTableWidgetItem(str(record.get('account', '-'))), 
@@ -373,7 +380,7 @@ class RecordsView(QWidget):
                 QTableWidgetItem(format_points(points)),
                 QTableWidgetItem(self._display_time(record)),
                 QTableWidgetItem(str(record.get('lots', 0))), 
-                QTableWidgetItem(f"￥{record.get('net_profit', 0):,.2f}"), 
+                QTableWidgetItem(f"￥{net_amount:,.2f}"), 
                 QTableWidgetItem(f"￥{record.get('commission', 0):.2f}")
             ]
 
@@ -385,10 +392,13 @@ class RecordsView(QWidget):
                     "未找到开仓记录。可导入更早月份的交割单自动缝合，"
                     "或在「深度复盘」中选中此单手工补录开仓价。")
 
-            # 点数与盈亏同色（绿盈红亏），盈亏列加粗
-            pnl_color = settings.COLOR_PROFIT_TEXT if record.get('net_profit', 0) > 0 else settings.COLOR_LOSS_TEXT
+            # 点数与盈亏同色（绿盈红亏），净盈亏列加粗
+            pnl_color = (settings.COLOR_PROFIT_TEXT if net_amount > 0
+                         else settings.COLOR_LOSS_TEXT)
             items[COL_PNL].setForeground(QColor(pnl_color))
             items[COL_PNL].setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            items[COL_PNL].setToolTip(
+                "净额 = 平仓盈亏 − 手续费（真实到手）；与绩效统计、筛选器同口径。")
             if points is not None:
                 items[COL_POINTS].setForeground(
                     QColor(settings.COLOR_PROFIT_TEXT if points > 0 else settings.COLOR_LOSS_TEXT))

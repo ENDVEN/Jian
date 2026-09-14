@@ -10,11 +10,13 @@ from config import settings
 from core.analyzer import TradeAnalyzer
 from core.engine import DataEngine
 from core.updater import UpdateCheckerThread
+# P7：函数配方互送用的纯函数（把各种形态的"函数段"统一成页面各自要的形状）
+from data.formula_store import segments_as_texts, segments_as_tuples
 
 from ui.views.dashboard import DashboardView
 from ui.views.records import RecordsView
 from ui.views.review import ReviewView
-from ui.views.market import MarketView
+from ui.views.trading_desk import TradingDeskView
 from ui.views.backtest_module import BacktestModule
 from ui.views.data_manager import DataManagerView
 
@@ -76,7 +78,8 @@ class JianMainWindow(QMainWindow):
         self.page_overview = DashboardView(self)
         self.page_records = RecordsView(self)
         self.page_review = ReviewView(self) 
-        self.page_market = MarketView(self)
+        # ⚠ 属性名仍叫 page_market（导航第 4 页的历史名字），实现已换成 P8 的行情工作台
+        self.page_market = TradingDeskView(self)
         self.page_backtest = BacktestModule(self)
         self.page_data = DataManagerView(self)
         
@@ -99,6 +102,43 @@ class JianMainWindow(QMainWindow):
         
         self.render_all_data()
         self.check_for_updates()
+
+    # ==========================================
+    # 页面切换 + 函数配方互送（P7 · §7-B3 P7）
+    # ==========================================
+    # 【为什么互送要放在主窗口】两个页面**不应该互相 import**（否则耦合、也容易循环引用）。
+    # 主窗口本来就是"组件装配与事件分发"的地方（§3），由它当唯一的传话筒最干净：
+    #   行情页 ──send_formula_to_backtest──▶ 主窗口 ──▶ 回测页.load_formula_from_external()
+    #   回测页 ──send_formula_to_market────▶ 主窗口 ──▶ 行情页.receive_formula()
+    _PAGE_INDEX = {"market": 3, "backtest": 4}
+
+    def switch_to(self, key: str) -> None:
+        """按名字切页（互送后直接把用户带到目标页，省得他自己找）。"""
+        index = self._PAGE_INDEX.get(str(key))
+        if index is not None:
+            self.content_area.setCurrentIndex(index)
+
+    def send_formula_to_backtest(self, segments, params_text: str = "") -> int:
+        """行情页 → 回测页：把函数送进①函数段编辑区并切页，返回段数（0 = 内容为空）。
+
+        ⚠ **目标窗格不随行**：回测页没有副图概念，只带函数文本与参数。
+        需要连窗格一起保留时请用「💾 存为配方」（配方里存了 target，行情页载入即还原）。
+        """
+        texts = segments_as_texts({"segments": segments})
+        if not texts:
+            return 0
+        self.page_backtest.backtest_single.load_formula_from_external(texts, params_text)
+        self.switch_to("backtest")
+        return len(texts)
+
+    def send_formula_to_market(self, segments, params_text: str = "") -> int:
+        """回测页 → 行情页：每段默认落「主图」（回测侧没有窗格信息），切页并立即渲染。"""
+        pairs = segments_as_tuples({"segments": segments})
+        if not pairs:
+            return 0
+        self.page_market.receive_formula(pairs, params_text, source_label="回测页")
+        self.switch_to("market")
+        return len(pairs)
 
     def check_for_updates(self):
         self.updater_thread = UpdateCheckerThread()

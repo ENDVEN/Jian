@@ -18,13 +18,12 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                              QPushButton, QFrame)
 
-from ui.widgets.custom_widgets import (NoWheelComboBox,
+from ui.widgets.custom_widgets import (COMBO_QSS_SMALL, NoWheelComboBox,
                                        NoWheelDoubleSpinBox)
 
 _CARD_QSS = ("QFrame { background: white; border: 1px solid #E7EAF0; border-radius: 12px; }")
-_CTRL_QSS = ("QComboBox { padding: 0 8px; border: 1px solid #E0E4EC; border-radius: 8px; "
-             "background: white; font-size: 12px; color: #1F2430; }"
-             "QComboBox:focus { border: 1px solid #1976D2; }")
+# v6.9：行内下拉样式收敛到 custom_widgets（成对的 ::drop-down/::down-arrow，§10-9）
+_CTRL_QSS = COMBO_QSS_SMALL
 _FLAT_QSS = ("QPushButton { color: #1976D2; background: transparent; border: none; "
              "padding: 0 6px; font-weight: bold; border-radius: 6px; font-size: 12px; }"
              "QPushButton:hover { background: #EEF4FD; }")

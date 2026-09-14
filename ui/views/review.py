@@ -10,12 +10,15 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QFrame, QStackedWidget, QTableWidget, 
                              QTableWidgetItem, QHeaderView,
                              QTabWidget, QMessageBox, QListWidget, 
-                             QListWidgetItem, QTextEdit, QSplitter, QLineEdit,
-                             QDateEdit)
+                             QListWidgetItem, QTextEdit, QSplitter, QLineEdit)
 from PyQt6.QtCore import Qt, QDate, QTimer
 from PyQt6.QtGui import QColor, QFont
 
-from ui.widgets.custom_widgets import CandlestickItem, NoWheelComboBox
+from ui.widgets.custom_widgets import (COMBO_QSS_ACCENT, COMBO_QSS_EDIT,
+                                       COMBO_QSS_EDIT_OK, DATEEDIT_QSS_WARN,
+                                       CandlestickItem, NoWheelComboBox,
+                                       NoWheelDateEdit)
+from ui.widgets.adaptive_axis import attach_date_axis, slice_span
 from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
 from ui.widgets.screenshot_gallery import ScreenshotGallery
 from ui.widgets.yearly_review import YearlyReviewPanel
@@ -24,7 +27,7 @@ from core.preferences import preferences
 from core.utils import (extract_root_symbol, format_duration, format_fill_time,
                         format_points, format_price, format_trade_time,
                         record_entry_has_clock, record_holding_seconds,
-                        row_points, trading_day_count)
+                        record_net_amount, row_points, trading_day_count)
 from data.market_db import DataLakeManager
 from core.indicators import TAEngine
 
@@ -78,7 +81,9 @@ class ReviewView(QWidget):
         self.btn_next_time.clicked.connect(lambda: self.change_review_time(1))
         
         self.cb_time_picker = NoWheelComboBox()
-        self.cb_time_picker.setStyleSheet("QComboBox { font-size: 16px; font-weight: bold; color: #1976D2; padding: 5px 15px; border: 1px solid #E0E0E0; border-radius: 6px; background: white;} QComboBox::drop-down { border: none; width: 20px;} QComboBox:hover { background: #F5F5F5; }")
+        # v6.9：样式收敛到 custom_widgets 的完整契约（旧写法只给 ::drop-down 不给
+        # ::down-arrow，Qt 会切到样式化绘制路径 ⇒ 箭头消失，§10-9）
+        self.cb_time_picker.setStyleSheet(COMBO_QSS_ACCENT)
         self.cb_time_picker.activated.connect(self.quick_jump_time)
 
         self.btn_latest_time = QPushButton("⏭️ 最新")
@@ -231,7 +236,7 @@ class ReviewView(QWidget):
         self.cb_edit_strategy = NoWheelComboBox()
         self.cb_edit_strategy.setEditable(True)
         self.cb_edit_strategy.setFixedWidth(130)  
-        self.cb_edit_strategy.setStyleSheet("QComboBox { border: 1px solid #D1D9E6; border-radius: 4px; background: white; color: #212121; padding: 4px; }")
+        self.cb_edit_strategy.setStyleSheet(COMBO_QSS_EDIT)
         self.cb_edit_strategy.lineEdit().editingFinished.connect(self.silent_update_strategy)
         self.cb_edit_strategy.activated.connect(self.silent_update_strategy)
         strat_layout.addWidget(self.cb_edit_strategy)
@@ -260,13 +265,11 @@ class ReviewView(QWidget):
         row1.addWidget(self.lbl_orphan_tip)
         row1.addStretch()
 
-        self.inp_orphan_date = QDateEdit(QDate.currentDate())
+        self.inp_orphan_date = NoWheelDateEdit(QDate.currentDate())
         self.inp_orphan_date.setCalendarPopup(True)
         self.inp_orphan_date.setDisplayFormat("yyyy-MM-dd")
         self.inp_orphan_date.setFixedWidth(120)
-        self.inp_orphan_date.setStyleSheet(
-            "QDateEdit { border: 1px solid #FFCC80; border-radius: 4px; "
-            "padding: 3px; background: white; }")
+        self.inp_orphan_date.setStyleSheet(DATEEDIT_QSS_WARN)
 
         self.inp_orphan_price = QLineEdit()
         self.inp_orphan_price.setPlaceholderText("开仓价")
@@ -598,8 +601,16 @@ class ReviewView(QWidget):
 
         if k_data:
             self.review_kline_chart.addItem(CandlestickItem(k_data))
-            axis = self.review_kline_chart.getAxis('bottom')
-            axis.setTicks([list(enumerate(day_labels))])
+            # 自适应坐标轴（§7-B4）：
+            #  · 横轴 = "当月第几日"的**序数轴**（不是真日期）→ 走文本刻度，只求密度自适应
+            #    （原来把当月每个交易日都写上，窄窗口必定互相压字）；
+            #  · 纵轴跟随可视区间（蜡烛自身高低即数据源），放大后不再被全月极值压扁。
+            lows = np.array([row[3] for row in k_data], dtype=float)
+            highs = np.array([row[4] for row in k_data], dtype=float)
+            attach_date_axis(
+                self.review_kline_chart, texts=day_labels,
+                y_provider=(lambda i0, i1, _lo=lows, _hi=highs:
+                            slice_span(_lo, _hi, i0, i1)))
 
     def _trading_dates_for(self, symbol: str) -> list:
         """按需读取某品种主体的本地交易日历（带缓存），无本地数据返回空列表"""
@@ -728,7 +739,9 @@ class ReviewView(QWidget):
         self.current_editing_idx = None
         day_df = self.current_view_df[self.current_view_df['trade_time'].dt.day == qdate.day()]
         for idx, record in day_df.iterrows():
-            pnl, sym = record['net_profit'], record['symbol']
+            # 【v6.9 · §9-P1 收尾】当日清单的金额与正负号一律用**净额**（真实到手），
+            # 与过滤器 / Dashboard / core/analyzer 同口径，见 core.utils.record_net_amount。
+            pnl, sym = record_net_amount(record), record['symbol']
             is_orphan = int(record.get('is_orphan', 0) or 0) == 1
             action = "买开" if record.get('direction') == 'LONG' else "卖开"
             entry_txt = format_price(record.get('entry_price')) if not is_orphan else "?"
@@ -750,8 +763,10 @@ class ReviewView(QWidget):
             list_item = QListWidgetItem(txt)
             list_item.setData(Qt.ItemDataRole.UserRole, idx)
             list_item.setForeground(QColor(settings.COLOR_PROFIT_TEXT) if pnl > 0 else QColor(settings.COLOR_LOSS_TEXT))
+            tip = "金额为「净额」= 平仓盈亏 − 手续费（真实到手），颜色按净额正负判定。"
             if is_orphan:
-                list_item.setToolTip("待缝合：未找到开仓记录。可补导更早月份交割单，或在选中后手工补录开仓价。")
+                tip += "\n\n待缝合：未找到开仓记录。可补导更早月份交割单，或在选中后手工补录开仓价。"
+            list_item.setToolTip(tip)
             self.day_trades_list.addItem(list_item)
 
     @staticmethod
@@ -802,7 +817,7 @@ class ReviewView(QWidget):
                 '<br/><span style="font-size:13px; color:#757575;">开仓价: </span>'
                 '<span style="font-size:13px; color:#F57C00; font-style:italic;">待补录（缝合前点数不可算）</span>'
                 f'　→　平仓价 <b style="color:#212121;">{exit_price}</b>'
-                '<span style="color:#757575;">　|　结果: </span>'
+                '<span style="color:#757575;">　|　净额: </span>'
                 f'<b style="color:{col_hex}; font-size:16px;">￥{pnl:,.2f}</b>'
             )
         else:
@@ -814,7 +829,7 @@ class ReviewView(QWidget):
                 f'<b style="color:#212121;">{exit_price}</b>'
                 '<span style="color:#757575;">　|　盈亏 </span>'
                 f'<b style="color:{col_hex};">{pts_txt} 点</b>'
-                '<span style="color:#757575;">　|　结果: </span>'
+                '<span style="color:#757575;">　|　净额: </span>'
                 f'<b style="color:{col_hex}; font-size:16px;">￥{pnl:,.2f}</b>'
             )
         self.lbl_trade_detail.setText(html)
@@ -828,7 +843,8 @@ class ReviewView(QWidget):
         self.current_editing_idx = df_idx
 
         is_orphan = int(record.get('is_orphan', 0) or 0) == 1
-        self._update_detail_header(record, is_orphan, record['net_profit'])
+        # 头部的「结果」金额与颜色同样按净额（真实到手），§9-P1
+        self._update_detail_header(record, is_orphan, record_net_amount(record))
 
         self.txt_reason.setPlainText(str(record.get('entry_reason', '')))
         self.txt_reflection.setPlainText(str(record.get('reflection', '')))
@@ -1059,7 +1075,9 @@ class ReviewView(QWidget):
                                               style=Qt.PenStyle.DashLine))
 
         is_long = record['direction'] == 'LONG'
-        pnl = float(record['net_profit'])
+        # 【v6.9 · §9-P1 收尾】回放标记色与高亮带方向同样按**净额**判定（真实到手），
+        # 否则"毛利为正、手续费吃掉"的单子会被画成绿色盈利区间。
+        pnl = record_net_amount(record)
         marker_color = settings.COLOR_PROFIT if pnl >= 0 else settings.COLOR_LOSS
 
         if dual:
@@ -1168,22 +1186,19 @@ class ReviewView(QWidget):
             hi = min(len(df_slice) - 1, exit_idx + half)
             self.playback_chart.setXRange(lo, hi, padding=0.05)
 
-        # ---- Y 范围：把价格参考线纳入可视区域，避免画在图外 ----
-        y_lo = float(df_slice['low'].min())
-        y_hi = float(df_slice['high'].max())
-        for price_ref in (entry_price, exit_price):
-            if _valid_price(price_ref):
-                p = float(price_ref)
-                y_lo, y_hi = min(y_lo, p), max(y_hi, p)
-        span = (y_hi - y_lo) or 1.0
-        self.playback_chart.setYRange(y_lo - span * 0.05, y_hi + span * 0.05)
-
-        # 底部时间轴
-        axis = self.playback_chart.getAxis('bottom')
-        step = max(1, len(df_slice) // 8)
-        ticks = [[(i, df_slice['date'].iloc[i].strftime('%m-%d'))
-                  for i in range(0, len(df_slice), step)]]
-        axis.setTicks(ticks)
+        # ---- 自适应坐标轴（§7-B4）：y 跟随**可视区间** + 日期刻度随缩放重算 ----
+        # 入场/出场价参考线仍参与 y 范围（否则会被画在图外），但极值只在可视窗口内取 ——
+        # 放大到某几根 K 线时，不再被"整段回溯区间"的极值压成一条线（这正是用户报的毛病）。
+        pb_low = df_slice['low'].to_numpy(dtype=float)
+        pb_high = df_slice['high'].to_numpy(dtype=float)
+        refs = [float(p) for p in (entry_price, exit_price) if _valid_price(p)]
+        if refs:
+            pb_low = np.fmin(pb_low, min(refs))
+            pb_high = np.fmax(pb_high, max(refs))
+        attach_date_axis(
+            self.playback_chart, df_slice['date'],
+            y_provider=(lambda i0, i1, _lo=pb_low, _hi=pb_high:
+                        slice_span(_lo, _hi, i0, i1)))
 
         # 【交互体验】点击交易单即自动切到回放页
         self.review_chart_tabs.setCurrentWidget(self.playback_chart)
@@ -1204,9 +1219,8 @@ class ReviewView(QWidget):
             
         self.refresh_review_filters()
         
-        original_style = "QComboBox { border: 1px solid #D1D9E6; border-radius: 4px; background: white; color: #212121; padding: 4px; }"
-        self.cb_edit_strategy.setStyleSheet("QComboBox { border: 2px solid #4CAF50; border-radius: 4px; background: #E8F5E9; color: #2E7D32; padding: 4px; font-weight: bold; }")
-        QTimer.singleShot(1000, lambda: self.cb_edit_strategy.setStyleSheet(original_style))
+        self.cb_edit_strategy.setStyleSheet(COMBO_QSS_EDIT_OK)
+        QTimer.singleShot(1000, lambda: self.cb_edit_strategy.setStyleSheet(COMBO_QSS_EDIT))
 
     def save_review_text(self):
         if getattr(self, 'current_editing_idx', None) is None: QMessageBox.warning(self, "提示", "请先选择一笔交易！"); return

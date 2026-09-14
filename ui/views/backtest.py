@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QFrame, QScrollArea,
                              QMessageBox, QTabWidget, QTableWidget,
                              QTableWidgetItem, QHeaderView,
-                             QComboBox, QCheckBox, QSplitter,
+                             QComboBox, QCheckBox, QSplitter, QDialog,
                              QInputDialog, QApplication, QFileDialog, QMenu)
 
 from config import settings
@@ -42,17 +42,22 @@ from core.formula.program import (parse_program, execute_programs,
 from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS, risk_summary)
 from core.utils import align_by_date, parse_params_text, synthetic_bars
 from data.market_db import DataLakeManager
+# P7：公式资产化（配方库）+ 与行情页互送
+from data.formula_store import (SOURCE_BACKTEST, get_formula_store, make_formula,
+                                segments_as_texts)
 # 说明：INDEX_PRESETS / is_index_symbol 是纯常量与纯校验函数（无副作用、不联网），
 #      因此允许被 UI 直接引用；但**任何联网抓取**都必须走 MarketSyncService（见下方 worker）。
 from data.akshare_feed import INDEX_PRESETS, is_index_symbol, is_stock_code
 from data.strategy_store import StrategyStore
 from data.sync_service import (ZONE_KLINE, ZONE_INDEX, friendly_fetch_message)
-from ui.widgets.custom_widgets import (CandlestickItem, NoWheelComboBox,
-                                       NoWheelDateEdit, NoWheelDoubleSpinBox,
-                                       SPINBOX_QSS)
+from ui.widgets.custom_widgets import (COMBO_QSS, LINE_COMBO_QSS, CandlestickItem,
+                                       NoWheelComboBox, NoWheelDateEdit,
+                                       NoWheelDoubleSpinBox, SPINBOX_QSS)
+from ui.widgets.formula_library import FormulaLibraryDialog
 from ui.workers import BacktestRunWorker, SingleSyncWorker
 from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
 # v6.4 / §7-B3 P3：公式叠层渲染全 app 唯一入口（引擎 DrawData → 图元），本页只负责切窗口
+from ui.widgets.adaptive_axis import axis_px, compute_ticks, slice_span, visible_span
 from ui.widgets.chart_pane import ChartPane
 from ui.widgets.draw_overlay import OverlayPainter, overlay_extent, slice_draws
 from ui.widgets.condition_gate import ConditionGate
@@ -135,6 +140,8 @@ class SingleStockBacktestView(QWidget):
         self.main_win = main_win
         self.data_lake = DataLakeManager()
         self.store = StrategyStore()
+        # P7：与行情页**共用同一个配方库实例**（否则后保存的会覆盖先保存的）
+        self.formula_store = get_formula_store()
 
         self.current_symbol = None
         self.current_name = ""
@@ -186,9 +193,8 @@ class SingleStockBacktestView(QWidget):
         toolbar.setSpacing(8)
 
         # 统一输入控件高度/圆角，避免“大大小小”的混乱感
-        self._ctrl_qss = ("QLineEdit, QComboBox { padding: 0 12px; border: 1px solid #D9DEE8; "
-                          "border-radius: 8px; background: white; font-size: 13px; color: #1F2430; }"
-                          "QLineEdit:focus, QComboBox:focus { border: 1px solid #1976D2; }")
+        # v6.9：收敛到 custom_widgets.LINE_COMBO_QSS（含成对 ::drop-down/::down-arrow，§10-9）
+        self._ctrl_qss = LINE_COMBO_QSS
         self._flat_qss = ("QPushButton { color: #1976D2; background: transparent; border: none; "
                           "padding: 0 8px; font-weight: bold; border-radius: 8px; }"
                           "QPushButton:hover { background: #EEF4FD; } QPushButton:disabled { color: #B4BECB; }")
@@ -276,6 +282,33 @@ class SingleStockBacktestView(QWidget):
         step1.setStyleSheet("font-size: 14px; font-weight: bold; color: #1976D2;")
         func_head.addWidget(step1)
         func_head.addStretch()
+
+        # —— P7：公式资产化 + 与行情页互送（与「🩺 检测」同排，都属于"对这段函数的操作"）——
+        _action_qss = ("QPushButton { background:#F5F5F5; border:1px solid #E0E0E0; "
+                       "border-radius:8px; padding:4px 10px; font-weight:bold; color:#424242; }"
+                       "QPushButton:hover { background:#EDEDED; }")
+        self.btn_library = QPushButton("📚 配方库")
+        self.btn_library.setStyleSheet(_action_qss)
+        self.btn_library.setToolTip("载入已保存的公式配方（含行情页存下的那些）")
+        self.btn_library.clicked.connect(self.open_formula_library)
+        func_head.addWidget(self.btn_library)
+
+        self.btn_save_formula = QPushButton("💾 存为配方")
+        self.btn_save_formula.setStyleSheet(_action_qss)
+        self.btn_save_formula.setToolTip("把下面的函数与参数存进配方库；同名即覆盖")
+        self.btn_save_formula.clicked.connect(self.save_formula_as)
+        func_head.addWidget(self.btn_save_formula)
+
+        self.btn_send_market = QPushButton("📤 送到行情页")
+        self.btn_send_market.setStyleSheet(
+            "QPushButton { background:#E8F1FF; border:1px solid #BBDEFB; border-radius:8px; "
+            "padding:4px 10px; font-weight:bold; color:#1976D2; }"
+            "QPushButton:hover { background:#D6E8FF; }")
+        self.btn_send_market.setToolTip("把函数与参数送到「📈 市场行情」的公式叠加区，"
+                                        "在真实 K 线上看它长什么样（每段默认落主图）")
+        self.btn_send_market.clicked.connect(self.send_formula_to_market)
+        func_head.addWidget(self.btn_send_market)
+
         self.btn_detect = QPushButton("🩺 检测")
         self.btn_detect.setStyleSheet("QPushButton { background:#E8F1FF; color:#1976D2; font-weight:bold; padding:4px 14px; border-radius:8px; border:none;} QPushButton:hover{background:#D6E8FF;} QPushButton:disabled{background:#F0F3F8; color:#A7AEBE;}")
         self.btn_detect.clicked.connect(self.detect_function)
@@ -385,8 +418,7 @@ class SingleStockBacktestView(QWidget):
         completer = self.cmb_index.completer()
         if completer is not None:
             completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.cmb_index.setStyleSheet("QComboBox { padding: 0 10px; border: 1px solid #E0E4EC; "
-                                     "border-radius: 8px; background: white; font-size: 13px; }")
+        self.cmb_index.setStyleSheet(COMBO_QSS)
         for code, name in INDEX_PRESETS.items():
             self.cmb_index.addItem(f"{code}  {name}", code)
         self.cmb_index.setCurrentIndex(0)
@@ -660,6 +692,69 @@ class SingleStockBacktestView(QWidget):
     def _parse_params_text(text: str) -> dict:
         """（v6.6 起委托 core.utils.parse_params_text —— 行情页参数框共用同一份）"""
         return parse_params_text(text)
+
+    # ==========================================
+    # 公式资产化 + 互送（P7 · §7-B3 P7）
+    # ==========================================
+    # 【与行情页的分工】行情页保留每段的"主图/副图"目标；回测页**没有副图概念**，
+    # 所以互送时只带函数文本 + 参数。要连窗格一起留档，就用「💾 存为配方」——
+    # 配方里 `segments[i].target` 是存下来的（行情页载入时原样还原）。
+    def load_formula_from_external(self, texts, params_text: str = "") -> int:
+        """接收外来公式（行情页「📤 送去做回测」/ 配方库）：填进函数段 + 参数，并自动检测。
+
+        :return: 实际载入的段数（0 = 内容为空，什么都没做）
+        """
+        clean = [str(text).strip() for text in (texts or []) if str(text or "").strip()]
+        if not clean:
+            return 0
+        self.segments.set_texts(clean)
+        self.txt_params.setText(str(params_text or ""))
+        self.detect_function(quiet=True)      # 送来的函数立刻自检：语法/缺参当场可见
+        return len(clean)
+
+    def current_formula_segments(self) -> list[str]:
+        return [text.strip() for text in self.segments.texts() if text.strip()]
+
+    def save_formula_as(self):
+        """把①里的函数 + 参数存成配方（同名即覆盖）。"""
+        texts = self.current_formula_segments()
+        if not texts:
+            QMessageBox.information(self, "暂无函数", "先在①里粘贴函数，再保存为配方。")
+            return
+        name, ok = QInputDialog.getText(self, "保存为配方", "配方名称（同名即覆盖）：")
+        if not ok:
+            return
+        try:
+            formula = make_formula(name, texts, params_text=self.txt_params.text(),
+                                   source=SOURCE_BACKTEST)
+        except ValueError as e:
+            QMessageBox.warning(self, "无法保存", str(e))
+            return
+        saved = self.formula_store.upsert(formula)
+        self._set_detect(True, f"✓ 已存入配方库：{saved['name']}")
+
+    def open_formula_library(self):
+        """打开配方库并载入选中项（行情页存下的配方在这里同样能用）。"""
+        dialog = FormulaLibraryDialog(self.formula_store, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        formula = dialog.selected_formula()
+        if not formula:
+            return
+        count = self.load_formula_from_external(segments_as_texts(formula),
+                                                formula.get("params_text", ""))
+        self._set_detect(True, f"✓ 已从配方库载入「{formula['name']}」（{count} 段）")
+
+    def send_formula_to_market(self) -> int:
+        """回测页 → 行情页（由主窗口转交，两个页面互不 import）；返回送过去的段数。"""
+        texts = self.current_formula_segments()
+        if not texts:
+            QMessageBox.information(self, "暂无函数", "先在①里粘贴函数，再送到行情页。")
+            return 0
+        count = self.main_win.send_formula_to_market(texts, self.txt_params.text())
+        if count:
+            self._set_detect(True, f"✓ 已把 {count} 段函数送到「📈 市场行情」")
+        return count
 
     def detect_function(self, quiet: bool = False):
         """多段函数：逐段解析 + 共享 context 试运行 + 缺参自动探测 (阶段A)"""
@@ -1406,28 +1501,14 @@ class SingleStockBacktestView(QWidget):
         state = self._equity_state
         if state is None:
             return
+        # 刻度算法收敛到公共件（§7-B4）：本页不再自己写"按可视 bar 重算 + 自适应格式"，
+        # 与行情页/复盘页共用同一份口径（这正是当年"改一处漏三处"的病根）。
         dates = state['dates']
         view_box = self.equity_chart.getViewBox()
-        x0, x1 = view_box.viewRange()[0]
-        n = len(dates)
-        i0 = max(0, min(n - 1, int(x0)))
-        i1 = max(i0, min(n - 1, int(x1)))
-        span = i1 - i0 + 1
-        step = max(1, round(span / 8))
-        first, last = pd.Timestamp(dates[i0]), pd.Timestamp(dates[i1])
-        if span <= 90:
-            fmt = '%Y-%m-%d'
-        elif first.year != last.year:
-            fmt = '%Y-%m'
-        else:
-            fmt = '%Y-%m'
-        ticks = [(i, pd.Timestamp(dates[i]).strftime(fmt)) for i in range(i0, i1 + 1, step)]
-        present = {t[0] for t in ticks}
-        for idx in (i0, i1):
-            if idx not in present:
-                ticks.append((idx, pd.Timestamp(dates[idx]).strftime(fmt)))
-        ticks.sort(key=lambda t: t[0])
-        self.equity_chart.getAxis('bottom').setTicks([ticks])
+        axis = self.equity_chart.getAxis('bottom')
+        i0, i1 = visible_span(view_box, len(dates))
+        ticks = compute_ticks(dates, i0, i1, width_px=axis_px(axis))
+        axis.setTicks([ticks] if ticks else [])
 
     def _on_kline_zoom(self, *_args):
         if self._kline_state is not None:
@@ -1458,39 +1539,31 @@ class SingleStockBacktestView(QWidget):
             return
         dates = state['dates']
         view_box = self.kline_chart.getViewBox()
-        x0, x1 = view_box.viewRange()[0]
         n = len(dates)
-        i0 = max(0, min(n - 1, int(x0)))
-        i1 = max(i0, min(n - 1, int(x1)))
-        span = i1 - i0 + 1
-        step = max(1, round(span / 8))
-        first, last = pd.Timestamp(dates[i0]), pd.Timestamp(dates[i1])
-        fmt = '%Y-%m-%d' if first.year != last.year else '%m-%d'
-        ticks = [(i, pd.Timestamp(dates[i]).strftime(fmt)) for i in range(i0, i1 + 1, step)]
-        present = {t[0] for t in ticks}
-        for idx in (i0, i1):
-            if idx not in present:
-                ticks.append((idx, pd.Timestamp(dates[idx]).strftime(fmt)))
-        ticks.sort(key=lambda t: t[0])
-        self.kline_chart.getAxis('bottom').setTicks([ticks])
+        # 刻度算法收敛到公共件（§7-B4）：横轴密度/格式全 app 一份口径
+        axis = self.kline_chart.getAxis('bottom')
+        i0, i1 = visible_span(view_box, n)
+        ticks = compute_ticks(dates, i0, i1, width_px=axis_px(axis))
+        axis.setTicks([ticks] if ticks else [])
 
         if self.chk_follow.isChecked():
-            vis_high = state['high'][i0:i1 + 1]
-            vis_low = state['low'][i0:i1 + 1]
-            if len(vis_high):
-                lo_p, hi_p = float(vis_low.min()), float(vis_high.max())
-                # v6.4：把公式叠层（线 / 状态柱 / 图标）也纳入视口 —— 否则超出 K 线高低价的
-                # 叠层会被裁掉。这是"宿主第三件事"（§7-B3 B③）。
-                ov_lo = state.get('overlay_lo')
-                ov_hi = state.get('overlay_hi')
-                if ov_lo is not None and len(ov_lo) == len(dates):
-                    seg_lo, seg_hi = ov_lo[i0:i1 + 1], ov_hi[i0:i1 + 1]
-                    if np.isfinite(seg_lo).any():
-                        lo_p = min(lo_p, float(np.nanmin(seg_lo)))
-                    if np.isfinite(seg_hi).any():
-                        hi_p = max(hi_p, float(np.nanmax(seg_hi)))
+            # 「价格轴跟随可视区间」开关语义保留（用户可以关，§7-B4 边界）：
+            # 极值只在**可视窗口内**取，并沿用 v6.4 的"叠层也纳入视口"（§7-B3 B③）。
+            low = np.asarray(state['low'], dtype=float)
+            high = np.asarray(state['high'], dtype=float)
+            ov_lo = state.get('overlay_lo')
+            ov_hi = state.get('overlay_hi')
+            if ov_lo is not None and np.asarray(ov_lo).size == n:
+                low = np.fmin(low, np.asarray(ov_lo, dtype=float))
+            if ov_hi is not None and np.asarray(ov_hi).size == n:
+                high = np.fmax(high, np.asarray(ov_hi, dtype=float))
+            span = slice_span(low, high, i0, i1)
+            if span is not None:
+                lo_p, hi_p = span
                 pad = (hi_p - lo_p) * 0.06 or (abs(hi_p) * 0.01 or 1.0)
-                view_box.setYRange(lo_p - pad, hi_p + pad)
+                # padding=0：pyqtgraph 会在我们给的范围上再叠一层自己的 padding（§11.5-21），
+                # 那会让"价格轴跟随可视区间"的实际留白变成不可预期的数值。
+                view_box.setYRange(lo_p - pad, hi_p + pad, padding=0)
 
     # ==========================================
     # 结果渲染

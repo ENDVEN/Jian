@@ -120,6 +120,30 @@ def row_points(record) -> float | None:
     return diff if direction == 'LONG' else -diff
 
 
+def record_net_amount(record) -> float:
+    """单笔「净额（真实到手）」= 平仓盈亏 − 手续费 —— **全站唯一取值口径**（§5.3-B）。
+
+    【为什么单列一个函数】任意"盈利 / 亏损"的**展示判定**（着色、正负号、标记色、
+    高亮带方向）都必须走这里：直接读 `net_profit`（毛利）会把"毛利为正、手续费吃掉后
+    实际亏损"的单子显示成绿色盈利，与 Dashboard / core/analyzer 的净额口径自相矛盾
+    （历史债 §9-P1，v6.9 已收敛）。
+
+    容忍 Series / dict / TradeRecord 三类入参；缺失或 NaN 一律按 0 处理，
+    绝不因脏值抛异常（展示层不该被数据质量打断）。
+    """
+    def _num(key: str) -> float:
+        value = record.get(key) if hasattr(record, 'get') else getattr(record, key, None)
+        if value is None:
+            return 0.0
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return 0.0 if pd.isna(value) else value
+
+    return _num('net_profit') - _num('commission')
+
+
 def format_fill_time(value) -> str:
     """渲染成交时刻；无时分信息时返回空串（配合主时间列显示纯日期）"""
     if value is None:
@@ -296,3 +320,70 @@ def align_by_date(values: dict[str, pd.Series], anchor_dates,
         # 还原到调用方给定的原顺序 (DataFrame 按 index 赋值可自动对齐)
         out[name] = aligned.reindex(pd.DatetimeIndex(anchor_raw))
     return out
+
+
+# ==========================================
+# 周期重采样 (v6.12 · §7-B3 P8 行情工作台)
+# ==========================================
+# 周期取值：D=日线(原样) / W=周线 / M=月线
+PERIOD_LABELS = {"D": "日线", "W": "周线", "M": "月线"}
+PERIOD_ORDER = ("D", "W", "M")
+
+
+def normalize_period(value) -> str:
+    """任意写法归一成 D/W/M（未知回落 D）。"""
+    text = str(value or "D").strip().upper()
+    if text.startswith("W") or text in ("WEEK", "周", "周线"):
+        return "W"
+    if text.startswith("M") or text in ("MONTH", "月", "月线"):
+        return "M"
+    return "D"
+
+
+def period_label(value) -> str:
+    return PERIOD_LABELS.get(normalize_period(value), "日线")
+
+
+def resample_ohlcv(df: pd.DataFrame, period: str = "D") -> pd.DataFrame:
+    """把**日线**重采样成周线 / 月线（纯本地计算，不碰网络）。
+
+    【为什么要它】行情页要能像通达信那样切周期；数据湖只存日线
+    （`kline_min` 分钟级属 §7 D3 远期），所以周/月**就地聚合**即可，
+    下游（K 线 / 指标 / 公式 / 标注）完全不知道数据被重采样过 —— 列名与日线一致。
+
+    【聚合口径】open=区间首、high=区间最大、low=区间最小、close=区间末、volume=区间和；
+    其余列取区间首值（保留原始列不丢）。**date 取该区间内最后一个真实交易日**
+    （不是 resample 给的周期标签 —— 否则周线会显示成周日、月线显示成月末，
+    与"这根 K 线最后成交于哪天"的事实不符）。
+
+    :param period: D/W/M（见 `normalize_period`；D 时原样返回副本）
+    """
+    if df is None or len(df) == 0:
+        return pd.DataFrame() if df is None else df.copy()
+    period = normalize_period(period)
+    if period == "D" or "date" not in df.columns:
+        return df.copy()
+
+    work = df.copy()
+    work["date"] = pd.to_datetime(work["date"], errors="coerce")
+    work = work.dropna(subset=["date"]).sort_values("date")
+    if work.empty:
+        return work.reset_index(drop=True)
+
+    key = work["date"].dt.to_period("W" if period == "W" else "M")
+    # date 用区间内最后一根真实交易日（纯转置，不用 apply，避免 pandas 版本差异/告警）
+    last_dates = work["date"].groupby(key).max()
+
+    rules = {"open": "first", "high": "max", "low": "min", "close": "last"}
+    if "volume" in work.columns:
+        rules["volume"] = "sum"
+    for column in work.columns:
+        if column not in rules and column != "date":
+            rules[column] = "first"
+
+    out = work.drop(columns=["date"]).groupby(key).agg(rules)
+    out["date"] = last_dates
+    out = out.dropna(subset=["open", "close"])
+    columns = ["date"] + [c for c in ("open", "high", "low", "close", "volume") if c in out.columns]
+    columns += [c for c in out.columns if c not in columns]
+    return out[columns].reset_index(drop=True)

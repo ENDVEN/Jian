@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 
 from data.akshare_feed import INDEX_PRESETS
 from data.sync_service import (ThrottlePolicy, ZONE_KLINE, ZONE_INDEX,
-                               estimate_seconds)
+                               estimate_seconds, friendly_constituent_message)
 from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
                                        NoWheelDoubleSpinBox, NoWheelSpinBox)
 # 【架构纪律 v5.12 · §9-O2】线程一律用 ui/workers.py 的，弹窗不自造 QThread
@@ -310,15 +310,20 @@ class BulkDownloadDialog(QDialog):
         worker = ConstituentsWorker(code, self)
         token = self._cons_token
         worker.finished_signal.connect(
-            lambda symbols, t=token: self._on_constituents(symbols, t))
+            lambda result, t=token: self._on_constituents(result, t))
         self._cons_worker = worker
         worker.start()
 
-    def _on_constituents(self, symbols: list, token: int):
+    def _on_constituents(self, result, token: int):
         # 【竞态防护】只接受最新一次请求的结果，迟到的旧请求直接丢弃
         if token != self._cons_token:
             return
         self.btn_resolve.setEnabled(True)
+        # v6.9：结果由 MarketSyncService 统一回包（dict），失败原因分类文案也由它给
+        # （门面是联网抓取的唯一入口，§9-H 红线；此处只负责展示，§10-3）
+        if not isinstance(result, dict):
+            result = {"symbols": result or []}
+        symbols = result.get("symbols") or []
         self._symbols = symbols
         if symbols:
             self.lbl_cons.setText(f"✅ 解析到 {len(symbols)} 只")
@@ -326,8 +331,7 @@ class BulkDownloadDialog(QDialog):
             self.lbl_cons.setText("❌ 解析失败，请改用其它来源")
             QMessageBox.warning(
                 self, "解析失败",
-                "未能获取该指数的成分股列表（接口不可用或网络异常）。\n\n"
-                "建议：① 稍后重试；② 改用「粘贴代码列表」或「全市场 A 股」。")
+                friendly_constituent_message(self.cmb_cons.currentData(), result))
         self._refresh_estimate()
 
     # ==========================================
@@ -339,7 +343,7 @@ class BulkDownloadDialog(QDialog):
         if key == "constituent":
             return "请先点击「解析成分股」"
         if key == "all":
-            return "花名册为空 —— 请先运行 sync_roster.py 同步 A 股名册"
+            return "花名册为空 —— 请先运行 scripts/sync_roster.py 同步 A 股名册"
         return "请先粘贴至少一个代码"
 
     def _refresh_estimate(self, *_):

@@ -24,7 +24,12 @@ class DataLakeManager:
         # ==========================================
         self.zones = {
             # 1. 核心量价区 (Time-Series)
-            "kline_daily": os.path.join(self.lake_root, "kline", "daily"),       # 股票/期货日线
+            "kline_daily": os.path.join(self.lake_root, "kline", "daily"),       # 股票/期货日线 (前复权)
+            # ★v6.13/P8 复权切换：同一批标的的**不复权**日线单独一个分区。
+            # 【为什么另存分区而不是加一列】前复权数据会随除权**整体漂移**、不复权不会，
+            # 两者永远无法互相推导；放同一个文件里就只能"二选一覆盖"（切一次复权重下一遍全历史）。
+            # 分区隔离还能让用户在「数据管理」里单独查看/删除其中一份（数据主权）。
+            "kline_daily_raw": os.path.join(self.lake_root, "kline", "daily_raw"),
             "kline_min": os.path.join(self.lake_root, "kline", "minute"),        # 未来预留：高频分时
             
             # 2. 宏观与指数区 (Macro & Indexes)

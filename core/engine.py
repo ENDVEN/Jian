@@ -103,7 +103,7 @@ class DataEngine:
     def list_stock_symbols(self) -> list[str]:
         """全量 A 股代码列表（纯 6 位数字），供"全市场预下载"使用。
 
-        花名册为空时返回空列表 —— 上层必须据此提示用户先跑 sync_roster.py，
+        花名册为空时返回空列表 —— 上层必须据此提示用户先跑 scripts/sync_roster.py，
         绝不能拿空列表去发起批量下载。
         """
         try:

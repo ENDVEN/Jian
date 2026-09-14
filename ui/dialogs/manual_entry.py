@@ -1,34 +1,21 @@
 # ui/dialogs/manual_entry.py
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QComboBox, QMessageBox, QFormLayout, QLineEdit,
-                             QDateTimeEdit, QDoubleSpinBox, QSpinBox, QLabel,
-                             QCheckBox)
+                             QLabel, QCheckBox)
 from PyQt6.QtCore import QDateTime
-from ui.widgets.custom_widgets import NoWheelComboBox
+from ui.widgets.custom_widgets import (DIALOG_INPUT_QSS, NoWheelComboBox,
+                                       NoWheelDateTimeEdit, NoWheelDoubleSpinBox,
+                                       NoWheelSpinBox)
 from models.trade import TradeRecord
 from core.preferences import TIME_SOURCE_DATE_ONLY, TIME_SOURCE_MANUAL
 from config import settings
 
-# 输入控件样式说明：
-#  - QLineEdit/QComboBox/QDateTimeEdit 用 QSS 统一圆角边框。
-#  - QSpinBox/QDoubleSpinBox 刻意【不写任何样式规则】：
-#    一旦给微调框父控件写 border/padding 或只写一半子控件规则，Qt 就会切换到
-#    "样式化绘制"路径，导致 up/down 箭头丢失、背景/边框异常（透明+只剩分隔线）。
-#    不写规则则保持系统原生渲染：白底、清晰箭头、整块可点，最稳妥。
-_INPUT_QSS = """
-QDialog { background-color: #FAFAFA; font-family: -apple-system, sans-serif; }
-QLabel { font-weight: bold; color: #424242; }
-
-QLineEdit, QComboBox, QDateTimeEdit {
-    border: 1px solid #E0E0E0; border-radius: 6px;
-    padding: 6px; background: white; font-size: 14px;
-}
-
-QComboBox::drop-down, QDateTimeEdit::drop-down {
-    subcontrol-origin: border; subcontrol-position: top right;
-    width: 26px; border: none; border-left: 1px solid #E0E0E0;
-}
-"""
+# 输入控件样式：v6.9 起收敛到 custom_widgets.DIALOG_INPUT_QSS（全 app 唯一来源，§10-9）。
+#   · QLineEdit / QComboBox / QDateTimeEdit 统一圆角边框，且下拉箭头由该契约成对给出
+#     （旧版只写 ::drop-down 不给 ::down-arrow ⇒ 下拉/日历箭头会整个消失）。
+#   · QSpinBox / QDoubleSpinBox 仍**不写任何样式规则**（保持原生渲染）
+#     —— 给微调框写半截样式会让 up/down 箭头丢失或热区错位（历史 Bug，§10-9）。
+_INPUT_QSS = DIALOG_INPUT_QSS
 
 
 class ManualEntryDialog(QDialog):
@@ -99,7 +86,7 @@ class ManualEntryDialog(QDialog):
             self.inp_strategy.setCurrentText(strategy_options[0])
         form.addRow("策略分类:", self.inp_strategy)
 
-        self.inp_time = QDateTimeEdit(QDateTime.currentDateTime())
+        self.inp_time = NoWheelDateTimeEdit(QDateTime.currentDateTime())
         self.inp_time.setCalendarPopup(True)
         self.inp_time.setDisplayFormat("yyyy-MM-dd HH:mm")
         form.addRow("交易时间:", self.inp_time)
@@ -113,7 +100,7 @@ class ManualEntryDialog(QDialog):
         self.chk_entry_time.toggled.connect(self._on_entry_time_toggled)
         form.addRow("", self.chk_entry_time)
 
-        self.inp_entry_time = QDateTimeEdit(QDateTime.currentDateTime())
+        self.inp_entry_time = NoWheelDateTimeEdit(QDateTime.currentDateTime())
         self.inp_entry_time.setCalendarPopup(True)
         self.inp_entry_time.setDisplayFormat("yyyy-MM-dd HH:mm")
         self.inp_entry_time.setEnabled(False)
@@ -121,29 +108,29 @@ class ManualEntryDialog(QDialog):
 
         # v1.2：价格属选填项。填了就能计算点数盈亏，留空按"无价格"显示。
         # 手工录入是直接填写结果，不是开平仓配对，因此不产生孤儿标记。
-        self.inp_entry_price = QDoubleSpinBox()
+        self.inp_entry_price = NoWheelDoubleSpinBox()
         self.inp_entry_price.setRange(0, 99999999)
         self.inp_entry_price.setDecimals(2)
         self.inp_entry_price.setSpecialValueText("留空")
         form.addRow("开仓价 (选填):", self.inp_entry_price)
 
-        self.inp_exit_price = QDoubleSpinBox()
+        self.inp_exit_price = NoWheelDoubleSpinBox()
         self.inp_exit_price.setRange(0, 99999999)
         self.inp_exit_price.setDecimals(2)
         self.inp_exit_price.setSpecialValueText("留空")
         form.addRow("平仓价 (选填):", self.inp_exit_price)
 
-        self.inp_lots = QSpinBox()
+        self.inp_lots = NoWheelSpinBox()
         self.inp_lots.setRange(1, 100000)
         self.inp_lots.setValue(1)
         form.addRow("数量(手/股):", self.inp_lots)
 
-        self.inp_pnl = QDoubleSpinBox()
+        self.inp_pnl = NoWheelDoubleSpinBox()
         self.inp_pnl.setRange(-999999999, 999999999)
         self.inp_pnl.setDecimals(2)
         form.addRow("净盈亏*:", self.inp_pnl)
 
-        self.inp_comm = QDoubleSpinBox()
+        self.inp_comm = NoWheelDoubleSpinBox()
         self.inp_comm.setRange(0, 99999999)
         self.inp_comm.setDecimals(2)
         form.addRow("手续费:", self.inp_comm)
