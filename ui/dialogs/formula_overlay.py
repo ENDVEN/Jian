@@ -4,8 +4,9 @@
 
 【职责边界 · §10-3】
   本对话框只做三件事：**收集函数文本 + 参数 + 每段的目标窗格 → 自检 → 交给行情页**；
-  它**不碰行情数据、不绘图**。求值与渲染由 `ui/views/market.py` 走
+  它**不碰行情数据、不绘图**。求值与渲染由行情页 `ui/views/trading_desk.py` 走
   `execute_programs_with_draws_grouped` + `OverlayPainter`（全 app 唯一叠层渲染器）。
+  ⚠ `ui/views/market.py` 已于 v6.12 删除，别再照旧路径找它。
 
 【为什么"目标窗格"是每段一个】
   用户手里的函数分两类：**主图函数**（均线类，与股价同量级）与**副图函数**

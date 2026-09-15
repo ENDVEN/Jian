@@ -26,7 +26,8 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
                              QVBoxLayout, QWidget)
 
 from config import settings
-from core.backtest import EXIT_REASON_COLORS, EXIT_REASON_LABELS, risk_summary
+from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS, fill_summary,
+                           risk_summary)
 from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
 
 # 报告图默认画布
@@ -238,6 +239,8 @@ def render_result_png(meta: dict, result, file_path: str) -> bool:
                  f"（买 {index.get('expr_buy') or '—'} | 卖 {index.get('expr_sell') or '—'}）"
                  if index else "未启用")
     risk_txt = risk_summary(meta.get("risk") or {})
+    # v6.17：成交时点模型也要出现在报告图上，否则图与结果对不上（§7-B5 D3）
+    fill = meta.get("fill") or {}
 
     note1 = QLabel(
         f"函数: {_clamp_segments(meta, 130)}　|　参数: {params_text}")
@@ -250,7 +253,8 @@ def render_result_png(meta: dict, result, file_path: str) -> bool:
     note2.setStyleSheet(f"font-size: 12px; color: {_TEXT_DIM};")
     note2.setWordWrap(True)
     lay.addWidget(note2)
-    note3 = QLabel(f"风控: {risk_txt}　|　指数门控: {index_txt}")
+    note3 = QLabel(f"风控: {risk_txt}　|　指数门控: {index_txt}　|　"
+                   + fill_summary(fill.get("fill_mode"), fill.get("trigger_tick")))
     note3.setStyleSheet(f"font-size: 12px; color: {_TEXT_DIM};")
     note3.setWordWrap(True)
     lay.addWidget(note3)

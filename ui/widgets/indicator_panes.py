@@ -1,8 +1,9 @@
 # ui/widgets/indicator_panes.py
 """
-行情页「内置副图」的内容构建（v6.8 从 `ui/views/market.py` 搬出，SRP）。
+行情页「内置副图」的内容构建（v6.8 从当时的 `ui/views/market.py` 搬出，SRP）。
 
-【为什么搬】market.py 已 463 行、连续越线（§9-L）。窗格的**编排**交给
+【为什么搬】当时那个 `market.py` 已 463 行、连续越线（§9-L）；该文件 v6.12 已删除，
+现为 `ui/views/trading_desk.py`。窗格的**编排**交给
 `ui/widgets/chart_host.py`，**内容构建**搬到这里，页面只剩"开关 + 组装"。
 
 【纪律】

@@ -3,7 +3,8 @@
 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。
 
 【为什么要有这一层】
-  §9-H 记录的架构债：`ui/views/market.py` 与 `ui/views/backtest.py` 各自直接
+  §9-H 记录的架构债：行情页（当时是 `ui/views/market.py`，**v6.12 已删除**、现为
+  `ui/views/trading_desk.py`）与 `ui/views/backtest.py` 各自直接
   import `AkShareFeed` 拉数，"本地有没有 → 要不要拉 → 怎么合并 → 怎么落盘"这套流程
   在 UI 层形成了两份实现。本服务把这件事收敛成**唯一一份**，
   UI 只认本门面（§10-3 架构纪律：UI 绝不直接发网络请求 / 直接读写数据湖）。

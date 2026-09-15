@@ -151,7 +151,8 @@ class BacktestRunWorker(QThread):
     finished_signal = pyqtSignal(object)   # BacktestResult | None
 
     def __init__(self, df, symbol: str, buy_expr: str, sell_expr: str,
-                 start_date: str, end_date: str, risk: dict = None, parent=None):
+                 start_date: str, end_date: str, risk: dict = None,
+                 fill_mode: str = None, trigger_tick=None, parent=None):
         super().__init__(parent)
         self.df = df
         self.symbol = symbol
@@ -160,13 +161,17 @@ class BacktestRunWorker(QThread):
         self.start_date = start_date
         self.end_date = end_date
         self.risk = risk or {}
+        # v6.17 成交时点模型（默认 None -> 引擎侧归一回 next_open / 1 跳）
+        self.fill_mode = fill_mode
+        self.trigger_tick = trigger_tick
 
     def run(self):
         result = None
         try:
             result = BacktestEngine().run(
                 self.df, self.buy_expr, self.sell_expr, symbol=self.symbol,
-                start_date=self.start_date, end_date=self.end_date, risk=self.risk)
+                start_date=self.start_date, end_date=self.end_date, risk=self.risk,
+                fill_mode=self.fill_mode, trigger_tick=self.trigger_tick)
         except Exception as e:  # noqa: BLE001 —— 回测异常绝不穿透线程
             logger.error(f"市场回测-计算异常 [{self.symbol}]: {e}")
         self.finished_signal.emit(result)

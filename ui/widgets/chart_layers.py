@@ -3,7 +3,8 @@
 「图层协议」的公共件（§7-B3 D4 · v6.7）。
 
 【为什么单独成文件】
-  `ui/views/market.py` 已到 425 行、逼近体积上限（§9-L）。把两件**与页面无关**的事
+  当时那个 `ui/views/market.py` 已到 425 行、逼近体积上限（§9-L；v6.12 已删除，
+  现为 `ui/views/trading_desk.py`）。把两件**与页面无关**的事
   搬出来，页面只留"开关 + 窗格编排"：
     1. 内置指标 → 绘图 IR（`builtin_indicator_layers`）；
     2. 叠层数值与股价是否差得离谱（`scale_mismatch_hint`，给用户的选图引导）。

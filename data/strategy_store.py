@@ -12,6 +12,10 @@ import time
 import uuid
 
 from config import settings
+# v6.17：成交时点模型的口径常量与归一化函数**只有一份**，在 core/backtest.py；
+# 这里只做"是否偏离默认口径"的签名判定，禁止就地再写一套默认值。
+# （data → core 的纯常量引用与 data/data_feed.py → core.preferences 同源，无副作用。）
+from core.backtest import DEFAULT_TRIGGER_TICK, FILL_NEXT_OPEN, normalize_fill
 
 _STRATEGY_FILE = "backtest_strategies.json"
 
@@ -120,7 +124,20 @@ def _signature(payload: dict) -> str:
         _risk_signature(payload.get("risk")),
         # 阶段C：指数 regime 门控计入签名；未启用(或缺失)与旧存档等价。
         _index_signature(payload.get("index")),
+        # v6.17：成交时点模型计入签名；**默认口径(next_open + 1跳)与旧存档等价**，
+        # 归并为空串 —— 这样"改动前保存的策略"不会被误判成另一套策略。
+        _fill_signature(payload.get("fill")),
     ])
+
+
+def _fill_signature(fill) -> str:
+    """成交时点模型：默认口径(次日开盘 / 1 跳)或缺失 -> ''；非默认 -> 稳定化文本"""
+    if not isinstance(fill, dict):
+        return ""
+    conf = normalize_fill(fill.get("fill_mode"), fill.get("trigger_tick"))
+    if conf["fill_mode"] == FILL_NEXT_OPEN and conf["trigger_tick"] == DEFAULT_TRIGGER_TICK:
+        return ""
+    return f"{conf['fill_mode']}|{conf['trigger_tick']}"
 
 
 def _risk_signature(risk) -> str:

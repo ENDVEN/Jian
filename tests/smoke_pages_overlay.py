@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期的**页面级**验收（P3–P8）。
+"""「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。
 
 用法：py tests/smoke_pages_overlay.py  （在仓库根目录执行）
 ⚠ 会真实构造主窗口（打开 ~/.jian_data），请勿在 app 运行中同时跑。
@@ -717,11 +717,133 @@ check("横轴是序数文本（「N日」）且密度收敛，不是 12 个标�
 check("资金 K 线纵轴也跟随可视区间", rev_handle is not None and rev_handle.y_enabled)
 
 # ==========================================
+# §7-B5 成交真实性：页面级接线（v6.18）
+#   引擎侧断言在 tests/smoke_chart.py；这里只管"页面上能不能用、导出能不能溯源"。
+# ==========================================
+print("\n[§7-B5] 成交模型行：UI 往返 / 存档兼容 / 参数按需出现")
+from core.backtest import (FILL_CLOSE, FILL_NEXT_OPEN, FILL_TRIGGER, BacktestEngine,
+                           BacktestTrade, fill_mode_oneliner, normalize_fill,
+                           tick_to_yuan, yuan_to_tick)  # noqa: E402
+from core.backtest import fill_summary as _fill_summary  # noqa: E402
+
+check("新建页面默认口径 = 次日开盘 + 0.01 元（与改动前行为一致）",
+      view._fill_config() == {"fill_mode": FILL_NEXT_OPEN, "trigger_tick": 1})
+check("下拉三项文案与 core.backtest 同源（页面没另写一份）",
+      [view.cmb_fill_mode.itemData(i) for i in range(view.cmb_fill_mode.count())]
+      == [FILL_NEXT_OPEN, FILL_CLOSE, FILL_TRIGGER])
+check("行内说明默认已显示（不必悬停就能看到）",
+      view.lbl_fill_desc.text() == fill_mode_oneliner(FILL_NEXT_OPEN, 1))
+check("非第三档时「买卖价要多等」整块隐藏 —— 不给用户看不懂的常驻参数",
+      not view._fill_offset_box.isVisibleTo(view))
+
+check("跳数控件步长 == 0.01 元（有过渡价格，不是一按顶到上限）",
+      abs(view.spin_fill_offset.singleStep() - 0.01) < 1e-12)
+view.spin_fill_offset.setValue(0.01)
+view.spin_fill_offset.stepUp()
+check("0.01 按一次上箭头 → 0.02（逐级过渡）",
+      abs(view.spin_fill_offset.value() - 0.02) < 1e-9)
+check("风控行的 1 位小数控件步长仍为 0.5（没被顺手改坏）",
+      abs(view.spin_risk_stop.singleStep() - 0.5) < 1e-12)
+
+view._apply_fill_config({"fill_mode": FILL_TRIGGER, "trigger_tick": 3})
+check("载入触发式口径可完整还原（3 跳 ↔ 0.03 元）",
+      view._fill_config() == {"fill_mode": FILL_TRIGGER, "trigger_tick": 3}
+      and abs(view.spin_fill_offset.value() - 0.03) < 1e-9)
+check("第三档「买卖价要多等」对用户可见", view._fill_offset_box.isVisibleTo(view))
+check("行内说明里的金额跟着参数实时变（0.03 元）", "0.03 元" in view.lbl_fill_desc.text())
+check("元→跳 换算走公共件（界面用元、落库存整数跳）",
+      tick_to_yuan(3) == 0.03 and yuan_to_tick(0.35) == 35)
+
+view._apply_fill_config({})                      # 模拟"旧存档：完全没有 fill 字段"
+check("载入旧存档（无 fill 字段）→ 回落默认口径，老策略跑的还是同一套口径",
+      view._fill_config() == {"fill_mode": FILL_NEXT_OPEN, "trigger_tick": 1})
+view._apply_fill_config({"fill_mode": "瞎写", "trigger_tick": -9})
+check("载入非法口径 → 回落默认（不炸、也不静默乱用）",
+      view._fill_config() == {"fill_mode": FILL_NEXT_OPEN, "trigger_tick": 1})
+
+check("策略快照 payload 携带 fill（保存后可完整复原）",
+      view._strategy_payload().get("fill")
+      == {"fill_mode": FILL_NEXT_OPEN, "trigger_tick": 1})
+from data.strategy_store import _signature as _sig  # noqa: E402
+_payload = view._strategy_payload()
+check("真实 payload 去掉 fill 字段后签名不变 —— 默认口径不改变策略身份",
+      _sig({k: v for k, v in _payload.items() if k != "fill"}) == _sig(_payload))
+
+print("[§7-B5] 用户教学入口：📖 三档怎么选？")
+check("行上有「📖 三档怎么选？」按钮（教学入口是看得见的，不只藏在 tooltip 里）",
+      hasattr(view, "btn_fill_help") and "怎么选" in view.btn_fill_help.text())
+from ui.dialogs.fill_model_help import FillModelHelpDialog  # noqa: E402
+_help = FillModelHelpDialog(None, trigger_tick=2)
+from PyQt6.QtWidgets import QLabel, QPushButton  # noqa: E402
+_help_text = " ".join(lab.text() for lab in _help.findChildren(QLabel))
+check("教学弹窗标题是问句式人话", _help.windowTitle() == "成交模型怎么选？")
+check("弹窗用一套固定价格数字讲三档差别（有例子才教得会）",
+      all(x in _help_text for x in ("10.00", "10.60", "9.50", "9.30")))
+check("弹窗里的金额与实际参数一致（用户看到的例子 = 他将要用的口径）",
+      "0.02 元" in _help_text)
+check("T+1 用大白话解释，不出现「当根/K线」",
+      "今天买的" in _help_text and "今天不能卖" in _help_text
+      and "当根" not in _help_text and "K 线" not in _help_text)
+check("弹窗有明确关闭按钮",
+      any(isinstance(b, QPushButton) and "知道了" in b.text()
+          for b in _help.findChildren(QPushButton)))
+_help.deleteLater()
+
+print("[§7-B5] 导出：口径可溯源 + T+1 标记 + 结构不变")
+_probe_df = pd.DataFrame({
+    "date": pd.date_range("2024-01-02", periods=4, freq="D"),
+    "open": [10.0] * 4, "high": [10.0] * 4, "low": [10.0] * 4,
+    "close": [10.0] * 4, "volume": [1] * 4})
+_bt_res = BacktestEngine()._run_on_signals(
+    data=_probe_df, buy_signal=np.array([False] * 4), sell_signal=np.array([False] * 4),
+    symbol="sh600000", buy_expression="B", sell_expression="S",
+    start_date="2024-01-02", end_date="2024-01-05", params={}, commission_rate=0.0003,
+    risk={"max_bars": 0, "stop_loss_pct": 0.0, "take_profit_pct": 0.0, "trailing_pct": 0.0})
+_bt_res.trades = [
+    BacktestTrade(entry_date=pd.Timestamp("2024-01-03"), exit_date=pd.Timestamp("2024-01-04"),
+                  entry_price=10.0, exit_price=9.0, commission=0.0057, pnl=-1.0057,
+                  return_pct=-0.10057, exit_reason="stop_loss", deferred_t1=True),
+    BacktestTrade(entry_date=pd.Timestamp("2024-02-01"), exit_date=pd.Timestamp("2024-02-20"),
+                  entry_price=10.0, exit_price=11.0, commission=0.0063, pnl=0.9937,
+                  return_pct=0.09937, exit_reason="signal", deferred_t1=False),
+]
+_meta = {"symbol": "sh600000", "name": "测试股", "strategy_name": "单元测试",
+         "start_date": "2024-01-01", "end_date": "2024-12-31",
+         "segments": ["A:MA(C,5);"], "params_text": "N=5", "buy_expr": "B",
+         "sell_expr": "S", "risk": {}, "index": None,
+         "fill": {"fill_mode": FILL_TRIGGER, "trigger_tick": 2}}
+_csv_text = view._compose_result_csv(_bt_res, _meta)
+check("CSV 表头写入成交模型（与 fill_summary 同源）",
+      f"# 成交模型: {_fill_summary(FILL_TRIGGER, 2)}" in _csv_text)
+check("CSV 表头写明 T+1 已启用（导出可复现）", "# T+1 约束：已启用" in _csv_text)
+check("被 T+1 顺延的那一笔在明细里带标记", _csv_text.count("（T+1 顺延）") == 1)
+
+import csv as _csv  # noqa: E402
+import io as _io  # noqa: E402
+_rows = list(_csv.reader(_io.StringIO(_csv_text)))
+_hdr = next(i for i, r in enumerate(_rows) if r and r[0] == "买入日期")
+_data = [r for r in _rows[_hdr + 1:] if r]
+check("逐笔区仍是 8 列（新增标记没破坏列结构）", all(len(r) == 8 for r in _data))
+check("逐笔行数 == 成交笔数", len(_data) == 2)
+check("表头区每行仍是单格（含逗号的函数行不会被拆列）",
+      all(len(r) == 1 for r in _rows[:_hdr] if r))
+
+from ui.widgets.backtest_report import render_result_png  # noqa: E402
+_png_dir = tempfile.mkdtemp(prefix="_tmp_png_")
+_png = os.path.join(_png_dir, "r.png")
+_ok_png = render_result_png(_meta, _bt_res, _png)
+check("PNG 报告图带成交模型渲染并落盘成功", bool(_ok_png) and os.path.getsize(_png) > 0)
+from PyQt6.QtGui import QImage  # noqa: E402
+check("报告图尺寸仍是 1120×660",
+      QImage(_png).width() == 1120 and QImage(_png).height() == 660)
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402
 
-for _name in ("annotations.json", "formula_library.json", "watchlist.json"):
+for _name in ("annotations.json", "formula_library.json", "watchlist.json",
+              "backtest_strategies.json"):
     _path = os.path.join(settings.USER_DATA_DIR, _name)
     _untouched = (not os.path.exists(_path)) or os.path.getmtime(_path) < RUN_STARTED_AT
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)

@@ -39,7 +39,11 @@ from core.formula.program import (parse_program, execute_programs,
                                   execute_programs_with_draws,
                                   probe_missing_parameters, FormulaProgramError)
 # v5.15：离场原因标签/配色/风控文案从 core.backtest 统一导入（CSV 表头 / 明细着色 / PNG 报告同源）
-from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS, risk_summary)
+# v6.17：成交时点模型的三档常量/文案/归一化与 T+1 说明同样只有一份来源（§7-B5）
+from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS,
+                           FILL_CLOSE, FILL_MODE_LABELS, FILL_NEXT_OPEN, FILL_TRIGGER,
+                           T1_SUMMARY, fill_mode_oneliner, fill_summary, normalize_fill,
+                           risk_summary, tick_to_yuan, yuan_to_tick)
 from core.utils import align_by_date, parse_params_text, synthetic_bars
 from data.market_db import DataLakeManager
 # P7：公式资产化（配方库）+ 与行情页互送
@@ -64,6 +68,8 @@ from ui.widgets.condition_gate import ConditionGate
 from ui.widgets.function_segments import FunctionSegments
 # v5.15：PNG 报告图渲染下沉到独立模块（SRP，回测页只负责入口与文件对话框）
 from ui.widgets.backtest_report import render_result_png
+# v6.17：成交模型的用户教学弹窗（术语必须"看得见地"解释，不能只藏在 tooltip 里）
+from ui.dialogs.fill_model_help import FillModelHelpDialog
 
 PLACEHOLDER = "-"
 MARKER_MARGIN = 0.03
@@ -514,6 +520,78 @@ class SingleStockBacktestView(QWidget):
                             "任意一项设 0 即关闭；悬停各项输入框可看单独说明。"))
         bottom_lay.addWidget(risk_bar)
 
+        # 成交模型行 (v6.17 · §7-B5：三档成交时点 + T+1 规则常显不可关闭)
+        # ⚠【文案铁律 · 用户实测反馈驱动】界面上**不许**出现"跳 / 当根 / K线 / 条件单"这类
+        #   行话当唯一解释 —— 主说明一律用人话 + 具体数字；术语只允许作为 tooltip 的补充。
+        #   并且必须有"看得见的教学入口"（📖 按钮 + 行内实时说明），不能只藏在悬停里。
+        fill_bar = QFrame()
+        fill_bar.setStyleSheet(_CARD_QSS)
+        fill_v = QVBoxLayout(fill_bar)
+        fill_v.setContentsMargins(14, 8, 14, 8)
+        fill_v.setSpacing(5)
+
+        fill_top = QHBoxLayout()
+        fill_top.setSpacing(8)
+        target_lbl = QLabel("🎯 成交模型")
+        target_lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #1565C0;")
+        fill_top.addWidget(target_lbl)
+        fill_top.addWidget(self._mini_label("什么时候成交"))
+        self.cmb_fill_mode = NoWheelComboBox()
+        self.cmb_fill_mode.setStyleSheet(COMBO_QSS)
+        self.cmb_fill_mode.setFixedHeight(30)
+        self.cmb_fill_mode.setMinimumWidth(240)
+        for _mode in (FILL_NEXT_OPEN, FILL_CLOSE, FILL_TRIGGER):
+            self.cmb_fill_mode.addItem(FILL_MODE_LABELS[_mode], _mode)
+        self.cmb_fill_mode.setToolTip(
+            "信号在当天收盘后才判定，所以「什么时候真的成交」由你在这里定。\n"
+            "三档的详细区别（带具体价格例子）请点右侧「📖 三档怎么选？」。")
+        fill_top.addWidget(self.cmb_fill_mode)
+
+        # 「多等多少钱才动手」只对第三档有意义 —— 不做成"看不懂的常驻参数"
+        self._fill_offset_box = QWidget()
+        off_lay = QHBoxLayout(self._fill_offset_box)
+        off_lay.setContentsMargins(0, 0, 0, 0)
+        off_lay.setSpacing(6)
+        off_lay.addWidget(self._mini_label("买卖价要多等"))
+        self.spin_fill_offset = self._risk_spin(
+            "只有「价格冲破 / 跌破才成交」用到它：\n"
+            "买入触发价 = 信号日最高价 + 这个数；卖出触发价 = 信号日最低价 − 这个数。\n"
+            "默认 0.01 元 = A股最小变动价格（交易所俗称「1 跳」）；箭头每次调 0.01 元，\n"
+            "也可以直接用键盘输入（如 0.35）。\n"
+            "等得越多 → 越不容易被碰到 → 越不容易成交。",
+            0.01, 0.01, 1.00, 2)
+        off_lay.addWidget(self.spin_fill_offset)
+        off_lay.addWidget(self._mini_label("元才动手"))
+        fill_top.addWidget(self._fill_offset_box)
+        fill_top.addStretch()
+        self.btn_fill_help = QPushButton("📖 三档怎么选？")
+        self.btn_fill_help.setStyleSheet(self._flat_qss)
+        self.btn_fill_help.setToolTip("用具体价格例子讲清三档的区别，以及为什么"
+                                      "「当天买的当天不能卖」")
+        self.btn_fill_help.clicked.connect(self._show_fill_help)
+        fill_top.addWidget(self.btn_fill_help)
+        fill_v.addLayout(fill_top)
+
+        # 行内实时说明：**这就是"用户指引"的主体**（随选择变化，不必悬停也能看懂）
+        self.lbl_fill_desc = QLabel("")
+        self.lbl_fill_desc.setStyleSheet("font-size: 12px; color: #3C4552;")
+        self.lbl_fill_desc.setWordWrap(True)
+        fill_v.addWidget(self.lbl_fill_desc)
+
+        self.lbl_fill_t1 = QLabel("🔒 所有档位都遵守：今天买的，今天不能卖")
+        self.lbl_fill_t1.setStyleSheet("font-size: 12px; color: #6A1B9A; font-weight: bold;")
+        self.lbl_fill_t1.setToolTip(
+            "A股规定今天买入的股票今天不能卖出，回测同样照此执行 —— 否则结果会比现实好看。\n"
+            "· 买入当天就跌穿止损（或涨到止盈）→ 当天卖不掉，只能第二天一开盘就卖，\n"
+            "  第二天的跳空低开由你承担；\n"
+            "· 「最长持仓 1 天」实际会变成第二天收盘才卖；\n"
+            "· 同一天里卖出之后不会立刻又买回来（否则等于白交两次手续费、持仓却没变）。")
+        fill_v.addWidget(self.lbl_fill_t1)
+
+        self.cmb_fill_mode.currentIndexChanged.connect(self._sync_fill_controls)
+        self._sync_fill_controls()
+        bottom_lay.addWidget(fill_bar)
+
         # KPI 卡片行
         kpi_row = QHBoxLayout()
         kpi_row.setSpacing(10)
@@ -630,7 +708,12 @@ class SingleStockBacktestView(QWidget):
         spin.setRange(lo, hi)
         spin.setDecimals(decimals)
         spin.setValue(value)
-        spin.setSingleStep(1 if decimals == 0 else 0.5)
+        # 【v6.18 修 · 用户实测倒逼】步长必须跟着**小数位**自适应，不能写死。
+        # 历史 Bug：原先写死 `1 if decimals == 0 else 0.5`，对"2 位小数"的控件
+        # （成交模型的「买卖价要多等」，范围 0.01~0.20）按一次上箭头就 +0.5 → 被上限夹住，
+        # 用户反馈：「直接跳到 0.2 并且无法继续上调，没有过渡价格」。
+        # 规则：0 位 → 1；1 位 → 0.5；≥2 位 → 10^-decimals（2 位即 0.01，与 A股最小变动价一致）。
+        spin.setSingleStep(1 if decimals == 0 else (0.5 if decimals == 1 else 10.0 ** -decimals))
         # 宽度留足：原生箭头 + 数值 + 边距，避免窄控件挤压箭头导致热区与图标不符
         spin.setMinimumWidth(72)
         spin.setToolTip(tooltip)
@@ -660,6 +743,46 @@ class SingleStockBacktestView(QWidget):
                 spin.setValue(float(cfg.get(key, 0) or 0))
             except (TypeError, ValueError):
                 spin.setValue(0)
+
+    # ---------- 成交模型 (v6.17 · §7-B5) ----------
+    def _fill_config(self) -> dict:
+        """读取成交模型行 -> 引擎口径 dict。
+
+        ⚠ 界面上用「元」跟用户说话，落库/签名仍存**整数跳**（跳 × 0.01 元）：
+        避免浮点小数在比较与签名里漂移（`0.03` vs `0.030000000000000002`）。
+        """
+        return {
+            "fill_mode": self.cmb_fill_mode.currentData() or FILL_NEXT_OPEN,
+            "trigger_tick": yuan_to_tick(self.spin_fill_offset.value()),
+        }
+
+    def _apply_fill_config(self, cfg: dict):
+        """从策略快照恢复成交模型。
+
+        旧存档没有 fill 字段 -> `normalize_fill` 一律回落
+        **次日开盘 + 0.01 元**（= 改动前的行为），保证老策略读出来跑的还是同一套口径。
+        """
+        conf = normalize_fill((cfg or {}).get("fill_mode"),
+                              (cfg or {}).get("trigger_tick"))
+        pos = self.cmb_fill_mode.findData(conf["fill_mode"])
+        self.cmb_fill_mode.blockSignals(True)
+        self.cmb_fill_mode.setCurrentIndex(pos if pos >= 0 else 0)
+        self.cmb_fill_mode.blockSignals(False)
+        self.spin_fill_offset.setValue(tick_to_yuan(conf["trigger_tick"]))
+        self._sync_fill_controls()
+
+    def _sync_fill_controls(self):
+        """「多等多少元」只在第三档下有含义；行内说明随选择实时更新（用户指引的主体）。"""
+        is_trigger = self.cmb_fill_mode.currentData() == FILL_TRIGGER
+        if hasattr(self, "_fill_offset_box"):
+            self._fill_offset_box.setVisible(is_trigger)
+        if hasattr(self, "lbl_fill_desc"):
+            self.lbl_fill_desc.setText(fill_mode_oneliner(
+                self.cmb_fill_mode.currentData(), self._fill_config()["trigger_tick"]))
+
+    def _show_fill_help(self):
+        """用户教学弹窗（只解释、不改配置）—— 术语必须有"看得见的"解释入口。"""
+        FillModelHelpDialog(self, trigger_tick=self._fill_config()["trigger_tick"]).exec()
 
     def _build_compare_tab(self):
         lay = QVBoxLayout(self.compare_tab)
@@ -891,6 +1014,8 @@ class SingleStockBacktestView(QWidget):
             "condition_sell": self.gate_sell.config(),
             "risk": self._risk_config(),
             "index": self._index_config(),
+            # v6.17：成交时点模型也属于策略配置（进签名，避免不同口径互相污染对比）
+            "fill": self._fill_config(),
             "start_date": self.date_start.date().toString("yyyy-MM-dd"),
             "end_date": self.date_end.date().toString("yyyy-MM-dd"),
             "symbol": self.current_symbol,
@@ -940,6 +1065,8 @@ class SingleStockBacktestView(QWidget):
         self._apply_risk_config(strategy.get("risk") or {})
         # 还原指数 regime 门控 (旧策略无 index 字段 -> 全关)
         self._apply_index_config(strategy.get("index") or {})
+        # 还原成交模型 (旧策略无 fill 字段 -> 次日开盘 + 1 跳，等价改动前行为)
+        self._apply_fill_config(strategy.get("fill") or {})
         self.lbl_run_status.setText(f"已载入策略「{strategy.get('name')}」，请选择股票后运行。")
 
     def _index_config(self) -> dict:
@@ -1085,6 +1212,7 @@ class SingleStockBacktestView(QWidget):
         self._pending_run = (buy_expr, sell_expr)
         self._pending_params = self._parse_params_text(self.txt_params.text())
         self._pending_risk = self._risk_config()
+        self._pending_fill = self._fill_config()      # v6.17 成交时点模型（发起瞬间定格）
 
         # 指数 regime 门控配置 (阶段C)：仅当启用且至少一侧配了条件才需要指数数据
         index_cfg = None
@@ -1116,6 +1244,7 @@ class SingleStockBacktestView(QWidget):
             "sell_expr": sell_expr,
             "risk": self._risk_config(),
             "index": index_cfg,
+            "fill": self._fill_config(),
         }
 
         self._prepare_index_then_stock()
@@ -1164,7 +1293,7 @@ class SingleStockBacktestView(QWidget):
     def _on_synced(self, result: dict):
         symbol = str(result.get("symbol", self.current_symbol) or self.current_symbol)
         # 【竞态防护】拉取期间用户可能已切到别的标的，过期结果必须丢弃 (v5.12 · §9-O5)。
-        # 与 ui/views/market.py 的 _on_sync_finished 同一手法 —— 同类防护要做就做全套。
+        # 与行情工作台 trading_desk._on_sync_finished 同一手法 —— 同类防护要做就做全套。
         if symbol != self.current_symbol:
             self._set_busy(False, "")
             return
@@ -1202,6 +1331,7 @@ class SingleStockBacktestView(QWidget):
 
         buy_expr, sell_expr = self._pending_run
         risk = getattr(self, '_pending_risk', {}) or {}
+        fill = getattr(self, '_pending_fill', None) or {}
 
         # 阶段C：指数 regime 门控列拼接 (引擎零改动)
         index_cfg = getattr(self, '_pending_index', None)
@@ -1223,7 +1353,8 @@ class SingleStockBacktestView(QWidget):
             merged, self.current_symbol, buy_expr, sell_expr,
             self.date_start.date().toString("yyyy-MM-dd"),
             self.date_end.date().toString("yyyy-MM-dd"),
-            risk=risk)
+            risk=risk,
+            fill_mode=fill.get("fill_mode"), trigger_tick=fill.get("trigger_tick"))
         self._run_thread.finished_signal.connect(self._on_result)
         self._run_thread.start()
 
@@ -1347,6 +1478,10 @@ class SingleStockBacktestView(QWidget):
         row(f"# 买入表达式: {meta.get('buy_expr')}")
         row(f"# 卖出表达式: {meta.get('sell_expr')}")
         row(f"# 风控: {self._risk_readable(meta.get('risk') or {})}")
+        # v6.17：成交时点模型 + T+1 —— 不写进报告，导出内容就"不可复现"
+        fill = meta.get("fill") or {}
+        row("# 成交模型: " + fill_summary(fill.get("fill_mode"), fill.get("trigger_tick")))
+        row(f"# {T1_SUMMARY}")
         index = meta.get("index")
         if index:
             row("# 指数门控: 已启用 {symbol}（买入许可: {b} / 卖出破位: {s}）".format(
@@ -1373,7 +1508,8 @@ class SingleStockBacktestView(QWidget):
                 entry, f"{t.entry_price:.2f}", exit_, f"{t.exit_price:.2f}",
                 str(t.days_held if t.days_held is not None else ""),
                 f"{t.pnl:.2f}", f"{t.return_pct:.4f}",
-                EXIT_REASON_LABELS.get(getattr(t, "exit_reason", "signal"), "卖出信号"),
+                EXIT_REASON_LABELS.get(getattr(t, "exit_reason", "signal"), "卖出信号")
+                + ("（T+1 顺延）" if getattr(t, "deferred_t1", False) else ""),
             ])
         # NOTE(v5.15 · 用户拍板)：不再输出 200+ 行的「每日净值明细」——
         #   ① 它是 CSV 可读性低的主因；② 专业投资者要核查的确定性事实是 参数+逐笔，
@@ -1599,6 +1735,9 @@ class SingleStockBacktestView(QWidget):
             entry = pd.Timestamp(t.entry_date)
             exit_ = pd.Timestamp(t.exit_date)
             reason = EXIT_REASON_LABELS.get(getattr(t, 'exit_reason', 'signal'), "卖出信号")
+            if getattr(t, 'deferred_t1', False):
+                # v6.17：该笔是"进场当根被 T+1 拦下、顺延到最早可卖根开盘价成交"的
+                reason += "（T+1 顺延）"
             values = [
                 str(row + 1), entry.strftime('%Y-%m-%d'), f"{t.entry_price:.2f}",
                 exit_.strftime('%Y-%m-%d'), f"{t.exit_price:.2f}",

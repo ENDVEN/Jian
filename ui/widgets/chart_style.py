@@ -8,6 +8,7 @@
       ui/widgets/yearly_review.py YearlyReviewPanel._apply_pokorny_style
       ui/views/backtest.py        SingleStockBacktestView._apply_pokorny_axis
       ui/views/market.py          MarketView._apply_pokorny_axis
+                                  （`market.py` v6.12 已删除，现为 trading_desk.py；上面是当时的现场）
   而"资金/净值曲线"（排序 → cumsum → 按盈亏选色 → plot + fillLevel）更是重复了四份
   （review / yearly_review / backtest / dashboard）。
   **改一处漏两处是迟早的事**，这里统一收口。

@@ -1151,6 +1151,190 @@ except Exception as e:  # noqa: BLE001
     traceback.print_exc()
     check(f"坐标轴自适应测试执行失败: {type(e).__name__}: {e}", False)
 
+# ==========================================
+# §7-B5 回测成交真实性：三档成交时点 / T+1 闸门 / 触发式委托 / 同根不重建仓（v6.18）
+#   落地时先以一次性探针验证；此处是**正式移植版**。
+#   ⚠ 原探针里"借 `git show HEAD` 的旧引擎做逐位回归"那段**故意不移植**：
+#     提交后 HEAD 会变，断言会随仓库状态漂移 —— 改为对**手算期望值**断言，
+#     强度等价且不依赖 git 状态（旧引擎的对照结论已记录在 §7-B5-E）。
+# ==========================================
+try:
+    import re as _re
+
+    from core.backtest import (FILL_CLOSE, FILL_MODE_LABELS, FILL_NEXT_OPEN,
+                               FILL_TRIGGER, BacktestEngine, fill_mode_oneliner,
+                               fill_summary, normalize_fill, tick_to_yuan, yuan_to_tick)
+    from data.strategy_store import _signature
+
+    def _risk_off(**kw):
+        base = {'max_bars': 0, 'stop_loss_pct': 0.0, 'take_profit_pct': 0.0,
+                'trailing_pct': 0.0}
+        base.update(kw)
+        return base
+
+    def _bars(opens, highs, lows, closes):
+        return pd.DataFrame({
+            'date': pd.date_range('2024-01-02', periods=len(opens), freq='D'),
+            'open': opens, 'high': highs, 'low': lows, 'close': closes,
+            'volume': [10000.0] * len(opens)})
+
+    def _bt(dfx, buy, sell, risk=None, fill_mode=FILL_NEXT_OPEN, tick=1):
+        return BacktestEngine._run_on_signals(
+            data=dfx, buy_signal=np.array(buy), sell_signal=np.array(sell),
+            symbol='T', buy_expression='', sell_expression='',
+            start_date='2024-01-01', end_date='2024-12-31', params={},
+            commission_rate=0.0003,
+            risk=risk if risk is not None else _risk_off(),
+            fill_mode=fill_mode, trigger_tick=tick)
+
+    def _keys(res):
+        return [(t.entry_date, t.exit_date, round(t.entry_price, 9),
+                 round(t.exit_price, 9), t.exit_reason,
+                 getattr(t, 'deferred_t1', False)) for t in res.trades]
+
+    print("\n[§7-B5] 三档成交时点各自落在正确的 K 线上")
+    df_a = _bars([10.0, 11.0, 12.0, 13.0], [10.5, 11.5, 12.5, 13.5],
+                 [9.5, 10.5, 11.5, 12.5], [10.2, 11.2, 12.2, 13.2])
+    r = _bt(df_a, [True, False, False, False], [False] * 4, fill_mode=FILL_NEXT_OPEN)
+    check("next_open：成交价 == 次日开盘 11.00", abs(r.trades[0].entry_price - 11.0) < 1e-9)
+    check("next_open：成交根 == 信号根 +1", r.trades[0].entry_date == df_a['date'].iloc[1])
+
+    r = _bt(df_a, [True, False, False, False], [False] * 4, fill_mode=FILL_CLOSE)
+    check("close：成交价 == 当日收盘 10.20", abs(r.trades[0].entry_price - 10.2) < 1e-9)
+    check("close：成交根 == 信号根本身", r.trades[0].entry_date == df_a['date'].iloc[0])
+
+    df_t = _bars([10.0, 10.3, 10.4, 10.5], [10.5, 10.8, 10.9, 11.0],
+                 [9.9, 10.2, 10.3, 10.4], [10.2, 10.6, 10.7, 10.8])
+    r = _bt(df_t, [True, False, False, False], [False] * 4, fill_mode=FILL_TRIGGER, tick=1)
+    check("trigger：盘中触达 → 按触发价 10.51 成交（不追到最高价）",
+          len(r.trades) == 1 and abs(r.trades[0].entry_price - 10.51) < 1e-9)
+
+    df_g = _bars([10.0, 11.0, 11.0, 11.0], [10.5, 11.5, 11.5, 11.5],
+                 [9.9, 10.9, 10.9, 10.9], [10.2, 11.0, 11.0, 11.0])
+    r = _bt(df_g, [True, False, False, False], [False] * 4, fill_mode=FILL_TRIGGER, tick=1)
+    check("trigger：开盘跳空越过触发价 → 按开盘价 11.00 成交（不占便宜）",
+          abs(r.trades[0].entry_price - 11.0) < 1e-9)
+
+    df_m = _bars([10.0] * 4, [10.1, 10.05, 10.05, 10.05], [9.9] * 4, [10.0] * 4)
+    r = _bt(df_m, [True, False, False, False], [False] * 4, fill_mode=FILL_TRIGGER, tick=1)
+    check("trigger：一整天未触达 → 本次信号作废、零成交", len(r.trades) == 0)
+
+    print("[§7-B5] T+1 闸门：进场当根触发风控不得当日离场")
+    df_s = _bars([10.0, 10.0, 9.0, 10.0], [10.2, 10.1, 9.5, 10.2],
+                 [9.9, 9.0, 8.8, 9.9], [10.0, 9.2, 9.0, 10.0])
+    r = _bt(df_s, [True, False, False, False], [False] * 4,
+            risk=_risk_off(stop_loss_pct=0.05))
+    t0 = r.trades[0]
+    check("止损在进场当根触发 → 未当日离场", t0.exit_date != t0.entry_date)
+    check("顺延到最早可卖根（入场根 +1）", t0.exit_date == df_s['date'].iloc[2])
+    check("按该根开盘价成交 9.00 —— 跳空低开就承受跳空", abs(t0.exit_price - 9.0) < 1e-9)
+    check("离场原因仍记录为 stop_loss（没有被吞掉）", t0.exit_reason == 'stop_loss')
+    check("该笔带 deferred_t1 标记（UI 可提示 T+1 顺延）", t0.deferred_t1 is True)
+    check("[非空对照] 进场当根 low 9.00 确实击穿止损线 9.50",
+          float(df_s['low'].iloc[1]) <= t0.entry_price * 0.95)
+
+    df_k = _bars([10.0, 10.0, 10.6, 10.0], [10.2, 11.0, 10.8, 10.2],
+                 [9.9, 9.9, 10.5, 9.9], [10.0, 10.8, 10.7, 10.0])
+    r = _bt(df_k, [True, False, False, False], [False] * 4,
+            risk=_risk_off(take_profit_pct=0.05))
+    tk = r.trades[0]
+    check("止盈在进场当根触及 → 同样顺延到最早可卖根开盘价 10.60",
+          tk.exit_date == df_k['date'].iloc[2] and abs(tk.exit_price - 10.6) < 1e-9)
+    check("原因保留 take_profit 且带 deferred_t1",
+          tk.exit_reason == 'take_profit' and tk.deferred_t1 is True)
+
+    df_b = _bars([10.0] * 4, [10.2, 10.1, 10.1, 10.1], [9.9] * 4, [10.0, 10.2, 10.3, 10.4])
+    r = _bt(df_b, [True, False, False, False], [False] * 4, risk=_risk_off(max_bars=1))
+    tb = r.trades[0]
+    check("max_bars=1 在 T+1 下 == 次根收盘离场 10.30",
+          tb.exit_reason == 'max_bars' and tb.exit_date == df_b['date'].iloc[2]
+          and abs(tb.exit_price - 10.3) < 1e-9)
+    check("max_bars 属收盘评估型，不打 T+1 顺延标记", tb.deferred_t1 is False)
+
+    print("[§7-B5] 触发式卖单：触达才卖 / 未触达信号作废")
+    df_sell = _bars([10.0, 10.0, 10.2, 10.0], [10.2, 10.3, 10.3, 10.2],
+                    [9.9, 9.9, 9.0, 8.5], [10.0, 10.1, 9.5, 8.6])
+    r = _bt(df_sell, [True, False, False, False], [False, False, True, False],
+            fill_mode=FILL_TRIGGER, tick=1)
+    ts = r.trades[0]
+    check("触发式卖出：跌破触发价 8.99 才成交，原因=signal",
+          ts.exit_reason == 'signal' and abs(ts.exit_price - 8.99) < 1e-9)
+    check("成交落在信号根的下一根", ts.exit_date == df_sell['date'].iloc[3])
+
+    df_hold = _bars([10.0, 10.0, 10.2, 10.2, 10.2], [10.2, 10.3, 10.3, 10.3, 10.3],
+                    [9.9, 9.9, 9.8, 9.9, 9.9], [10.0, 10.1, 10.1, 10.1, 10.1])
+    r = _bt(df_hold, [True, False, False, False, False],
+            [False, False, True, False, False], fill_mode=FILL_TRIGGER, tick=1)
+    check("触发式卖单未触达 → 本次信号作废、持仓延续到期末强平",
+          len(r.trades) == 1 and r.trades[0].exit_reason == 'force_close')
+
+    print("[§7-B5] 同根不重建仓（用户 2026-09-15 追加拍板）")
+    df_x = _bars([10.0] * 5, [10.2] * 5, [9.9] * 5, [10.0, 10.5, 10.6, 10.7, 10.8])
+    res_x = _bt(df_x, [True, True, True, False, False], [False, True, False, False, False])
+    check("同根卖出后未在同一成交根（bar2 开盘 10.00）重建仓 —— 空转被掐掉",
+          not any(t.entry_date == df_x['date'].iloc[2]
+                  and abs(t.entry_price - 10.0) < 1e-9 for t in res_x.trades))
+    check("该笔正常建仓（bar1）未被波及 —— 规则只拦同成交根",
+          any(t.entry_date == df_x['date'].iloc[1] for t in res_x.trades))
+    check("离场之后下一根的合法再入场照常允许（bar3 建仓存在）",
+          any(t.entry_date == df_x['date'].iloc[3] for t in res_x.trades))
+    res_c = _bt(df_x, [True, False, True, False, False], [False, True, False, False, False])
+    check("[非空对照] 去掉 bar1 买入信号 → 交易序列完全一致（证明它被规则抑制了）",
+          _keys(res_c) == _keys(res_x))
+
+    df_y = _bars([10.0] * 4, [10.2] * 4, [9.9] * 4, [10.0, 10.1, 10.2, 10.3])
+    res_y = _bt(df_y, [True, True, False, False], [False, True, False, False],
+                fill_mode=FILL_CLOSE)
+    check("close 档：同一收盘价买回同样被拦（bar1 无建仓）",
+          not any(t.entry_date == df_y['date'].iloc[1] for t in res_y.trades))
+
+    print("[§7-B5] 参数归一化 / 元↔跳换算 / 文案可懂性 / 签名兼容")
+    check("缺省参数回落 next_open + 1 跳",
+          normalize_fill(None, None) == {'fill_mode': FILL_NEXT_OPEN, 'trigger_tick': 1})
+    check("非法值一律回落默认，不炸",
+          normalize_fill('瞎写', -9) == {'fill_mode': FILL_NEXT_OPEN, 'trigger_tick': 1})
+    check("1 跳 → 0.01 元", abs(tick_to_yuan(1) - 0.01) < 1e-12)
+    check("0.03 元 → 3 跳 / 0 元 → 回落 1 跳",
+          yuan_to_tick(0.03) == 3 and yuan_to_tick(0) == 1)
+    r = _bt(df_a, [True, False, False, False], [False] * 4, fill_mode=FILL_TRIGGER, tick=2)
+    check("BacktestResult 携带实际生效口径",
+          r.fill_mode == FILL_TRIGGER and r.trigger_tick == 2)
+
+    # 用户实测反馈（v6.18）："触发式条件单 / 触发跳数 完完全全看不懂"。
+    # 判据 = 用户第一眼看到的文案里**不许出现行话**；「跳空」是交易者常用词，必须放行。
+    jargon = [r'跳(?!空)', r'当根', r'K\s*线', r'条件单', r'回测引擎']
+    check("[自检] 「跳空」不算行话（避免误伤常用词）",
+          not [p for p in jargon if _re.search(p, '跳空低开')])
+    for _mode in (FILL_NEXT_OPEN, FILL_CLOSE, FILL_TRIGGER):
+        _label, _one = FILL_MODE_LABELS[_mode], fill_mode_oneliner(_mode, 1)
+        check(f"下拉项「{_label}」不含行话",
+              not [p for p in jargon if _re.search(p, _label)])
+        check(f"行内说明「{_one[:18]}…」不含行话",
+              not [p for p in jargon if _re.search(p, _one)])
+    check("第三档把术语换算成用户量纲（出现 0.01 元）",
+          '0.01 元' in fill_mode_oneliner(FILL_TRIGGER, 1))
+    check("第三档讲清「没碰到会怎样」（不买也不卖）",
+          '不买也不卖' in fill_mode_oneliner(FILL_TRIGGER, 1))
+    check("留档文案（CSV/PNG 用）与 UI 说明分工不同但同源",
+          fill_summary(FILL_TRIGGER, 2).startswith('成交时点：价格冲破/跌破才成交')
+          and '0.02 元' in fill_summary(FILL_TRIGGER, 2))
+
+    _base = {'function': 'A:MA(C,5);', 'params_text': 'N=5', 'condition_buy': '{}',
+             'condition_sell': '{}', 'risk': {}, 'index': {}}
+    _old_sig = _signature(dict(_base))
+    check("旧存档（无 fill 字段）与显式默认口径签名相同 —— 老策略不被误判成新策略",
+          _old_sig == _signature({**_base, 'fill': {'fill_mode': FILL_NEXT_OPEN,
+                                                    'trigger_tick': 1}}))
+    for _fm, _tk, _tag in ((FILL_CLOSE, 1, '当日收盘'), (FILL_TRIGGER, 1, '触发式 1 跳'),
+                           (FILL_TRIGGER, 3, '触发式 3 跳')):
+        check(f"{_tag} 与默认口径签名不同（不同口径不互相污染对比）",
+              _signature({**_base, 'fill': {'fill_mode': _fm, 'trigger_tick': _tk}})
+              != _old_sig)
+except Exception as e:  # noqa: BLE001
+    import traceback
+    traceback.print_exc()
+    check(f"§7-B5 成交真实性测试执行失败: {type(e).__name__}: {e}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)
