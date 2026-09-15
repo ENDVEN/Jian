@@ -733,8 +733,10 @@ check("下拉三项文案与 core.backtest 同源（页面没另写一份）",
       == [FILL_NEXT_OPEN, FILL_CLOSE, FILL_TRIGGER])
 check("行内说明默认已显示（不必悬停就能看到）",
       view.lbl_fill_desc.text() == fill_mode_oneliner(FILL_NEXT_OPEN, 1))
+# 1.22：成交模型收进「🎯 成交」编辑卡片（默认收起）；isVisibleTo(卡片) 只看该控件
+# 自身与卡片的 body —— 卡片整体收起不影响这里的口径，也不必写用户偏好文件。
 check("非第三档时「买卖价要多等」整块隐藏 —— 不给用户看不懂的常驻参数",
-      not view._fill_offset_box.isVisibleTo(view))
+      not view._fill_offset_box.isVisibleTo(view.pane_fill))
 
 check("跳数控件步长 == 0.01 元（有过渡价格，不是一按顶到上限）",
       abs(view.spin_fill_offset.singleStep() - 0.01) < 1e-12)
@@ -749,7 +751,7 @@ view._apply_fill_config({"fill_mode": FILL_TRIGGER, "trigger_tick": 3})
 check("载入触发式口径可完整还原（3 跳 ↔ 0.03 元）",
       view._fill_config() == {"fill_mode": FILL_TRIGGER, "trigger_tick": 3}
       and abs(view.spin_fill_offset.value() - 0.03) < 1e-9)
-check("第三档「买卖价要多等」对用户可见", view._fill_offset_box.isVisibleTo(view))
+check("第三档「买卖价要多等」对用户可见", view._fill_offset_box.isVisibleTo(view.pane_fill))
 check("行内说明里的金额跟着参数实时变（0.03 元）", "0.03 元" in view.lbl_fill_desc.text())
 check("元→跳 换算走公共件（界面用元、落库存整数跳）",
       tick_to_yuan(3) == 0.03 and yuan_to_tick(0.35) == 35)

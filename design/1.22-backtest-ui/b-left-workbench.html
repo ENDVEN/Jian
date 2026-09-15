@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 B · 左侧折叠工作台（专业终端风）</title>
+<style>
+:root{
+  --bg:#EDF1F6; --card:#fff; --line:#DDE3EC; --line2:#EEF1F6;
+  --ink:#1F2430; --ink2:#3C4552; --muted:#8A94A6; --faint:#B4BECB;
+  --rail:#1B2130; --rail2:#232B3B; --rail-ink:#9AA6BC;
+  --accent:#1976D2; --accent-soft:#E3F2FD; --up:#2E7D32; --down:#C62828; --purple:#6A1B9A;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:12.5px/1.5 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+.app{display:flex;height:100%}
+
+/* ---------- 左侧：56px 图标栏 ↔ 340px 面板 ---------- */
+.rail{width:56px;background:var(--rail);color:var(--rail-ink);display:flex;flex-direction:column;
+      align-items:center;gap:2px;padding:10px 0;flex:0 0 auto;transition:width .16s}
+.rail.big{width:340px;align-items:stretch}
+.rail .logo{font-size:18px;color:#fff;padding:6px 0 12px;text-align:center}
+.rbtn{display:flex;align-items:center;gap:10px;padding:9px 0;border-radius:8px;color:var(--rail-ink);
+      font-size:12.5px;white-space:nowrap;overflow:hidden;justify-content:center}
+.rail.big .rbtn{justify-content:flex-start;padding:9px 12px}
+.rbtn:hover{background:var(--rail2);color:#fff}
+.rbtn.on{background:#123054;color:#fff;box-shadow:inset 3px 0 0 var(--accent)}
+.rbtn .ic{font-size:15px;width:18px;text-align:center;flex:0 0 auto}
+.rbtn .tx{display:none}
+.rail.big .rbtn .tx{display:inline}
+.rail .sp{flex:1}
+.rpanel{display:none;flex:1;min-height:0;overflow:auto;padding:12px 12px 20px;background:#fff;border-right:1px solid var(--line)}
+.rail.big .rpanel.on{display:block}
+.rail .tiny{font-size:10.5px;color:#5D6B85}
+
+/* ---------- 右侧主区 ---------- */
+.main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+
+/* 顶部命令条：高频低停留，压到一行（深色，和结果区形成强对比） */
+.cmd{display:flex;align-items:center;gap:8px;background:var(--rail2);color:#E6EBF4;padding:8px 12px;flex:0 0 auto}
+.cmd .inp{background:#151B27;border:1px solid #2C3648;color:#E6EBF4;border-radius:7px;padding:5px 9px;width:104px;outline:none;font:inherit}
+.cmd .sel{background:#151B27;border:1px solid #2C3648;color:#E6EBF4;border-radius:7px;padding:5px 9px;font:inherit}
+.cmd .mini{color:#8D9AB2;font-size:12px}
+.cmd .run{background:var(--accent);color:#fff;font-weight:700;border-radius:8px;padding:7px 18px;box-shadow:0 3px 10px rgba(25,118,210,.35)}
+.cmd .run:hover{background:#1568D8}
+.cmd .tbtn{color:#A9B6CC;border:1px solid #303B4E;border-radius:7px;padding:5px 10px;font-size:12px}
+.cmd .tbtn:hover{color:#fff;border-color:#42506A}
+.grow{flex:1}
+
+/* KPI 细长条（浅灰底，横向 4 格，不抢戏但一眼可读） */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);background:#fff;border-bottom:1px solid var(--line);flex:0 0 auto}
+.kpi{padding:8px 14px;border-right:1px solid var(--line2)}
+.kpi:last-child{border-right:none}
+.kpi .lab{color:var(--muted);font-size:11.5px}
+.kpi .val{font-size:21px;font-weight:800;margin-top:1px}
+.kpi .sub{color:var(--faint);font-size:11px}
+
+/* 结果区：吃满剩余 */
+.res{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;background:#fff;margin:8px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.rhead{display:flex;align-items:center;gap:2px;padding:4px 8px 0;border-bottom:1px solid var(--line2);flex:0 0 auto}
+.rtab{padding:7px 13px;color:var(--muted);font-weight:700;font-size:12.5px;border-bottom:2px solid transparent}
+.rtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.rtools{display:flex;align-items:center;gap:10px;margin-left:auto;padding-bottom:5px;font-size:11.8px;color:var(--ink2)}
+.rtools label{display:flex;align-items:center;gap:4px;cursor:pointer}
+.rbody{flex:1 1 auto;min-height:0;padding:4px 8px 8px}
+svg.eq{width:100%;height:100%;display:block}
+.grid{stroke:#EEF1F6;stroke-width:1}
+.axis{fill:#B4BECB;font-size:11px}
+.curve{fill:none;stroke:#F0A030;stroke-width:1.6}
+.area{fill:url(#g)}
+
+/* 栏内编辑控件 */
+.lbl{font-weight:700;font-size:12px;color:var(--ink2);margin:0 0 6px}
+.hint{color:var(--muted);font-size:11.5px;margin:5px 0 10px}
+textarea{width:100%;height:200px;border:1px solid var(--line);border-radius:8px;padding:8px;
+         font:11.5px/1.55 Consolas,"Courier New",monospace;resize:vertical;outline:none;color:#243043;background:#FCFDFF}
+textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.inp2{border:1px solid var(--line);border-radius:7px;padding:5px 8px;font:inherit;outline:none;width:100px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:5px 10px;font-size:12px;color:var(--ink2)}
+.btn:hover{background:#F5F9FF;border-color:#BBDEFB;color:var(--accent)}
+.btn.p{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+.row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:9px}
+.gate{border:1px dashed #D9E2EE;border-radius:8px;padding:8px;margin-bottom:9px;background:#FBFCFE;font-size:12px}
+.tag{font-size:10.5px;border-radius:5px;padding:2px 6px;background:var(--accent-soft);color:var(--accent);font-weight:700}
+.tag.sell{background:#FDECEA;color:var(--down)}
+.okbar{background:#F2FAF4;border:1px solid #D6EEDA;color:#256B34;border-radius:8px;padding:7px 9px;font-size:11.5px;margin-top:9px}
+.pin{color:#B4BECB;font-size:11px}
+
+.badge{position:fixed;right:12px;bottom:12px;background:rgba(27,33,48,.9);color:#fff;border-radius:10px;padding:8px 12px;
+       font-size:11.8px;line-height:1.55;max-width:440px;z-index:20}
+.badge b{color:#7FD1FF}
+.badge .x{float:right;margin-left:10px;opacity:.6;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ★ 左栏：56px 常态（几乎不占地）；点图标展开到 340px -->
+  <nav class="rail" id="rail">
+    <div class="logo">📐</div>
+    <button class="rbtn on" data-panel="pFn"    title="函数｜1 段 · 27 变量 · ✓"><span class="ic">ƒ</span><span class="tx">函数 <span class="tiny">1 段 ✓</span></span></button>
+    <button class="rbtn" data-panel="pCond"     title="买卖条件｜买 2 · 卖 1"><span class="ic">⇄</span><span class="tx">买卖条件 <span class="tiny">买2 · 卖1</span></span></button>
+    <button class="rbtn" data-panel="pIdx"      title="大盘门控｜未启用"><span class="ic">📉</span><span class="tx">大盘门控 <span class="tiny">未启用</span></span></button>
+    <button class="rbtn" data-panel="pRisk"     title="风控｜全部关闭"><span class="ic">🛡</span><span class="tx">风控 <span class="tiny">全部关闭</span></span></button>
+    <button class="rbtn" data-panel="pFill"     title="成交模型｜价格冲破/跌破 · 0.01 元"><span class="ic">🎯</span><span class="tx">成交模型 <span class="tiny">冲破/跌破</span></span></button>
+    <button class="rbtn" data-panel="pLib"      title="策略库/配方库"><span class="ic">📚</span><span class="tx">策略 / 配方库</span></button>
+    <div class="sp"></div>
+    <button class="rbtn" id="btnPin" title="钉住左栏（常驻不自动收起）"><span class="ic">📌</span><span class="tx">钉住左栏</span></button>
+
+    <!-- 展开后的内容（缩略示意，真实实现复用现有 ① ② ③ 编辑器） -->
+    <div style="display:none"></div>
+  </nav>
+
+  <!-- 展开面板放在 rail 内（演示用，简化结构） -->
+  <div class="main">
+    <!-- 顶部命令条 -->
+    <div class="cmd">
+      <span class="mini">标的</span>
+      <input class="inp" value="600326">
+      <span style="color:#9AA6BC">西藏天路 · 已缓存</span>
+      <select class="sel"><option>绿蓝红策略</option></select>
+      <button class="tbtn">保存</button>
+      <span class="mini" style="margin-left:8px">区间</span>
+      <select class="sel"><option>近5年</option></select>
+      <input class="inp" value="2021-09-15" style="width:116px">
+      <span class="mini">→</span>
+      <input class="inp" value="2026-09-06" style="width:116px">
+      <span class="grow"></span>
+      <span class="mini">11 笔闭环 · 累计 +35.86%</span>
+      <button class="run">▶ 开始回测</button>
+    </div>
+
+    <!-- KPI 条 -->
+    <div class="kpis">
+      <div class="kpi"><div class="lab">总成交</div><div class="val">11</div><div class="sub">笔闭环</div></div>
+      <div class="kpi"><div class="lab">胜率</div><div class="val" style="color:#2E7D32">45.5%</div><div class="sub">5 胜 / 6 负</div></div>
+      <div class="kpi"><div class="lab">累计收益</div><div class="val" style="color:#2E7D32">+35.9%</div><div class="sub">近 5 年</div></div>
+      <div class="kpi"><div class="lab">平均单笔</div><div class="val">+4.76%</div><div class="sub">T+1 顺延 10 笔</div></div>
+    </div>
+
+    <!-- 结果区 -->
+    <div class="res">
+      <div class="rhead">
+        <button class="rtab on">📈 净值曲线</button>
+        <button class="rtab">🕯️ K线买卖点</button>
+        <button class="rtab">🧭 策略对比</button>
+        <button class="rtab">🧾 成交明细</button>
+        <div class="rtools">
+          <label><input type="checkbox" checked> 价格轴跟随</label>
+          <label><input type="checkbox"> 对数价格</label>
+          <label><input type="checkbox" checked> 公式叠层</label>
+          <button class="btn">适应全量</button>
+          <button class="btn">最近150日</button>
+          <button class="btn">导出 ▾</button>
+        </div>
+      </div>
+      <div class="rbody">
+        <svg class="eq" viewBox="0 0 1000 300" preserveAspectRatio="none">
+          <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#FFB74D" stop-opacity=".35"/><stop offset="1" stop-color="#FFB74D" stop-opacity=".02"/>
+          </linearGradient></defs>
+          <line class="grid" x1="0" y1="0" x2="1000" y2="0"/><line class="grid" x1="0" y1="75" x2="1000" y2="75"/>
+          <line class="grid" x1="0" y1="150" x2="1000" y2="150"/><line class="grid" x1="0" y1="225" x2="1000" y2="225"/>
+          <line class="grid" x1="0" y1="299" x2="1000" y2="299"/>
+          <path class="area" d="M0,206 L60,206 L62,200 L90,200 L92,212 L160,212 L162,206 L240,206 L242,214 L300,214 L302,192 L330,192 L332,202 L420,202 L422,198 L500,198 L502,210 L560,210 L562,216 L620,216 L622,186 L650,186 L652,204 L700,204 L702,208 L736,208 L744,120 L748,24 L752,10 L758,60 L764,88 L900,88 L1000,86 L1000,300 L0,300 Z"/>
+          <path class="curve" d="M0,206 L60,206 L62,200 L90,200 L92,212 L160,212 L162,206 L240,206 L242,214 L300,214 L302,192 L330,192 L332,202 L420,202 L422,198 L500,198 L502,210 L560,210 L562,216 L620,216 L622,186 L650,186 L652,204 L700,204 L702,208 L736,208 L744,120 L748,24 L752,10 L758,60 L764,88 L900,88 L1000,86"/>
+          <text class="axis" x="4" y="12">1.6</text><text class="axis" x="4" y="87">1.4</text>
+          <text class="axis" x="4" y="162">1.2</text><text class="axis" x="4" y="237">1.0</text>
+          <text class="axis" x="4" y="296">0.8</text>
+          <text class="axis" x="6" y="292">2021-09</text><text class="axis" x="240" y="292">2022-12</text>
+          <text class="axis" x="470" y="292">2024-03</text><text class="axis" x="700" y="292">2025-06</text>
+          <text class="axis" x="930" y="292">2026-09</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ★ 展开面板（宽 340px，挤压结果区但结果仍可见 → 改完立刻跑） -->
+  <aside class="rail" id="dock" style="display:none;width:340px;flex-direction:column;align-items:stretch;padding:0">
+    <div style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)">
+      <b id="dockTitle" style="font-size:13px;color:#1F2430">函数</b>
+      <span class="grow"></span>
+      <span class="pin" title="钉住：切换图标时不自动收起">📌 钉住</span>
+      <button class="btn" id="dockClose">收起 ▸</button>
+    </div>
+
+    <div class="rpanel on" data-panel="pFn">
+      <div class="lbl">函数段 1（多段 · 共享变量池）</div>
+      <textarea>MA_VOL := MA(VOL,11);
+MA_VOL_PRE := REF(MA_VOL,1);
+VOL_CHANGE := (MA_VOL - MA_VOL_PRE) / MA_VOL_PRE;
+
+TYPICAL_PRICE := (HIGH + LOW + CLOSE) / 3;
+MA_PRICE := MA(TYPICAL_PRICE,5);
+MA_PRICE_PRE := REF(MA_PRICE,1);
+PRICE_CHANGE := (MA_PRICE - MA_PRICE_PRE) / MA_PRICE_PRE;
+
+WEIGHT_VOL := 0.4;
+WEIGHT_PRICE := 0.6;</textarea>
+      <div class="row" style="margin-top:9px">
+        <button class="btn">＋ 函数段</button><button class="btn">📚 配方库</button><button class="btn">🔍 检测</button>
+      </div>
+      <div class="okbar">✓ 可运行 · 27 个共享变量</div>
+    </div>
+
+    <div class="rpanel" data-panel="pCond">
+      <div class="lbl">买入条件组 · 2 条</div>
+      <div class="gate"><span class="tag">1</span> VOL_CHANGE &gt; 0.2<br><span class="tag">2</span> PRICE_CHANGE &gt; 0<br><span class="hint">满足逻辑：全部满足（AND）</span></div>
+      <div class="lbl">卖出条件组 · 1 条</div>
+      <div class="gate"><span class="tag sell">1</span> CROSS(MA_PRICE_PRE, MA_PRICE)<br><span class="hint">满足逻辑：任一满足（OR）</span></div>
+      <div class="lbl">回测区间</div>
+      <div class="row"><span>2021-09-15</span><span>→</span><span>2026-09-06</span></div>
+    </div>
+
+    <div class="rpanel" data-panel="pIdx">
+      <div class="lbl">指数 regime 门控</div>
+      <div class="row"><input type="checkbox"> 启用<br><select class="sel"><option>上证指数 (000001)</option></select></div>
+      <div class="gate"><span class="tag">买入许可</span> MA(CLOSE,20) &gt; MA(CLOSE,60)</div>
+      <div class="gate"><span class="tag sell">卖出破位</span> CLOSE &lt; MA(CLOSE,60)</div>
+    </div>
+
+    <div class="rpanel" data-panel="pRisk">
+      <div class="lbl">风控离场（0 = 关闭）</div>
+      <div class="row">最长持仓 <input class="inp2" value="0"> 根</div>
+      <div class="row">固定止损 <input class="inp2" value="0"> %</div>
+      <div class="row">固定止盈 <input class="inp2" value="0"> %</div>
+      <div class="row">移动止盈回撤 <input class="inp2" value="0"> %</div>
+      <div class="hint">盘中触发即离场，优先于卖出信号，谁先到谁执行。</div>
+    </div>
+
+    <div class="rpanel" data-panel="pFill">
+      <div class="lbl">什么时候成交</div>
+      <div class="row"><select class="sel"><option>价格冲破 / 跌破才成交</option><option>次日开盘价成交</option><option>当日收盘价成交</option></select></div>
+      <div class="row">买卖价要多等 <input class="inp2" value="0.01"> 元才动手</div>
+      <button class="btn">📖 三档怎么选？</button>
+      <div class="hint" style="margin-top:9px;color:#3C4552">冲破信号日最高价 +0.01 元才买入、跌破最低价 −0.01 元才卖出；一天没碰到就不买也不卖。</div>
+      <div style="color:#6A1B9A;font-weight:700;font-size:11.8px">🔒 所有档位都遵守：今天买的，今天不能卖</div>
+    </div>
+
+    <div class="rpanel" data-panel="pLib">
+      <div class="lbl">策略库</div>
+      <div class="gate">绿蓝红策略 <span class="hint">上次用于 600326</span></div>
+      <div class="gate">MACD 双线 <span class="hint">上次用于 000001</span></div>
+      <div class="lbl" style="margin-top:12px">配方库</div>
+      <div class="gate">量价共振（3 段）</div>
+      <div class="gate">MACD 标准（1 段）</div>
+    </div>
+  </aside>
+</div>
+
+<div class="badge" id="badge">
+  <span class="x" onclick="document.getElementById('badge').style.display='none'">✕</span>
+  <b>样板 B · 左侧折叠工作台（专业终端风）</b><br>
+  左栏常态 56px（≈ 不占地），点图标展开 340px 改参数 —— 结果区始终不离开视野，改完立刻跑。点 📌 试钉住效果。
+</div>
+
+<script>
+const dock = document.getElementById('dock');
+const rail = document.getElementById('rail');
+let pinned = false;
+function openPanel(key, title){
+  dock.style.display = 'flex';
+  document.getElementById('dockTitle').textContent = title;
+  document.querySelectorAll('#dock .rpanel').forEach(p=>p.classList.toggle('on', p.dataset.panel===key));
+  if(!pinned) rail.classList.remove('big');
+}
+function collapse(){ dock.style.display='none'; rail.classList.add('big'); }
+
+document.querySelectorAll('.rail .rbtn[data-panel]').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('.rail .rbtn').forEach(x=>x.classList.toggle('on', x===b));
+    if(rail.classList.contains('big')){ rail.classList.remove('big'); }
+    else { rail.classList.add('big'); }
+    // 展开窄栏（非钉住）时：只显示菜单，不显示内容 → 由“内容”面板承担编辑
+    if(rail.classList.contains('big')){
+      const t = b.querySelector('.tx').textContent.split(' ')[0];
+      openPanel(b.dataset.panel, t);
+    } else { dock.style.display='none'; }
+  });
+});
+document.getElementById('btnPin').onclick = ()=>{
+  pinned = !pinned;
+  document.getElementById('btnPin').classList.toggle('on', pinned);
+  if(pinned && !rail.classList.contains('big')) rail.classList.add('big');
+};
+document.getElementById('dockClose').onclick = collapse;
+</script>
+</body>
+</html>

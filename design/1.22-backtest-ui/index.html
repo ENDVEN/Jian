@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>1.22 回测页 UI 大改 · 方案样板对比</title>
+<style>
+:root{
+  --bg:#F4F6FA; --card:#fff; --line:#E4E9F0; --ink:#1F2430; --ink2:#3C4552;
+  --muted:#8A94A6; --faint:#B4BECB; --accent:#1976D2; --accent-soft:#E8F2FE;
+  --up:#2E7D32; --down:#C62828; --orange:#E65100;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13.5px/1.65 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;padding:26px 30px 60px}
+h1{font-size:22px;margin:0 0 6px}
+h2{font-size:16px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--accent)}
+.lead{color:var(--muted);margin:0 0 22px;max-width:1000px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;
+      box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.05)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.sample{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+        box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.06);display:flex;flex-direction:column}
+.shead{padding:13px 16px 10px;display:flex;align-items:flex-start;gap:10px}
+.shead .k{width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;
+          font-weight:800;font-size:14px;flex:0 0 auto}
+.shead .t{font-weight:800;font-size:14.5px}
+.shead .d{color:var(--muted);font-size:12.3px;margin-top:2px}
+.shot{position:relative;width:100%;height:372px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+      background:#EDF1F6;overflow:hidden}
+.shot iframe{position:absolute;top:0;left:0;width:1440px;height:886px;border:0;transform:scale(.42);
+             transform-origin:top left;pointer-events:none}
+@media (max-width:1500px){ .grid{grid-template-columns:1fr} }
+.sfoot{display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:12.3px;color:var(--ink2)}
+.sfoot a{color:var(--accent);font-weight:700;text-decoration:none}
+.sfoot a:hover{text-decoration:underline}
+.pill{font-size:11.5px;border-radius:999px;padding:3px 9px;font-weight:700;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.pill.g{background:#EAF7EE;color:var(--up)}
+.pill.o{background:#FFF3E0;color:var(--orange)}
+.pill.r{background:#FDECEA;color:var(--down)}
+.pill.gray{background:#F1F4F9;color:var(--muted)}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:12.8px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #EEF1F6;vertical-align:top}
+th{background:#F7F9FC;font-weight:700;color:var(--ink2);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td.c{text-align:center;white-space:nowrap}
+code{background:#F4F6FA;border:1px solid #E7EAF0;border-radius:5px;padding:1px 5px;font-family:Consolas,monospace;font-size:12.2px}
+.big{font-size:20px;font-weight:800}
+.big.bad{color:var(--down)}
+.big.good{color:var(--up)}
+.note{background:#FFFBF0;border:1px solid #F3E2B8;border-radius:10px;padding:12px 14px;font-size:12.8px;color:#6B5A22}
+.note b{color:#8A6D1F}
+.ask{background:#F7FBFF;border:1px solid #CFE4FA;border-radius:10px;padding:14px 16px;font-size:13px}
+.ask ol{margin:8px 0 0 18px;padding:0}
+.ask li{margin-bottom:7px}
+ul.tight{margin:6px 0 0 18px;padding:0}
+ul.tight li{margin-bottom:5px}
+.kv{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.metric{background:#FBFCFE;border:1px solid #E7EAF0;border-radius:10px;padding:10px 14px;min-width:170px}
+.metric .l{color:var(--muted);font-size:12px}
+.metric .v{font-size:19px;font-weight:800}
+</style>
+</head>
+<body>
+
+<h1>1.22 回测页 UI 大改 · 方案样板对比</h1>
+<p class="lead">
+  设计目标（你的原话归纳）：<b>按"使用频率 × 视线停留时长"分层</b> —— 低频高占地的配置区（函数 / 条件 / 大盘门控）
+  收起来，把空间还给高频高停留的结果区。下面的 4 个样板结构不同（不是换皮），可直接点开对比。
+</p>
+
+<h2>一、先把"现状为什么难受"量化</h2>
+<div class="card">
+  <div class="kv">
+    <div class="metric"><div class="l">页面纵向被"配置"吃掉</div><div class="v bad">~85%</div></div>
+    <div class="metric"><div class="l">结果区（净值曲线）可见高度</div><div class="v bad">≈ 60 px</div></div>
+    <div class="metric"><div class="l">7 个常驻区块 · 全部同一优先级</div><div class="v bad">平铺</div></div>
+    <div class="metric"><div class="l">样板 A / C 给结果的占比</div><div class="v good">70% / 85%</div></div>
+  </div>
+  <ul class="tight">
+    <li><b>①函数 ②条件 ③大盘门控</b>：一次配置后基本不动，但每次打开都占满屏上半部，且<b>加任何新功能都只能继续往下挤</b>。</li>
+    <li><b>回测区间 / 风控 / 成交模型</b>：使用频率中等，但它们被排在结果之前，把结果又往下推。</li>
+    <li><b>结果区</b>：KPI + 4 个结果页签才是真正被长期注视的部分，却只剩残渣高度。</li>
+  </ul>
+</div>
+
+<h2>二、四个样板（点标题全屏打开 · 可交互）</h2>
+<div class="grid">
+
+  <div class="sample">
+    <div class="shead"><div class="k">A</div>
+      <div><div class="t">摘要条 + 全宽结果</div>
+        <div class="d">低频配置压成一行 chips，点击才展开对应编辑区</div></div>
+      <span style="flex:1"></span><span class="pill g">结果 ≈ 70%</span>
+    </div>
+    <div class="shot"><iframe src="a-summary-bar.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span>结果区 ≈ 70% 高度</span><span>·</span><span>迁移成本 <b>中</b></span>
+      <span style="flex:1"></span><a href="a-summary-bar.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#333C4E">B</div>
+      <div><div class="t">左侧折叠工作台</div>
+        <div class="d">56px 图标栏 ↔ 340px 面板；改完立刻跑，结果不离视野</div></div>
+      <span style="flex:1"></span><span class="pill g">结果 ≈ 78%</span>
+    </div>
+    <div class="shot"><iframe src="b-left-workbench.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span>点左侧图标展开/收起</span><span>·</span><span>迁移成本 <b>中高</b></span>
+      <span style="flex:1"></span><a href="b-left-workbench.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#6A1B9A">C</div>
+      <div><div class="t">步骤流向导</div>
+        <div class="d">① 函数 → ② 条件 → ③ 风控与成交 → ④ 结果，各占一屏</div></div>
+      <span style="flex:1"></span><span class="pill g">结果 ≈ 85%</span>
+    </div>
+    <div class="shot"><iframe src="c-stepper.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span>点顶部步骤来回切</span><span>·</span><span>迁移成本 <b>低~中</b></span>
+      <span style="flex:1"></span><a href="c-stepper.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#E65100">D</div>
+      <div><div class="t">可停靠面板 + 布局预设</div>
+        <div class="d">「看结果 / 调参数 / 并排」三套预设，分隔条可拖</div></div>
+      <span style="flex:1"></span><span class="pill o">你定 25%~90%</span>
+    </div>
+    <div class="shot"><iframe src="d-docking.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span>右上角切三套布局</span><span>·</span><span>迁移成本 <b>高</b></span>
+      <span style="flex:1"></span><a href="d-docking.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+</div>
+
+<h2>三、四个样板的取舍对照</h2>
+<table>
+  <thead><tr><th>样板</th><th>交互模型</th><th>看得见的好处</th><th>代价 / 风险</th><th>适合</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>A 摘要条</b></td><td>配置 → 一行 chips（可点开）</td>
+      <td>一次性解决"配置挤结果"；<b>还顺带解决了"我到底配了什么"看不见的问题</b>（chips 本身就是状态摘要）</td>
+      <td>编辑时若用遮罩抽屉会盖住结果（可改为<b>就地展开</b>规避）</td><td>绝大多数日常使用</td>
+    </tr>
+    <tr>
+      <td><b>B 左栏工作台</b></td><td>图标栏 ↔ 展开面板</td>
+      <td>改参数与看结果<b>同屏</b>，调参迭代最快；栏位可钉住</td>
+      <td>展开时挤压图表宽度；图标栏的图标语义要靠记忆（需要 tooltip 兜底）</td><td>高频调参的重度用户</td>
+    </tr>
+    <tr>
+      <td><b>C 步骤流</b></td><td>4 步各自独占屏</td>
+      <td>每一步空间<b>最充裕</b>，教学/首次配置体验最好；结果页最干净</td>
+      <td><b>来回切步</b>才能边改边看，反复微调时最烦</td><td>首次配置 / 配置改动很少的用户</td>
+    </tr>
+    <tr>
+      <td><b>D 可停靠面板</b></td><td>面板可停靠/浮动 + 预设</td>
+      <td>自由度最高，用户自己决定比例；三套预设覆盖所有场景</td>
+      <td>Qt 里工程量与坑最多（停靠/浮动状态、pyqtgraph 尺寸联动）；样式的统一性最难守</td><td>专业版/进阶用户</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>四、分层规则（无论选哪个样板，这张表都是施工依据）</h2>
+<table>
+  <thead><tr><th>层</th><th>判据（频率 × 视线停留）</th><th>控件</th><th>呈现方式</th></tr></thead>
+  <tbody>
+    <tr><td><b>L0 主角</b></td><td>高频 · 长停留</td><td>KPI 四卡 · 结果页签（净值曲线 / K线买卖点 / 策略对比 / 成交明细）</td><td><b>常驻 + 吃满剩余高度</b>，永不折叠</td></tr>
+    <tr><td><b>L1 操作轴</b></td><td>高频 · 短停留</td><td>标的/策略选择 · 回测区间 · ▶开始回测</td><td>一行常驻（可合并进摘要条右端）</td></tr>
+    <tr><td><b>L2 状态+入口</b></td><td>低频 · 但需随时确认</td><td>函数段数/变量数 · 条件组数 · 大盘门控开关 · 风控四项 · 成交模型档位</td><td><b>一行 chips 摘要</b>（显示当前值 + 点击展开编辑）</td></tr>
+    <tr><td><b>L3 编辑区</b></td><td>低频 · 长停留（配置时）</td><td>函数编辑器 · 条件积木 · 指数门控 · 风控输入 · 成交模型</td><td>按需展开：抽屉 / 就地手风琴 / 侧栏（样板不同）</td></tr>
+    <tr><td><b>L4 附属</b></td><td>辅助</td><td>K线显示开关 · 导出结果 · 教学入口（📖 三档怎么选）</td><td>贴在 L0 区域的头部工具条 / 图标按钮</td></tr>
+  </tbody>
+</table>
+
+<h2>五、我的推荐：A 的骨架 + D 的"可拖分栏"（混合方案）</h2>
+<div class="card">
+  <ul class="tight">
+    <li><b>常态</b> = 样板 A：一行摘要条 + KPI + 结果区吃满（结果区 ≈ 75%）。</li>
+    <li><b>点 chips / ⚙</b> = 在结果区<b>上方就地展开</b>该编辑卡片（一次只展开一个，默认占 ~35% 高，可拖分隔条）——
+      避开"遮罩抽屉盖住结果"的缺点，实际拿到样板 D「调参数」预设的好处。</li>
+    <li><b>⊕ 保留一个 📌"钉住编辑区"</b>（借样板 B）：钉住后改完直接 ▶，不用反复开合。</li>
+    <li>默认进入<b>看结果</b>；把"上次的展开状态"写进 <code>preferences.json</code>（沿既有单例，不新增存储）。</li>
+  </ul>
+  <div class="note" style="margin-top:12px">
+    <b>顺路收益（很重要）：</b>这次 UI 结构改造天然把 1697 行的 <code>ui/views/backtest.py</code> 切成 4~5 个子构件
+    （摘要条 / 编辑卡片×3 / 结果区），正好<b>一次性完成 §9-L 大文件拆分</b> ——
+    否则先改 UI 再拆文件 = 同一块代码改两遍（我上一条消息提过这个风险）。
+  </div>
+</div>
+
+<h2>六、落到 PyQt6 的实现成本（诚实评估）</h2>
+<table>
+  <thead><tr><th>样板</th><th>新增/改造</th><th>关键坑</th><th>回归影响</th></tr></thead>
+  <tbody>
+    <tr><td><b>A</b></td><td>新增 <code>summary_bar.py</code>（chips）+ 就地展开容器（<code>QSplitter</code> 垂直）</td>
+        <td>摘要条要能"读回"现有控件状态（别做两套状态）；展开/收起要保留各编辑器内部状态</td>
+        <td>中：两个冒烟脚本里<b>断言控件层级/标签文案</b>的部分要跟着改</td></tr>
+    <tr><td><b>B</b></td><td><code>QToolBar</code> 左栏 + <code>QStackedWidget</code> + 钉住状态持久化</td>
+        <td>栏目宽度动画与 pyqtgraph 尺寸联动（§11.5-15 布局坑）；图标语义需要 tooltip</td>
+        <td>中</td></tr>
+    <tr><td><b>C</b></td><td><code>QStackedWidget</code> 4 页 + 步骤条</td>
+        <td>步骤间共享状态要集中（避免"回上一步丢输入"）；"运行"按钮位置</td>
+        <td>小</td></tr>
+    <tr><td><b>D</b></td><td>原生 <code>QDockWidget</code> 或自绘停靠</td>
+        <td>停靠/浮动/最大化状态、样式统一、与现有 <code>ChartHost</code> 的尺寸联动</td>
+        <td>大</td></tr>
+  </tbody>
+</table>
+
+<h2>七、需要你拍板的 4 点</h2>
+<div class="ask">
+  <ol>
+    <li><b>交互模型选哪个？</b> 直接选 A / B / C / D，或者说"用你推荐的 A+D 混合"。</li>
+    <li><b>打开页面时默认长什么样？</b> 「看结果」（配置全收，结果最大）还是「调参数」（配置常驻一半）？
+        （我建议默认看结果 + 记住上次状态）</li>
+    <li><b>允许"配置区完全不可见"吗？</b> 即用户可以不展开任何编辑区就完成回测（用上次配置直接 ▶）。
+        若不允许，就保留一列常驻摘要 = 样板 B/D 的形态。</li>
+    <li><b>顺路做 §9-L 拆分吗？</b> 我建议做（一次规划，改一遍）。</li>
+  </ol>
+</div>
+
+</body>
+</html>

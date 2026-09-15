@@ -37,6 +37,11 @@ TIME_SOURCE_MANUAL = "MANUAL"         # 用户手工补录
 # 默认偏好：time_precision 留空，代表"尚未询问过用户"
 DEFAULTS = {
     "time_precision": None,
+    # 1.22（样板 A）：回测页界面状态 —— 低频配置默认**全部收起**（空间留给回测结果），
+    # 展开状态"记住上次"（用户 2026-09-16 拍板）。
+    #   {"pane": "fn"|"cond"|"index"|"risk"|"fill"|None, "last": "fn"}
+    #   pane = 当前展开的编辑卡片；last = 最近用过的那张（「⚙ 编辑配置」的落点）
+    "backtest_ui": None,
 }
 
 

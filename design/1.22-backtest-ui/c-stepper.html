@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 C · 步骤流向导（宽松留白风）</title>
+<style>
+:root{
+  --bg:#F6F8FB; --card:#fff; --line:#E4E9F0; --line2:#F0F3F8;
+  --ink:#1F2430; --ink2:#3C4552; --muted:#8A94A6; --faint:#BCC5D2;
+  --accent:#1976D2; --accent-soft:#E8F2FE; --up:#2E7D32; --down:#C62828; --purple:#6A1B9A;
+  --shadow:0 1px 3px rgba(16,24,40,.04),0 12px 30px rgba(16,24,40,.05);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/1.55 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+     display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+/* 顶部：模块页签 */
+.tabs{display:flex;align-items:center;gap:6px;padding:8px 26px 0;flex:0 0 auto}
+.tab{padding:8px 14px;color:var(--muted);font-weight:700;font-size:13.5px;border-bottom:2px solid transparent}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ★ 步骤条：把"配置"和"看结果"彻底分开，各自独占空间 */
+.steps{display:flex;align-items:center;gap:0;padding:14px 26px 16px;flex:0 0 auto}
+.step{display:flex;align-items:center;gap:10px;padding:6px 16px 6px 6px;border-radius:999px;color:var(--muted)}
+.step .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:12.5px;
+         background:#EEF2F8;color:var(--muted);border:1px solid #E4E9F0}
+.step .t{font-weight:700;font-size:13px}
+.step .s{font-size:11.5px;color:var(--faint)}
+.step.done .n{background:#EAF7EE;color:var(--up);border-color:#D6EEDA}
+.step.done{color:var(--ink2)}
+.step.on{background:#fff;box-shadow:var(--shadow);color:var(--ink)}
+.step.on .n{background:var(--accent);color:#fff;border-color:var(--accent)}
+.arrow{width:26px;height:1px;background:linear-gradient(90deg,#DFE6EF,#C9D4E3);margin:0 4px}
+.grow{flex:1}
+
+.stage{flex:1 1 auto;min-height:0;padding:0 26px 22px;display:flex;flex-direction:column}
+.view{display:none;flex:1 1 auto;min-height:0;flex-direction:column}
+.view.on{display:flex}
+
+/* 通用大卡（宽松） */
+.big{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);
+     padding:20px 22px;margin-bottom:14px}
+.big h3{margin:0 0 4px;font-size:15px}
+.big p{margin:0 0 14px;color:var(--muted);font-size:12.5px}
+textarea{width:100%;height:330px;border:1px solid var(--line);border-radius:12px;padding:14px;
+         font:12.5px/1.65 Consolas,"Courier New",monospace;resize:vertical;outline:none;color:#243043;background:#FCFDFF}
+textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.foot{display:flex;align-items:center;gap:10px;flex:0 0 auto;padding-top:2px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:9px 16px;font-size:13px;color:var(--ink2)}
+.btn:hover{background:#F6FAFF;border-color:#BBDEFB;color:var(--accent)}
+.btn.p{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700;box-shadow:0 6px 16px rgba(25,118,210,.25)}
+.btn.p:hover{background:#1565C0;color:#fff}
+.okbar{background:#F2FAF4;border:1px solid #D6EEDA;color:#256B34;border-radius:12px;padding:11px 14px;font-size:12.5px;margin-top:12px}
+.row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.inp{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 11px;font:inherit;outline:none;width:130px}
+.sel{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 11px;font:inherit}
+.gate{border:1px dashed #DCE4EF;border-radius:12px;padding:13px 15px;background:#FBFCFE;margin-bottom:10px}
+.gate .h{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.tag{font-size:11px;border-radius:6px;padding:2px 8px;background:var(--accent-soft);color:var(--accent);font-weight:700}
+.tag.sell{background:#FDECEA;color:var(--down)}
+.tag.gray{background:#F1F4F9;color:var(--muted)}
+
+/* 结果步骤：一行只读摘要 + KPI + 图表吃满 */
+.summary{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:12px;
+         padding:9px 14px;margin-bottom:12px;font-size:12.5px;color:var(--ink2);flex:0 0 auto;box-shadow:var(--shadow)}
+.summary .item{white-space:nowrap}
+.summary .item b{color:var(--ink)}
+.summary .sep{width:1px;height:16px;background:var(--line)}
+.dim{color:var(--faint)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;flex:0 0 auto}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px 16px;box-shadow:var(--shadow)}
+.kpi .lab{color:var(--muted);font-size:12px}
+.kpi .val{font-size:28px;font-weight:800;margin-top:3px}
+.kpi .sub{color:var(--faint);font-size:11.5px}
+.res{flex:1 1 auto;min-height:0;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);
+     display:flex;flex-direction:column;overflow:hidden}
+.rhead{display:flex;align-items:center;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--line2);flex:0 0 auto}
+.rtab{padding:9px 15px;color:var(--muted);font-weight:700;font-size:12.5px;border-bottom:2px solid transparent}
+.rtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.rtools{display:flex;align-items:center;gap:12px;margin-left:auto;padding-bottom:6px;font-size:12px;color:var(--ink2)}
+.rtools label{display:flex;align-items:center;gap:5px}
+.rbody{flex:1 1 auto;min-height:0;padding:8px 12px 12px}
+svg.eq{width:100%;height:100%;display:block}
+.grid{stroke:#F0F3F8;stroke-width:1}
+.axis{fill:#BCC5D2;font-size:11px}
+.curve{fill:none;stroke:#43A047;stroke-width:1.7}
+.area{fill:url(#g)}
+
+.badge{position:fixed;right:14px;bottom:14px;background:rgba(31,36,48,.9);color:#fff;border-radius:12px;padding:9px 13px;
+       font-size:11.8px;line-height:1.55;max-width:430px;z-index:20}
+.badge b{color:#8BC34A}
+.badge .x{float:right;margin-left:10px;opacity:.6;cursor:pointer}
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <button class="tab on">📈 单股回测</button>
+  <button class="tab">🌐 全市场筛选</button>
+  <button class="tab">📊 广度统计</button>
+</div>
+
+<!-- 步骤条 -->
+<div class="steps" id="steps">
+  <button class="step done" data-go="s1"><span class="n">✓</span><span><span class="t">函数</span><span class="s"> 1 段 · 27 变量</span></span></button>
+  <span class="arrow"></span>
+  <button class="step done" data-go="s2"><span class="n">✓</span><span><span class="t">买卖条件</span><span class="s"> 买 2 · 卖 1</span></span></button>
+  <span class="arrow"></span>
+  <button class="step done" data-go="s3"><span class="n">✓</span><span><span class="t">风控与成交</span><span class="s"> 风控关 · 冲破/跌破</span></span></button>
+  <span class="arrow"></span>
+  <button class="step on" data-go="s4"><span class="n">4</span><span><span class="t">回测结果</span><span class="s"> 11 笔 · +35.9%</span></span></button>
+  <span class="grow"></span>
+  <button class="btn" id="btnRun">▶ 重新回测</button>
+</div>
+
+<div class="stage">
+
+  <!-- ① 函数 -->
+  <section class="view" data-view="s1">
+    <div class="big">
+      <h3>① 粘贴你的函数</h3>
+      <p>可多段 · 段间共享变量池（后段可引用前段）。首次粘贴后一般不再改动，因此单独占一屏。</p>
+      <textarea>MA_VOL := MA(VOL,11);
+MA_VOL_PRE := REF(MA_VOL,1);
+VOL_CHANGE := (MA_VOL - MA_VOL_PRE) / MA_VOL_PRE;
+
+TYPICAL_PRICE := (HIGH + LOW + CLOSE) / 3;
+MA_PRICE := MA(TYPICAL_PRICE,5);
+MA_PRICE_PRE := REF(MA_PRICE,1);
+PRICE_CHANGE := (MA_PRICE - MA_PRICE_PRE) / MA_PRICE_PRE;
+
+WEIGHT_VOL := 0.4;
+WEIGHT_PRICE := 0.6;</textarea>
+      <div class="row" style="margin-top:12px">
+        <button class="btn">＋ 添加函数段</button>
+        <button class="btn">📚 配方库</button>
+        <button class="btn">💾 存为配方</button>
+        <button class="btn">📤 送到行情页</button>
+        <span class="grow"></span>
+        <button class="btn p">🔍 检测</button>
+      </div>
+      <div class="okbar">✓ 可运行 · 识别 27 个共享变量：MA_VOL, MA_VOL_PRE, VOL_CHANGE, TYPICAL_PRICE, MA_PRICE, MA_PRICE_PRE, PRICE_CHANGE, WEIGHT_VOL, WEIGHT_PRICE …</div>
+    </div>
+    <div class="foot"><span class="grow"></span><button class="btn p" data-go="s2">下一步：买卖条件 →</button></div>
+  </section>
+
+  <!-- ② 条件 -->
+  <section class="view" data-view="s2">
+    <div class="big">
+      <h3>② 买卖条件组</h3>
+      <p>每个条件一行 · 满足计数触发。这里改动频繁，所以放在独立一屏。</p>
+      <div class="grid2">
+        <div>
+          <div class="row" style="margin-bottom:9px"><b>买入条件组</b><span class="tag gray">满足逻辑：全部满足</span></div>
+          <div class="gate"><div class="h"><span class="tag">买入 1</span><span>VOL_CHANGE &gt; 0.2</span></div>
+            <div class="row"><span class="dim">比较：</span><select class="sel"><option>&gt;</option></select><span class="dim">阈值</span><input class="inp" value="0.2"></div></div>
+          <div class="gate"><div class="h"><span class="tag">买入 2</span><span>PRICE_CHANGE &gt; 0</span></div>
+            <div class="row"><span class="dim">比较：</span><select class="sel"><option>&gt;</option></select><span class="dim">阈值</span><input class="inp" value="0"></div></div>
+          <button class="btn">＋ 添加买入条件</button>
+        </div>
+        <div>
+          <div class="row" style="margin-bottom:9px"><b>卖出条件组</b><span class="tag gray">满足逻辑：任一满足</span></div>
+          <div class="gate"><div class="h"><span class="tag sell">卖出 1</span><span>CROSS(MA_PRICE_PRE, MA_PRICE)</span></div>
+            <div class="row"><span class="dim">比较：</span><select class="sel"><option>下穿（CROSS）</option></select></div></div>
+          <button class="btn">＋ 添加卖出条件</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <b>回测区间</b>
+        <select class="sel"><option>近5年</option><option>近3年</option><option>全部(2016起)</option></select>
+        <input class="inp" value="2021-09-15"><span class="dim">至</span><input class="inp" value="2026-09-06">
+      </div>
+    </div>
+    <div class="foot"><button class="btn" data-go="s1">← 上一步</button><span class="grow"></span><button class="btn p" data-go="s3">下一步：风控与成交 →</button></div>
+  </section>
+
+  <!-- ③ 风控与成交 -->
+  <section class="view" data-view="s3">
+    <div class="big">
+      <h3>③ 风控与成交模型</h3>
+      <p>出场保护与"信号之后按什么价成交"。平时全 0 / 默认档即可，需要时再来调。</p>
+      <div class="grid2">
+        <div>
+          <div class="row" style="margin-bottom:9px"><b>🛡 风控离场</b><span class="dim">任一项设 0 = 关闭</span></div>
+          <div class="gate"><div class="h"><span class="tag gray">最长持仓</span></div><div class="row"><input class="inp" value="0"><span class="dim">根 K 线内未卖出则收盘强平</span></div></div>
+          <div class="gate"><div class="h"><span class="tag gray">固定止损</span></div><div class="row"><input class="inp" value="0"><span class="dim">% 自开仓价回撤</span></div></div>
+          <div class="gate"><div class="h"><span class="tag gray">固定止盈</span></div><div class="row"><input class="inp" value="0"><span class="dim">% 自开仓价上涨</span></div></div>
+          <div class="gate"><div class="h"><span class="tag gray">移动止盈回撤</span></div><div class="row"><input class="inp" value="0"><span class="dim">% 自最高点回落</span></div></div>
+        </div>
+        <div>
+          <div class="row" style="margin-bottom:9px"><b>🎯 成交模型</b><button class="btn">📖 三档怎么选？</button></div>
+          <div class="gate">
+            <div class="row"><select class="sel" style="min-width:230px">
+              <option>价格冲破 / 跌破才成交</option><option>次日开盘价成交</option><option>当日收盘价成交</option></select></div>
+            <div class="row" style="margin-top:10px">买卖价要多等 <input class="inp" value="0.01" style="width:86px"> 元才动手</div>
+            <p style="margin:12px 0 0;color:#3C4552;font-size:12.5px">先挂单等价格到点：冲破信号日最高价 +0.01 元才买入、跌破最低价 −0.01 元才卖出；一整天没碰到，就不买也不卖。</p>
+          </div>
+          <div class="gate" style="border-style:solid;background:#FAF6FE;border-color:#E6D8F3">
+            <div style="color:#6A1B9A;font-weight:700;font-size:12.5px">🔒 所有档位都遵守：今天买的，今天不能卖</div>
+            <div class="dim" style="margin-top:6px;font-size:12px">买入当天跌穿止损也卖不掉 → 第二天一开盘就卖，跳空低开由你承担。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="foot"><button class="btn" data-go="s2">← 上一步</button><span class="grow"></span><button class="btn p" data-go="s4">▶ 运行回测，看结果</button></div>
+  </section>
+
+  <!-- ④ 结果：独占整屏 -->
+  <section class="view on" data-view="s4">
+    <div class="summary">
+      <span class="item">📈 <b>西藏天路 (600326)</b></span><span class="sep"></span>
+      <span class="item dim">绿蓝红策略</span><span class="sep"></span>
+      <span class="item">ƒ 1 段 <b>27 变量 ✓</b></span>
+      <span class="item">⇄ 买 <b>2</b> · 卖 <b>1</b></span>
+      <span class="item dim">📉 门控 未启用</span>
+      <span class="item dim">🛡 风控 全关</span>
+      <span class="item">🎯 <b>冲破/跌破</b> · 0.01 元</span>
+      <span class="sep"></span>
+      <span class="item dim">2021-09-15 ~ 2026-09-06</span>
+      <span class="grow"></span>
+      <button class="btn" data-go="s1">⚙ 重新配置</button>
+      <button class="btn">导出结果 ▾</button>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="lab">总成交</div><div class="val">11</div><div class="sub">笔闭环交易</div></div>
+      <div class="kpi"><div class="lab">胜率</div><div class="val" style="color:#2E7D32">45.5%</div><div class="sub">5 胜 / 6 负</div></div>
+      <div class="kpi"><div class="lab">累计收益</div><div class="val" style="color:#2E7D32">+35.9%</div><div class="sub">近 5 年</div></div>
+      <div class="kpi"><div class="lab">平均单笔</div><div class="val">+4.76%</div><div class="sub">含 T+1 顺延 10 笔</div></div>
+    </div>
+
+    <div class="res">
+      <div class="rhead">
+        <button class="rtab on">📈 净值曲线</button>
+        <button class="rtab">🕯️ K线买卖点</button>
+        <button class="rtab">🧭 策略对比</button>
+        <button class="rtab">🧾 成交明细</button>
+        <div class="rtools">
+          <label><input type="checkbox" checked> 价格轴跟随</label>
+          <label><input type="checkbox"> 对数价格</label>
+          <label><input type="checkbox" checked> 公式叠层</label>
+          <button class="btn">适应全量</button><button class="btn">最近150日</button>
+        </div>
+      </div>
+      <div class="rbody">
+        <svg class="eq" viewBox="0 0 1000 300" preserveAspectRatio="none">
+          <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#8BC34A" stop-opacity=".4"/><stop offset="1" stop-color="#8BC34A" stop-opacity=".02"/>
+          </linearGradient></defs>
+          <line class="grid" x1="0" y1="0" x2="1000" y2="0"/><line class="grid" x1="0" y1="75" x2="1000" y2="75"/>
+          <line class="grid" x1="0" y1="150" x2="1000" y2="150"/><line class="grid" x1="0" y1="225" x2="1000" y2="225"/>
+          <line class="grid" x1="0" y1="299" x2="1000" y2="299"/>
+          <path class="area" d="M0,206 L60,206 L62,200 L90,200 L92,212 L160,212 L162,206 L240,206 L242,214 L300,214 L302,192 L330,192 L332,202 L420,202 L422,198 L500,198 L502,210 L560,210 L562,216 L620,216 L622,186 L650,186 L652,204 L700,204 L702,208 L736,208 L744,120 L748,24 L752,10 L758,60 L764,88 L900,88 L1000,86 L1000,300 L0,300 Z"/>
+          <path class="curve" d="M0,206 L60,206 L62,200 L90,200 L92,212 L160,212 L162,206 L240,206 L242,214 L300,214 L302,192 L330,192 L332,202 L420,202 L422,198 L500,198 L502,210 L560,210 L562,216 L620,216 L622,186 L650,186 L652,204 L700,204 L702,208 L736,208 L744,120 L748,24 L752,10 L758,60 L764,88 L900,88 L1000,86"/>
+          <text class="axis" x="4" y="12">1.6</text><text class="axis" x="4" y="87">1.4</text>
+          <text class="axis" x="4" y="162">1.2</text><text class="axis" x="4" y="237">1.0</text>
+          <text class="axis" x="4" y="296">0.8</text>
+          <text class="axis" x="6" y="292">2021-09</text><text class="axis" x="240" y="292">2022-12</text>
+          <text class="axis" x="470" y="292">2024-03</text><text class="axis" x="700" y="292">2025-06</text>
+          <text class="axis" x="930" y="292">2026-09</text>
+        </svg>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="badge" id="badge">
+  <span class="x" onclick="document.getElementById('badge').style.display='none'">✕</span>
+  <b>样板 C · 步骤流向导（宽松留白风）</b><br>
+  ① → ② → ③ 各自独占一屏（空间充裕、不挤结果），第 ④ 步结果独占全屏 ≈ 85%。点顶部任意步骤来回切。
+</div>
+
+<script>
+const steps = document.querySelectorAll('.step');
+function go(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on', v.dataset.view===id));
+  steps.forEach(s=>{
+    const on = s.dataset.go===id;
+    s.classList.toggle('on', on);
+    if(on) s.querySelector('.n').textContent = id==='s4' ? '4' : id.slice(1);
+  });
+  const idx = ['s1','s2','s3','s4'].indexOf(id);
+  steps.forEach((s,i)=>{
+    s.classList.toggle('done', i<idx);
+    if(i<idx) s.querySelector('.n').textContent = '✓';
+  });
+}
+document.querySelectorAll('[data-go]').forEach(el=>el.addEventListener('click', ()=>go(el.dataset.go)));
+document.getElementById('btnRun').onclick = ()=>go('s4');
+</script>
+</body>
+</html>
