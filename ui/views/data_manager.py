@@ -43,7 +43,7 @@ ZONE_LABELS = {
     "kline_daily": "日线行情",
     "kline_daily_raw": "日线行情 (不复权)",
     "index_daily": "大盘/行业指数",
-    "kline_min": "分钟行情 (预留)",
+    "kline_min": "分钟行情 (1/5/15/30/60 分)",
     "macro_eco": "宏观经济",
     "fin_report": "财务报表",
     "valuation": "每日估值",

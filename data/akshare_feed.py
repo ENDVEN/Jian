@@ -4,6 +4,8 @@ import pandas as pd
 import logging
 from datetime import datetime
 
+from core.utils import MINUTE_PERIODS, normalize_period
+
 # 系统内部统一的标准量价列名 (Canonical OHLCV Schema)
 OHLCV_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume']
 
@@ -15,6 +17,57 @@ KLINE_CN_RENAME = {
 
 # 东财接口超时上限 (秒)：作为兜底源时不允许无限期挂起
 EM_TIMEOUT_SECONDS = 15
+
+# ★v6.23：东财 `stock_zh_a_hist` 的「成交量」单位是**手**（1 手 = 100 股），新浪是**股**。
+# 【为什么必须统一】两个源混进同一个分区就会出现 100× 的量能台阶（实据：本机 300750 的
+#   历史 2018-07-20..2026-04-30 是"手"、2026-05-06 之后是"股"，量柱在接缝处突变 ×159 ——
+#   用户看到的就是"大面积显示错误"）。单位是两个接口的**已知事实**，不是猜。
+EM_VOLUME_UNIT = 100
+
+# OHLC 里必须存在的价格列（缺一即该行不可用）
+_PRICE_COLUMNS = ('open', 'high', 'low', 'close')
+
+
+def em_volume_to_shares(df: pd.DataFrame) -> pd.DataFrame:
+    """东财兜底源的「成交量」由**手**换算成**股**（`×EM_VOLUME_UNIT`），列名不变。
+
+    单独抽成纯函数（而不是塞在请求里）：① 便于断言"换算只做一次、列缺失时不崩"；
+    ② 让"单位统一"这件事在源码里有一个**唯一可搜索的落点**（§10-9 单一来源）。
+    """
+    if df is None or df.empty or '成交量' not in df.columns:
+        return df
+    out = df.copy()
+    out['成交量'] = pd.to_numeric(out['成交量'], errors='coerce') * EM_VOLUME_UNIT
+    return out
+
+
+def drop_unusable_price_rows(df: pd.DataFrame, label: str = "") -> pd.DataFrame:
+    """丢掉**价格不可用**的行（非正价 / 缺价），并**出声**记录（v6.23 物理护栏）。
+
+    【为什么要有它】实据：300750 的本地历史里出现过 `open=-4.03 / close=-0.68`（历史遗留
+    口径的产物）。一根负价会把主图 y 轴拽到负数区、**整张图被压扁** —— 用户描述为
+    "大面积显示错误"。这类行在任何口径下都无意义，所以入口处直接拦掉。
+
+    ⚠ **不静默**：丢弃行数写进 logger.warning，并把前几个日期打在日志里（§10-4）。
+    """
+    cols = [c for c in _PRICE_COLUMNS if c in df.columns]
+    if not cols:
+        return df
+    prices = df[cols]
+    bad = prices.isna().any(axis=1) | (prices <= 0).any(axis=1)
+    count = int(bad.sum())
+    if not count:
+        return df
+    stamp = ""
+    if "date" in df.columns:
+        try:
+            stamp = " 日期示例: " + ", ".join(
+                pd.to_datetime(df.loc[bad, "date"]).dt.strftime("%Y-%m-%d").head(5).tolist())
+        except Exception:  # noqa: BLE001 —— 仅日志，失败不影响主流程
+            stamp = ""
+    logging.warning(f"[数据护栏] {label or '未知标的'} 丢弃非正价/缺价行 {count} 行"
+                    f"（价格 ≤ 0 或缺失时该行无意义，绝不进数据湖）。{stamp}")
+    return df.loc[~bad]
 
 # ==========================================
 # 复权口径（v6.13 · P8 复权切换）
@@ -152,6 +205,8 @@ class AkShareFeed:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
         df['symbol'] = symbol_value
+        # ★v6.23 物理护栏：非正价 / 缺价的行一律不进数据湖（否则一根负价会把整张图压扁）
+        df = drop_unusable_price_rows(df, symbol_value)
         return df.reset_index(drop=True)
 
     @staticmethod
@@ -195,12 +250,19 @@ class AkShareFeed:
     @staticmethod
     def _fetch_a_share_via_em(symbol: str, start_date: str, end_date: str,
                               adjust: str = ADJUST_QFQ) -> pd.DataFrame:
-        """东财日线 (兜底源)：兼容北交所等新浪未覆盖的标的"""
+        """东财日线 (兜底源)：兼容北交所等新浪未覆盖的标的。
+
+        ★v6.23：出口处把「成交量」从**手**换算成**股**（见 `EM_VOLUME_UNIT`）——
+        否则同一分区里会同时存在两种单位，量能副图出现 100× 台阶。
+        """
         try:
             df = ak.stock_zh_a_hist(
                 symbol=symbol, period="daily", start_date=start_date,
                 end_date=end_date, adjust=adjust or "", timeout=EM_TIMEOUT_SECONDS,
             )
+            if df is not None and not df.empty and '成交量' in df.columns:
+                df = em_volume_to_shares(df)
+                logging.info(f"东财兜底源成交量已由「手」换算为「股」(×{EM_VOLUME_UNIT}) [{symbol}]")
             return df if df is not None else pd.DataFrame()
         except Exception as e:
             logging.warning(f"A股日线东财源失败 [{symbol}]: {e}")
@@ -258,6 +320,52 @@ class AkShareFeed:
             return AkShareFeed.fetch_a_share_daily(symbol, start_date=start_date,
                                                    end_date=end_date, adjust=adjust)
         return AkShareFeed.fetch_futures_daily(symbol)
+
+    # ==========================================
+    # 分钟线 (v6.21 · §7-B6 STEP 3 / §7 D3)
+    # ==========================================
+    # 【立项前实测结论 · 2026-09-16 探针（临时脚本，跑完即删）】
+    #   ① 新浪 `stock_zh_a_minute` 可用，**固定回吐最近 1970 根**（实测 600519）：
+    #        1m ≈ 9 个交易日 / 5m ≈ 42 / 15m ≈ 124 / 30m ≈ 247 / 60m ≈ 493
+    #      ⇒ 各档位**历史深度不同**，所以分钟档位**各自独立取数、绝不本地聚合**
+    #        （把 1m 聚合成 5m 只会把历史从 42 天缩到 9 天）。
+    #   ② 东财 `stock_zh_a_hist_min_em` 在本机被代理拦截（ProxyError）⇒ **不接入**：
+    #        未验证的降级路径等于埋雷 —— 与 §9-H 同源纪律一致（宁可少一条路，
+    #        也不要一条从没跑通的路）。
+    #   ③ `adjust` 参数**实测不生效**（前复权 vs 不复权逐根比对 1970 根差异 = 0）
+    #      ⇒ 分钟**只有一种口径 = 真实成交价（不含复权）**。UI 必须明说这一点，
+    #        绝不能把它伪装成"前复权的分钟线"（§5.3 口径唯一直说）。
+    MINUTE_FETCH_LIMIT = 1970
+
+    @staticmethod
+    def fetch_a_share_minute(symbol: str, period: str = "5m") -> pd.DataFrame:
+        """拉取 A 股分钟线（新浪源 · **不复权口径**，见本节头实测结论）。
+
+        :param period: 分钟档位 `1m/5m/15m/30m/60m`（用 `core.utils.normalize_period` 归一）
+        :return: 标准列 `date/open/high/low/close/volume`（`date` 含时分秒）；失败/非股票返回空表
+        """
+        period_key = normalize_period(period)
+        if period_key not in MINUTE_PERIODS:
+            logging.warning(f"非分钟周期被拒绝: {period}")
+            return pd.DataFrame()
+        sina_symbol = AkShareFeed._to_sina_stock_symbol(symbol)
+        if not sina_symbol:
+            logging.warning(f"分钟线仅支持 A 股代码（无法识别的市场）: {symbol}")
+            return pd.DataFrame()
+        try:
+            # 新浪的 period 参数是**纯数字**（"5"），且只认 adjust 语义之外的原始价
+            df = ak.stock_zh_a_minute(symbol=sina_symbol, period=period_key[:-1], adjust="")
+        except Exception as e:  # noqa: BLE001 —— 网络异常绝不外泄到 UI
+            logging.warning(f"A股分钟线拉取失败 [{symbol} {period_key}]: {e}")
+            return pd.DataFrame()
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        out = AkShareFeed._normalize_ohlcv(df, {"day": "date"}, symbol)
+        # 新浪返回的 volume/amount 是字符串，`_normalize_ohlcv` 已按 OHLCV_COLUMNS 转数值；
+        # 这里只保留标准六列 + 口算不清的冗余列一律丢掉（分钟表越小越好）。
+        keep = [c for c in OHLCV_COLUMNS if c in out.columns]
+        return out[keep].tail(AkShareFeed.MINUTE_FETCH_LIMIT).reset_index(drop=True)
 
     # ==========================================
     # 指数成分股 (批量预下载用)

@@ -323,21 +323,70 @@ def align_by_date(values: dict[str, pd.Series], anchor_dates,
 
 
 # ==========================================
-# 周期重采样 (v6.12 · §7-B3 P8 行情工作台)
+# 周期重采样 (v6.12 · §7-B3 P8 行情工作台；v6.21 加分钟档位 = §7 D3)
 # ==========================================
-# 周期取值：D=日线(原样) / W=周线 / M=月线
-PERIOD_LABELS = {"D": "日线", "W": "周线", "M": "月线"}
-PERIOD_ORDER = ("D", "W", "M")
+# 周期取值：D=日线(原样) / W=周线 / M=月线 / **分钟档位 1m·5m·15m·30m·60m**
+# 【两类周期的本质区别（务必分清）】
+#   · 周/月 = **由日线就地聚合**（历史不缩水，因为日线本身有 2010 起全历史）；
+#   · 分钟 = **各档位独立取数、绝不本地聚合** —— 实测（2026-09-16 探针）新浪分钟源
+#     固定回吐最近 **1970 根**，所以 1m≈9 个交易日 / 5m≈42 / 15m≈124 / 30m≈247 / 60m≈493，
+#     "把 1m 聚合成 5m"只会把历史从 42 天缩到 9 天（这正是 §7-B5-F2 说的"历史深度差异"）。
+PERIOD_LABELS = {"D": "日线", "W": "周线", "M": "月线",
+                 "1m": "1分钟", "5m": "5分钟", "15m": "15分钟",
+                 "30m": "30分钟", "60m": "60分钟"}
+MINUTE_PERIODS = ("1m", "5m", "15m", "30m", "60m")
+PERIOD_ORDER = ("D", "W", "M") + MINUTE_PERIODS
+# 各分钟档位"大约能回溯多少个交易日"（实测值，只用于给用户的诚实提示，不参与计算）
+MINUTE_DEPTH_DAYS = {"1m": 9, "5m": 42, "15m": 124, "30m": 247, "60m": 493}
+_MINUTE_ALIASES = {"1": "1m", "5": "5m", "15": "15m", "30": "30m", "60": "60m"}
+
+
+def _minute_key_from_text(text: str) -> str:
+    """从 '5m' / 'M5' / '5min' / '5分钟' 里认出分钟档位；认不出返回空串。
+
+    ⚠ 必须带"分/m"标志才算分钟：裸 `M` 是**月线**（历史口径，不能改），
+    裸数字则由 `normalize_period` 的 int 分支处理。
+    """
+    digits = "".join(ch for ch in str(text) if ch.isdigit())
+    if digits not in _MINUTE_ALIASES:
+        return ""
+    lowered = str(text).lower()
+    return _MINUTE_ALIASES[digits] if any(f in lowered for f in ("m", "min", "分")) else ""
 
 
 def normalize_period(value) -> str:
-    """任意写法归一成 D/W/M（未知回落 D）。"""
-    text = str(value or "D").strip().upper()
-    if text.startswith("W") or text in ("WEEK", "周", "周线"):
+    """任意写法归一成周期键（未知回落 D）。
+
+    支持：`D/W/M` + 分钟档位 `1m/5m/15m/30m/60m`（也接受 `M5`/`5min`/`5分钟`/整数 `5`）。
+    """
+    if value is None or isinstance(value, bool):
+        return "D"
+    if isinstance(value, (int, float)):
+        return _MINUTE_ALIASES.get(str(int(value)), "D")
+    text = str(value).strip()
+    if not text:
+        return "D"
+    if text.upper() in PERIOD_LABELS:
+        return text.upper()
+    minute = _minute_key_from_text(text)
+    if minute:
+        return minute
+    upper = text.upper()
+    if upper.startswith("W") or upper in ("WEEK", "周", "周线"):
         return "W"
-    if text.startswith("M") or text in ("MONTH", "月", "月线"):
+    if upper.startswith("M") or upper in ("MONTH", "月", "月线"):
         return "M"
     return "D"
+
+
+def is_minute_period(value) -> bool:
+    """是否分钟档位（**独立取数**，不是本地聚合出来的）。"""
+    return normalize_period(value) in MINUTE_PERIODS
+
+
+def is_aggregate_period(value) -> bool:
+    """是否"由日线就地聚合"出来的周期（周/月）。"""
+    return normalize_period(value) in ("W", "M")
 
 
 def period_label(value) -> str:
@@ -347,21 +396,25 @@ def period_label(value) -> str:
 def resample_ohlcv(df: pd.DataFrame, period: str = "D") -> pd.DataFrame:
     """把**日线**重采样成周线 / 月线（纯本地计算，不碰网络）。
 
-    【为什么要它】行情页要能像通达信那样切周期；数据湖只存日线
-    （`kline_min` 分钟级属 §7 D3 远期），所以周/月**就地聚合**即可，
-    下游（K 线 / 指标 / 公式 / 标注）完全不知道数据被重采样过 —— 列名与日线一致。
+    【为什么要它】行情页要能像通达信那样切周期；数据湖只存日线，
+    所以周/月**就地聚合**即可，下游（K 线 / 指标 / 公式 / 标注）完全不知道数据被重采样过
+    —— 列名与日线一致。
+
+    ⚠ **分钟档位不归它管**（v6.21 起）：分钟是**各档位独立取数**的（见 `MINUTE_PERIODS`
+    处的实测说明），传进来一律**原样返回**。若在这里把 1m 聚合成 5m，历史会被
+    "1970 根 ÷ 5" 直接砍到 1/5（1m 只有 9 个交易日），属于静默缩水 —— 与 §9-M3 同性质的红线。
 
     【聚合口径】open=区间首、high=区间最大、low=区间最小、close=区间末、volume=区间和；
     其余列取区间首值（保留原始列不丢）。**date 取该区间内最后一个真实交易日**
     （不是 resample 给的周期标签 —— 否则周线会显示成周日、月线显示成月末，
     与"这根 K 线最后成交于哪天"的事实不符）。
 
-    :param period: D/W/M（见 `normalize_period`；D 时原样返回副本）
+    :param period: D/W/M/分钟档位（见 `normalize_period`；D 与分钟档位一律原样返回副本）
     """
     if df is None or len(df) == 0:
         return pd.DataFrame() if df is None else df.copy()
     period = normalize_period(period)
-    if period == "D" or "date" not in df.columns:
+    if period == "D" or is_minute_period(period) or "date" not in df.columns:
         return df.copy()
 
     work = df.copy()

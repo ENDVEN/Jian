@@ -16,6 +16,14 @@ import sys
 import tempfile
 import time
 
+# 【§11.7】Windows 控制台默认 GBK：带 ⇒ 这类符号的 print 会抛 UnicodeEncodeError，
+# 表现为"某个分节整段被跳过 + 假报若干失败"（1.23 修）。统一按 UTF-8 输出。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 —— 被重定向的流不支持 reconfigure 就跳过
+        pass
+
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 # 本文件在 tests/ 子目录里，**仓库根 = 本文件的父目录**（由 `__file__` 反推，§10-13）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -89,6 +97,21 @@ class _NoopUpdateChecker:
 
 
 _mw_module.UpdateCheckerThread = _NoopUpdateChecker
+
+# ==========================================
+# 打桩 ③：用户偏好**一律不落盘**（1.23 · STEP 3c 真踩到的坑）
+#   行情工作台会记住"上次用什么"（`desk_ui`），回测页会记 `backtest_ui`；
+#   测试里点一下开关就会触发保存 ⇒ 跑一次冒烟就把用户真实 `preferences.json` 写脏。
+#   做法是**两层保险**：
+#     ① 单例的 `path` 重定向到临时目录 —— 无论哪条代码路径保存，都写不到用户文件；
+#     ② `Preferences.save` 再打一层桩（内存写入）。断言照常读内存值。
+#   收尾自检里仍保留 `preferences.json`，防止以后有人绕过这层。
+# ==========================================
+from core import preferences as _pref_module  # noqa: E402
+
+_pref_module.preferences.path = os.path.join(
+    tempfile.mkdtemp(prefix="_tmp_pref_"), "preferences.json")
+_pref_module.Preferences.save = lambda self: True
 
 from core.formula.program import parse_program, execute_programs_with_draws  # noqa: E402
 from ui.main_window import JianMainWindow  # noqa: E402
@@ -376,12 +399,12 @@ check("初始无标注、删除按钮禁用",
       mkt._annotations.count() == 0 and not mkt.btn_delete_annotation.isEnabled())
 
 # —— 三类标注逐个新建（等价用户：选类型 → 点「➕ 添加标注」）——
-mkt.cmb_tool.setCurrentIndex(1)
+mkt.select_tool('trend')
 check("工具切换 → 面板回执显示当前工具", "趋势线" in mkt.lbl_annotation_status.text())
 trend = mkt._annotations.create_default()
-mkt.cmb_tool.setCurrentIndex(2)
+mkt.select_tool('hline')
 hline = mkt._annotations.create_default()
-mkt.cmb_tool.setCurrentIndex(3)
+mkt.select_tool('vline')
 vline = mkt._annotations.create_default()
 check("三类标注全部落库", store.count('sh600000') == 3
       and all(x is not None for x in (trend, hline, vline)))
@@ -581,7 +604,7 @@ daily_bars = mkt._layer_bars
 check("日线基线：渲染根数 = 原始日线根数", daily_bars == len(df))
 check("标注层周期键 = D", mkt._annotations._period == 'D')
 
-mkt.cb_period.setCurrentIndex(1)          # 周线
+mkt.select_period_group("W")              # 周线（★STEP 3b：分段控件与测试同一入口）
 weekly_bars = len(resample_ohlcv(df, 'W'))
 check("切周线：渲染根数 = 聚合后的周线根数", mkt.current_period == 'W'
       and mkt._layer_bars == weekly_bars < daily_bars)
@@ -589,21 +612,22 @@ check("标题注明周期与根数", '周线' in mkt.main_plot.titleLabel.text
       and str(weekly_bars) in mkt.main_plot.titleLabel.text)
 check("标注层周期跟着切（日线的画线不串到周线）", mkt._annotations._period == 'W')
 
-mkt.cmb_tool.setCurrentIndex(1 + DRAWABLE_KINDS.index('trend'))
+mkt.select_tool('trend')
 mkt._annotations.create_default()
 check("标注按 (标的, 周期) 隔离：只在 weekly 有一条第 daily 为 0",
       p8_store.count('sh600000', 'weekly') == 1 and p8_store.count('sh600000', 'daily') == 0)
 
-mkt.cb_period.setCurrentIndex(2)          # 月线
+mkt.select_period_group("M")              # 月线
 check("切月线：根数 = 月线聚合根数且标注按 monthly 取",
       mkt.current_period == 'M' and mkt._layer_bars == len(resample_ohlcv(df, 'M'))
       and mkt._annotations._period == 'M' and mkt._annotations.count() == 0)
 
 # ---- 新画线类型：斐波那契 / 文字 ----
-check("工具下拉 = 浏览 + 交互层声明的全部可画类型（两处同源）",
-      mkt.cmb_tool.count() == 1 + len(DRAWABLE_KINDS))
+check("画线工具 = 浏览 + 交互层声明的全部可画类型（两处同源；★STEP 4 起是分段控件）",
+      mkt.seg_tool.count() == 1 + len(DRAWABLE_KINDS)
+      and mkt.seg_tool.current_key() == 'trend')
 
-mkt.cmb_tool.setCurrentIndex(1 + DRAWABLE_KINDS.index(KIND_FIB))
+mkt.select_tool(KIND_FIB)
 fib_item = mkt._annotations.create_default()
 check("斐波那契：主图元 + 7 档水平位 + 7 标签",
       fib_item is not None and len(mkt._annotations._extras[fib_item['id']]) == 14
@@ -615,13 +639,13 @@ check("删除斐波那契：附属水平位一并消失（不留无主图元）"
       len(mkt.host.main_pane.annotation_items) == 0 and p8_store.count('sh600000', 'monthly') == 0)
 
 ANSWERS.append("这里是压力位")              # 文字标注要填内容 → 交给打桩的输入框
-mkt.cmb_tool.setCurrentIndex(1 + DRAWABLE_KINDS.index(KIND_TEXT))
+mkt.select_tool(KIND_TEXT)
 mkt.add_annotation()
 check("文字标注：经页面入口创建并落库",
       mkt._annotations.count() == 1 and len(mkt.host.main_pane.annotation_items) == 1)
 
 before_modals = len(MODALS)
-mkt.cmb_tool.setCurrentIndex(0)            # 回到浏览模式：不应再新建
+mkt.select_tool("")                        # 回到浏览模式：不应再新建
 mkt.add_annotation()
 check("浏览模式下点「添加」不会新建（改为提示用户先选类型）",
       mkt._annotations.count() == 1
@@ -632,12 +656,12 @@ mkt._annotations.clear_all()
 from data.sync_service import ADJUST_NONE, ADJUST_QFQ, zone_for_adjust  # noqa: E402
 
 check("默认前复权（与全 app 历史行为一致）",
-      mkt.current_adjust == ADJUST_QFQ and mkt.cb_adjust.currentData() == ADJUST_QFQ
+      mkt.current_adjust == ADJUST_QFQ and mkt.seg_adjust.current_key() == ADJUST_QFQ
       and zone_for_adjust(mkt.current_adjust) == 'kline_daily')
 
 adjust_syncs = []
 mkt.sync_cloud = lambda: adjust_syncs.append(zone_for_adjust(mkt.current_adjust))
-mkt.cb_adjust.setCurrentIndex(1)             # → 不复权
+mkt.select_adjust(ADJUST_NONE)               # → 不复权
 check("切到不复权：口径与目标分区都换了",
       mkt.current_adjust == ADJUST_NONE
       and zone_for_adjust(mkt.current_adjust) == 'kline_daily_raw')
@@ -652,7 +676,7 @@ check("不复权明确提示两个已知差异（除权跳空 / 画线不共用�
 check("tooltip 点名了对应分区（便于用户去数据管理页核对）",
       'kline_daily_raw' in mkt.lbl_adjust_hint.toolTip())
 
-mkt.cb_adjust.setCurrentIndex(0)             # 切回前复权
+mkt.select_adjust(ADJUST_QFQ)                # 切回前复权
 check("切回前复权：回到前复权分区（两份来回切不会互相覆盖）",
       mkt.current_adjust == ADJUST_QFQ and adjust_syncs[-1] == 'kline_daily')
 
@@ -660,7 +684,7 @@ print("== v6.15 · 坐标轴自适应（§7-B4）：页面级 ==")
 from ui.widgets.adaptive_axis import handle_for  # noqa: E402
 
 # ---- 行情工作台：主图 + 量/MACD 副图逐格自适应 ----
-mkt.cb_period.setCurrentIndex(0)           # 回到日线（前面测过周/月）
+mkt.select_period_group("D")               # 回到日线（前面测过周/月）
 mkt.cb_vol.setChecked(True)
 mkt.cb_macd.setChecked(True)
 mkt.current_df = df                        # 200 根合成日线（前面被前置过 5 根，这里复位）
@@ -839,13 +863,448 @@ from PyQt6.QtGui import QImage  # noqa: E402
 check("报告图尺寸仍是 1120×660",
       QImage(_png).width() == 1120 and QImage(_png).height() == 660)
 
+print("\n== §7-B6 STEP 3b · 顶栏第 2 行：分段控件（周期含分钟 / 复权）+ 口径回执 ==")
+# 本节只验"控件与状态"，**不联网**：分钟取数路径用 monkeypatch 的 sync_cloud 观察。
+from core.utils import MINUTE_DEPTH_DAYS, MINUTE_PERIODS, is_minute_period  # noqa: E402
+from data.sync_service import ZONE_MIN, minute_key  # noqa: E402
+from ui.views.trading_desk import DESK_UI_KEY  # noqa: E402
+
+check("顶栏第 2 行的三个分段控件齐备（周期 / 分钟档位 / 复权）",
+      all(hasattr(mkt, name) for name in ("seg_period", "seg_minute", "seg_adjust")))
+check("周期分段 = 日/周/月/分钟 四档（一级）",
+      mkt.seg_period.count() == 4 and mkt.seg_period.labels() == ["日", "周", "月", "分钟"])
+check("分钟档位分段 = 1/5/15/30/60 五档（二级，只在选「分钟」时出现）",
+      mkt.seg_minute.count() == 5 and mkt.seg_minute.labels() == ["1", "5", "15", "30", "60"])
+
+# ---- 日线态：二级控件隐藏、复权可用 ----
+mkt.select_period_group("D")
+check("日线态：分钟档位与深度提示都隐藏（参数只在有意义的档位出现，§10-10）",
+      not mkt.seg_minute.isVisibleTo(mkt) and not mkt.lbl_minute_depth.isVisibleTo(mkt))
+check("日线态：复权分段可用、无口径警告",
+      mkt.seg_adjust.isEnabled() and mkt.lbl_caliber_note.text() == "")
+
+# ---- 切分钟：kline_min 分区 + 按档位分键 + 复权禁用 + 深度诚实提示 ----
+minute_syncs = []
+mkt.sync_cloud = lambda: minute_syncs.append(mkt._data_zone_and_key())
+mkt.select_period_group("MIN")
+check("切分钟：生效周期 = 上次用过的分钟档位（一级档位停在「分钟」）",
+      mkt._period_group == "MIN" and mkt.current_period == mkt.current_minute)
+check("切分钟：二级档位与深度提示出现；复权**禁用**并说明只有真实价一种口径",
+      mkt.seg_minute.isVisibleTo(mkt) and mkt.lbl_minute_depth.isVisibleTo(mkt)
+      and not mkt.seg_adjust.isEnabled() and "不含复权" in mkt.lbl_caliber_note.text())
+check("切分钟：取数走 kline_min 分区 + **按档位分键**（不是一个键装所有档位）",
+      bool(minute_syncs) and minute_syncs[-1] == (ZONE_MIN, minute_key('sh600000', mkt.current_minute)))
+check("深度提示用的是**实测值**（1m 与 60m 不同，不是拍脑袋的固定文案）",
+      str(MINUTE_DEPTH_DAYS[mkt.current_minute]) in mkt.lbl_minute_depth.text()
+      and MINUTE_DEPTH_DAYS["1m"] != MINUTE_DEPTH_DAYS["60m"])
+check("口径回执写清「分钟只有真实价」+ 可回溯天数",
+      "真实成交价" in mkt.lbl_adjust_hint.text() and "交易日" in mkt.lbl_adjust_hint.text())
+
+_saved_prefs = {}
+mkt._save_desk_ui = lambda **kw: (mkt._desk_ui.update(kw), _saved_prefs.update(kw))
+mkt.select_minute("60m")
+check("换分钟档位：current_period 与偏好一起更新（记住上次）",
+      mkt.current_period == "60m" and _saved_prefs.get("minute_period") == "60m")
+check("偏好键与 `backtest_ui` 同源做法（不新增存储文件）", DESK_UI_KEY == "desk_ui")
+check("换档位后深度提示跟着换（60m 比 5m 深得多）",
+      str(MINUTE_DEPTH_DAYS["60m"]) in mkt.lbl_minute_depth.text())
+
+# ---- 从分钟切回日线：必须重新取日线数据（绝不能拿分钟数据配日线标题）----
+mkt.current_df = pd.DataFrame({
+    "date": pd.date_range("2026-09-16 09:35", periods=6, freq="5min"),
+    "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100})
+reloads = []
+mkt.sync_cloud = lambda: reloads.append(mkt._data_zone_and_key())
+mkt.select_period_group("D")
+check("⚠ 分钟 → 日线：**重新取日线数据**（数据源变了就必须换，不是重算）",
+      bool(reloads) and reloads[-1][0] == 'kline_daily')
+check("切回日线：复权恢复可用、二级控件收回、口径警告消失",
+      mkt.seg_adjust.isEnabled() and not mkt.seg_minute.isVisibleTo(mkt)
+      and mkt.lbl_caliber_note.text() == "")
+
+# ---- 日 ↔ 周/月 是**同源**：只重渲染，不该重新取数（否则每次切周期都联网）----
+mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
+mkt.current_df = df.copy()
+mkt.render_charts()
+no_fetch = []
+mkt.sync_cloud = lambda: no_fetch.append(1)
+mkt.select_period_group("W")
+mkt.select_period_group("D")
+check("日 ↔ 周/月 切换**不触发取数**（同源就地聚合，§7-B6-C）",
+      no_fetch == [] and mkt.current_period == "D")
+
+print("\n== §7-B6 STEP 3c · 工具行 chips（最近使用优先 / 单一状态源 / 满池在「＋ 更多」）==")
+from ui.widgets.chip_mru import CHIP_LIMIT, CHIP_POOLS, chip_label  # noqa: E402
+
+mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
+mkt.current_df = df.copy()
+mkt.cb_ma.setChecked(True)
+mkt.cb_boll.setChecked(False)
+mkt.cb_vol.setChecked(True)
+mkt.cb_macd.setChecked(True)
+mkt.cb_formula.setChecked(True)
+mkt.render_charts()
+
+check("工具行 chips 每组 ≤ 3 个（溢出交给「＋ 更多」，配置不会完全不可见）",
+      len(mkt.chips_for("main")) <= CHIP_LIMIT and len(mkt.chips_for("sub")) <= CHIP_LIMIT
+      and bool(mkt.chips_for("main")))
+
+_saved_chips = {}
+mkt._save_desk_ui = lambda **kw: (mkt._desk_ui.update(kw), _saved_chips.update(kw))
+mkt.toggle_chip("boll")
+check("点 chip = 改**真源复选框**（chip 只是投影，不是第二套状态）",
+      mkt.cb_boll.isChecked() and "boll" in mkt.chips_for("main"))
+check("刚用过的项排到最前（最近使用优先）", mkt.chips_for("main")[0] == "boll")
+check("最近使用历史落偏好（下次打开还记得）",
+      _saved_chips.get("main_chips", [])[:1] == ["boll"])
+
+mkt.toggle_chip("boll")
+check("取消勾选：复选框关掉，但 chips 里**留位变灰**（否则关掉就再也点不回来）",
+      not mkt.cb_boll.isChecked() and "boll" in mkt.chips_for("main"))
+
+mkt.cb_macd.setChecked(False)
+check("反向投影：从左栏复选框关闭 → chips 同样变灰（两个方向同一份状态）",
+      "macd" in mkt.chips_for("sub"))
+mkt.cb_macd.setChecked(True)
+
+mkt.cb_boll.setChecked(True)
+check("已启用项一定出现在 chips 里（不会『开了却看不到』）",
+      "boll" in mkt.chips_for("main") and len(mkt.chips_for("main")) <= CHIP_LIMIT)
+
+check("「＋ 更多」菜单列出**完整候选池**（去掉已显示的）",
+      {a.text() for a in mkt._main_more_menu.actions() if a.isCheckable()}
+      == {chip_label(k) for k in set(CHIP_POOLS["main"]) - set(mkt.chips_for("main"))})
+
+# ---- 公式副图 chip：控制**这一格的显示**（不删用户的函数段）----
+mkt._formula_segments = [("DIFF: EMA(C,5) - EMA(C,20);", 'sub1')]
+mkt._compile_formula()
+mkt.render_charts()
+check("公式段指向副图 1 ⇒ 该 chip 进候选且窗格可见",
+      "sub1" in mkt.chips_for("sub") and "sub1" in mkt.host.pane_names)
+mkt.toggle_chip("sub1")
+check("关掉「公式副图 1」⇒ 只隐藏这一格，函数段本体还在（关的是显示，不是函数）",
+      "sub1" not in mkt.host.pane_names and bool(mkt._formula_segments))
+mkt.toggle_chip("sub1")
+check("再打开 ⇒ 窗格回来（可逆）", "sub1" in mkt.host.pane_names)
+mkt._formula_segments = []
+mkt._compile_formula()
+mkt.render_charts()
+
+print("\n== §7-B6 STEP 5 · 读数条接线（业务读数由页面给）+ 三处回执一行化 ==")
+mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
+mkt.current_df = df.copy()
+mkt.cb_ma.setChecked(True)
+mkt.render_charts()
+_rdf = mkt._rendered_df
+_row = _rdf.iloc[-1]
+_text = mkt.host.readout_text
+
+check("读数条常驻（不悬停也有东西看）且 = 最新一根",
+      mkt.host._readout.isVisibleTo(mkt.host) and bool(_text))
+check("读数各字段与**本次渲染的那一份 df** 逐字段一致（不造假）",
+      _row['date'].strftime('%Y-%m-%d') in _text
+      and f"开 {_row['open']:.2f}" in _text and f"高 {_row['high']:.2f}" in _text
+      and f"低 {_row['low']:.2f}" in _text and f"收 {_row['close']:.2f}" in _text
+      and f"量 {_row['volume']:,.0f}" in _text)
+check("开了均线 ⇒ 读数带 MA5 / MA20（列名与 TAEngine.add_ma 同源）",
+      "MA5" in _text and "MA20" in _text and f"{_row['MA_5']:.2f}" in _text)
+_hover = mkt._readout_for_pane('main', 10, 100.0)
+check("悬停第 11 根 ⇒ 读数换成这一根（provider 真按 x 取行）",
+      f"收 {_rdf.iloc[10]['close']:.2f}" in _hover and _hover != _text)
+check("副图不抢读数条（各窗格 y 含义不同 ⇒ 交回宿主内置文案）；越界也不崩",
+      mkt._readout_for_pane('macd', 10, 1.0) == ""
+      and mkt._readout_for_pane('main', 99999, 1.0) == ""
+      and mkt._readout_for_pane('main', -5, 1.0) == "")
+_period_backup = mkt.current_period
+mkt.current_period = "5m"
+check("分钟周期 ⇒ 读数时间戳到分钟（不是只给日期）",
+      mkt._readout_stamp_fmt() == '%Y-%m-%d %H:%M')
+mkt.current_period = _period_backup
+
+check("复权回执已是一行摘要（不再用 \\n 折行；完整说法在 tooltip）",
+      "\n" not in mkt.lbl_adjust_hint.text()
+      and "根" in mkt.lbl_adjust_hint.text()
+      and "\n" in mkt.lbl_adjust_hint.toolTip())
+check("标注回执已是一行摘要（操作说明挪进 tooltip）",
+      "\n" not in mkt.lbl_annotation_status.text()
+      and "松手自动保存" in mkt.lbl_annotation_status.toolTip())
+check("公式回执已是一行摘要（多行会被 · 串联，不靠换行折行）",
+      "\n" not in mkt.lbl_formula_status.text())
+
+# ---- ★v6.23：回执行的"差异定位"与"数据体检"（用户 2026-09-17 实测反馈驱动）----
+#   为什么要有这两段：① 前复权的差异**只在除权日之前**，用户看最近一段会以为"开关坏了"；
+#   ② 本地曾出现过"兜底源数据（成交量=手 / 负价）混入" ⇒ 图上量能 100× 台阶 + y 轴被压扁。
+from data.sync_service import ADJUST_QFQ, ZONE_KLINE, ZONE_KLINE_RAW  # noqa: E402
+
+_REAL_LAKE = mkt.data_lake
+_DAYS = pd.bdate_range('2024-01-01', periods=80)
+# 构造一次除权：不复权 10 元 → 8 元；前复权把除权日**之前**的价格改成 8 元（连续）
+_RAW_CLOSE = np.concatenate([np.full(40, 10.0), np.full(40, 8.0)])
+_QFQ_CLOSE = np.full(80, 8.0)
+
+
+class _LakeStub:
+    def load_data(self, zone, key):
+        if zone == ZONE_KLINE:
+            return pd.DataFrame({'date': _DAYS, 'close': _QFQ_CLOSE})
+        return pd.DataFrame({'date': _DAYS, 'close': _RAW_CLOSE})
+
+    def exists(self, zone, key):
+        return True
+
+
+mkt.data_lake = _LakeStub()
+mkt.current_symbol = 'sh600000'
+mkt.current_adjust = ADJUST_QFQ
+mkt._data._diff_cache.clear()
+mkt._data._health_cache.clear()
+mkt._refresh_adjust_hint()
+_diff_text = mkt.lbl_adjust_hint.text()
+check(f"回执点名「最近一次除权跳空」在哪天、多大（{_diff_text}）",
+      '除权跳空最近一次' in _diff_text and '-20.0%' in _diff_text)
+check("tooltip 讲清「为什么切了口径看着一样」（差异只在除权日之前）",
+      '只把**除权日之前**的历史价格往回改' in mkt.lbl_adjust_hint.toolTip())
+mkt._data._diff_cache.clear()
+mkt.data_lake = _REAL_LAKE
+
+# ---- 数据体检：两类"物理上不可能"的行都要被写进回执（不静默）----
+_SEAM_VOL = np.concatenate([np.full(40, 1e6), np.full(40, 1e8)])
+_seam_df = pd.DataFrame({
+    'date': _DAYS, 'open': np.full(80, 8.0), 'high': np.full(80, 8.2),
+    'low': np.full(80, 7.8), 'close': np.full(80, 8.0), 'volume': _SEAM_VOL})
+mkt.current_df = _seam_df
+mkt._data._health_cache.clear()
+mkt._refresh_adjust_hint()
+_seam_text = mkt.lbl_adjust_hint.text()
+check(f"体检：成交量量纲接缝（×100）被抓出并指向修复入口（{_seam_text}）",
+      '量能接缝' in _seam_text and '重新全量下载' in _seam_text)
+check("体检提示与口径摘要**同一行**（不靠换行折行，窄面板也读得到）",
+      "\n" not in _seam_text)
+_neg_df = _seam_df.copy()
+_neg_df.loc[0, 'close'] = -0.68
+mkt.current_df = _neg_df
+mkt._data._health_cache.clear()
+mkt._refresh_adjust_hint()
+check("体检：非正价行被抓出（一根负价就会把整张图压扁）",
+      '非正价 1 根' in mkt.lbl_adjust_hint.text())
+mkt.current_df = df.copy()
+mkt._data._health_cache.clear()
+mkt._refresh_adjust_hint()
+check("干净数据不给假警报", '疑似数据异常' not in mkt.lbl_adjust_hint.text())
+mkt.render_charts()
+
+print("\n== §7-B6 STEP 4 · 左栏：图标轨 + 分页面板 + 折起（控件搬家不重建）==")
+from ui.views.trading_desk import RAIL_ITEMS  # noqa: E402
+
+check("图标轨 5 项、面板 5 页，键一一对应",
+      mkt.rail.keys() == [key for key, _icon, _title in RAIL_ITEMS] == mkt.desk_panel.keys())
+
+# ---- 搬家不重建：控件仍挂在**正确的页**上（父级链能追到该页容器）----
+_MOVED = [("lst_watch", "watch"), ("btn_watch_add", "watch"), ("btn_watch_up", "watch"),
+          ("btn_edit_formula", "formula"), ("lbl_formula_status", "formula"),
+          ("cb_ma", "layer"), ("cb_boll", "layer"), ("cb_formula", "layer"),
+          ("cb_vol", "layer"), ("cb_macd", "layer"),
+          ("seg_tool", "anno"), ("btn_add_annotation", "anno"),
+          ("btn_delete_annotation", "anno"), ("btn_clear_lines", "anno"),
+          ("lbl_annotation_status", "anno"), ("lbl_adjust_hint", "data")]
+
+
+def _in_page(widget, page):
+    body = mkt.desk_panel.body(page)
+    node = widget
+    while node is not None:
+        if node is body:
+            return True
+        node = node.parentWidget()
+    return False
+
+
+_missing = [name for name, page in _MOVED
+            if not hasattr(mkt, name) or not _in_page(getattr(mkt, name), page)]
+check(f"搬家后控件都挂在正确的页上（{len(_MOVED)} 项 · 异常：{_missing or '无'}）", not _missing)
+
+# ---- 信号没断（搬家最容易的翻车点：连了但对象换了/丢了）----
+mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
+mkt.current_df = df.copy()
+mkt.cb_ma.setChecked(True)
+mkt.cb_boll.setChecked(True)
+check(f"搬家后信号仍活着：均线 3 + 布林 2（上/下轨，中轨由 MA20 承担）⇒ 图层 5 条"
+      f"（MA={mkt.cb_ma.isChecked()} BOLL={mkt.cb_boll.isChecked()}"
+      f" 实际={len(mkt._layer_builtin)} 周期={mkt.current_period}）",
+      len(mkt._layer_builtin) == 5)
+mkt.cb_boll.setChecked(False)
+
+# ---- 切页 = 只切可见性（§11.5-25 的 isVisibleTo 口径）----
+mkt.show_rail_page("formula")
+check("切到公式页：本页控件可见、自选页控件不可见（但对象都还在）",
+      mkt.desk_panel.current_page() == "formula"
+      and mkt.btn_edit_formula.isVisibleTo(mkt.desk_panel)
+      and not mkt.lst_watch.isVisibleTo(mkt.desk_panel))
+mkt.show_rail_page("watch")
+check("切回自选页：可见性反转", mkt.desk_panel.current_page() == "watch"
+      and mkt.lst_watch.isVisibleTo(mkt.desk_panel)
+      and not mkt.btn_edit_formula.isVisibleTo(mkt.desk_panel))
+
+# ---- 折起：面板收起、图标轨常驻（否则折起后就切不了页）----
+mkt.set_panel_collapsed(True)
+check("折起：面板隐藏，但图标轨仍在（还能切页）",
+      mkt.is_panel_collapsed() and mkt.desk_panel.isHidden() and not mkt.rail.isHidden())
+mkt.rail.button("anno").click()
+check("折起状态下点图标 = 先展开、再切到该页（活动栏手感）",
+      not mkt.is_panel_collapsed() and mkt.desk_panel.current_page() == "anno")
+
+win.resize(1440, 900)
+win.show()                       # 离屏平台也支持 show；不给它看，布局就不会分配真实宽度
+app.processEvents()
+_width_before = mkt.host.width()
+mkt.set_panel_collapsed(True)
+app.processEvents()
+_width_after = mkt.host.width()
+check(f"折起后图表拿到更多宽度（{_width_before} → {_width_after}）",
+      mkt.desk_panel.isHidden() and (_width_before == 0 or _width_after > _width_before + 200))
+
+# ---- ★v6.22 离屏实测补修：富余宽度归**图表**，折起要把宽度**还干净** ----
+#   修前实测（1911px 窗口）：展开 left=969 / 图表只剩 698（55% 被左栏吃掉）；
+#   折起 left=269（面板虽隐藏，Qt 的 qSmartMinSize 仍按 minimumSizeHint 留着 ~340px 空白）。
+from ui.views.trading_desk import PANEL_DEFAULT_WIDTH  # noqa: E402
+from ui.widgets.desk_panel import RAIL_TOTAL_WIDTH  # noqa: E402
+
+mkt.set_panel_collapsed(False)
+app.processEvents()
+_sizes_open = mkt.main_splitter.sizes()
+check(f"展开态：富余宽度归图表，左栏只占 {_sizes_open[0]}px（≈{PANEL_DEFAULT_WIDTH}，不吃富余）",
+      _sizes_open[0] <= PANEL_DEFAULT_WIDTH + 40)
+mkt.set_panel_collapsed(True)
+app.processEvents()
+_sizes_fold = mkt.main_splitter.sizes()
+check(f"折起态：左侧只剩图标轨（{_sizes_fold[0]}px ≈ {RAIL_TOTAL_WIDTH}，面板宽度 = {mkt.desk_panel.width()}）",
+      _sizes_fold[0] <= RAIL_TOTAL_WIDTH + 10 and mkt.desk_panel.width() == 0)
+check(f"折起后图表真的吃满（host.w = {mkt.host.width()}，比展开态多 ≈ 面板宽）",
+      mkt.host.width() > _sizes_open[0] + 300)
+mkt.set_panel_collapsed(False)
+mkt.set_panel_collapsed(True)
+app.processEvents()
+check("折起/展开来回切是幂等的（左侧仍只剩图标轨）",
+      mkt.main_splitter.sizes()[0] <= RAIL_TOTAL_WIDTH + 10)
+
+# ---- 工具行的 ✎ 入口 ----
+mkt.btn_anno_tool.click()
+check("工具行 ✎ 入口：打开「✎ 标注」页并自动展开",
+      mkt.desk_panel.current_page() == "anno" and not mkt.is_panel_collapsed())
+
+# ---- 记住上次（页 + 折起）----
+_saved_panel = {}
+mkt._save_desk_ui = lambda **kw: (mkt._desk_ui.update(kw), _saved_panel.update(kw))
+mkt.show_rail_page("data")
+check("切页落偏好（下次打开还在这一页）", _saved_panel.get("panel_page") == "data")
+mkt.set_panel_collapsed(False)
+check("展开状态也落偏好", _saved_panel.get("rail_collapsed") is False)
+
+print("\n== §7-B6 STEP 6 · 拆分后：页面是薄壳（名字全在，实现搬进 desk_*.py）==")
+import inspect  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import ui.widgets.desk_annotations  # noqa: E402,F401
+import ui.widgets.desk_chips  # noqa: E402,F401
+import ui.widgets.desk_data  # noqa: E402,F401
+import ui.widgets.desk_formula  # noqa: E402,F401
+import ui.widgets.desk_layers  # noqa: E402,F401
+import ui.widgets.desk_layout  # noqa: E402,F401
+import ui.widgets.desk_panel  # noqa: E402,F401
+import ui.widgets.desk_readout  # noqa: E402,F401
+import ui.widgets.desk_watch  # noqa: E402,F401
+from ui.views import trading_desk as _desk_module  # noqa: E402
+
+_desk_lines = [line for line in Path(_desk_module.__file__).read_text(
+    encoding="utf-8").splitlines() if line.strip()]
+check(f"trading_desk.py 已降到 ≤500 行（实测 {len(_desk_lines)}）", len(_desk_lines) <= 500)
+check("9 个 desk_* 模块都能独立导入（新能力落 ui/widgets/*，§10-12）", True)
+
+# 判据 = **拆分前后同一套断言零改动**：所以这里只额外钉"实现确实搬走了"（不是把壳写成空函数）
+#   (模块句柄, 模块内的方法名, 页面上的同名薄壳, 实现所在文件)
+for _handle, _impl_name, _page_name, _module in (
+        ("_layers", "render_charts", "render_charts", "desk_layers.py"),
+        ("_layers", "prepared_df", "prepared_df", "desk_layers.py"),
+        ("_layers", "_paint_layers", "_paint_layers", "desk_layers.py"),
+        ("_data", "select_adjust", "select_adjust", "desk_data.py"),
+        ("_data", "load_symbol", "load_symbol", "desk_data.py"),
+        ("_data", "_refresh_adjust_hint", "_refresh_adjust_hint", "desk_data.py"),
+        ("_formula", "edit_formula", "edit_formula", "desk_formula.py"),
+        ("_formula", "receive_formula", "receive_formula", "desk_formula.py"),
+        ("_annos", "add_annotation", "add_annotation", "desk_annotations.py"),
+        ("_annos", "_refresh_annotation_status", "_refresh_annotation_status",
+         "desk_annotations.py"),
+        ("_chips", "toggle_chip", "toggle_chip", "desk_chips.py"),
+        ("_watch", "move_watchlist", "move_watchlist", "desk_watch.py"),
+        ("_readout", "_readout_for_pane", "_readout_for_pane", "desk_readout.py"),
+        ("_panel", "set_panel_collapsed", "set_panel_collapsed", "desk_panel.py"),
+        ("_layout", "build_tool_row", "_build_tool_row", "desk_layout.py")):
+    _impl = getattr(getattr(mkt, _handle), _impl_name)     # 实现（模块里）
+    _src = Path(inspect.getsourcefile(_impl)).name
+    check(f"{_impl_name} 的实现已搬进 {_module}，页面保留同名薄壳 {_page_name}",
+          _src == _module and hasattr(mkt, _page_name))
+
+# ==========================================
+# 行情工作台迁移护栏（1.23 / §7-B6 · 版式收口 STEP 0）
+#   迁移的**唯一红线** = 只许换容器与排布，不许换控件名 / 方法名 / 常量名
+#   （本页有 86+ 处 `mkt.xxx` 断言直接引用它们）。把白名单写成可执行断言 ⇒
+#   谁不小心改名/删名，这里立刻红，而不是等别处的断言以"怪异原因"挂掉。
+# ==========================================
+print("\n== 行情工作台迁移护栏（§7-B6 STEP 0）：公共面不许改名/删除 ==")
+DESK_PUBLIC_ATTRS = (
+    # 恒等状态（页面与主窗口都按这些名字读写）
+    "current_symbol", "current_name", "current_df", "current_period", "current_adjust",
+    "current_minute", "_period_group", "_rendered_df", "_desk_ui",
+    # 图表设施
+    "main_plot", "host", "formula_plots", "_axes", "_annotations", "_main_more_menu",
+    # 控件（换容器可以，换名字不行）
+    "txt_search", "btn_search", "btn_sync", "lbl_sync_status", "lst_watch",
+    "cb_ma", "cb_boll", "cb_formula", "cb_vol", "cb_macd",
+    "btn_edit_formula", "lbl_formula_status", "lbl_annotation_status", "lbl_adjust_hint",
+    "btn_add_annotation", "btn_delete_annotation", "btn_clear_lines",
+    # ★STEP 3b/3c/4：顶栏第 2 行 + 左栏（迁移期新增的公共面，同样不许改名）
+    "seg_period", "seg_minute", "seg_adjust", "seg_tool",
+    "lbl_minute_depth", "lbl_caliber_note", "lbl_anno_pill", "btn_anno_tool",
+    "rail", "desk_panel",
+    # ★STEP 6：行为模块句柄（页面只转发；测试按模块核对实现位置）
+    "_layout", "_panel", "_data", "_layers", "_formula", "_annos", "_chips",
+    "_watch", "_readout",
+    # 行为入口（页面级断言与 main_window 互送都调它们）
+    "load_symbol", "sync_cloud", "render_charts", "prepared_df",
+    "edit_formula", "save_formula_as", "open_formula_library",
+    "send_formula_to_backtest", "receive_formula",
+    "add_annotation", "delete_selected_annotation", "clear_annotations",
+    "select_period_group", "select_minute", "select_adjust",
+    "select_tool", "toggle_chip", "chips_for",
+    "show_rail_page", "set_panel_collapsed", "is_panel_collapsed",
+)
+# 图层/配方相关的私有状态：拆分（§9-L）时"状态留页面"，所以名字也不许动
+DESK_PUBLIC_STATE = ("_layer_builtin", "_layer_formula", "_layer_items",
+                     "_formula_segments", "_formula_params_text", "_formula_store")
+_desk_missing = [name for name in DESK_PUBLIC_ATTRS + DESK_PUBLIC_STATE if not hasattr(mkt, name)]
+check(f"公共面完整（{len(DESK_PUBLIC_ATTRS) + len(DESK_PUBLIC_STATE)} 项 · 缺：{_desk_missing or '无'}）",
+      not _desk_missing)
+check("附图高度常量 SUB_PLOT_HEIGHT 仍可外部导入（150）", SUB_PLOT_HEIGHT == 150)
+check("导航第 4 页仍指向行情工作台（main_window.page_market）", win.page_market is mkt)
+
+# ⚠ STEP 3b 已办：周期/复权两个下拉被**分段控件**取代。这里反过来钉住"旧名不该再留"
+#   —— 留着就是两套入口（§11.5-11：改一处漏一处的老毛病）。
+check("周期/复权下拉已被分段控件取代（旧控件名不该再存在）",
+      not hasattr(mkt, "cb_period") and not hasattr(mkt, "cb_adjust")
+      and hasattr(mkt, "seg_period") and hasattr(mkt, "seg_adjust"))
+# ⚠ STEP 4 已办：画线工具下拉换成「✎ 标注」页里的分段控件 ⇒ **迁移期三处旧入口至此全部清掉**。
+check("迁移期三处旧入口已全部清除（`cb_period` / `cb_adjust` / `cmb_tool` 都不该存在）",
+      not any(hasattr(mkt, name) for name in ("cb_period", "cb_adjust", "cmb_tool")))
+check("取而代之：三个分段控件 `seg_period` / `seg_adjust` / `seg_tool` 齐备",
+      all(hasattr(mkt, name) for name in ("seg_period", "seg_adjust", "seg_tool")))
+
 # ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402
 
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
-              "backtest_strategies.json"):
+              "backtest_strategies.json", "preferences.json"):
     _path = os.path.join(settings.USER_DATA_DIR, _name)
     _untouched = (not os.path.exists(_path)) or os.path.getmtime(_path) < RUN_STARTED_AT
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)

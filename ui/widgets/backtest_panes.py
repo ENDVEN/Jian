@@ -34,8 +34,13 @@ from config import settings
 from core.backtest import FILL_CLOSE, FILL_MODE_LABELS, FILL_NEXT_OPEN, FILL_TRIGGER
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.condition_gate import ConditionGate
-from ui.widgets.custom_widgets import (COMBO_QSS, NoWheelComboBox,
-                                       NoWheelDoubleSpinBox, SPINBOX_QSS)
+# ⚠ 后 4 个是**再导出**：`mini_label` / `hint_icon` / `TAB_QSS_*` 的**定义**已于 v6.21
+# 上收到 `custom_widgets.py`（§7-B6 STEP 1，样式/构件单一来源）。这里 import 进来只为
+# **保持既有导入路径不变** —— `ui/views/backtest.py` 仍从本模块 import 它们，断言零改动。
+from ui.widgets.custom_widgets import (COMBO_QSS, NoWheelComboBox,  # noqa: F401
+                                       NoWheelDoubleSpinBox, SPINBOX_QSS,
+                                       TAB_QSS_OFF, TAB_QSS_ON,  # noqa: F401（再导出）
+                                       hint_icon, mini_label)    # noqa: F401（再导出）
 from ui.widgets.function_segments import FunctionSegments
 
 # ==========================================
@@ -64,25 +69,10 @@ DETECT_QSS = ("QPushButton { background:#E8F1FF; color:#1976D2; font-weight:bold
 
 
 # ==========================================
-# 表单小构件（原页面的 _mini_label / _hint_icon / _risk_spin）
+# 表单小构件
 # ==========================================
-def mini_label(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #5B6472;")
-    return lbl
-
-
-def hint_icon(tooltip: str) -> QLabel:
-    """灰字说明弱化：用一个小 ? 角标承载 tooltip，代替占据版面的长灰字"""
-    icon = QLabel("?")
-    icon.setFixedSize(15, 15)
-    icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    icon.setStyleSheet("QLabel { background:#E3E7EF; color:#7A8392; border-radius:7px;"
-                       " font-size:10px; font-weight:bold; }")
-    icon.setToolTip(tooltip)
-    return icon
-
-
+# `mini_label` / `hint_icon` 已上收到 `ui/widgets/custom_widgets.py`（v6.21 · §7-B6 STEP 1），
+# 本文件只负责再导出（见文件顶部 import）。下一条 `number_spin` 仍属回测页专属（风控/成交参数口径）。
 def number_spin(tooltip: str, value: float, lo: float, hi: float,
                 decimals: int) -> NoWheelDoubleSpinBox:
     """带说明的数值输入框（回测页所有风控/成交参数都用它，样式与步长同源）。
@@ -271,7 +261,7 @@ class EditDrawer(QFrame):
                 break
         for k, btn in self._tabs.items():
             on = (k == key)
-            btn.setStyleSheet(_TAB_QSS_ON if on else _TAB_QSS_OFF)
+            btn.setStyleSheet(TAB_QSS_ON if on else TAB_QSS_OFF)
         self.sig_pane_changed.emit(key)
 
     @property
@@ -284,12 +274,6 @@ class EditDrawer(QFrame):
         """供页面在打开时把内容滚回顶部（切卡片时保持"从头看"）。"""
         return self._scroll
 
-
-_TAB_QSS_OFF = ("QPushButton { background:#F7F9FC; border:1px solid #E7EAF0; border-radius:8px;"
-                " padding:5px 12px; font-size:12.5px; font-weight:bold; color:#5B6472; }"
-                "QPushButton:hover { border-color:#A9C7EA; color:#1976D2; }")
-_TAB_QSS_ON = ("QPushButton { background:#E8F2FE; border:1px solid #A9C7EA; border-radius:8px;"
-               " padding:5px 12px; font-size:12.5px; font-weight:bold; color:#1257A8; }")
 
 
 # ==========================================

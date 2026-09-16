@@ -10,7 +10,7 @@ from config import settings
 from core.utils import format_duration
 from ui.widgets.calendar_heatmap import CalendarHeatmap
 from ui.widgets.chart_style import plot_equity_curve
-from ui.widgets.custom_widgets import COMBO_QSS_SMALL, NoWheelComboBox
+from ui.widgets.custom_widgets import COMBO_QSS_SMALL, NoWheelComboBox, hint_icon
 
 class DashboardView(QWidget):
     # 中性态配色 (无数据 / 不参与盈亏着色的指标)
@@ -121,16 +121,10 @@ class DashboardView(QWidget):
         lay.addWidget(self.heatmap)
         return panel
 
-    @staticmethod
-    def _hint_icon(tooltip: str) -> QLabel:
-        """「?」小角标承载说明，避免长灰字占版面（与回测页同一手法）"""
-        icon = QLabel("?")
-        icon.setFixedSize(15, 15)
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet("QLabel { background:#E3E7EF; color:#7A8392; border-radius:7px;"
-                           " font-size:10px; font-weight:bold; }")
-        icon.setToolTip(tooltip)
-        return icon
+    # 【v6.21 · §7-B6 STEP 1】原来这里复制了一份「?」角标实现（§9-O7 那类重复），
+    # 现已收敛到 `ui.widgets.custom_widgets.hint_icon`（唯一定义处）；
+    # 保留同名 staticmethod 是为了不动调用点与既有断言。
+    _hint_icon = staticmethod(hint_icon)
 
     @staticmethod
     def _rgba_bg(rgb: tuple, alpha: float = 0.1) -> str:

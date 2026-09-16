@@ -126,18 +126,21 @@ class SingleSyncWorker(QThread):
     finished = pyqtSignal(dict)   # MarketSyncService.refresh_one 的返回结构
 
     def __init__(self, symbol: str, zone: str = ZONE_KLINE, force_full: bool = False,
-                 min_date: str = None, policy: ThrottlePolicy = None, parent=None):
+                 min_date: str = None, policy: ThrottlePolicy = None, parent=None,
+                 period: str = None):
         super().__init__(parent)
         self._symbol = symbol
         self._zone = zone
         self._force_full = force_full
         self._min_date = min_date
         self._policy = policy
+        # ★v6.21/§7-B6 STEP 3：仅 `zone=ZONE_MIN` 用（分钟按档位各存一份，见 sync_service.minute_key）
+        self._period = period
 
     def run(self):
         result = MarketSyncService().refresh_one(
             self._symbol, zone=self._zone, force_full=self._force_full,
-            min_date=self._min_date, policy=self._policy)
+            min_date=self._min_date, policy=self._policy, period=self._period)
         self.finished.emit(result)
 
 
@@ -206,8 +209,13 @@ class FuturesImportWorker(QThread):
     """
     后台解析期货交割单。
 
-    【职责边界】只做耗时的 Excel 解析，落库交给 UI 主线程执行，
-    避免子线程写 SQLite 与主线程读数据争抢同一份内存状态。
+    【职责边界】**只解析、不落库**：`engine.parse_cfmmc()` 是耗时步骤，落库
+    （`engine.commit_cfmmc()`）由 UI 主线程收结果后执行 —— 避免子线程**写** SQLite
+    与主线程读数据争抢同一份内存状态。
+
+    ⚠ 诚实记一笔（§9-T4-② 的历史挂账）：解析内部**会读** SQLite
+    （`parse_cfmmc` → `db.load_open_legs()` 取历史未平仓腿，好让分月导入无缝衔接）。
+    所以准确说法是"**子线程只读、不写库**"，而不是旧注释里的"子线程完全不碰 SQLite"。
     """
 
     finished = pyqtSignal(dict)

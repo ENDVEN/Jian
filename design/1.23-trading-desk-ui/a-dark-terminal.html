@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 A · 深色专业终端（Terminal Pro）</title>
+<style>
+/* ============================================================
+   样板 A · 设计语言 =「深色专业终端 / Terminal Pro」
+   一句话：把一屏当"看盘台"——深底、密信息、等宽数字、细边框、零装饰。
+   特征：① 52px 图标轨 + 320px 工具面板（默认收起，点击才占宽）
+        ② 顶部两行：标的行（高 44）+ 图形工具条（高 36），常驻 2 行
+        ③ 图表吃满剩余高度，底部状态条常驻十字光标读数
+        ④ 周期/复权用"分段控件"（segmented），比下拉少一次点击
+   ============================================================ */
+:root{
+  --bg:#0B1118; --panel:#121C26; --panel2:#16222E; --line:#22303D; --line2:#1B2733;
+  --ink:#E6EDF3; --ink2:#AEBBC7; --muted:#7C8B99; --faint:#55636F;
+  --accent:#21C7A8; --accent-dim:#0E8C77; --sel:#1E3A4C;
+  --up:#F2545B; --down:#31C48D; --gold:#F2B441; --blue:#4EA1F7;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);overflow:hidden;
+     font:13px/1.5 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+     display:flex;flex-direction:column}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+.num{font-family:Consolas,"Cascadia Mono",monospace;font-variant-numeric:tabular-nums}
+
+/* ---------- 第 1 行：标的 / 搜索 / 同步（常驻 · L1 操作轴） ---------- */
+.top{display:flex;align-items:center;gap:8px;padding:6px 12px;flex:0 0 auto;
+     background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{font-weight:800;font-size:14px;letter-spacing:.3px;color:var(--ink)}
+.brand span{color:var(--accent)}
+.search{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--line);
+        border-radius:6px;padding:4px 8px}
+.search input{background:none;border:none;outline:none;color:var(--ink);width:150px;font:inherit}
+.search input::placeholder{color:var(--faint)}
+.btn{border:1px solid var(--line);background:var(--panel2);border-radius:6px;padding:5px 11px;
+     font-size:12.5px;color:var(--ink2)}
+.btn:hover{border-color:#33475A;color:var(--ink)}
+.btn.on{background:var(--sel);border-color:var(--accent-dim);color:var(--accent);font-weight:700}
+.btn.pri{background:var(--accent-dim);border-color:var(--accent-dim);color:#04120F;font-weight:700}
+.btn.pri:hover{background:var(--accent);color:#04120F}
+.pill{font-size:11.5px;padding:3px 9px;border-radius:999px;background:#183241;color:var(--accent);
+      border:1px solid #1E4B48;white-space:nowrap}
+.pill.g{background:#1B3229;color:var(--down);border-color:#255B44}
+.pill.r{background:#33222A;color:var(--up);border-color:#5A2F36}
+.grow{flex:1}
+
+/* ---------- 第 2 行：图形工具条（常驻 · L2 状态+入口） ---------- */
+.tools{display:flex;align-items:center;gap:10px;padding:5px 12px;flex:0 0 auto;
+       background:var(--panel2);border-bottom:1px solid var(--line);overflow-x:auto}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{padding:4px 10px;font-size:12.5px;color:var(--muted);background:var(--panel)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--sel);color:var(--accent);font-weight:700}
+.tlabel{font-size:11.5px;color:var(--faint);letter-spacing:.4px}
+.chip{display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
+      border:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:12.2px;white-space:nowrap}
+.chip:hover{border-color:#33475A;color:var(--ink2)}
+.chip.on{background:#1B3229;border-color:#255B44;color:var(--down)}
+.chip i{width:6px;height:6px;border-radius:50%;background:var(--faint);display:block}
+.chip.on i{background:var(--down);box-shadow:0 0 0 3px #1B3229}
+.tb{width:28px;height:26px;border:1px solid var(--line);border-radius:5px;color:var(--muted);
+    display:grid;place-items:center;font-size:13px;background:var(--panel)}
+.tb:hover{color:var(--ink);border-color:#33475A}
+.tb.on{background:#22313D;border-color:var(--accent-dim);color:var(--accent)}
+.sep{width:1px;height:18px;background:var(--line)}
+
+/* ---------- 主体：图标轨 + 工具面板 + 图表 ---------- */
+.body{flex:1 1 auto;min-height:0;display:flex}
+.rail{width:52px;flex:0 0 auto;background:var(--panel);border-right:1px solid var(--line);
+      display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:6px}
+.rail button{width:40px;height:42px;border-radius:8px;color:var(--muted);display:grid;place-items:center;
+             font-size:16px;position:relative}
+.rail button:hover{background:var(--panel2);color:var(--ink)}
+.rail button.on{background:var(--sel);color:var(--accent)}
+.rail button.on::before{content:"";position:absolute;left:-6px;top:9px;bottom:9px;width:2px;background:var(--accent)}
+.rail .tag{font-size:10px;display:block;margin-top:-2px}
+
+.panel{width:320px;flex:0 0 auto;background:var(--panel);border-right:1px solid var(--line);
+       overflow:auto;padding:10px}
+.panel.hide{display:none}
+.phead{display:flex;align-items:center;gap:6px;margin:2px 0 8px}
+.phead .t{font-weight:800;font-size:12.5px;color:var(--ink);letter-spacing:.3px}
+.phead .x{margin-left:auto;color:var(--faint);font-size:14px}
+.grp{border:1px solid var(--line2);border-radius:8px;background:var(--bg);padding:8px;margin-bottom:8px}
+.grp h4{margin:0 0 7px;font-size:11.5px;color:var(--faint);font-weight:700;letter-spacing:.6px}
+.row{display:flex;align-items:center;gap:6px}
+.row+.row{margin-top:6px}
+.mini{font-size:11.5px;color:var(--faint);line-height:1.6}
+.wl{list-style:none;margin:0;padding:0}
+.wl li{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12.5px;color:var(--ink2)}
+.wl li:hover{background:var(--panel2)}
+.wl li.on{background:var(--sel);color:var(--ink);font-weight:700}
+.wl .code{margin-left:auto;color:var(--faint);font-size:11.5px}
+.wl .chg{width:52px;text-align:right;font-size:11.5px}
+.up{color:var(--up)} .down{color:var(--down)}
+.status{border:1px solid var(--line2);border-radius:8px;background:var(--bg);padding:8px;
+        font-size:11.5px;color:var(--muted);line-height:1.7}
+.status b{color:var(--ink2)}
+
+/* ---------- 图表区（L0 主角，吃满） ---------- */
+.chartwrap{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;background:var(--bg);position:relative}
+.chead{display:flex;align-items:center;gap:10px;padding:6px 12px 4px;flex:0 0 auto}
+.ctitle{font-size:14.5px;font-weight:800}
+.csub{font-size:11.8px;color:var(--muted)}
+.readout{margin-left:auto;display:flex;gap:12px;font-size:11.8px;color:var(--muted)}
+.readout b{color:var(--ink2);font-weight:600}
+.panes{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:2px;padding:0 12px}
+.pane{position:relative;background:var(--bg)}
+.pane.main{flex:1 1 auto;min-height:0}
+.pane.vol{height:96px;flex:0 0 auto}
+.pane.macd{height:110px;flex:0 0 auto}
+.pane.sub{height:96px;flex:0 0 auto}
+.pane svg{width:100%;height:100%;display:block}
+.plabel{position:absolute;left:6px;top:4px;font-size:10.5px;color:var(--faint);letter-spacing:.5px}
+.plabel em{font-style:normal;color:var(--muted)}
+.pane .warn{position:absolute;right:8px;top:4px;font-size:11px;color:var(--gold)}
+.xaxis{display:flex;justify-content:space-between;padding:4px 14px 6px;font-size:11px;color:var(--faint);flex:0 0 auto}
+
+/* ---------- 十字光标（跨窗格贯穿） ---------- */
+.xh{position:absolute;inset:0;pointer-events:none;z-index:3}
+.xh .v{position:absolute;top:0;bottom:0;width:1px;background:var(--muted);opacity:.75}
+.xh .h{position:absolute;left:0;right:0;height:1px;background:var(--muted);opacity:.5}
+.xh .tagbox{position:absolute;background:var(--panel2);border:1px solid var(--line);border-radius:5px;
+            padding:3px 7px;font-size:11.5px;color:var(--ink);white-space:nowrap;
+            box-shadow:0 4px 14px rgba(0,0,0,.35)}
+
+/* ---------- 图例 ---------- */
+.legend{display:flex;gap:14px;padding:2px 14px 0;font-size:11.5px;color:var(--muted);flex:0 0 auto}
+.legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:4px}
+
+/* ---------- 角标说明 ---------- */
+.badge{position:fixed;left:14px;bottom:12px;background:rgba(6,12,18,.92);border:1px solid var(--line);
+       color:var(--ink2);border-radius:10px;padding:9px 13px;font-size:12px;line-height:1.6;z-index:20;max-width:520px}
+.badge b{color:var(--accent)}
+.badge .x{float:right;margin-left:10px;opacity:.6;cursor:pointer}
+</style>
+</head>
+<body>
+
+<!-- 第 1 行 -->
+<div class="top">
+  <div class="brand">行情<span>工作台</span></div>
+  <div class="search"><span style="color:#55636F">🔍</span><input value="600326" placeholder="代码或中文名"></div>
+  <button class="btn pri" id="btnSearch">查阅</button>
+  <span class="pill g" id="cachePill">已缓存 · 前复权 140 根</span>
+  <span class="grow"></span>
+  <span class="lbl num" id="syncStatus" style="font-size:11.8px;color:#7C8B99">已是最新（今天 15:00 收盘后同步）</span>
+  <button class="btn" id="btnSync">☁️ 云端同步</button>
+</div>
+
+<!-- 第 2 行：图形工具条（L2 摘要 + 入口，全部常驻但只占 36px） -->
+<div class="tools">
+  <span class="tlabel">周期</span>
+  <div class="seg" id="segPeriod">
+    <button data-p="D" class="on">日</button><button data-p="W">周</button><button data-p="M">月</button>
+  </div>
+  <span class="tlabel">复权</span>
+  <div class="seg" id="segAdjust">
+    <button data-a="qfq" class="on">前复权</button><button data-a="raw">不复权</button>
+  </div>
+  <span class="sep"></span>
+  <span class="tlabel">主图</span>
+  <button class="chip on" data-ov="ma"><i></i>MA 5/20/60</button>
+  <button class="chip" data-ov="boll"><i></i>BOLL</button>
+  <button class="chip on" data-ov="formula"><i></i>公式 2 段</button>
+  <span class="sep"></span>
+  <span class="tlabel">附图</span>
+  <button class="chip on" data-ov="vol"><i></i>量</button>
+  <button class="chip on" data-ov="macd"><i></i>MACD</button>
+  <button class="chip" data-ov="subformula"><i></i>公式副图 1</button>
+  <span class="sep"></span>
+  <span class="tlabel">画线</span>
+  <button class="tb" data-tool="trend" title="趋势线">╱</button>
+  <button class="tb" data-tool="hline" title="水平线">─</button>
+  <button class="tb" data-tool="vline" title="垂直线">│</button>
+  <button class="tb" data-tool="fib" title="斐波那契">≡</button>
+  <button class="tb" data-tool="text" title="文字">T</button>
+  <span class="sep"></span>
+  <button class="btn" id="btnAdd">＋ 添加标注</button>
+  <button class="btn" id="btnDel">🧽 删除选中</button>
+  <span class="pill" id="annoPill">日线已存 3 条</span>
+</div>
+
+<!-- 主体 -->
+<div class="body">
+
+  <!-- 图标轨 -->
+  <div class="rail" id="rail">
+    <button data-pane="watch" class="on" title="自选股">★</button>
+    <button data-pane="formula" title="公式与配方">ƒ</button>
+    <button data-pane="indicator" title="主图叠加 / 附图">◫</button>
+    <button data-pane="anno" title="标注清单">✎</button>
+    <button data-pane="data" title="数据与同步">⛁</button>
+  </div>
+
+  <!-- 工具面板（默认展开，可点图标收起） -->
+  <div class="panel" id="panel"></div>
+
+  <!-- 图表 -->
+  <div class="chartwrap" id="chartwrap">
+    <div class="chead">
+      <div>
+        <div class="ctitle">西藏天路 <span class="num" style="color:#7C8B99;font-weight:600">600326</span></div>
+        <div class="csub" id="csub">日线 · 前复权 · 共 140 根 · 截至 2026-09-16</div>
+      </div>
+      <div class="readout" id="readout">
+        <span>2026-09-16</span>
+        <span>开 <b class="num">18.42</b></span>
+        <span>高 <b class="num">18.71</b></span>
+        <span>低 <b class="num">18.30</b></span>
+        <span>收 <b class="num">18.66</b></span>
+        <span>量 <b class="num">213万</b></span>
+        <span>MA5 <b class="num">18.51</b></span>
+        <span>MA20 <b class="num">18.02</b></span>
+      </div>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="panes" id="panes">
+      <div class="pane main" id="paneMain">
+        <div class="plabel">主图 · <em>K 线 + MA + 公式叠层</em></div>
+        <svg id="main" viewBox="0 0 1200 320" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="pane vol" id="paneVol">
+        <div class="plabel">成交量（万手）</div>
+        <svg id="vol" viewBox="0 0 1200 96" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="pane macd" id="paneMacd">
+        <div class="plabel">MACD (12,26,9)</div>
+        <svg id="macd" viewBox="0 0 1200 110" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="pane sub" id="paneSub" style="display:none">
+        <div class="plabel">公式副图 1 · <em>振荡型指标（独立 y 轴）</em></div>
+        <svg id="sub" viewBox="0 0 1200 96" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+    <div class="xaxis" id="xaxis"></div>
+    <div class="xh" id="xh" style="display:none"><div class="v"></div><div class="h"></div><div class="tagbox"></div></div>
+  </div>
+</div>
+
+<div class="badge" id="badge">
+  <span class="x" onclick="document.getElementById('badge').style.display='none'">✕</span>
+  <b>A · 深色专业终端（Terminal Pro）</b> —— 深底 + 密集信息 + 等宽数字，一屏当看盘台用。<br>
+  交互：左栏图标切换面板（再点一次收起）· 周期/复权分段切换（真重算）· 上方 chips 切叠加层 · 图上移动鼠标看跨窗格读数。<br>
+  <span style="color:#55636F">示意数据（固定种子，非真实行情）</span>
+</div>
+
+<script>
+/* ============================================================
+   1. 示意数据（固定种子 → 每次刷新长得一样）
+   ============================================================ */
+function makeData(n, seed, start){
+  let s = seed, r = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  let p = start, out = [];
+  for (let i = 0; i < n; i++){
+    const d = Math.sin(i / 11) * 0.10 + Math.sin(i / 37) * 0.07 + (r() - 0.5) * 0.20;
+    const o = p, c = Math.max(4, o + d);
+    out.push({o, c, h: Math.max(o, c) + r() * 0.12, l: Math.min(o, c) - r() * 0.12, v: 120 + r() * 260});
+    p = c;
+  }
+  return out;
+}
+const RAW = makeData(200, 20260916, 16.8);
+function tradingDates(n){
+  const out = [], d = new Date(2024, 0, 2);
+  while (out.length < n){ const w = d.getDay(); if (w !== 0 && w !== 6) out.push(new Date(d)); d.setDate(d.getDate() + 1); }
+  return out;
+}
+const DATES = tradingDates(400);
+function agg(bars, k){
+  const out = [], dts = [];
+  for (let i = 0; i < bars.length; i += k){
+    const g = bars.slice(i, i + k); if (!g.length) break;
+    out.push({o: g[0].o, c: g[g.length - 1].c, h: Math.max.apply(null, g.map(x => x.h)),
+              l: Math.min.apply(null, g.map(x => x.l)), v: g.reduce((a, b) => a + b.v, 0)});
+    dts.push(i + g.length - 1);
+  }
+  return {bars: out, dateIdx: dts};
+}
+function ma(arr, n){ return arr.map((_, i) => i < n - 1 ? null : arr.slice(i - n + 1, i + 1).reduce((a, b) => a + b, 0) / n); }
+function ema(arr, n){ const k = 2 / (n + 1), out = []; arr.forEach((v, i) => out.push(i ? v * k + out[i - 1] * (1 - k) : v)); return out; }
+
+/* ============================================================
+   2. 主题（本样板的"深色终端"色板 —— 全文件唯一颜色来源）
+   ============================================================ */
+const TH = {
+  up:'#F2545B', down:'#31C48D', wick:'#6B7A88',
+  ma5:'#F2B441', ma20:'#4EA1F7', ma60:'#B07BE8', boll:'rgba(126,140,255,.5)',
+  grid:'#16222E', vol:'#39506A', formula:'#21C7A8',
+  dif:'#4EA1F7', dea:'#F2B441'
+};
+const W = 1200, PADX = 6;
+
+/* ============================================================
+   3. 绘图（三窗格：主图 / 量 / MACD；共享 x 映射）
+   ============================================================ */
+const S = {};   // 本次渲染的坐标映射（十字光标反解用）
+function svgEl(id){ const e = document.getElementById(id); e.innerHTML = ''; return e; }
+function mk(tag, attrs){ const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+
+function render(){
+  const st = state;
+  const view = st.period === 'D' ? {bars: RAW, dateIdx: RAW.map((_, i) => i)}
+                                 : agg(RAW, st.period === 'W' ? 5 : 22);
+  const bars = view.bars, n = bars.length;
+  const xw = W - PADX * 2, step = xw / n, X = i => PADX + i * step + step / 2;
+  S.n = n; S.step = step; S.X = X; S.bars = bars; S.dateIdx = view.dateIdx;
+
+  const closes = bars.map(b => b.c);
+  const m5 = ma(closes, 5), m20 = ma(closes, 20), m60 = ma(closes, 60);
+
+  /* ---- 主图 ---- */
+  const H = 320, main = svgEl('main');
+  let lo = Math.min.apply(null, bars.map(b => b.l)), hi = Math.max.apply(null, bars.map(b => b.h));
+  if (st.boll){ const mid = m20, sd = m20.map((v, i) => { if (v == null) return null;
+      const seg = closes.slice(Math.max(0, i - 19), i + 1); const m = v;
+      return Math.sqrt(seg.reduce((a, b) => a + (b - m) * (b - m), 0) / seg.length); });
+    mid.forEach((v, i) => { if (v == null) return; hi = Math.max(hi, v + 2 * sd[i]); lo = Math.min(lo, v - 2 * sd[i]); });
+    S.bollBand = {mid, sd};
+  }
+  const padP = (hi - lo) * 0.06; lo -= padP; hi += padP;
+  const Y = v => H - (v - lo) / (hi - lo) * H;
+  S.lo = lo; S.hi = hi; S.H = H;
+
+  for (let g = 0; g <= 4; g++){ const y = H * g / 4; main.appendChild(mk('line', {x1:0, y1:y, x2:W, y2:y, stroke:TH.grid, 'stroke-width':1})); }
+  bars.forEach((b, i) => {
+    const x = X(i), up = b.c >= b.o, col = up ? TH.up : TH.down;
+    const bw = Math.max(1.2, step * 0.62);
+    main.appendChild(mk('line', {x1:x, y1:Y(b.h), x2:x, y2:Y(b.l), stroke:col, 'stroke-width': Math.min(1.6, step * 0.14)}));
+    const y1 = Y(Math.max(b.o, b.c)), y2 = Y(Math.min(b.o, b.c));
+    main.appendChild(mk('rect', {x:x - bw / 2, y:y1, width:bw, height:Math.max(1, y2 - y1), fill:col,
+      opacity: up ? 1 : .92}));
+  });
+  const line = (arr, color, wdt) => {
+    let d = '', open = false;
+    arr.forEach((v, i) => { if (v == null){ open = false; return; } d += (open ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1) + ' '; open = true; });
+    main.appendChild(mk('path', {d, fill:'none', stroke:color, 'stroke-width':wdt || 1.4}));
+  };
+  if (st.boll && S.bollBand){ line(S.bollBand.mid.map((v, i) => v == null ? null : v + 2 * S.bollBand.sd[i]), TH.boll, 1);
+    line(S.bollBand.mid, TH.boll, 1); line(S.bollBand.mid.map((v, i) => v == null ? null : v - 2 * S.bollBand.sd[i]), TH.boll, 1); }
+  if (st.ma){ line(m5, TH.ma5); line(m20, TH.ma20); line(m60, TH.ma60, 1.1); }
+  if (st.formula){                                   // 公式叠层（示意：一条自定义线 + 状态横杠）
+    line(closes.map((v, i) => i < 30 ? null : m5[i] * 0.996 + 0.22), TH.formula, 1.6);
+    bars.forEach((b, i) => { if (i % 13 < 4) main.appendChild(mk('rect',
+      {x:X(i) - step * 0.35, y:Y(lo + (hi - lo) * 0.06), width:step * 0.7, height:3, fill:TH.formula, opacity:.85})); });
+  }
+
+  /* ---- 成交量 ---- */
+  const HV = 96, vol = svgEl('vol');
+  const vhi = Math.max.apply(null, bars.map(b => b.v)) * 1.08;
+  for (let g = 0; g <= 2; g++) vol.appendChild(mk('line', {x1:0, y1:HV * g / 2, x2:W, y2:HV * g / 2, stroke:TH.grid, 'stroke-width':1}));
+  bars.forEach((b, i) => { const h = b.v / vhi * HV;
+    vol.appendChild(mk('rect', {x:X(i) - step * 0.31, y:HV - h, width:Math.max(1, step * 0.62), height:h,
+      fill: b.c >= b.o ? TH.up : TH.down, opacity:.5})); });
+
+  /* ---- MACD ---- */
+  const HM = 110, macd = svgEl('macd');
+  const dif = ema(closes, 12).map((v, i) => v - ema(closes, 26)[i]);
+  const dea = ema(dif, 9), hist = dif.map((v, i) => v - dea[i]);
+  const amp = Math.max.apply(null, hist.map(Math.abs).concat(dif.map(Math.abs))) * 1.15;
+  const MY = v => HM / 2 - v / amp * (HM / 2 - 6);
+  macd.appendChild(mk('line', {x1:0, y1:MY(0), x2:W, y2:MY(0), stroke:TH.grid, 'stroke-width':1}));
+  hist.forEach((v, i) => { const y = MY(v), z = MY(0);
+    macd.appendChild(mk('rect', {x:X(i) - step * 0.3, y:Math.min(y, z), width:Math.max(1, step * 0.6),
+      height:Math.max(1, Math.abs(z - y)), fill: v >= 0 ? 'rgba(242,84,91,.55)' : 'rgba(49,196,141,.5)'})); });
+  const mline = (arr, c) => { let d = ''; arr.forEach((v, i) => d += (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + MY(v).toFixed(1) + ' ');
+    macd.appendChild(mk('path', {d, fill:'none', stroke:c, 'stroke-width':1.4})); };
+  mline(dif, TH.dif); mline(dea, TH.dea);
+
+  /* ---- 公式副图 1（振荡型指标：独立 y 轴 + 零轴参考线） ---- */
+  const HS = 96, sub = svgEl('sub');
+  const osc = closes.map((v, i) => { const w = closes.slice(Math.max(0, i - 13), i + 1);
+    const a = Math.max.apply(null, w), b2 = Math.min.apply(null, w);
+    return a === b2 ? 0 : (v - b2) / (a - b2) * 100 - 50; });
+  const oamp = Math.max(20, Math.max.apply(null, osc.map(Math.abs)) * 1.1);
+  const SY = v => HS / 2 - v / oamp * (HS / 2 - 6);
+  sub.appendChild(mk('line', {x1:0, y1:SY(0), x2:W, y2:SY(0), stroke:TH.grid, 'stroke-width':1}));
+  let dp = ''; osc.forEach((v, i) => dp += (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + SY(v).toFixed(1) + ' ');
+  sub.appendChild(mk('path', {d:dp, fill:'none', stroke:TH.formula, 'stroke-width':1.5}));
+
+  document.getElementById('paneVol').style.display = st.vol ? '' : 'none';
+  document.getElementById('paneMacd').style.display = st.macd ? '' : 'none';
+  document.getElementById('paneSub').style.display = st.subformula ? '' : 'none';
+
+  /* ---- 横轴标签 + 图例 + 标题 ---- */
+  const lab = document.getElementById('xaxis'); lab.innerHTML = '';
+  for (let k = 0; k <= 5; k++){ const i = Math.round((n - 1) * k / 5);
+    const span = document.createElement('span'); span.textContent = dateLabel(view.dateIdx[i]); lab.appendChild(span); }
+  const lg = document.getElementById('legend');
+  lg.innerHTML = (st.ma ? '<span><i style="background:' + TH.ma5 + '"></i>MA5 <i style="background:' + TH.ma20 + '"></i>MA20 <i style="background:' + TH.ma60 + '"></i>MA60</span>' : '')
+    + (st.boll ? '<span><i style="background:' + TH.boll + '"></i>BOLL(20,2)</span>' : '')
+    + (st.formula ? '<span><i style="background:' + TH.formula + '"></i>公式段 1：自定义线 + 状态柱</span>' : '')
+    + '<span style="color:#55636F">' + n + ' 根</span>';
+  document.getElementById('csub').textContent =
+    periodName(st.period) + ' · ' + adjustName(st.adjust) + ' · 共 ' + n + ' 根 · 截至 ' + dateLabel(n - 1);
+  document.getElementById('cachePill').textContent = '已缓存 · ' + adjustName(st.adjust) + ' ' + n + ' 根';
+}
+const PERIOD_NAME = {D:'日线', W:'周线', M:'月线'};
+function periodName(p){ return PERIOD_NAME[p]; }
+function adjustName(a){ return a === 'qfq' ? '前复权' : '不复权'; }
+function dateLabel(i){ const d = DATES[Math.min(i, DATES.length - 1)];
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+
+/* ============================================================
+   4. 状态 + 左栏面板（低频配置的落地处）
+   ============================================================ */
+/* 单一状态源：控件的 class 只是它的"投影"（避免"控件一套状态、代码里再猜一遍"） */
+const state = {period:'D', adjust:'qfq', tool:'',
+               ma:true, boll:false, formula:true, vol:true, macd:true, subformula:false};
+function applyChips(){
+  document.querySelectorAll('[data-ov]').forEach(el => {
+    const key = el.dataset.ov;
+    if (key in state) el.classList.toggle('on', !!state[key]);
+  });
+}
+
+const PANEL = {
+  watch: `<div class="phead"><span class="t">★ 自选股</span><span class="x" onclick="toggleRail('watch')">✕</span></div>
+    <div class="grp"><ul class="wl">
+      <li class="on"><span>西藏天路</span><span class="code num">600326</span><span class="chg num up">+2.41%</span></li>
+      <li><span>贵州茅台</span><span class="code num">600519</span><span class="chg num down">-0.68%</span></li>
+      <li><span>宁德时代</span><span class="code num">300750</span><span class="chg num up">+1.12%</span></li>
+      <li><span>中证白酒</span><span class="code num">399997</span><span class="chg num down">-0.31%</span></li>
+    </ul></div>
+    <div class="grp"><div class="row"><button class="btn on" style="flex:1">★ 加入当前</button>
+      <button class="btn" style="flex:1">⬆ 上移</button><button class="btn" style="flex:1">⬇ 下移</button></div>
+      <div class="row"><button class="btn" style="flex:1;color:#F2545B;border-color:#5A2F36">🗑 移出自选</button></div>
+      <div class="mini" style="margin-top:7px">双击列表即切换标的；顺序 = 你的关注顺序。</div></div>`,
+  formula: `<div class="phead"><span class="t">ƒ 公式与配方</span><span class="x" onclick="toggleRail('formula')">✕</span></div>
+    <div class="grp"><h4>当前公式</h4>
+      <div class="mini" style="color:#21C7A8">✓ 2 段 · 27 个变量 · 主图 1 · 副图 1</div>
+      <div class="mini" style="margin-top:6px">段 1（主图）：自定义线 + 4 色状态柱<br>段 2（副图 1）：振荡指标</div></div>
+    <div class="grp"><h4>操作</h4>
+      <div class="row"><button class="btn on" style="flex:1">✏️ 编辑公式…</button></div>
+      <div class="row"><button class="btn" style="flex:1">💾 存为配方…</button><button class="btn" style="flex:1">📚 配方库…</button></div>
+      <div class="row"><button class="btn" style="flex:1">📤 送去做回测</button></div>
+      <div class="mini" style="margin-top:7px">开机自动恢复上次用过的配方（公式不再"重启就丢"）。</div></div>`,
+  indicator: `<div class="phead"><span class="t">◫ 主图叠加 / 附图</span><span class="x" onclick="toggleRail('indicator')">✕</span></div>
+    <div class="grp"><h4>主图叠加</h4>
+      <div class="row"><button class="chip on" data-ov="ma" style="flex:1;justify-content:center"><i></i>均线 MA 5/20/60</button></div>
+      <div class="row"><button class="chip" data-ov="boll" style="flex:1;justify-content:center"><i></i>布林带 BOLL</button></div>
+      <div class="row"><button class="chip on" data-ov="formula" style="flex:1;justify-content:center"><i></i>自定义公式叠层</button></div></div>
+    <div class="grp"><h4>附图（按需创建，独立 y 轴）</h4>
+      <div class="row"><button class="chip on" data-ov="vol" style="flex:1;justify-content:center"><i></i>成交量</button></div>
+      <div class="row"><button class="chip on" data-ov="macd" style="flex:1;justify-content:center"><i></i>MACD</button></div>
+      <div class="row"><button class="chip" data-ov="subformula" style="flex:1;justify-content:center"><i></i>公式副图 1</button></div>
+      <div class="mini" style="margin-top:7px">振荡型指标（MACD/RSI/量能）放副图，主图 K 线才不会被压扁。</div></div>`,
+  anno: `<div class="phead"><span class="t">✎ 标注清单</span><span class="x" onclick="toggleRail('anno')">✕</span></div>
+    <div class="grp"><h4>本标的 · 日线（按周期分开存）</h4><ul class="wl">
+      <li class="on"><span>趋势线</span><span class="code">2025-03-11 → 2025-06-02</span></li>
+      <li><span>水平线</span><span class="code">18.00</span></li>
+      <li><span>斐波那契 7 档</span><span class="code">16.20 → 19.80</span></li>
+    </ul>
+    <div class="row" style="margin-top:8px"><button class="btn" style="flex:1">🧽 删除选中</button>
+      <button class="btn" style="flex:1;color:#F2545B;border-color:#5A2F36">🗑️ 清空本标的</button></div>
+    <div class="mini" style="margin-top:7px">点图中线条选中（变橙）→ Delete 删除；坐标按日期锚定，前复权修正也不漂移。</div></div>`,
+  data: `<div class="phead"><span class="t">⛁ 数据与同步</span><span class="x" onclick="toggleRail('data')">✕</span></div>
+    <div class="grp"><h4>当前分区</h4>
+      <div class="status">分区：<b>kline_daily</b>（前复权）<br>行数：<b class="num">140</b> · 截至 <b class="num">2026-09-16</b><br>另一份：<b>kline_daily_raw</b>（不复权，未下载）</div></div>
+    <div class="grp"><div class="row"><button class="btn" style="flex:1">☁️ 更新到最新</button></div>
+      <div class="mini" style="margin-top:7px">本地有数据 → 只补最新几天；本地没有 → 整段抓取。<br>
+      「重新全量下载」只在「🗄 数据管理」页（危险动作隔离）。</div></div>`
+};
+document.getElementById('rail').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  toggleRail(b.dataset.pane);
+});
+function toggleRail(pane){
+  const btn = document.querySelector('.rail button[data-pane="' + pane + '"]');
+  const panel = document.getElementById('panel');
+  if (btn.classList.contains('on') && !panel.classList.contains('hide')){
+    panel.classList.add('hide'); btn.classList.remove('on'); return;
+  }
+  document.querySelectorAll('.rail button').forEach(x => x.classList.remove('on'));
+  btn.classList.add('on'); panel.classList.remove('hide');
+  panel.innerHTML = PANEL[pane] || '';
+  applyChips();
+}
+toggleRail('watch');
+
+/* ---------- 工具条交互（一律用事件委托：面板内容会被重建，逐个绑会重复触发） ---------- */
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-ov]'); if (!c) return;
+  const key = c.dataset.ov;
+  if (!(key in state)) return;
+  state[key] = !state[key];
+  applyChips();
+  render();
+});
+document.querySelectorAll('#segPeriod button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#segPeriod button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); state.period = b.dataset.p; render();
+}));
+document.querySelectorAll('#segAdjust button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#segAdjust button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); state.adjust = b.dataset.a; render();
+  document.getElementById('syncStatus').textContent = state.adjust === 'raw'
+    ? '⚠ 不复权按真实价显示：指标含除权跳空，画线不与前复权共用'
+    : '已是最新（今天 15:00 收盘后同步）';
+}));
+document.querySelectorAll('.tb').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tb').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+}));
+document.getElementById('btnDel').addEventListener('click', () => {
+  document.getElementById('syncStatus').textContent = '① 先在图上点一下那条线（变橙=已选中）→ 再点「删除选中」或按 Delete';
+});
+document.getElementById('btnAdd').addEventListener('click', () => {
+  document.getElementById('annoPill').textContent = '日线已存 4 条（松手自动保存）';
+});
+
+/* ============================================================
+   5. 跨窗格十字光标（真实功能：竖线贯穿全部窗格 / 横线只留悬停窗格 / 顶部给读数）
+   ============================================================ */
+const wrap = document.getElementById('chartwrap'), xh = document.getElementById('xh');
+const vline = xh.querySelector('.v'), hline = xh.querySelector('.h'), tagbox = xh.querySelector('.tagbox');
+wrap.addEventListener('mousemove', ev => {
+  const r = wrap.getBoundingClientRect(); if (!S.n) return;
+  const paneStack = document.getElementById('panes').getBoundingClientRect();
+  if (ev.clientY < paneStack.top - 30 || ev.clientY > paneStack.bottom) { xh.style.display = 'none'; return; }
+  const mr = document.getElementById('paneMain').getBoundingClientRect();   // x 映射以图表本体为准（.panes 有内边距）
+  const frac = Math.min(1, Math.max(0, (ev.clientX - mr.left) / mr.width));
+  const i = Math.min(S.n - 1, Math.max(0, Math.round(frac * S.n - 0.5)));
+  xh.style.display = '';
+  vline.style.left = (mr.left - r.left + S.X(i) / W * mr.width) + 'px';
+  const paneEls = [['paneMain', 'main'], ['paneVol', 'vol'], ['paneMacd', 'macd'], ['paneSub', 'sub']];
+  const hit = paneEls.find(p => { const pr = document.getElementById(p[0]).getBoundingClientRect();
+    return ev.clientY >= pr.top && ev.clientY <= pr.bottom; });
+  const b = S.bars[i];
+  const dstr = dateLabel(S.dateIdx[i]);
+  if (hit){
+    const pr = document.getElementById(hit[0]).getBoundingClientRect();
+    hline.style.display = ''; hline.style.top = (pr.top - r.top + ev.clientY - pr.top) + 'px';
+  }
+  const price = S.lo + (1 - (ev.clientY - paneStack.top) / paneStack.height) * (S.hi - S.lo);
+  tagbox.textContent = dstr + '　O ' + b.o.toFixed(2) + '  H ' + b.h.toFixed(2) + '  L ' + b.l.toFixed(2)
+    + '  C ' + b.c.toFixed(2) + '　量 ' + Math.round(b.v) + '万手';
+  tagbox.style.left = Math.min(paneStack.width - 300, Math.max(6, vline.offsetLeft - r.left + 10)) + 'px';
+  tagbox.style.top = '6px';
+  document.getElementById('readout').innerHTML =
+    '<span>' + dstr + '</span><span>开 <b class="num">' + b.o.toFixed(2) + '</b></span>'
+    + '<span>高 <b class="num">' + b.h.toFixed(2) + '</b></span><span>低 <b class="num">' + b.l.toFixed(2) + '</b></span>'
+    + '<span>收 <b class="num">' + b.c.toFixed(2) + '</b></span>'
+    + '<span>量 <b class="num">' + Math.round(b.v) + '万</b></span>';
+});
+wrap.addEventListener('mouseleave', () => { xh.style.display = 'none'; });
+
+render();
+</script>
+</body>
+</html>

@@ -3,6 +3,14 @@
 import os
 import sys
 
+# 【§11.7】Windows 控制台默认 GBK：带 ↔ / ⇒ 这类符号的 print 会抛 UnicodeEncodeError，
+# 表现为"某个分节整段被跳过 + 假报若干失败"（1.23 修）。统一按 UTF-8 输出。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 —— 被重定向的流不支持 reconfigure 就跳过
+        pass
+
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import numpy as np
@@ -279,6 +287,39 @@ try:
     check("关闭后光标全部隐藏", not v_main.isVisible() and not v_macd.isVisible())
     check("关闭后 readout 清空", host.readout_text == "")
 
+    # ---- v6.21 · §7-B6 STEP 2：读数条 provider（业务读数由页面给，宿主不猜业务）----
+    host.set_crosshair(True)
+    host.update_crosshair('main', 5.0, 12.3)
+    check("未设 provider 时文案与旧格式**逐字一致**（既有行为零变化）",
+          host.readout_text == "main   X=#5   Y=12.30")
+    _seen = []
+    host.set_readout_provider(lambda name, x, y: _seen.append((name, x, y)) or
+                              f"2024-01-05 开 10.00 高 12.30")
+    host.update_crosshair('main', 5.0, 12.3)
+    check("设了 provider ⇒ 文案来自页面，且拿到 (窗格, x, y)",
+          host.readout_text == "2024-01-05 开 10.00 高 12.30"
+          and _seen and _seen[-1][0] == 'main' and abs(_seen[-1][2] - 12.3) < 1e-9)
+    host.set_readout_provider(lambda *_: "")          # 空串 ⇒ 回退
+    host.update_crosshair('main', 5.0, 12.3)
+    check("provider 返回空串 ⇒ 回退内置文案", host.readout_text == "main   X=#5   Y=12.30")
+
+    def _boom(*_a):
+        raise RuntimeError("读数不该把图表搞崩")
+
+    host.set_readout_provider(_boom)
+    host.update_crosshair('main', 5.0, 12.3)
+    check("provider 抛异常 ⇒ 静默回退内置文案（图表不受连累）",
+          host.readout_text == "main   X=#5   Y=12.30")
+    host.set_readout_provider(None)
+    check("provider 可清除（回到纯内置口径）", host.readout_text == "main   X=#5   Y=12.30")
+
+    host.set_readout_visible(True)
+    host.set_crosshair(False)
+    check("读数条可**常显**（不依赖十字光标开关，工作台要它常驻）",
+          host._readout.isVisibleTo(host))
+    host.set_readout_visible(False)
+    check("取消常显后回到「跟十字光标走」", not host._readout.isVisibleTo(host))
+
     # ---- P2 clear：只清内容，不伤结构/光标 ----
     host.pane('main').add_overlay(pg.PlotDataItem([0, 1], [0, 1]))
     host.pane('main').add_annotation(pg.PlotDataItem([0, 1], [1, 0]))
@@ -536,6 +577,77 @@ except Exception as e:  # noqa: BLE001
     traceback.print_exc()
     check(f"复合控件样式契约测试执行失败: {type(e).__name__}: {e}", False)
 
+print("== v6.21 · §7-B6 STEP 1：分段控件 + 表单构件上收（样式单一来源）==")
+try:
+    from PyQt6.QtWidgets import QApplication
+    import ui.widgets.custom_widgets as cw  # noqa: F401
+    from ui.widgets.custom_widgets import (TAB_QSS_OFF, TAB_QSS_ON, SegmentedControl,
+                                           hint_icon, mini_label, segment_button_qss,
+                                           segment_qss)
+
+    _app = QApplication.instance() or QApplication([])
+
+    # ---- 1) 上收：定义只有一处，旧导入路径（回测页）仍可用 ----
+    import ui.widgets.backtest_panes as bp
+    check("mini_label / hint_icon 定义已上收，回测页是**再导出**（同一函数对象）",
+          bp.mini_label is mini_label and bp.hint_icon is hint_icon)
+    check("页签 QSS 同样上收（回测页再导出同一字符串）",
+          bp.TAB_QSS_ON is TAB_QSS_ON and bp.TAB_QSS_OFF is TAB_QSS_OFF)
+    check("Dashboard 的「?」角标也走同一处（消除第二份复制实现）",
+          "hint_icon" in open(os.path.join(ROOT, "ui", "views", "dashboard.py"),
+                              encoding="utf-8").read())
+
+    # ---- 2) 样式契约：完整 QSS（首尾圆角 + 中段分隔线成套出现）----
+    check("容器 QSS 带圆角与描边", "border-radius" in segment_qss() and "1px solid" in segment_qss())
+    _first = segment_button_qss("first")
+    _last = segment_button_qss("last")
+    _mid = segment_button_qss("middle")
+    check("首按钮只给左圆角（右圆角留给尾按钮）",
+          "border-top-left-radius" in _first and "border-top-right-radius" not in _first)
+    check("尾按钮只给右圆角", "border-top-right-radius" in _last
+          and "border-top-left-radius" not in _last)
+    check("中段有分隔线、首段没有（否则外框会与按钮边框叠成双线）",
+          "border-left" in _mid and "border-left" not in _first)
+    check("选中态样式齐备（:checked 有底色 + 字色 + 加粗）",
+          ":checked" in _mid and "font-weight: bold" in _mid)
+    check("单段 = only：四角全圆且无分隔线",
+          "border-top-left-radius" in segment_button_qss("only")
+          and "border-left" not in segment_button_qss("only"))
+    try:
+        segment_button_qss("瞎写")
+        check("非法位置应报错（防拼错位置导致半截样式）", False)
+    except ValueError as _e:
+        check(f"非法位置报错（{_e}）", True)
+
+    # ---- 3) 行为：单一状态源 + 幂等 + 信号 ----
+    seg = SegmentedControl([("D", "日"), ("W", "周"), ("M", "月")])
+    check("默认选中第一段", seg.current_key() == "D" and seg.current_index() == 0)
+    check("按钮数与段数一致且只有一项 checked",
+          seg.count() == 3 and sum(1 for b in seg.buttons() if b.isChecked()) == 1)
+    _fired = []
+    seg.sigChanged.connect(_fired.append)
+    seg.buttons()[1].click()                     # 模拟真实点击
+    check("点击第 2 段 → 状态与信号都跟上",
+          seg.current_key() == "W" and _fired == ["W"])
+    check("点击后仍只有一项 checked（互斥由 QButtonGroup 保证）",
+          sum(1 for b in seg.buttons() if b.isChecked()) == 1)
+    check("set_current 幂等：切到已是当前段 → 不发信号",
+          seg.set_current("W") is True and _fired == ["W"])
+    check("set_current(emit=True) 才会补发", seg.set_current("M", emit=True) is True
+          and _fired == ["W", "M"])
+    check("非法 key 被拒绝且状态不变（不静默乱切）",
+          seg.set_current("Q") is False and seg.current_key() == "M")
+    check("current 参数可在构造时定位（开机记忆上次口径用）",
+          SegmentedControl([("af", "前复权"), ("nf", "不复权")], current="nf").current_key() == "nf")
+    check("单段控件也能构造（避免边界崩）",
+          SegmentedControl([("only", "唯一")]).count() == 1)
+    _empty = SegmentedControl([])
+    check("空段列表不崩、状态为空串", _empty.count() == 0 and _empty.current_key() == "")
+except Exception as e:  # noqa: BLE001
+    import traceback
+    traceback.print_exc()
+    check(f"分段控件/构件上收测试执行失败: {type(e).__name__}: {e}", False)
+
 print("== v6.9 · 架构红线（§9-H：UI 层不得直连行情源 / 数据库）==")
 try:
     from pathlib import Path
@@ -775,7 +887,11 @@ try:
           normalize_period("D") == "D" and normalize_period("周线") == "W"
           and normalize_period("month") == "M" and normalize_period("") == "D"
           and normalize_period("乱写") == "D")
-    check("周期中文标签与顺序", period_label("W") == "周线" and PERIOD_ORDER == ("D", "W", "M"))
+    # v6.21：`PERIOD_ORDER` 扩了分钟档位（§7 D3）；前三位仍是 日/周/月，顺序与取值都钉死
+    check("周期中文标签与顺序（含分钟档位）",
+          period_label("W") == "周线"
+          and period_label("1m") == "1分钟"
+          and PERIOD_ORDER == ("D", "W", "M", "1m", "5m", "15m", "30m", "60m"))
 
     daily = pd.DataFrame({
         'date': pd.bdate_range('2024-01-01', periods=10),      # 两周（2024-01-01 是周一）
@@ -810,6 +926,186 @@ except Exception as e:  # noqa: BLE001
     import traceback
     traceback.print_exc()
     check(f"周期重采样测试执行失败: {type(e).__name__}: {e}", False)
+
+print("== v6.21 · §7-B6 STEP 3 / §7 D3：分钟周期数据链路（不联网）==")
+try:
+    import inspect
+
+    from core.utils import (MINUTE_DEPTH_DAYS, MINUTE_PERIODS, PERIOD_ORDER,
+                            is_aggregate_period, is_minute_period, normalize_period,
+                            period_label, resample_ohlcv)
+    from data.akshare_feed import AkShareFeed
+    from data.sync_service import (ZONE_MIN, MarketSyncService, minute_key,
+                                   split_minute_key)
+
+    # ---- 1) 周期归一：分钟是**新增档位**，但不许污染既有 D/W/M 口径 ----
+    check("分钟档位齐全且顺序稳定",
+          MINUTE_PERIODS == ("1m", "5m", "15m", "30m", "60m") and PERIOD_ORDER[:3] == ("D", "W", "M"))
+    check("归一：'5m'/'M5'/'5min'/'5分钟'/整数 5 都进 5m",
+          all(normalize_period(v) == "5m" for v in ("5m", "M5", "5min", "5分钟", 5)))
+    check("裸 'M' 仍是**月线**（历史口径不许被分钟抢走）",
+          normalize_period("M") == "M" and period_label("M") == "月线")
+    check("日/周写法的归一没被破坏",
+          [normalize_period(v) for v in ("D", "W", "周线", "日线", "")] == ["D", "W", "W", "D", "D"])
+    check("未知写法回落 D（不猜不报错）", normalize_period("瞎写") == "D")
+    check("label 与 is_minute / is_aggregate 判据一致",
+          period_label("15m") == "15分钟" and is_minute_period("15m")
+          and not is_aggregate_period("15m") and is_aggregate_period("W"))
+
+    # ---- 2) 重采样：周/月聚合，分钟**直通**（各档位独立取数）----
+    bars = pd.DataFrame({
+        "date": pd.bdate_range("2024-01-01", periods=30),
+        "open": [10.0] * 30, "high": [11.0] * 30, "low": [9.0] * 30,
+        "close": [10.5] * 30, "volume": [100] * 30})
+    check("周线仍然聚合（既有行为零变化）", len(resample_ohlcv(bars, "W")) < len(bars))
+    check("分钟周期 resample 是**直通** —— 绝不把 1m 聚合成 5m（那会把历史从 42 天缩到 9 天）",
+          resample_ohlcv(bars, "5m").equals(resample_ohlcv(bars, "D")))
+    check("深度提示表与档位一一对应、且单调（1m 最浅 / 60m 最深）",
+          set(MINUTE_DEPTH_DAYS) == set(MINUTE_PERIODS)
+          and MINUTE_DEPTH_DAYS["1m"] < MINUTE_DEPTH_DAYS["60m"])
+
+    # ---- 3) 分钟键：同一标的按档位各存一份 ----
+    check("minute_key 往返", split_minute_key(minute_key("600519", "5m")) == ("600519", "5m"))
+    check("minute_key 归一档位写法", minute_key("600519", "M5") == "600519@5m")
+    check("非分钟键原样返回（日线键不受影响）", split_minute_key("600519") == ("600519", ""))
+    check("非法档位不伪造分钟键", split_minute_key("600519@瞎写") == ("600519@瞎写", ""))
+    check("1m 与 5m 是两个键（不会互相覆盖）",
+          minute_key("600519", "1m") != minute_key("600519", "5m"))
+
+    # ---- 4) 源层：签名就是"口径声明"（分钟只有真实价一种）----
+    check("fetch_a_share_minute **没有 adjust 参数** —— 从签名上杜绝'顺手加前复权'"
+          "（实测 adjust 不生效，加了就是假口径）",
+          "adjust" not in inspect.signature(AkShareFeed.fetch_a_share_minute).parameters)
+    check("非股票代码取分钟返回空表（不联网、不抛异常）",
+          AkShareFeed.fetch_a_share_minute("IF2401", "5m").empty)
+    check("非分钟周期被拒绝（不拿日线冒充分钟）",
+          AkShareFeed.fetch_a_share_minute("600519", "W").empty)
+
+    # ---- 5) 门面：分派 / 快照合并 / 分钟不做 skip_fresh（全部用内存湖，不碰用户数据）----
+    calls = []
+    original_fetch = MarketSyncService._fetch
+
+    def _fake_fetch(symbol, zone, start_date, period=None):
+        calls.append((symbol, zone, start_date, period))
+        if symbol == "EMPTY":
+            return pd.DataFrame()
+        step = pd.Timedelta(minutes=5)
+        base = pd.Timestamp("2026-09-16 15:00")
+        rows = 3 if len(calls) == 1 else 5
+        return pd.DataFrame({
+            "date": [base - step * (rows - 1 - i) for i in range(rows)],
+            "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5,
+            "volume": 100, "symbol": symbol})
+
+    class _MemLake:
+        """内存湖：只实现门面用到的方法（**绝不碰用户真实数据**）"""
+
+        def __init__(self):
+            self.store = {}
+
+        def exists(self, zone, key):
+            return key in self.store
+
+        def load_data(self, zone, key):
+            return self.store.get(key, pd.DataFrame())
+
+        def save_data(self, zone, key, df):
+            self.store[key] = df.copy()
+            return True
+
+        def get_latest_date(self, zone, key):
+            df = self.store.get(key)
+            return "" if df is None or df.empty else str(df["date"].max())
+
+    svc = MarketSyncService()
+    svc.lake = _MemLake()
+    MarketSyncService._fetch = staticmethod(_fake_fetch)
+    _no_sleep = (lambda _s: None)
+    try:
+        first = svc.refresh_one("600519", zone=ZONE_MIN, period="5m", sleep_fn=_no_sleep)
+        check("分钟同步落到 `600519@5m` 这个键上（不是裸代码，日线那份不受影响）",
+              "600519@5m" in svc.lake.store and "600519" not in svc.lake.store)
+        check("回包给的是**纯标的**（页面竞态守卫照旧可用）+ 键与档位单列",
+              first["symbol"] == "600519" and first["key"] == "600519@5m"
+              and first["period"] == "5m")
+        check("档位被传到源层（而不是让源层猜）",
+              calls[-1][1] == ZONE_MIN and calls[-1][3] == "5m")
+        check("分钟同步成功回执", first["ok"] and first["rows"] == 3)
+
+        second = svc.refresh_one("600519", zone=ZONE_MIN, period="5m", sleep_fn=_no_sleep)
+        check("第二次同步 = 整段快照**合并去重**（新增 2 根、旧的 3 根不丢）",
+              second["ok"] and second["rows"] == 5 and second["added"] == 2)
+
+        svc._is_fresh = lambda *a, **k: True          # 强行"本地已最新"
+        today = svc.refresh_one("600519", zone=ZONE_MIN, period="5m", sleep_fn=_no_sleep)
+        check("⚠ 分钟**不做**'已是最新就跳过'（盘中每分钟都在变，跳了就会拿旧快照）",
+              today["ok"] and not today.get("skipped"))
+
+        empty = svc.refresh_one("EMPTY", zone=ZONE_MIN, period="5m", sleep_fn=_no_sleep)
+        check("分钟空返回 = 真失败（不退化成'已最新'，保住重试与熔断语义）",
+              (not empty["ok"]) and not empty.get("skipped"))
+
+        one = svc.refresh_one("600519", zone=ZONE_MIN, period="1m", sleep_fn=_no_sleep)
+        check("换档位 ⇒ 另存一份，互不覆盖（1m 不会读到 5m 的数据）",
+              one["key"] == "600519@1m" and "600519@1m" in svc.lake.store)
+    finally:
+        MarketSyncService._fetch = staticmethod(original_fetch)
+except Exception as e:  # noqa: BLE001
+    import traceback
+    traceback.print_exc()
+    check(f"分钟周期数据链路测试执行失败: {type(e).__name__}: {e}", False)
+
+print("== v6.21 · §7-B6 STEP 3c：工具行 chips「最近使用优先」（纯函数）==")
+try:
+    import ui.widgets.custom_widgets as _cw_chip
+    from ui.widgets.chip_mru import (CHIP_LIMIT, CHIP_POOLS, chip_kind, chip_label,
+                                     hidden_keys, normalize_recent, push_recent,
+                                     resolve_chips)
+
+    check("两个候选池与 §7-B6-D 一致（主图 3 / 副图 5）",
+          CHIP_POOLS["main"] == ("ma", "boll", "formula")
+          and CHIP_POOLS["sub"] == ("volume", "macd", "sub1", "sub2", "sub3"))
+    check("chip_kind 认得出归属、认不出返回空",
+          chip_kind("ma") == "main" and chip_kind("sub2") == "sub" and chip_kind("瞎写") == "")
+    check("push_recent：新用的排最前 + 去重 + 超长截断",
+          push_recent(["boll", "ma"], "ma") == ["ma", "boll"]
+          and push_recent(["ma"], "ma") == ["ma"]
+          and push_recent(["ma", "boll", "formula"], "volume", history=3)
+          == ["volume", "ma", "boll"])
+    check("normalize_recent 丢掉池外键（坏偏好不许污染界面）",
+          normalize_recent(["ma", "瞎写", "ma", "sub1"]) == ["ma", "sub1"]
+          and normalize_recent(None) == [])
+    check("resolve：**已启用项一定看得见**（即使最近顺序靠后）",
+          "boll" in resolve_chips(["ma", "volume", "macd"], ["boll"], limit=3))
+    check("resolve：顺序 = 最近使用倒序",
+          resolve_chips(["macd", "ma", "volume"], ["ma", "volume", "macd"], limit=3)
+          == ["macd", "ma", "volume"])
+    check("resolve：已启用优先占位，关闭的灰态项用空位补上（规则 3）",
+          resolve_chips(["ma", "boll", "volume", "macd"], ["ma"], limit=3)
+          == ["ma", "boll", "volume"])
+    check("resolve：上限生效（溢出的交给「＋ 更多」）",
+          len(resolve_chips(["ma", "boll", "formula"], ["ma", "boll", "formula"], limit=2)) == 2)
+    check("resolve：已启用数 > 上限时按**最近序**裁剪",
+          resolve_chips(["formula", "boll", "ma"], ["ma", "boll", "formula"], limit=2)
+          == ["formula", "boll"])
+    check("resolve：pool 会过滤掉不存在的项（如公式里根本没有副图 2）",
+          resolve_chips(["sub2", "volume"], [], limit=3, pool=("volume", "macd")) == ["volume"])
+    check("resolve：空输入不崩、结果为空",
+          resolve_chips([], [], limit=3) == [] and resolve_chips(None, None) == [])
+    check("hidden_keys = 池内但没显示出来的（正是「＋ 更多」要列的东西）",
+          set(hidden_keys(["ma", "boll", "formula"], [], limit=2, pool=CHIP_POOLS["main"]))
+          == {"formula"})
+    check("chip_label 有中文名、未知键原样回显",
+          chip_label("ma") == "MA" and chip_label("sub1") == "公式副图 1"
+          and chip_label("自定义") == "自定义")
+    check("chip 样式的唯一定义处 = custom_widgets（§10-9）",
+          all(hasattr(_cw_chip, name) for name in ("CHIP_QSS_ON", "CHIP_QSS_OFF",
+                                                   "CHIP_MORE_QSS")))
+    check("池上限常量就是 3（与 §7-B6-D 的「最近前 3」一字对应）", CHIP_LIMIT == 3)
+except Exception as e:  # noqa: BLE001
+    import traceback
+    traceback.print_exc()
+    check(f"工具行 chips 纯函数测试执行失败: {type(e).__name__}: {e}", False)
 
 print("== v6.12 · 自选股（P8）+ 斐波那契/文字标注的绘制与删除 ==")
 try:
@@ -1334,6 +1630,125 @@ except Exception as e:  # noqa: BLE001
     import traceback
     traceback.print_exc()
     check(f"§7-B5 成交真实性测试执行失败: {type(e).__name__}: {e}", False)
+
+# ==========================================
+# v6.23 · 数据物理护栏 + 读数条新字段（用户 2026-09-17 实测反馈驱动）
+#   背景：本地 300750 的历史里混进了兜底源数据（成交量单位=手、前复权含负价），
+#   表现为"量能副图 100× 台阶 + 一根负价把整张图压扁"。这里把两道护栏钉成断言。
+# ==========================================
+print("\n== v6.23 · 数据护栏（非正价 / 成交量单位）+ 读数条（涨跌幅 · 一字）==")
+from data.akshare_feed import (EM_VOLUME_UNIT, drop_unusable_price_rows,  # noqa: E402
+                              em_volume_to_shares)
+
+_guard = pd.DataFrame({
+    'date': pd.to_datetime(['2018-06-11', '2018-06-12', '2018-06-13']),
+    'open': [-4.03, 1.33, 3.54], 'high': [-0.68, 1.33, 3.54],
+    'low': [-4.03, 1.33, 3.54], 'close': [-0.68, 1.33, 3.54],
+})
+_kept = drop_unusable_price_rows(_guard, '300750')
+check(f"非正价行被拦下（3 行 → {len(_kept)} 行；负价那行不再进湖）", len(_kept) == 2)
+check("护栏只拦非正价/缺价，正常行一根不少（不误伤）",
+      list(_kept['close']) == [1.33, 3.54])
+check("缺价（NaN）行同样拦下",
+      len(drop_unusable_price_rows(pd.DataFrame({
+          'date': pd.to_datetime(['2024-01-02', '2024-01-03']),
+          'open': [1.0, None], 'high': [1.1, None],
+          'low': [0.9, None], 'close': [1.05, None]}), 'x')) == 1)
+check("没有价格列时原样返回（不崩）",
+      len(drop_unusable_price_rows(pd.DataFrame({'date': [1], 'volume': [2]}))) == 1)
+
+_em = pd.DataFrame({'日期': ['2024-01-02'], '成交量': [1234]})
+_converted = em_volume_to_shares(_em)
+check(f"东财兜底源成交量「手 → 股」（×{EM_VOLUME_UNIT}）",
+      float(_converted['成交量'].iloc[0]) == 1234 * EM_VOLUME_UNIT)
+check("换算**只做一次**（重复调用不会越乘越大）",
+      float(em_volume_to_shares(pd.DataFrame({'成交量': [1234]}))['成交量'].iloc[0])
+      == 1234 * EM_VOLUME_UNIT)
+check("没有「成交量」列时原样返回（新浪路径/异常帧都不崩）",
+      list(em_volume_to_shares(pd.DataFrame({'close': [1.0]})).columns) == ['close'])
+
+# ---- 量纲接缝判据（中位数比对：单日放量不算，持续换单位才算）----
+from ui.widgets.desk_data import DeskData  # noqa: E402
+
+_dd = DeskData(None)                       # 只调静态判据，不碰页面
+_flat = pd.Series([1e6] * 40)
+_seam = pd.concat([pd.Series([1e6] * 40), pd.Series([1e8] * 40)], ignore_index=True)
+_spike = pd.concat([pd.Series([1e6] * 40), pd.Series([1e8]), pd.Series([1e6] * 39)],
+                   ignore_index=True)
+check("量纲接缝（×100 持续换单位）被识别", _dd._volume_seam(_seam) is not None)
+check("单日放量（复牌/涨停放量）**不**误报 —— 它之后会回落到同一基线",
+      _dd._volume_seam(_spike) is None)
+check("量能平稳时不报", _dd._volume_seam(_flat) is None)
+
+# ---- 读数条：涨跌幅 + 一字（纯数据事实，不猜涨跌停规则）----
+from ui.widgets.desk_readout import DeskReadout  # noqa: E402
+
+_row = pd.Series({'date': pd.Timestamp('2024-07-30'), 'open': 6.78, 'high': 6.78,
+                  'low': 6.78, 'close': 6.78, 'volume': 23938437.0})
+_line = DeskReadout._readout_text_for_row(_row, '%Y-%m-%d', prev_close=6.17)
+check("读数条带涨跌幅（一字板那天 = +9.89%，一眼看出不是画错）", '+9.89%' in _line)
+check("读数条带「一字」标签（当日最高 == 最低）", '一字' in _line)
+_row2 = pd.Series({'date': pd.Timestamp('2024-07-31'), 'open': 6.90, 'high': 7.46,
+                   'low': 6.80, 'close': 7.46, 'volume': 49885536.0})
+_line2 = DeskReadout._readout_text_for_row(_row2, '%Y-%m-%d', prev_close=6.78)
+check("有振幅的那天不给「一字」标签（不误报）", '一字' not in _line2 and '+10.03%' in _line2)
+check("没有前收（第一根）时不显示涨跌幅（不编数字）",
+      '%' not in DeskReadout._readout_text_for_row(_row, '%Y-%m-%d', prev_close=None)
+      .replace('开 ', '').replace('高 ', '').replace('低 ', '').replace('收 ', ''))
+
+# ==========================================
+# v6.23 · 一字板可读性（用户 2026-09-17 二次反馈："一字板的显示问题"）
+#   数据已用独立源逐根核对为**真连板**（600326：2025-07-21..24 四个一字板，
+#   开=高=低=收 ⇒ 实体高度 0）；问题在**画法**：零高度实体只剩一条 1px 横线，
+#   缩小时几乎看不见 ⇒ 一串一字板看起来像"虚点/断口"。这里把"必须画得出且比影线粗"钉住。
+# ==========================================
+print("\n== v6.23 · 一字板可读性（零高度实体必须画得出、且比普通影线粗）==")
+from PyQt6 import QtCore  # noqa: E402
+from PyQt6.QtGui import QImage, QPainter  # noqa: E402
+
+from config import settings  # noqa: E402
+from ui.widgets.custom_widgets import CandlestickItem  # noqa: E402
+
+check("一字板（开=收=高=低）被判定为零高度实体", CandlestickItem.is_flat_bar(10.54, 10.54))
+check("T 字板（开=收=高，带下影）同样按零高度处理", CandlestickItem.is_flat_bar(15.43, 15.43))
+check("正常 K 线不按零高度处理（画法一字未改）", not CandlestickItem.is_flat_bar(9.66, 9.58))
+check(f"横档线宽 ≥2px（常量 {CandlestickItem.FLAT_BAR_PEN_WIDTH}）—— 1px 缩小时是头发丝",
+      CandlestickItem.FLAT_BAR_PEN_WIDTH >= 2.0)
+
+
+def _ink(bars, scale=10):
+    """把 K 线图元画到离屏画布上，数非白像素 = **看得见的笔迹**。"""
+    img = QImage(240, 240, QImage.Format.Format_ARGB32)
+    img.fill(0xFFFFFFFF)
+    painter = QPainter(img)
+    painter.scale(scale, scale)
+    CandlestickItem(bars).paint(painter, None)
+    painter.end()
+    return sum(1 for _y in range(240) for _x in range(240)
+               if img.pixelColor(_x, _y).lightness() < 200)
+
+
+def _ink_of_pen(width, scale=10):
+    """同一条横线，用指定线宽的**普通画笔**画 —— 作为"头发丝"参照。"""
+    img = QImage(240, 240, QImage.Format.Format_ARGB32)
+    img.fill(0xFFFFFFFF)
+    painter = QPainter(img)
+    painter.scale(scale, scale)
+    painter.setPen(pg.mkPen(settings.COLOR_PROFIT, width=width))
+    painter.drawLine(QtCore.QPointF(0.65, 20.0), QtCore.QPointF(1.35, 20.0))
+    painter.end()
+    return sum(1 for _y in range(240) for _x in range(240)
+               if img.pixelColor(_x, _y).lightness() < 200)
+
+
+_flat_ink = _ink([(0, 20.0, 20.0, 20.0, 20.0), (1, 20.0, 20.0, 20.0, 20.0)])
+_hair_ink = _ink_of_pen(1.0)          # 老画法：1px 实体描边
+_normal_ink = _ink([(0, 19.0, 20.0, 18.5, 20.5), (1, 19.0, 20.0, 18.5, 20.5)])
+check(f"一字板在离屏画布上留下可见笔迹（{_flat_ink} 个非白像素）", _flat_ink >= 20)
+check(f"一字板的横档**明显比 1px 头发丝粗**（{_flat_ink} vs {_hair_ink} 像素）",
+      _flat_ink >= _hair_ink * 1.8)
+check(f"普通 K 线照常画（{_normal_ink} 个非白像素），改画法没影响其它 bar",
+      _normal_ink > _hair_ink)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:

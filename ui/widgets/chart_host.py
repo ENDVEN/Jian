@@ -101,6 +101,10 @@ class ChartHost(QWidget):
         self._readout = QLabel("")
         self._readout.setStyleSheet("color: #616161; font-size: 12px; padding: 1px 6px;")
         self._readout.setVisible(False)
+        # 【v6.21 · §7-B6 STEP 2】读数条的"业务文案"由页面提供（宿主不猜业务）：
+        #   provider(pane_name, x, y) -> str；未设置 / 返回空 / 抛异常 ⇒ 回退内置文案。
+        self._readout_provider = None
+        self._readout_forced = False          # 页面要求常显（不依赖十字光标开关）
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -263,9 +267,33 @@ class ChartHost(QWidget):
         cross = self._crosshairs.get(pane_name)
         return None if cross is None else (cross.vertical, cross.horizontal)
 
+    def set_readout_provider(self, provider) -> None:
+        """设置**读数条文案**的外部提供者（v6.21 · §7-B6 STEP 2）。
+
+        【为什么交给页面】内置文案只能给"窗格名 / X / Y"，而工作台要的是**业务读数**
+        （日期 + 开高低收 + 量 + 均线）。宿主**不猜业务**，只把 `(pane_name, x, y)`
+        转交页面，由页面用真实 df 拼文案（§10-3：引擎/宿主出数据，页面定业务）。
+        【纪律】provider 返回空串或抛异常 ⇒ **回退内置文案** —— 读数只是显示，
+        绝不能因为它挂掉而影响图表（这条有断言守着）。
+        """
+        self._readout_provider = provider
+
+    def set_readout_visible(self, visible: bool) -> None:
+        """让读数条**常显**（不依赖十字光标开关）—— 工作台要它常驻显示最新一根的读数。"""
+        self._readout_forced = bool(visible)
+        self._readout.setVisible(self._readout_forced or self._crosshair_enabled)
+
+    def set_readout_text(self, text: str) -> None:
+        """直接写读数条文案（v6.21 · §7-B6 STEP 5）。
+
+        【为什么不复用 `update_crosshair`】那会把十字光标**真的挪到**那一根上（画面上会看到
+        两条线跳到最新一根）—— 而"不悬停时显示最新一根的读数"是**常驻摘要**，不该动画。
+        """
+        self._readout.setText(str(text or ""))
+
     def set_crosshair(self, enabled: bool) -> None:
         self._crosshair_enabled = bool(enabled)
-        self._readout.setVisible(self._crosshair_enabled)
+        self._readout.setVisible(self._readout_forced or self._crosshair_enabled)
         if not self._crosshair_enabled:
             for cross in self._crosshairs.values():
                 cross.set_visible(False)
@@ -379,6 +407,15 @@ class ChartHost(QWidget):
             cross.set_visible(False)
 
     def _update_readout(self, pane: ChartPane, x: float, y: float) -> None:
+        # 【v6.21 · §7-B6 STEP 2】先问页面（业务读数）；失败/空 ⇒ 静默回退内置文案。
+        if self._readout_provider is not None:
+            try:
+                text = self._readout_provider(pane.name, x, y)
+            except Exception:  # noqa: BLE001 —— 读数只是显示，绝不能连累图表
+                text = ""
+            if text:
+                self._readout.setText(str(text))
+                return
         if self._date_axis:
             try:
                 label = _dt.datetime.fromtimestamp(float(x)).strftime('%Y-%m-%d')

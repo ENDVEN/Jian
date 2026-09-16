@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>1.23 行情工作台 UI 收口 · 四套设计语言样板</title>
+<style>
+:root{
+  --bg:#F4F6FA; --card:#fff; --line:#E4E9F0; --ink:#1F2430; --ink2:#3C4552;
+  --muted:#8A94A6; --faint:#B4BECB; --accent:#1976D2; --accent-soft:#E8F2FE;
+  --up:#2E7D32; --down:#C62828; --orange:#E65100;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13.5px/1.65 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;padding:26px 30px 70px}
+h1{font-size:22px;margin:0 0 6px}
+h2{font-size:16px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--accent)}
+h3{font-size:13.5px;margin:16px 0 8px;color:var(--ink2)}
+.lead{color:var(--muted);margin:0 0 22px;max-width:1020px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;
+      box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.05)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.sample{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+        box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.06);display:flex;flex-direction:column}
+.shead{padding:13px 16px 10px;display:flex;align-items:flex-start;gap:10px}
+.shead .k{width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;
+          font-weight:800;font-size:14px;flex:0 0 auto}
+.shead .t{font-weight:800;font-size:14.5px}
+.shead .d{color:var(--muted);font-size:12.3px;margin-top:2px}
+.shot{position:relative;width:100%;height:372px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+      background:#EDF1F6;overflow:hidden}
+.shot iframe{position:absolute;top:0;left:0;width:1440px;height:886px;border:0;transform:scale(.42);
+             transform-origin:top left;pointer-events:none}
+@media (max-width:1500px){ .grid{grid-template-columns:1fr} }
+.sfoot{display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:12.3px;color:var(--ink2);flex-wrap:wrap}
+.sfoot a{color:var(--accent);font-weight:700;text-decoration:none}
+.sfoot a:hover{text-decoration:underline}
+.pill{font-size:11.5px;border-radius:999px;padding:3px 9px;font-weight:700;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.pill.g{background:#EAF7EE;color:var(--up)}
+.pill.o{background:#FFF3E0;color:var(--orange)}
+.pill.r{background:#FDECEA;color:var(--down)}
+.pill.gray{background:#F1F4F9;color:var(--muted)}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:12.8px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #EEF1F6;vertical-align:top}
+th{background:#F7F9FC;font-weight:700;color:var(--ink2);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td.c{text-align:center;white-space:nowrap}
+code{background:#F4F6FA;border:1px solid #E7EAF0;border-radius:5px;padding:1px 5px;font-family:Consolas,monospace;font-size:12.2px}
+.big{font-size:20px;font-weight:800}
+.big.bad{color:var(--down)} .big.good{color:var(--up)}
+.note{background:#FFFBF0;border:1px solid #F3E2B8;border-radius:10px;padding:12px 14px;font-size:12.8px;color:#6B5A22}
+.note b{color:#8A6D1F}
+.ask{background:#F7FBFF;border:1px solid #CFE4FA;border-radius:10px;padding:14px 16px;font-size:13px}
+.ask ol{margin:8px 0 0 18px;padding:0}
+.ask li{margin-bottom:8px}
+ul.tight{margin:6px 0 0 18px;padding:0}
+ul.tight li{margin-bottom:5px}
+.kv{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.metric{background:#FBFCFE;border:1px solid #E7EAF0;border-radius:10px;padding:10px 14px;min-width:180px}
+.metric .l{color:var(--muted);font-size:12px}
+.metric .v{font-size:19px;font-weight:800}
+.swatch{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
+.swatch i{width:16px;height:16px;border-radius:4px;display:inline-block;border:1px solid rgba(0,0,0,.08)}
+</style>
+</head>
+<body>
+
+<h1>1.23 行情工作台 UI 收口 · 四套设计语言样板</h1>
+<p class="lead">
+  需求（你的原话）：<b>"流程一样"</b> —— 先出几版样板图、用<b>不同的设计语言</b>，你挑一个再动手。
+  下面是 4 套可交互样板，<b>设计语言彼此不同（不是换皮）</b>，都能满足 §10-14 的版式分层；
+  另外本轮的 <b>分钟周期（§7 D3）</b> 会共用同一条图形工具条 —— 所以我在 4 套样板里都预留了"周期第 4 档"的位置。
+</p>
+
+<h2>一、先把"现状为什么难受"量化（用代码实测，不用感觉）</h2>
+<div class="card">
+  <div class="kv">
+    <div class="metric"><div class="l">左栏常驻宽度</div><div class="v bad">240 ~ 300 px</div></div>
+    <div class="metric"><div class="l">左栏内容高度需求（实测）</div><div class="v bad">≈ 900 px</div></div>
+    <div class="metric"><div class="l">左栏实际可视高度（900p 屏）</div><div class="v bad">≈ 600 px</div></div>
+    <div class="metric"><div class="l">同类优先级的常驻分组</div><div class="v bad">6 组</div></div>
+  </div>
+  <ul class="tight">
+    <li><b>① 图表高度其实够</b>（左栏是纵向的，图表占满整高）—— 本页的病<b>不是"抢回高度"</b>，而是三件别的事，
+      这一点与回测页不同，我在下面写清楚，避免照搬回测页方案。</li>
+    <li><b>② 左栏要滚动才发现功能</b>：自选股 <code>setFixedHeight(150)</code> + 周期 + 复权 + 主图叠加 + 公式（4 个按钮 + 状态）
+      + 附图 + 标注工具（下拉 + 3 个按钮 + 状态）→ 后半夜才用到的「🛠 标注工具」默认在<b>视野之外</b>。</li>
+    <li><b>③ 6 个分组视觉权重完全相同</b>（都是「小标题 + 控件」平铺）——
+      用户无法一眼判断"哪个是我的高频操作"。</li>
+    <li><b>④ 状态回执被窄栏压窄</b>：复权回执 / 公式回执 / 标注回执都是 11px 的 QLabel 挤在 240px 里，
+      内容靠 tooltip 兜底 —— "我到底配了什么"看不见。</li>
+    <li><b>⑤ 图表让渡了 20% 宽度</b>给常驻左栏，而左栏里一半控件是"配一次就不动"的。</li>
+  </ul>
+  <div class="note" style="margin-top:12px">
+    <b>顺带纠正文档一处失真（本次要清的账）：</b>§9-U 把本页病灶写成"图表被压成下半屏"——
+    实测并不成立（图表占满整高）。真实病灶是上面的 ②③④⑤。这属于本轮 <b>A 项"清文档账"</b> 的一部分，收工时一并修正。
+  </div>
+</div>
+
+<h2>二、四套样板（点标题全屏打开 · 可交互）</h2>
+<div class="grid">
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#0E3B36">A</div>
+      <div><div class="t">深色专业终端（Terminal Pro）</div>
+        <div class="d">深底 + 密集信息 + 等宽数字 · 52px 图标轨 ↔ 320px 工具面板 · 一屏当看盘台</div></div>
+      <span style="flex:1"></span><span class="pill gray">图表 100% 高</span>
+    </div>
+    <div class="shot"><iframe src="a-dark-terminal.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span class="swatch"><i style="background:#0B1118"></i><i style="background:#21C7A8"></i><i style="background:#121C26"></i>深底 / 青绿 / 等宽</span>
+      <span>·</span><span>迁移成本 <b>中高</b></span>
+      <span style="flex:1"></span><a href="a-dark-terminal.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#1976D2">B</div>
+      <div><div class="t">亮色左栏工作台（Workbench）</div>
+        <div class="d">沿用 1.22 回测页同一套视觉语言 · 分组卡片可折叠 · 改参数与看图同屏</div></div>
+      <span style="flex:1"></span><span class="pill g">迁移成本最低</span>
+    </div>
+    <div class="shot"><iframe src="b-left-workbench.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span class="swatch"><i style="background:#F4F6FA"></i><i style="background:#fff"></i><i style="background:#1976D2"></i>白卡 / 蓝 / 圆角</span>
+      <span>·</span><span>迁移成本 <b>低</b></span>
+      <span style="flex:1"></span><a href="b-left-workbench.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#123A4A">C</div>
+      <div><div class="t">沉浸全屏 + 悬浮玻璃（Immersive HUD）</div>
+        <div class="d">图表铺满 100% · 控制项浮在图上、静置 3 秒自动淡出 · 可 📌 钉住</div></div>
+      <span style="flex:1"></span><span class="pill">零常驻行</span>
+    </div>
+    <div class="shot"><iframe src="c-immersive-glass.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span class="swatch"><i style="background:#0B1220"></i><i style="background:rgba(56,225,198,.6)"></i><i style="background:rgba(255,255,255,.2)"></i>深蓝 / 玻璃 / 悬浮</span>
+      <span>·</span><span>迁移成本 <b>中</b></span>
+      <span style="flex:1"></span><a href="c-immersive-glass.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#2F5D50">D</div>
+      <div><div class="t">纸感极简（Editorial）</div>
+        <div class="d">零阴影 + 1px 细线 + 衬线标题 + 单一墨绿 · 文本式摘要，点短语出纸片编辑条</div></div>
+      <span style="flex:1"></span><span class="pill o">护眼 / 长时间盯盘</span>
+    </div>
+    <div class="shot"><iframe src="d-paper-minimal.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span class="swatch"><i style="background:#FBFAF7"></i><i style="background:#191919"></i><i style="background:#2F5D50"></i>米白纸 / 墨黑 / 墨绿</span>
+      <span>·</span><span>迁移成本 <b>中</b></span>
+      <span style="flex:1"></span><a href="d-paper-minimal.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+</div>
+
+<h2>三、四套样板的取舍对照</h2>
+<table>
+  <thead><tr><th>样板</th><th>配置去哪了</th><th>看得见的好处</th><th>代价 / 风险</th><th>适合</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>A 深色终端</b></td>
+      <td>52px 图标轨 + 320px 面板（点图标展开/再点收起）</td>
+      <td>一屏信息密度最高；<b>周期/复权用分段控件，少一次点击</b>；底部常驻十字光标读数（看盘人最在意这排数字）</td>
+      <td>深色与其余 5 页（浅色）<b>割裂</b>，等于全 app 要两套色板；等宽字体与密集排布对非专业用户偏硬</td>
+      <td>你本人天天看盘 · 已习惯终端风格</td>
+    </tr>
+    <tr>
+      <td><b>B 左栏工作台</b></td>
+      <td>左栏分组卡片（每张可折叠，默认展开自选股）</td>
+      <td><b>与 1.22 回测页完全同一语言</b>（白卡/圆角/蓝），学习成本为 0；左栏宽度可收（44px）；自选股可点即切</td>
+      <td>图标轨方案相比"折叠卡片"<b>少了宽度节省</b>（卡片折叠只是变矮，不省宽）；左栏仍占 300px</td>
+      <td>最稳的选择（我默认推荐）</td>
+    </tr>
+    <tr>
+      <td><b>C 沉浸 HUD</b></td>
+      <td>右侧玻璃抽屉（4 页签）+ 底部胶囊 + 左侧工具轨</td>
+      <td><b>图表真正 100% 铺满</b>，宽度全拿回来；静置自动淡出让"看图不被打扰"；钉住后与常驻等效</td>
+      <td>"东西藏在浮层里"需要用户适应；淡出/浮层与 Qt 的 <code>QGraphicsView</code> 尺寸联动是<b>最容易出坑</b>的一处；正文小字在玻璃上有对比度风险（需走对比度守卫思路）</td>
+      <td>想要最大图表面积 · 愿意接受新鲜交互</td>
+    </tr>
+    <tr>
+      <td><b>D 纸感极简</b></td>
+      <td>文本式摘要 + 图表上方浮出的"纸片编辑条"（不挤高度）</td>
+      <td>层次全靠排版，<b>长时间盯盘最不累眼</b>；摘要本身就是"我配了什么"的答案（与回测页 chips 同一思想，但更轻）</td>
+      <td>可点击的"文字短语"发现性弱（新用户不知道能点）；衬线体在 Windows 上中文字形依赖系统字体，跨机表现不完全可控</td>
+      <td>看重护眼与克制感</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>四、无论选哪个，这四条都是施工硬约束</h2>
+<table>
+  <thead><tr><th>约束</th><th>为什么</th><th>对样板的要求</th></tr></thead>
+  <tbody>
+    <tr><td>① 常驻 ≤3 行</td><td>§10-14 版式分层（L0 主角 / L1 操作轴 / L2 摘要 / L3 编辑 / L4 附属）</td>
+      <td>4 套样板都已满足：A=2 行、B=2 行（顶栏 + 工具条）、C=0 行（浮层）、D=1 行（摘要）</td></tr>
+    <tr><td>② 低频配置必须离开常驻</td><td>自选股管理 / 公式编辑 / 标注工具 / 数据同步 = 配一次用很久</td>
+      <td>4 套都有明确的"低频落点"（面板 / 折叠卡 / 抽屉 / 纸片条）</td></tr>
+    <tr><td>③ 状态摘要必须常显</td><td>"我到底配了什么"看不见 = 现在最痛的点（回执挤在 240px 里）</td>
+      <td>A 用工具条 chips、B 用卡片内回执 + 图上指示、C 用胶囊、D 用文本摘要</td></tr>
+    <tr><td>④ 周期控件要能扩到第 4 档（分钟）</td><td>本轮同时要做 <b>§7 D3 分钟周期</b>：<code>kline_min</code> 分区已预留，日期格式只需改
+      <code>adaptive_axis.choose_date_format</code> 一处</td>
+      <td>4 套的周期控件都是"分段 / 胶囊"，<b>加一档不用重排版</b>；若你选 B，我会把分段控件做成可容纳 4~5 档</td></tr>
+  </tbody>
+</table>
+
+<h2>五、我的推荐</h2>
+<div class="card">
+  <ul class="tight">
+    <li><b>推荐 B 为主骨架</b>：它是 1.22 已验收的同一套语言，迁移成本最低、回归风险最小（两个冒烟脚本里页面级断言最多的就是本页），
+      并且天然解决现状的 ②③④⑤ 四点病灶。</li>
+    <li><b>吸收 A 的两个零件</b>（与设计语言无关、纯交互改进）：① 周期/复权改<b>分段控件</b>（少一次点击）；
+      ② 图表区常驻<b>十字光标读数条</b>（现在读数只在图上飘一个 tag，静置就没了）。</li>
+    <li><b>吸收 C 的一个零件</b>：左栏做个"<b>收起</b>"按钮（300px ↔ 44px 图标条），需要大图时一键让位 —— 比 A 的常驻图标轨更保守。</li>
+    <li><b>吸收 D 的一个零件</b>：把"公式状态 / 复权回执 / 标注回执"从 11px 小灰字升级为<b>可读的一行摘要</b>（不是靠 tooltip 兜底）。</li>
+    <li><b>不建议选 A</b>：深色终端会让本页成为全 app 唯一的深色页，长期维护两套色板不划算。
+      若你确实喜欢深色，我建议单独开一轮"全 app 深色主题"，而不是只改这一页。</li>
+  </ul>
+  <div class="note" style="margin-top:12px">
+    <b>顺路收益（与上一轮同理）：</b>本页 <code>ui/views/trading_desk.py 847 行</code> 已在 §9-U / §9-L 名单上。
+    这次 UI 收口天然把它切成"图形工具条 / 左栏面板 / 图表装配"三块 → <b>一次规划、改一遍</b>，
+    不必"先改 UI 再拆文件"。
+  </div>
+</div>
+
+<h2>六、落到 PyQt6 的实现成本（诚实评估）</h2>
+<table>
+  <thead><tr><th>样板</th><th>新增 / 改造</th><th>关键坑</th><th>回归影响</th></tr></thead>
+  <tbody>
+    <tr><td><b>A</b></td><td>图标轨 <code>QFrame</code> + 面板 <code>QStackedWidget</code> + 底部读数条</td>
+      <td>深色主题需要新色板与 <code>custom_widgets</code> 的 QSS 常量扩一套（§10-9 要求样式唯一来源）</td>
+      <td>中（样式相关断言最多）</td></tr>
+    <tr><td><b>B</b></td><td>左栏分组卡片（可复用 <code>backtest_panes</code> 的卡片构件思想）+ 工具条分段控件</td>
+      <td>折叠卡要"记住折叠状态"（写 <code>preferences</code>，与 1.22 的 <code>backtest_ui</code> 同源做法）</td>
+      <td>低~中</td></tr>
+    <tr><td><b>C</b></td><td>浮层容器 + 自动淡出计时器 + 右侧抽屉（可直接复用 <code>EditDrawer</code>）+ 左侧工具轨</td>
+      <td><b>浮层与 pyqtgraph 视口的鼠标事件冲突</b>（浮层不能吃掉拖拽/十字光标事件）；<code>backdrop-filter</code> 在 Qt 里没有原生等价物
+        （只能用半透明色近似，玻璃感会打折）；淡出动画要与"正在拖线"互斥</td>
+      <td>中</td></tr>
+    <tr><td><b>D</b></td><td>摘要行 + 纸片编辑条（绝对定位浮在图表上方）+ 细列表样式</td>
+      <td>衬线中文字体跨机不一致（需给定字体族回退链）；可点击短语的<b>可发现性</b>要靠 hover 下划线兜底</td>
+      <td>低~中</td></tr>
+  </tbody>
+</table>
+
+<h2>七、需要你拍板的 5 点</h2>
+<div class="ask">
+  <ol>
+    <li><b>选哪一套？</b> 直接说 A / B / C / D，或"用你推荐的 B + A 的两个零件 + C 的收起按钮"。</li>
+    <li><b>左栏要不要能"收起"？</b> 收起后图表多拿 ~260px 宽度（推荐要）。</li>
+    <li><b>公式状态 / 复权回执 / 标注回执</b> 是要"一行可读摘要"（推荐）还是维持小灰字 + tooltip？</li>
+    <li><b>分钟周期（§7 D3）这一轮一起做吗？</b> 一起做的话，周期控件我按 4 档（日/周/月/分钟）一次排好，避免二次改版。</li>
+    <li><b>顺路拆 <code>trading_desk.py</code>（847 行）吗？</b> 我建议做（与上一轮 <code>backtest.py</code> 同一套做法）。</li>
+  </ol>
+</div>
+
+</body>
+</html>

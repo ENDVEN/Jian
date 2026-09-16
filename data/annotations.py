@@ -33,6 +33,7 @@ import uuid
 from datetime import date as _date
 
 from config import settings
+from core.utils import MINUTE_PERIODS, normalize_period
 
 ANNOTATION_FILE = "annotations.json"
 SCHEMA_VERSION = 1
@@ -51,15 +52,30 @@ PERIOD_ALIASES = {
     "M": PERIOD_MONTHLY, "MONTH": PERIOD_MONTHLY, "MONTHLY": PERIOD_MONTHLY, "月": PERIOD_MONTHLY,
     "月线": PERIOD_MONTHLY,
 }
-PERIOD_LABELS = {PERIOD_DAILY: "日线", PERIOD_WEEKLY: "周线", PERIOD_MONTHLY: "月线"}
+PERIOD_LABELS = {PERIOD_DAILY: "日线", PERIOD_WEEKLY: "周线", PERIOD_MONTHLY: "月线",
+                 **{key: f"{key[:-1]}分钟" for key in MINUTE_PERIODS}}
 
 
 def period_key(value) -> str:
-    """任意周期写法 -> 规范键（daily/weekly/monthly）；未知回落 daily。"""
+    """任意周期写法 -> 规范键（`daily/weekly/monthly` + **分钟档位 `1m…60m`**）；未知回落 daily。
+
+    ⚠ 分钟档位走 `core.utils.normalize_period`（**全 app 唯一归一入口**），
+    否则 `M5` 这种写法在这里会变成 `m5`、在引擎里是 `5m` —— 两套归一必然串档。
+    分钟键与日/周/月键天然不同（`5m` vs `daily`），所以「分钟画的线」不会跑到日线上。
+    """
     text = str(value or "").strip()
     if not text:
         return PERIOD_DAILY
-    return PERIOD_ALIASES.get(text.upper(), text.lower() if text.isascii() else PERIOD_DAILY)
+    alias = PERIOD_ALIASES.get(text.upper())
+    if alias:
+        return alias
+    period = normalize_period(text)
+    if period in MINUTE_PERIODS:
+        return period
+    if period in ("W", "M"):
+        return PERIOD_ALIASES[period]
+    # 认不出的写法：ASCII 原样小写（保持历史行为），其余回落 daily
+    return text.lower() if text.isascii() else PERIOD_DAILY
 
 # 标注类型（kind）
 KIND_TREND = "trend"     # 趋势线（两端点，可拖动）

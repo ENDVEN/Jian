@@ -31,6 +31,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from core.utils import MINUTE_DEPTH_DAYS, MINUTE_PERIODS, normalize_period
 from data.akshare_feed import ADJUST_NONE, ADJUST_QFQ, AkShareFeed
 from data.market_db import DataLakeManager
 
@@ -42,13 +43,42 @@ ZONE_INDEX = "index_daily"
 # ★v6.13/P8 复权切换：**不复权**日线单独一个分区（两份数据无法互相推导，只能各存一份）
 ZONE_KLINE_RAW = "kline_daily_raw"
 
+# ★v6.21 / §7-B6 STEP 3（= §7 D3 分钟周期）：**分钟线分区**。
+# 【为什么单独分区 + 按档位分键】分钟各档位的历史深度不同（实测 1m≈9 天 / 60m≈493 天），
+# 同一标的的 1m 与 5m **无法互相推导** ⇒ 必须各存一份。
+ZONE_MIN = "kline_min"
+MINUTE_KEY_SEP = "@"
+
 # 复权口径（从数据源层重新导出给 UI 用，见本文件头"UI 只认门面"的纪律）
 # ⚠ ui/ 必须从这里 import，**禁止**直接 import data.akshare_feed（§9-H 红线）
 __all__ = ["MarketSyncService", "ThrottlePolicy", "ADJUST_QFQ", "ADJUST_NONE",
            "ADJUST_CHOICES", "ADJUST_LABELS", "adjust_label", "zone_for_adjust",
-           "ZONE_KLINE", "ZONE_KLINE_RAW", "ZONE_INDEX", "estimate_seconds",
+           "ZONE_KLINE", "ZONE_KLINE_RAW", "ZONE_INDEX", "ZONE_MIN", "estimate_seconds",
            "short_fetch_reason", "friendly_fetch_message", "friendly_constituent_message",
-           "DEFAULT_MIN_DATE"]
+           "DEFAULT_MIN_DATE", "MINUTE_PERIODS", "MINUTE_DEPTH_DAYS",
+           "minute_key", "split_minute_key"]
+
+
+def minute_key(symbol: str, period: str) -> str:
+    """`(标的, 分钟档位)` -> 数据湖文件名（键）。
+
+    `DataLakeManager` 的"键"就是文件名，所以约定 `600519@5m`。
+    ⚠ **页面/UI 只准调本函数**，别自己拼字符串（§11.5-19：跨模块的键必须有规范化入口，
+    否则"切了 5m 却读了 1m 那份"这类串档不会报错、只会静默显示错数据）。
+    """
+    return f"{str(symbol or '').strip()}{MINUTE_KEY_SEP}{normalize_period(period)}"
+
+
+def split_minute_key(key: str):
+    """`600519@5m` -> `("600519", "5m")`；不是分钟键时返回 `(key, "")`。"""
+    text = str(key or "")
+    if MINUTE_KEY_SEP not in text:
+        return text, ""
+    symbol, _, period = text.rpartition(MINUTE_KEY_SEP)
+    period_key = normalize_period(period)
+    if period_key in MINUTE_PERIODS:
+        return symbol, period_key
+    return text, ""
 
 ADJUST_CHOICES = (ADJUST_QFQ, ADJUST_NONE)
 ADJUST_LABELS = {ADJUST_QFQ: "前复权", ADJUST_NONE: "不复权"}
@@ -166,15 +196,21 @@ class MarketSyncService:
     # ==========================================
     # 状态查询
     # ==========================================
-    def status(self, symbol: str, zone: str = ZONE_KLINE) -> dict:
-        """本地缓存状态（供管理页 / 回测页判断是否需要联网）"""
+    def status(self, symbol: str, zone: str = ZONE_KLINE, period: str = None) -> dict:
+        """本地缓存状态（供管理页 / 回测页判断是否需要联网）。
+
+        :param period: 仅 `zone=ZONE_MIN` 用（分钟按档位各存一份，见 `minute_key`）
+        """
         symbol = str(symbol or "").strip()
-        cached = bool(symbol) and self.lake.exists(zone, symbol)
+        key = minute_key(symbol, period) if zone == ZONE_MIN else symbol
+        cached = bool(symbol) and self.lake.exists(zone, key)
         return {
             "symbol": symbol,
             "zone": zone,
+            "key": key,
+            "period": normalize_period(period) if zone == ZONE_MIN else "",
             "cached": cached,
-            "last_date": self.lake.get_latest_date(zone, symbol) if cached else "",
+            "last_date": self.lake.get_latest_date(zone, key) if cached else "",
         }
 
     # ==========================================
@@ -182,7 +218,7 @@ class MarketSyncService:
     # ==========================================
     def refresh_one(self, symbol: str, zone: str = ZONE_KLINE, force_full: bool = False,
                     min_date: str = None, policy: ThrottlePolicy = None,
-                    sleep_fn=time.sleep) -> dict:
+                    sleep_fn=time.sleep, period: str = None) -> dict:
         """
         把单个标的同步到最新（或强制全量重拉）。
 
@@ -203,8 +239,13 @@ class MarketSyncService:
         #   "network"              = 网络类异常（断网/超时/被限流）→ 提示稍后重试；
         #   "no_data"              = 两源都返回空 → 最可能是代码有误 / 已退市 / 长期停牌；
         #   "error"                = 其它异常。
+        period_key = normalize_period(period) if zone == ZONE_MIN else ""
+        # 分钟按档位各存一份 ⇒ 湖里的键 = `600519@5m`；而 `result["symbol"]` 仍回**纯标的**
+        # （页面用它做竞态守卫，§9-O5 —— 页面不需要知道键的存在）。
+        key = minute_key(symbol, period_key) if zone == ZONE_MIN else symbol
         result = {
-            "ok": False, "symbol": symbol, "zone": zone, "rows": 0, "added": 0,
+            "ok": False, "symbol": symbol, "zone": zone, "key": key, "period": period_key,
+            "rows": 0, "added": 0,
             "skipped": False, "reason": "", "first": None, "last": None, "message": "",
         }
         if not symbol:
@@ -212,7 +253,7 @@ class MarketSyncService:
             return result
 
         # ---- 1) 本地现状 ----
-        old = pd.DataFrame() if force_full else self.lake.load_data(zone, symbol)
+        old = pd.DataFrame() if force_full else self.lake.load_data(zone, key)
         old_rows = 0 if old.empty else len(old)
         start_date = min_date or DEFAULT_MIN_DATE
 
@@ -220,7 +261,11 @@ class MarketSyncService:
             try:
                 last = pd.to_datetime(old["date"], errors="coerce").max()
                 if pd.notna(last):
-                    if not force_full and self._is_fresh(last, policy.fresh_within_days) \
+                    # ⚠ 分钟**不做"已最新就跳过"**：它的"最新"精确到分钟（盘中每分钟都在变），
+                    # 而 `_is_fresh` 只比到"天" ⇒ 盘中会把 10:00 的旧快照当成"已是今天=最新"。
+                    # 分钟快照单只约 5 秒，宁可每次都真拉一次（用户点同步就是要最新）。
+                    if zone != ZONE_MIN and not force_full \
+                            and self._is_fresh(last, policy.fresh_within_days) \
                             and policy.skip_fresh:
                         result.update(ok=True, skipped=True, rows=old_rows,
                                       first=self._first_day(old), last=last.strftime("%Y-%m-%d"),
@@ -234,7 +279,9 @@ class MarketSyncService:
         # ---- 2) 拉取（温柔节流 + 指数退避重试）----
         # 增量模式（本地已有数据）下的"空返回"通常意味着：周末 / 节假日 / 当日 bar 尚未发布。
         # 那不是失败，不该重试、更不该计入熔断 —— 直接按"已最新"返回。
-        incremental = (not force_full and not old.empty)
+        # ⚠ 分钟：新浪固定回吐"最近 1970 根"整段快照 ⇒ 永远按"首次拉取"语义对待
+        # （空返回 = 真失败，保留退避重试 + 熔断计数），绝不把网络故障美化成"已是最新"。
+        incremental = (not force_full and not old.empty and zone != ZONE_MIN)
 
         policy.sleep(sleep_fn)
         new = pd.DataFrame()
@@ -243,7 +290,7 @@ class MarketSyncService:
         attempts = 1 if incremental else (policy.max_retries + 1)
         for attempt in range(attempts):
             try:
-                new = self._fetch(symbol, zone, start_date)
+                new = self._fetch(symbol, zone, start_date, period_key)
             except Exception as e:  # noqa: BLE001 —— 网络层异常绝不外泄到 UI
                 new = pd.DataFrame()
                 last_err = str(e)
@@ -270,7 +317,7 @@ class MarketSyncService:
         merged = new if (force_full or old.empty) else self._merge(old, new)
 
         # ---- 4) 落盘 ----
-        if not self.lake.save_data(zone, symbol, merged):
+        if not self.lake.save_data(zone, key, merged):
             result["message"] = "落盘失败"
             return result
 
@@ -285,7 +332,11 @@ class MarketSyncService:
     # 内部实现
     # ==========================================
     @staticmethod
-    def _fetch(symbol: str, zone: str, start_date: str) -> pd.DataFrame:
+    def _fetch(symbol: str, zone: str, start_date: str, period: str = None) -> pd.DataFrame:
+        if zone == ZONE_MIN:
+            # 分钟：新浪接口**不吃 start_date**（固定回吐最近 1970 根），
+            # 所以"增量"在分钟上退化为"整段快照 + 合并去重"（见 refresh_one 的 _merge）。
+            return AkShareFeed.fetch_a_share_minute(symbol, period=period or "5m")
         if zone == ZONE_INDEX:
             return AkShareFeed.fetch_index_daily(symbol, min_date=start_date or DEFAULT_MIN_DATE)
         if zone == ZONE_KLINE_RAW:

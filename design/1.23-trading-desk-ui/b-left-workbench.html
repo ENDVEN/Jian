@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 B · 亮色左栏工作台（Workbench）</title>
+<style>
+/* ============================================================
+   样板 B · 设计语言 =「亮色左栏工作台 / Workbench」
+   一句话：延续 1.22 回测页的视觉语言（白卡 + 8px 圆角 + 蓝主色），
+          把"改参数"和"看图表"放同一屏 —— 因为行情页的参数比回测页更常调。
+   特征：① 左栏 300px 分组卡片（每张可折叠，默认展开"自选股"）
+        ② 顶部标题行 + 图表上方图形工具条 = 常驻 2 行
+        ③ 图表区 = 白卡吃满剩余高度
+        ④ 迁移成本最低：几乎不引入新交互模型
+   ============================================================ */
+:root{
+  --bg:#F4F6FA; --card:#fff; --line:#E4E9F0; --line2:#EEF1F6;
+  --ink:#212121; --ink2:#3C4552; --muted:#8A94A6; --faint:#B4BECB;
+  --accent:#1976D2; --accent-soft:#E8F2FE; --accent-deep:#1565C0;
+  --up:#D32F2F; --down:#2E7D32; --orange:#E65100;
+  --shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.06);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);overflow:hidden;
+     font:13px/1.55 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+     display:flex;flex-direction:column;padding:12px 14px 0;gap:10px}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+.num{font-variant-numeric:tabular-nums;font-family:Consolas,"Cascadia Mono",monospace}
+
+/* ---------- 顶部：标题 + 搜索 + 同步（沿用现状，L1） ---------- */
+.top{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+h1{margin:0;font-size:22px;font-weight:800;letter-spacing:.2px}
+.search{display:flex;align-items:center;border:1px solid var(--line);background:#fff;border-radius:8px;
+        padding:7px 12px;box-shadow:var(--shadow)}
+.search input{border:none;outline:none;font:inherit;width:190px;color:var(--ink)}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 13px;font-size:12.5px;
+     color:var(--ink2);box-shadow:0 1px 1px rgba(16,24,40,.03)}
+.btn:hover{border-color:#C9D6E8;background:#F7FAFF}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700;
+         box-shadow:0 4px 12px rgba(25,118,210,.24)}
+.btn.pri:hover{background:var(--accent-deep)}
+.btn.ghost{border-color:#BBDEFB;color:var(--accent);font-weight:700}
+.btn.ghost:hover{background:var(--accent-soft)}
+.btn.danger{background:#FFEBEE;border-color:#FFCDD2;color:var(--up);font-weight:700}
+.pill{font-size:11.5px;border-radius:999px;padding:4px 10px;font-weight:700;background:#EAF7EE;color:var(--down);white-space:nowrap}
+.pill.blue{background:var(--accent-soft);color:var(--accent)}
+.pill.gray{background:#F1F4F9;color:var(--muted)}
+.grow{flex:1}
+
+/* ---------- 主体 ---------- */
+.body{flex:1 1 auto;min-height:0;display:flex;gap:10px;padding-bottom:12px}
+.side{width:300px;flex:0 0 auto;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.side.mini{width:44px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+      overflow:hidden;flex:0 0 auto}
+.chead{display:flex;align-items:center;gap:7px;padding:10px 12px;cursor:pointer;user-select:none}
+.chead .t{font-weight:800;font-size:12.8px;color:var(--ink2)}
+.chead .arrow{margin-left:auto;color:var(--faint);font-size:12px;transition:transform .15s}
+.card.collapsed .arrow{transform:rotate(-90deg)}
+.card.collapsed .cbody{display:none}
+.cbody{padding:0 12px 12px}
+.mini{padding:0 12px 10px;color:var(--muted);font-size:11.8px;line-height:1.6}
+.hr{height:1px;background:var(--line2);margin:0 12px}
+
+.wl{list-style:none;margin:0;padding:0}
+.wl li{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;font-size:12.6px;color:var(--ink2);cursor:pointer}
+.wl li:hover{background:#F7FAFF}
+.wl li.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.wl .code{margin-left:auto;color:var(--muted);font-size:11.5px}
+.wl .chg{width:54px;text-align:right;font-size:11.5px}
+.up{color:var(--up)} .down{color:var(--down)}
+.row{display:flex;align-items:center;gap:6px}
+.row+.row{margin-top:6px}
+.row .btn{flex:1;text-align:center;padding:6px 8px}
+.field{margin-bottom:9px}
+.field>.lab{font-size:11.5px;color:var(--muted);font-weight:700;margin-bottom:4px;letter-spacing:.3px}
+.selbox{width:100%;border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 10px;font:inherit;color:var(--ink2);
+        appearance:none;background-image:linear-gradient(45deg,transparent 50%,#8A94A6 50%),linear-gradient(135deg,#8A94A6 50%,transparent 50%);
+        background-position:calc(100% - 16px) 52%,calc(100% - 11px) 52%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.hintline{color:var(--muted);font-size:11.6px;line-height:1.6;margin-top:6px}
+.ok{color:#2E7D32} .warn{color:var(--orange)} .err{color:var(--up)}
+
+/* ---------- 图表卡（L0 主角） ---------- */
+.chartcard{flex:1 1 auto;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:12px;
+           box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+.bar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line2);flex:0 0 auto;overflow-x:auto}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:0 0 auto}
+.seg button{padding:6px 11px;font-size:12.4px;color:var(--muted);background:#FBFCFE}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.chip{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);
+      background:#FBFCFE;color:var(--muted);font-size:12.3px;white-space:nowrap}
+.chip:hover{border-color:#A9C7EA;background:#F4F9FF}
+.chip.on{background:#EAF7EE;border-color:#BFE3C8;color:var(--down);font-weight:700}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--faint);display:block}
+.chip.on i{background:#4CAF50;box-shadow:0 0 0 3px #EAF7EE}
+.sepv{width:1px;height:20px;background:var(--line);flex:0 0 auto}
+.tb{border:1px solid var(--line);border-radius:7px;width:30px;height:28px;display:grid;place-items:center;
+    color:var(--muted);background:#FBFCFE;font-size:13px}
+.tb:hover{border-color:#A9C7EA;color:var(--accent)}
+.tb.on{background:var(--accent-soft);border-color:#BBDEFB;color:var(--accent-deep);font-weight:700}
+
+.chead2{display:flex;align-items:flex-end;gap:10px;padding:10px 14px 4px;flex:0 0 auto}
+.ctitle{font-size:15.5px;font-weight:800}
+.csub{font-size:11.8px;color:var(--muted);padding-bottom:2px}
+.cards{display:flex;gap:8px;padding:4px 14px 0;flex:0 0 auto}
+.metric{background:#FBFCFE;border:1px solid var(--line2);border-radius:9px;padding:6px 10px;min-width:104px}
+.metric .l{color:var(--muted);font-size:11px}
+.metric .v{font-size:15px;font-weight:800}
+.legend{display:flex;gap:14px;padding:6px 14px 0;font-size:11.6px;color:var(--muted);flex:0 0 auto}
+.legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:4px}
+.panes{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:4px;padding:6px 14px 0;position:relative}
+.pane{position:relative;background:#fff}
+.pane.main{flex:1 1 auto;min-height:0}
+.pane.vol{height:92px;flex:0 0 auto}
+.pane.macd{height:104px;flex:0 0 auto}
+.pane svg{width:100%;height:100%;display:block}
+.plabel{position:absolute;left:8px;top:3px;font-size:10.5px;color:var(--faint);letter-spacing:.4px}
+.xaxis{display:flex;justify-content:space-between;padding:4px 16px 10px;font-size:11px;color:var(--faint);flex:0 0 auto}
+.xh{position:absolute;inset:0;pointer-events:none;z-index:3}
+.xh .v{position:absolute;top:0;bottom:0;width:1px;background:#9FB0C4}
+.xh .h{position:absolute;left:0;right:0;height:1px;background:#C9D6E8}
+.xh .tagbox{position:absolute;background:#fff;border:1px solid var(--line);border-radius:7px;padding:4px 9px;
+            font-size:11.6px;color:var(--ink);white-space:nowrap;box-shadow:0 6px 16px rgba(16,24,40,.14)}
+.foot{display:flex;align-items:center;gap:8px;padding:0 14px 10px;font-size:11.6px;color:var(--muted);flex:0 0 auto}
+
+.badge{position:fixed;left:14px;bottom:12px;background:rgba(33,33,33,.88);color:#fff;border-radius:10px;
+       padding:9px 13px;font-size:12px;line-height:1.6;z-index:20;max-width:520px;backdrop-filter:blur(4px)}
+.badge b{color:#8BC34A}
+.badge .x{float:right;margin-left:10px;opacity:.6;cursor:pointer}
+</style>
+</head>
+<body>
+
+<!-- 顶部（现状语言：标题 + 搜索 + 云端同步） -->
+<div class="top">
+  <h1>行情工作台</h1>
+  <span class="grow"></span>
+  <div class="search"><span style="color:#B4BECB">🔍</span><input value="600326" placeholder="输入代码或中文名 (如: 600519 或 茅台)"></div>
+  <button class="btn pri">查阅</button>
+  <button class="btn ghost">☁️ 云端同步</button>
+  <span id="syncStatus" class="pill gray">已是最新</span>
+</div>
+
+<div class="body">
+
+  <!-- 左栏：分组卡片（可折叠）—— 低频配置的落地处 -->
+  <div class="side" id="side">
+
+    <div class="card" data-card="watch">
+      <div class="chead"><span class="t">📌 自选股</span><span class="arrow">▾</span></div>
+      <div class="cbody">
+        <ul class="wl" id="watchlist">
+          <li class="on" data-sym="600326"><span>西藏天路</span><span class="code num">600326</span><span class="chg num up">+2.41%</span></li>
+          <li data-sym="600519"><span>贵州茅台</span><span class="code num">600519</span><span class="chg num down">-0.68%</span></li>
+          <li data-sym="300750"><span>宁德时代</span><span class="code num">300750</span><span class="chg num up">+1.12%</span></li>
+          <li data-sym="399997"><span>中证白酒</span><span class="code num">399997</span><span class="chg num down">-0.31%</span></li>
+        </ul>
+        <div class="hr" style="margin-bottom:9px"></div>
+        <div class="row"><button class="btn">★ 加入</button><button class="btn danger">🗑</button>
+          <button class="btn">⬆</button><button class="btn">⬇</button></div>
+        <div class="hintline">双击列表切换标的；顺序 = 你的关注顺序。</div>
+      </div>
+    </div>
+
+    <div class="card" data-card="period">
+      <div class="chead"><span class="t">🕐 周期与复权</span><span class="arrow">▾</span></div>
+      <div class="cbody">
+        <div class="field"><div class="lab">周期</div>
+          <div class="seg" id="segPeriod" style="width:100%">
+            <button data-p="D" class="on" style="flex:1">日线</button>
+            <button data-p="W" style="flex:1">周线</button>
+            <button data-p="M" style="flex:1">月线</button>
+          </div>
+          <div class="hintline">周/月线由日线<b>就地聚合</b>（不额外下载）；指标与公式跟着周期走。</div>
+        </div>
+        <div class="field"><div class="lab">复权</div>
+          <select class="selbox" id="selAdjust">
+            <option value="qfq">前复权（默认 · 看趋势/算指标）</option>
+            <option value="raw">不复权（看当年真实价位）</option>
+          </select>
+          <div class="hintline" id="adjustHint">当前：<b>前复权</b> · 140 根</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" data-card="overlay">
+      <div class="chead"><span class="t">🎛 主图叠加 / 附图</span><span class="arrow">▾</span></div>
+      <div class="cbody">
+        <div class="chip on" data-ov="ma" style="width:100%;justify-content:flex-start"><i></i>均线 (MA 5/20/60)</div>
+        <div class="chip" data-ov="boll" style="width:100%;justify-content:flex-start;margin-top:6px"><i></i>布林带 (BOLL)</div>
+        <div class="chip on" data-ov="formula" style="width:100%;justify-content:flex-start;margin-top:6px"><i></i>自定义公式叠层</div>
+        <div class="hr" style="margin:10px 0 9px"></div>
+        <div class="chip on" data-ov="vol" style="width:100%;justify-content:flex-start"><i></i>成交量（附图）</div>
+        <div class="chip on" data-ov="macd" style="width:100%;justify-content:flex-start;margin-top:6px"><i></i>MACD（附图）</div>
+      </div>
+    </div>
+
+    <div class="card" data-card="formula">
+      <div class="chead"><span class="t">ƒ 公式与配方</span><span class="arrow">▾</span></div>
+      <div class="cbody">
+        <div class="hintline ok" id="formulaStatus" style="margin-top:0">✓ 2 段 · 27 个变量 · 主图 1 · 副图 1</div>
+        <div class="row" style="margin-top:8px"><button class="btn" style="flex:1">✏️ 编辑公式…</button></div>
+        <div class="row"><button class="btn">💾 存为配方…</button><button class="btn">📚 配方库…</button></div>
+        <div class="row"><button class="btn" style="flex:1">📤 送去做回测</button></div>
+      </div>
+    </div>
+
+    <div class="card collapsed" data-card="anno">
+      <div class="chead"><span class="t">🛠 标注工具</span><span class="arrow">▾</span></div>
+      <div class="cbody">
+        <select class="selbox" id="selTool" style="margin-bottom:8px">
+          <option>🖱 浏览（不新建）</option><option>／ 趋势线</option><option>─ 水平线</option>
+          <option>│ 垂直线</option><option>≡ 斐波那契（7 档）</option><option>T 文字</option>
+        </select>
+        <div class="row"><button class="btn">➕ 添加标注</button><button class="btn" style="background:#FFF8E1;border-color:#FFE082;color:#E65100">🧽 删除选中</button></div>
+        <div class="row"><button class="btn danger" style="flex:1">🗑️ 清空本标的标注</button></div>
+        <div class="hintline" id="annoStatus">日线已存 3 条标注 · 点线条选中（变橙），Delete 删除</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 图表卡（L0） -->
+  <div class="chartcard">
+    <div class="bar">
+      <span style="font-size:11.5px;color:#B4BECB;font-weight:700;letter-spacing:.3px">周期</span>
+      <div class="seg" id="segPeriod2">
+        <button data-p="D" class="on">日</button><button data-p="W">周</button><button data-p="M">月</button>
+      </div>
+      <span class="sepv"></span>
+      <span style="font-size:11.5px;color:#B4BECB;font-weight:700">主图</span>
+      <button class="chip on" data-ov="ma"><i></i>MA</button>
+      <button class="chip" data-ov="boll"><i></i>BOLL</button>
+      <span class="sepv"></span>
+      <span style="font-size:11.5px;color:#B4BECB;font-weight:700">附图</span>
+      <button class="chip on" data-ov="vol"><i></i>量</button>
+      <button class="chip on" data-ov="macd"><i></i>MACD</button>
+      <span class="sepv"></span>
+      <span style="font-size:11.5px;color:#B4BECB;font-weight:700">画线</span>
+      <button class="tb" title="趋势线">╱</button><button class="tb" title="水平线">─</button>
+      <button class="tb" title="垂直线">│</button><button class="tb" title="斐波那契">≡</button>
+      <button class="tb" title="文字">T</button>
+      <span class="sepv"></span>
+      <button class="btn" style="padding:6px 11px">＋ 添加标注</button>
+      <span class="pill blue" id="annoPill2">日线 3 条</span>
+      <span class="grow"></span>
+      <button class="btn" style="padding:6px 11px">⚙️ 收起左栏</button>
+    </div>
+
+    <div class="chead2">
+      <div>
+        <div class="ctitle" id="ctitle">西藏天路 <span class="num" style="color:#8A94A6;font-size:13px">600326</span></div>
+        <div class="csub" id="csub">日线 · 前复权 · 共 140 根 · 截至 2026-09-16</div>
+      </div>
+      <span class="grow"></span>
+      <div class="cards" style="padding:0">
+        <div class="metric"><div class="l">最新价</div><div class="v num" id="mClose">18.66</div></div>
+        <div class="metric"><div class="l">涨跌幅</div><div class="v num up" id="mChg">+2.41%</div></div>
+        <div class="metric"><div class="l">可视区间</div><div class="v num" id="mRange">150 根</div></div>
+      </div>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="panes" id="panes">
+      <div class="pane main" id="paneMain">
+        <div class="plabel">主图 · K 线 + MA + 公式叠层</div>
+        <svg id="main" viewBox="0 0 1200 320" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="pane vol" id="paneVol">
+        <div class="plabel">成交量（万手）</div>
+        <svg id="vol" viewBox="0 0 1200 96" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="pane macd" id="paneMacd">
+        <div class="plabel">MACD (12,26,9)</div>
+        <svg id="macd" viewBox="0 0 1200 110" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="xh" id="xh" style="display:none"><div class="v"></div><div class="h"></div><div class="tagbox"></div></div>
+    </div>
+    <div class="xaxis" id="xaxis"></div>
+    <div class="foot">
+      <span>数据湖：<b style="color:#3C4552">kline_daily</b>（前复权）</span><span>·</span>
+      <span>本地命中，未联网</span><span>·</span>
+      <span>标注按「标的 + 周期」分别保存</span>
+    </div>
+  </div>
+</div>
+
+<div class="badge" id="badge">
+  <span class="x" onclick="document.getElementById('badge').style.display='none'">✕</span>
+  <b>B · 亮色左栏工作台（Workbench）</b> —— 与 1.22 回测页同一套视觉语言，迁移成本最低。<br>
+  交互：点左栏卡片标题折叠/展开 · 周期分段与复权下拉真重算 · 点自选股切换标的 · 图上移动看跨窗格读数。<br>
+  <span style="opacity:.6">示意数据（固定种子，非真实行情）</span>
+</div>
+
+<script>
+/* ---------- 示意数据（固定种子） ---------- */
+function makeData(n, seed, start){
+  let s = seed, r = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  let p = start, out = [];
+  for (let i = 0; i < n; i++){
+    const d = Math.sin(i / 11) * 0.10 + Math.sin(i / 37) * 0.07 + (r() - 0.5) * 0.20;
+    const o = p, c = Math.max(4, o + d);
+    out.push({o, c, h: Math.max(o, c) + r() * 0.12, l: Math.min(o, c) - r() * 0.12, v: 120 + r() * 260});
+    p = c;
+  }
+  return out;
+}
+function tradingDates(n){
+  const out = [], d = new Date(2024, 0, 2);
+  while (out.length < n){ const w = d.getDay(); if (w !== 0 && w !== 6) out.push(new Date(d)); d.setDate(d.getDate() + 1); }
+  return out;
+}
+const DATES = tradingDates(400);
+const SERIES = {600326: makeData(200, 20260916, 16.8), 600519: makeData(200, 77, 1520),
+                300750: makeData(200, 991, 208), 399997: makeData(200, 31, 8400)};
+const NAMES = {600326: '西藏天路', 600519: '贵州茅台', 300750: '宁德时代', 399997: '中证白酒'};
+function agg(bars, k){
+  const out = [], dts = [];
+  for (let i = 0; i < bars.length; i += k){
+    const g = bars.slice(i, i + k); if (!g.length) break;
+    out.push({o: g[0].o, c: g[g.length - 1].c, h: Math.max.apply(null, g.map(x => x.h)),
+              l: Math.min.apply(null, g.map(x => x.l)), v: g.reduce((a, b) => a + b.v, 0)});
+    dts.push(i + g.length - 1);
+  }
+  return {bars: out, dateIdx: dts};
+}
+function ma(arr, n){ return arr.map((_, i) => i < n - 1 ? null : arr.slice(i - n + 1, i + 1).reduce((a, b) => a + b, 0) / n); }
+function ema(arr, n){ const k = 2 / (n + 1), out = []; arr.forEach((v, i) => out.push(i ? v * k + out[i - 1] * (1 - k) : v)); return out; }
+
+/* ---------- 主题（亮色 Material） ---------- */
+const TH = {up:'#D32F2F', down:'#2E7D32', ma5:'#F2A33C', ma20:'#4EA1F7', ma60:'#B07BE8',
+  boll:'rgba(126,140,255,.55)', grid:'#F1F4F9', formula:'#00897B', dif:'#4EA1F7', dea:'#F2A33C'};
+const W = 1200, PADX = 6;
+const state = {
+  sym: '600326', period: 'D', adjust: 'qfq',
+  ov: {ma: true, boll: false, formula: true, vol: true, macd: true}
+};
+
+/* ---------- 绘图 ---------- */
+const S = {};
+function mk(tag, attrs){ const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+function svgEl(id){ const e = document.getElementById(id); e.innerHTML = ''; return e; }
+function dateLabel(i){ const d = DATES[Math.min(i, DATES.length - 1)];
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+const PERIOD_NAME = {D:'日线', W:'周线', M:'月线'};
+
+function render(){
+  const raw = SERIES[state.sym];
+  const view = state.period === 'D' ? {bars: raw, dateIdx: raw.map((_, i) => i)} : agg(raw, state.period === 'W' ? 5 : 22);
+  const bars = view.bars, n = bars.length, xw = W - PADX * 2, step = xw / n, X = i => PADX + i * step + step / 2;
+  S.n = n; S.X = X; S.bars = bars; S.dateIdx = view.dateIdx;
+  const closes = bars.map(b => b.c), m5 = ma(closes, 5), m20 = ma(closes, 20), m60 = ma(closes, 60);
+
+  /* 主图 */
+  const H = 320, main = svgEl('main');
+  let lo = Math.min.apply(null, bars.map(b => b.l)), hi = Math.max.apply(null, bars.map(b => b.h));
+  const sd = m20.map((v, i) => { if (v == null) return null;
+    const seg = closes.slice(Math.max(0, i - 19), i + 1);
+    return Math.sqrt(seg.reduce((a, b) => a + (b - v) * (b - v), 0) / seg.length); });
+  if (state.ov.boll) m20.forEach((v, i) => { if (v == null) return;
+    hi = Math.max(hi, v + 2 * sd[i]); lo = Math.min(lo, v - 2 * sd[i]); });
+  const padP = (hi - lo) * 0.06; lo -= padP; hi += padP;
+  const Y = v => H - (v - lo) / (hi - lo) * H;
+  S.lo = lo; S.hi = hi;
+  for (let g = 0; g <= 4; g++) main.appendChild(mk('line', {x1:0, y1:H * g / 4, x2:W, y2:H * g / 4, stroke:TH.grid, 'stroke-width':1}));
+  bars.forEach((b, i) => {
+    const x = X(i), up = b.c >= b.o, col = up ? TH.up : TH.down, bw = Math.max(1.2, step * 0.62);
+    main.appendChild(mk('line', {x1:x, y1:Y(b.h), x2:x, y2:Y(b.l), stroke:col, 'stroke-width':Math.min(1.5, step * 0.13)}));
+    const y1 = Y(Math.max(b.o, b.c)), y2 = Y(Math.min(b.o, b.c));
+    main.appendChild(mk('rect', {x:x - bw / 2, y:y1, width:bw, height:Math.max(1, y2 - y1), fill: up ? '#fff' : col,
+      stroke:col, 'stroke-width': up ? 1 : 0}));
+  });
+  const line = (arr, color, wdt) => { let d = '', open = false;
+    arr.forEach((v, i) => { if (v == null){ open = false; return; } d += (open ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1) + ' '; open = true; });
+    main.appendChild(mk('path', {d, fill:'none', stroke:color, 'stroke-width':wdt || 1.5})); };
+  if (state.ov.boll){ line(m20.map((v, i) => v == null ? null : v + 2 * sd[i]), TH.boll, 1);
+    line(m20, TH.boll, 1); line(m20.map((v, i) => v == null ? null : v - 2 * sd[i]), TH.boll, 1); }
+  if (state.ov.ma){ line(m5, TH.ma5); line(m20, TH.ma20); line(m60, TH.ma60, 1.1); }
+  if (state.ov.formula){
+    line(closes.map((v, i) => i < 30 ? null : m5[i] * 0.996 + 0.22), TH.formula, 1.8);
+    bars.forEach((b, i) => { if (i % 13 < 4) main.appendChild(mk('rect',
+      {x:X(i) - step * 0.35, y:Y(lo + (hi - lo) * 0.06), width:step * 0.7, height:3, fill:TH.formula, opacity:.9})); });
+  }
+
+  /* 量 */
+  const HV = 96, vol = svgEl('vol');
+  const vhi = Math.max.apply(null, bars.map(b => b.v)) * 1.08;
+  for (let g = 0; g <= 2; g++) vol.appendChild(mk('line', {x1:0, y1:HV * g / 2, x2:W, y2:HV * g / 2, stroke:TH.grid, 'stroke-width':1}));
+  bars.forEach((b, i) => { const h = b.v / vhi * HV;
+    vol.appendChild(mk('rect', {x:X(i) - step * 0.31, y:HV - h, width:Math.max(1, step * 0.62), height:h,
+      fill: b.c >= b.o ? TH.up : TH.down, opacity:.38})); });
+
+  /* MACD */
+  const HM = 110, macd = svgEl('macd');
+  const dif = ema(closes, 12).map((v, i) => v - ema(closes, 26)[i]);
+  const dea = ema(dif, 9), hist = dif.map((v, i) => v - dea[i]);
+  const amp = Math.max.apply(null, hist.map(Math.abs).concat(dif.map(Math.abs))) * 1.15;
+  const MY = v => HM / 2 - v / amp * (HM / 2 - 6);
+  macd.appendChild(mk('line', {x1:0, y1:MY(0), x2:W, y2:MY(0), stroke:'#E4E9F0', 'stroke-width':1}));
+  hist.forEach((v, i) => { const y = MY(v), z = MY(0);
+    macd.appendChild(mk('rect', {x:X(i) - step * 0.3, y:Math.min(y, z), width:Math.max(1, step * 0.6),
+      height:Math.max(1, Math.abs(z - y)), fill: v >= 0 ? 'rgba(211,47,47,.45)' : 'rgba(46,125,50,.4)'})); });
+  const mline = (arr, c) => { let d = ''; arr.forEach((v, i) => d += (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + MY(v).toFixed(1) + ' ');
+    macd.appendChild(mk('path', {d, fill:'none', stroke:c, 'stroke-width':1.5})); };
+  mline(dif, TH.dif); mline(dea, TH.dea);
+  document.getElementById('paneVol').style.display = state.ov.vol ? '' : 'none';
+  document.getElementById('paneMacd').style.display = state.ov.macd ? '' : 'none';
+
+  /* 标签 / 图例 / 指标卡 */
+  const lab = document.getElementById('xaxis'); lab.innerHTML = '';
+  for (let k = 0; k <= 5; k++){ const i = Math.round((n - 1) * k / 5);
+    const sp = document.createElement('span'); sp.textContent = dateLabel(view.dateIdx[i]); lab.appendChild(sp); }
+  document.getElementById('legend').innerHTML =
+    (state.ov.ma ? '<span><i style="background:' + TH.ma5 + '"></i>MA5 <i style="background:' + TH.ma20 + '"></i>MA20 <i style="background:' + TH.ma60 + '"></i>MA60</span>' : '')
+    + (state.ov.boll ? '<span><i style="background:' + TH.boll + '"></i>BOLL(20,2)</span>' : '')
+    + (state.ov.formula ? '<span><i style="background:' + TH.formula + '"></i>公式段 1：自定义线 + 状态柱</span>' : '')
+    + '<span style="color:#B4BECB">' + n + ' 根</span>';
+  document.getElementById('ctitle').innerHTML = NAMES[state.sym] + ' <span class="num" style="color:#8A94A6;font-size:13px">' + state.sym + '</span>';
+  document.getElementById('csub').textContent = PERIOD_NAME[state.period] + ' · '
+    + (state.adjust === 'qfq' ? '前复权' : '不复权') + ' · 共 ' + n + ' 根 · 截至 ' + dateLabel(n - 1);
+  const last = bars[n - 1], prev = bars[n - 2];
+  document.getElementById('mClose').textContent = last.c.toFixed(2);
+  const chg = (last.c / prev.c - 1) * 100;
+  const mchg = document.getElementById('mChg');
+  mchg.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+  mchg.className = 'v num ' + (chg >= 0 ? 'up' : 'down');
+  document.getElementById('mRange').textContent = Math.min(150, n) + ' 根';
+  document.getElementById('adjustHint').innerHTML = '当前：<b>' + (state.adjust === 'qfq' ? '前复权' : '不复权')
+    + '</b> · ' + n + ' 根' + (state.adjust === 'raw' ? '<br><span class="warn">⚠ 不复权按真实价显示：指标含除权跳空，画线也不与前复权共用</span>' : '');
+}
+
+/* ---------- 交互：卡片折叠 / 通道同步 ---------- */
+document.querySelectorAll('.chead').forEach(h => h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed')));
+document.querySelectorAll('.chip[data-ov]').forEach(c => c.addEventListener('click', () => {
+  const key = c.dataset.ov; state.ov[key] = !state.ov[key];
+  document.querySelectorAll('.chip[data-ov="' + key + '"]').forEach(x => x.classList.toggle('on', state.ov[key]));
+  render();
+}));
+function setPeriod(p){
+  state.period = p;
+  document.querySelectorAll('#segPeriod button, #segPeriod2 button').forEach(b => b.classList.toggle('on', b.dataset.p === p));
+  render();
+}
+document.querySelectorAll('#segPeriod button, #segPeriod2 button').forEach(b => b.addEventListener('click', () => setPeriod(b.dataset.p)));
+document.getElementById('selAdjust').addEventListener('change', e => { state.adjust = e.target.value; render(); });
+document.getElementById('selTool').addEventListener('change', e => {
+  const v = e.target.selectedIndex;
+  document.getElementById('annoStatus').textContent = v === 0 ? '日线已存 3 条标注 · 点线条选中（变橙），Delete 删除'
+    : '工具：' + e.target.options[v].text.replace(/^[^ ]+ /, '') + ' · 拖线调整，松手自动保存';
+  document.querySelectorAll('.tb').forEach((x, i) => x.classList.toggle('on', i === v - 1 && v > 0));
+});
+document.querySelectorAll('.tb').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tb').forEach(x => x.classList.remove('on')); b.classList.add('on');
+}));
+document.getElementById('watchlist').addEventListener('click', e => {
+  const li = e.target.closest('li'); if (!li) return;
+  document.querySelectorAll('#watchlist li').forEach(x => x.classList.remove('on'));
+  li.classList.add('on'); state.sym = li.dataset.sym; render();
+});
+
+/* ---------- 跨窗格十字光标 ---------- */
+const wrap = document.getElementById('panes'), xh = document.getElementById('xh');
+const vline = xh.querySelector('.v'), hline = xh.querySelector('.h'), tagbox = xh.querySelector('.tagbox');
+wrap.addEventListener('mousemove', ev => {
+  if (!S.n) return;
+  const pr0 = wrap.getBoundingClientRect(), r = pr0;      // xh 的坐标原点 = .panes（它自己）
+  const mr = document.getElementById('paneMain').getBoundingClientRect();
+  const frac = Math.min(1, Math.max(0, (ev.clientX - mr.left) / mr.width));
+  const i = Math.min(S.n - 1, Math.max(0, Math.round(frac * S.n - 0.5)));
+  xh.style.display = '';
+  const vx = mr.left - pr0.left + S.X(i) / W * mr.width;
+  vline.style.left = vx + 'px';
+  const hit = [['paneMain'], ['paneVol'], ['paneMacd']].map(p => document.getElementById(p[0]))
+    .find(el => { const q = el.getBoundingClientRect(); return ev.clientY >= q.top && ev.clientY <= q.bottom; });
+  if (hit){ const q = hit.getBoundingClientRect(); hline.style.display = ''; hline.style.top = (q.top - r.top) + 'px'; }
+  const b = S.bars[i];
+  tagbox.textContent = dateLabel(S.dateIdx[i]) + '　O ' + b.o.toFixed(2) + ' H ' + b.h.toFixed(2)
+    + ' L ' + b.l.toFixed(2) + ' C ' + b.c.toFixed(2) + '　量 ' + Math.round(b.v) + ' 万手';
+  tagbox.style.left = Math.max(6, vx + 10) + 'px'; tagbox.style.top = '4px';
+});
+wrap.addEventListener('mouseleave', () => { xh.style.display = 'none'; });
+
+render();
+</script>
+</body>
+</html>

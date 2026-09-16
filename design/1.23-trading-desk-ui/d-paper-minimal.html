@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 D · 纸感极简（Editorial）</title>
+<style>
+/* ============================================================
+   样板 D · 设计语言 =「纸感极简 / Editorial」
+   一句话：把界面当一张纸——零阴影、1px 细线、衬线标题、单一墨绿强调色，
+          信息层次全部靠"排版"（字号/字重/字距/留白），不靠卡片与色块。
+   特征：① 没有卡片、没有分隔面板，只有细横线
+        ② 顶部一行"文本式摘要"，点任一短语就在图表上方浮出一条纸片编辑条（不挤高度）
+        ③ 左栏是细列表（无边框），长时间盯盘不累眼
+   ============================================================ */
+:root{
+  --paper:#FBFAF7; --paper2:#F5F2EC; --ink:#191919; --ink2:#3E3E3E; --muted:#7A756C;
+  --faint:#A9A29A; --rule:#E5E0D6; --rule2:#EFEBE2; --green:#2F5D50; --green-soft:#EAF0ED;
+  --up:#A33A32; --down:#2F6B4F;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--paper);color:var(--ink);overflow:hidden;padding:22px 34px 0;
+     font:13.5px/1.6 "Songti SC","Georgia","Microsoft YaHei UI",serif;
+     display:flex;flex-direction:column;gap:0}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+.num{font-family:Georgia,Consolas,serif;font-variant-numeric:tabular-nums}
+
+/* ---------- 顶部：标题 + 搜索（无卡片，只有一条细线收口） ---------- */
+.masthead{display:flex;align-items:baseline;gap:16px;padding-bottom:12px;flex:0 0 auto}
+.masthead h1{margin:0;font-size:26px;font-weight:400;letter-spacing:.5px}
+.masthead .sub{color:var(--faint);font-size:11.5px;letter-spacing:1.6px;text-transform:uppercase}
+.masthead .grow{flex:1}
+.srch{display:flex;align-items:baseline;gap:8px;border-bottom:1px solid var(--ink)}
+.srch input{border:none;outline:none;background:none;font:inherit;font-size:14px;width:170px;color:var(--ink)}
+.srch button{font-size:12px;letter-spacing:1.2px;color:var(--green);text-transform:uppercase}
+.rule{height:1px;background:var(--ink);opacity:.85;flex:0 0 auto}
+.rule.thin{height:1px;background:var(--rule);opacity:1}
+
+/* ---------- 摘要行（文本式 · 点短语就地出编辑条） ---------- */
+.summary{display:flex;align-items:center;gap:0;flex-wrap:wrap;padding:10px 0 9px;flex:0 0 auto;
+         border-bottom:1px solid var(--rule);font-size:13px;color:var(--ink2)}
+.summary .k{color:var(--faint);font-size:11px;letter-spacing:1.4px;margin-right:10px;text-transform:uppercase}
+.phrase{padding:2px 2px;border-bottom:1px dashed transparent;color:var(--ink2);white-space:nowrap}
+.phrase+.phrase::before{content:"·";color:var(--faint);margin:0 9px}
+.phrase:hover{border-bottom-color:var(--green);color:var(--green)}
+.phrase b{font-weight:600;color:var(--ink)}
+.phrase.off{color:var(--faint)}
+.phrase.on{color:var(--green);border-bottom-color:var(--green)}
+.summary .grow{flex:1}
+.pilltxt{font-size:11.5px;color:var(--muted);letter-spacing:.4px}
+
+/* ---------- 纸片编辑条（浮在图表上方，不挤高度） ---------- */
+.sheet{position:absolute;left:0;right:0;top:0;background:var(--paper2);border-bottom:1px solid var(--ink);
+       padding:14px 2px 16px;display:none;z-index:5}
+.sheet.on{display:block}
+.sheet h3{margin:0 0 10px;font-size:13px;font-weight:600;letter-spacing:.4px}
+.sheet h3 span{font-weight:400;color:var(--muted);font-size:11.5px;letter-spacing:.3px;margin-left:8px}
+.sheet .cols{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-start}
+.opt{display:flex;align-items:baseline;gap:12px}
+.opt .lab{font-size:11px;letter-spacing:1.3px;color:var(--faint);text-transform:uppercase}
+.tlink{padding:2px 0;border-bottom:1px dashed transparent;color:var(--ink2);font-size:13px}
+.tlink:hover{color:var(--green);border-bottom-color:var(--green)}
+.tlink.on{color:var(--green);font-weight:600;border-bottom:1px solid var(--green)}
+.closing{position:absolute;right:2px;top:12px;color:var(--faint);font-size:12px;letter-spacing:1px}
+.closing:hover{color:var(--ink)}
+
+/* ---------- 主体：细列表 + 图表 ---------- */
+.body{flex:1 1 auto;min-height:0;display:flex;gap:30px;padding-top:14px}
+.side{width:212px;flex:0 0 auto;overflow:auto;padding-bottom:14px}
+.side h2{font-size:10.5px;letter-spacing:1.8px;color:var(--faint);margin:0 0 9px;font-weight:600;text-transform:uppercase}
+.side h2:not(:first-child){margin-top:20px}
+.wl{list-style:none;margin:0;padding:0}
+.wl li{display:flex;align-items:baseline;gap:8px;padding:7px 0;border-bottom:1px solid var(--rule2);
+       font-size:13px;color:var(--ink2);cursor:pointer}
+.wl li:hover{color:var(--green)}
+.wl li.on{color:var(--green);font-weight:600}
+.wl li.on::before{content:"—";color:var(--green);margin-right:-2px}
+.wl .code{margin-left:auto;color:var(--faint);font-size:11.5px}
+.wl .chg{width:52px;text-align:right;font-size:11.5px;color:var(--faint)}
+.up{color:var(--up)} .down{color:var(--down)}
+.side .note{font-size:11.5px;color:var(--faint);line-height:1.75;margin-top:14px}
+.side .mini-act{display:block;text-align:left;padding:4px 0;color:var(--green);font-size:12.5px;
+                border-bottom:1px dashed transparent}
+.side .mini-act:hover{border-bottom-color:var(--green)}
+.side .mini-act.danger{color:var(--up)}
+
+/* ---------- 图表区 ---------- */
+.chart{flex:1 1 auto;min-width:0;position:relative;display:flex;flex-direction:column}
+.chead{display:flex;align-items:baseline;gap:12px;padding-bottom:8px}
+.ctitle{font-size:19px;font-weight:600;letter-spacing:.3px}
+.csub{font-size:11.5px;color:var(--muted);letter-spacing:.3px}
+.chead .grow{flex:1}
+.readout{font-size:11.5px;color:var(--muted);display:flex;gap:14px}
+.readout b{color:var(--ink);font-weight:600}
+.legend{display:flex;gap:16px;font-size:11.5px;color:var(--muted);padding-bottom:6px}
+.legend i{display:inline-block;width:16px;height:1px;background:currentColor;vertical-align:middle;margin-right:5px}
+.panes{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px;position:relative}
+.pane{position:relative}
+.pane.main{flex:1 1 auto;min-height:0}
+.pane.vol{height:84px;flex:0 0 auto}
+.pane.macd{height:96px;flex:0 0 auto}
+.pane svg{width:100%;height:100%;display:block}
+.plabel{position:absolute;left:0;top:0;font-size:10px;letter-spacing:1.4px;color:var(--faint);text-transform:uppercase}
+.xaxis{display:flex;justify-content:space-between;font-size:11px;color:var(--faint);letter-spacing:.4px;
+       border-top:1px solid var(--rule);padding:6px 0 14px;flex:0 0 auto}
+.xh{position:absolute;inset:0;pointer-events:none;z-index:3}
+.xh .v{position:absolute;top:0;bottom:0;width:1px;background:var(--faint);opacity:.85}
+.xh .h{position:absolute;left:0;right:0;height:1px;background:var(--faint);opacity:.5}
+.xh .tagbox{position:absolute;background:var(--paper);border:1px solid var(--ink);padding:4px 9px;
+            font-size:11.5px;color:var(--ink);white-space:nowrap}
+.badge{position:fixed;left:34px;bottom:14px;background:var(--paper2);border:1px solid var(--ink);
+       color:var(--ink2);padding:10px 14px;font-size:11.8px;line-height:1.7;z-index:20;max-width:470px}
+.badge b{color:var(--green)} .badge .x{float:right;margin-left:10px;color:var(--faint);cursor:pointer}
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>行情工作台</h1>
+  <span class="sub">Market Desk</span>
+  <span class="grow"></span>
+  <div class="srch"><input value="600326" placeholder="代码或名称"><button>查阅 ↗</button></div>
+  <span class="pilltxt" id="syncTxt">已是最新 · 本地命中</span>
+</div>
+<div class="rule"></div>
+
+<!-- 文本式摘要（点任一短语 → 上方浮出纸片编辑条） -->
+<div class="summary" id="summary">
+  <span class="k">当前配置</span>
+  <button class="phrase" data-sheet="period"><b id="pPeriod">日线</b> 前复权</button>
+  <button class="phrase on" data-sheet="layer"><b>MA</b> ✓ · BOLL ✗ · 公式 2 段</button>
+  <button class="phrase on" data-sheet="layer">附图：量 · MACD</button>
+  <button class="phrase" data-sheet="anno">标注 3 条（日线）</button>
+  <button class="phrase" data-sheet="formula">配方：绿蓝红 V3</button>
+  <span class="grow"></span>
+  <button class="phrase" data-sheet="data">数据：kline_daily · 140 根</button>
+</div>
+
+<div class="body">
+
+  <!-- 左栏：细列表（无边框） -->
+  <div class="side">
+    <h2>自选股</h2>
+    <ul class="wl" id="watchlist">
+      <li class="on" data-sym="600326"><span>西藏天路</span><span class="code num">600326</span><span class="chg num">+2.41%</span></li>
+      <li data-sym="600519"><span>贵州茅台</span><span class="code num">600519</span><span class="chg num">−0.68%</span></li>
+      <li data-sym="300750"><span>宁德时代</span><span class="code num">300750</span><span class="chg num">+1.12%</span></li>
+      <li data-sym="399997"><span>中证白酒</span><span class="code num">399997</span><span class="chg num">−0.31%</span></li>
+    </ul>
+    <button class="mini-act">★ 把当前标的加入自选</button>
+    <button class="mini-act">移出自选 / 上移 / 下移</button>
+
+    <h2>标注（本标的 · 日线）</h2>
+    <ul class="wl">
+      <li><span>趋势线</span><span class="code">03-11 → 06-02</span></li>
+      <li><span>水平线</span><span class="code num">18.00</span></li>
+      <li><span>斐波那契 7 档</span><span class="code num">16.20 → 19.80</span></li>
+    </ul>
+    <button class="mini-act danger">删除选中 / 清空本标的标注</button>
+    <p class="note">标注按「标的 + 周期」分开保存，坐标按日期锚定 —— 增量更新与前复权修正都不会让它跑偏。</p>
+  </div>
+
+  <!-- 图表 -->
+  <div class="chart" id="chart">
+    <!-- 纸片编辑条：浮在图表上方，不改变图表高度 -->
+    <div class="sheet" id="sheet">
+      <button class="closing" onclick="closeSheet()">关闭 ✕</button>
+      <h3 id="sheetTitle">周期与复权<span>周/月线由日线就地聚合，不额外下载数据</span></h3>
+      <div class="cols" id="sheetBody"></div>
+    </div>
+
+    <div class="chead">
+      <span class="ctitle" id="ctitle">西藏天路</span>
+      <span class="csub num" id="csub">600326 · 日线 · 前复权 · 140 根 · 截至 2026-09-16</span>
+      <span class="grow"></span>
+      <span class="readout">
+        <span>开 <b class="num" id="rO">18.42</b></span><span>高 <b class="num" id="rH">18.71</b></span>
+        <span>低 <b class="num" id="rL">18.30</b></span><span>收 <b class="num" id="rC">18.66</b></span>
+        <span>量 <b class="num" id="rV">213万</b></span>
+      </span>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="panes" id="panes">
+      <div class="pane main" id="paneMain"><div class="plabel">Main · K + MA + Formula</div>
+        <svg id="main" viewBox="0 0 1200 320" preserveAspectRatio="none"></svg></div>
+      <div class="pane vol" id="paneVol"><div class="plabel">Volume</div>
+        <svg id="vol" viewBox="0 0 1200 84" preserveAspectRatio="none"></svg></div>
+      <div class="pane macd" id="paneMacd"><div class="plabel">MACD</div>
+        <svg id="macd" viewBox="0 0 1200 96" preserveAspectRatio="none"></svg></div>
+      <div class="xh" id="xh" style="display:none"><div class="v"></div><div class="h"></div><div class="tagbox"></div></div>
+    </div>
+    <div class="xaxis" id="xaxis"></div>
+  </div>
+</div>
+
+<div class="badge" id="badge">
+  <span class="x" onclick="document.getElementById('badge').style.display='none'">✕</span>
+  <b>D · 纸感极简（Editorial）</b> —— 零阴影 + 细线 + 衬线 + 单一墨绿，层次靠排版而非卡片。<br>
+  交互：点顶部摘要里的任一短语 → 图表上方浮出<b>纸片编辑条</b>（不挤图表高度）· 点自选股切换标的 · 图上移动看读数。<br>
+  <span style="opacity:.6">示意数据（固定种子，非真实行情）</span>
+</div>
+
+<script>
+/* ---------- 示意数据 ---------- */
+function makeData(n, seed, start){
+  let s = seed, r = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  let p = start, out = [];
+  for (let i = 0; i < n; i++){
+    const d = Math.sin(i / 11) * 0.10 + Math.sin(i / 37) * 0.07 + (r() - 0.5) * 0.20;
+    const o = p, c = Math.max(4, o + d);
+    out.push({o, c, h: Math.max(o, c) + r() * 0.12, l: Math.min(o, c) - r() * 0.12, v: 120 + r() * 260});
+    p = c;
+  }
+  return out;
+}
+function tradingDates(n){ const out = [], d = new Date(2024, 0, 2);
+  while (out.length < n){ const w = d.getDay(); if (w !== 0 && w !== 6) out.push(new Date(d)); d.setDate(d.getDate() + 1); }
+  return out; }
+const DATES = tradingDates(400);
+const SERIES = {600326: makeData(200, 20260916, 16.8), 600519: makeData(200, 77, 1520),
+                300750: makeData(200, 991, 208), 399997: makeData(200, 31, 8400)};
+const NAMES = {600326:'西藏天路', 600519:'贵州茅台', 300750:'宁德时代', 399997:'中证白酒'};
+function agg(bars, k){ const out = [], dts = [];
+  for (let i = 0; i < bars.length; i += k){ const g = bars.slice(i, i + k); if (!g.length) break;
+    out.push({o:g[0].o, c:g[g.length - 1].c, h:Math.max.apply(null, g.map(x => x.h)),
+              l:Math.min.apply(null, g.map(x => x.l)), v:g.reduce((a, b) => a + b.v, 0)});
+    dts.push(i + g.length - 1); }
+  return {bars: out, dateIdx: dts}; }
+function ma(a, n){ return a.map((_, i) => i < n - 1 ? null : a.slice(i - n + 1, i + 1).reduce((x, y) => x + y, 0) / n); }
+function ema(a, n){ const k = 2 / (n + 1), o = []; a.forEach((v, i) => o.push(i ? v * k + o[i - 1] * (1 - k) : v)); return o; }
+
+/* 纸感配色：低饱和、细线条（涨红跌绿按 A 股习惯，但压暗以配合纸感） */
+const TH = {up:'#A33A32', down:'#2F6B4F', ma5:'#B98A2E', ma20:'#3C6E9B', ma60:'#6A5A8C',
+  boll:'rgba(120,120,160,.5)', grid:'#F0ECE3', rule:'#E5E0D6', formula:'#2F5D50', dif:'#3C6E9B', dea:'#B98A2E'};
+const W = 1200, PADX = 4;
+const state = {sym:'600326', period:'D', adjust:'qfq', ov:{ma:true, boll:false, formula:true, vol:true, macd:true}};
+const S = {};
+function mk(t, a){ const e = document.createElementNS('http://www.w3.org/2000/svg', t);
+  for (const k in a) e.setAttribute(k, a[k]); return e; }
+function svgEl(id){ const e = document.getElementById(id); e.innerHTML = ''; return e; }
+function dateLabel(i){ const d = DATES[Math.min(i, DATES.length - 1)];
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+const PN = {D:'日线', W:'周线', M:'月线'};
+
+function render(){
+  const raw = SERIES[state.sym];
+  const view = state.period === 'D' ? {bars: raw, dateIdx: raw.map((_, i) => i)} : agg(raw, state.period === 'W' ? 5 : 22);
+  const bars = view.bars, n = bars.length, step = (W - PADX * 2) / n, X = i => PADX + i * step + step / 2;
+  S.n = n; S.X = X; S.bars = bars; S.dateIdx = view.dateIdx;
+  const closes = bars.map(b => b.c), m5 = ma(closes, 5), m20 = ma(closes, 20), m60 = ma(closes, 60);
+
+  const H = 320, main = svgEl('main');
+  let lo = Math.min.apply(null, bars.map(b => b.l)), hi = Math.max.apply(null, bars.map(b => b.h));
+  const sd = m20.map((v, i) => { if (v == null) return null;
+    const seg = closes.slice(Math.max(0, i - 19), i + 1);
+    return Math.sqrt(seg.reduce((a, b) => a + (b - v) * (b - v), 0) / seg.length); });
+  if (state.ov.boll) m20.forEach((v, i) => { if (v == null) return;
+    hi = Math.max(hi, v + 2 * sd[i]); lo = Math.min(lo, v - 2 * sd[i]); });
+  const padP = (hi - lo) * 0.06; lo -= padP; hi += padP;
+  const Y = v => H - (v - lo) / (hi - lo) * H;
+  S.lo = lo; S.hi = hi;
+  for (let g = 0; g <= 3; g++) main.appendChild(mk('line', {x1:0, y1:H * g / 3, x2:W, y2:H * g / 3, stroke:TH.grid, 'stroke-width':1}));
+  bars.forEach((b, i) => {
+    const x = X(i), up = b.c >= b.o, col = up ? TH.up : TH.down, bw = Math.max(1, step * 0.5);
+    main.appendChild(mk('line', {x1:x, y1:Y(b.h), x2:x, y2:Y(b.l), stroke:col, 'stroke-width':Math.min(1.3, step * 0.11)}));
+    const y1 = Y(Math.max(b.o, b.c)), y2 = Y(Math.min(b.o, b.c));
+    main.appendChild(mk('rect', {x:x - bw / 2, y:y1, width:bw, height:Math.max(1, y2 - y1),
+      fill: up ? 'none' : col, stroke:col, 'stroke-width':1}));
+  });
+  const line = (a, c, wd, dash) => { let d = '', open = false;
+    a.forEach((v, i) => { if (v == null){ open = false; return; } d += (open ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1) + ' '; open = true; });
+    main.appendChild(mk('path', {d, fill:'none', stroke:c, 'stroke-width':wd || 1.3, 'stroke-dasharray':dash || ''})); };
+  if (state.ov.boll){ line(m20.map((v, i) => v == null ? null : v + 2 * sd[i]), TH.boll, 1, '3 3');
+    line(m20, TH.boll, 1); line(m20.map((v, i) => v == null ? null : v - 2 * sd[i]), TH.boll, 1, '3 3'); }
+  if (state.ov.ma){ line(m5, TH.ma5); line(m20, TH.ma20); line(m60, TH.ma60, 1); }
+  if (state.ov.formula){
+    line(closes.map((v, i) => i < 30 ? null : m5[i] * 0.996 + 0.22), TH.formula, 1.5);
+    bars.forEach((b, i) => { if (i % 13 < 4) main.appendChild(mk('rect',
+      {x:X(i) - step * 0.32, y:Y(lo + (hi - lo) * 0.05), width:step * 0.64, height:2, fill:TH.formula})); });
+  }
+
+  const HV = 84, vol = svgEl('vol');
+  const vhi = Math.max.apply(null, bars.map(b => b.v)) * 1.08;
+  vol.appendChild(mk('line', {x1:0, y1:HV, x2:W, y2:HV, stroke:TH.rule, 'stroke-width':1}));
+  bars.forEach((b, i) => { const h = b.v / vhi * (HV - 4);
+    vol.appendChild(mk('rect', {x:X(i) - step * 0.28, y:HV - h, width:Math.max(1, step * 0.56), height:h,
+      fill: b.c >= b.o ? TH.up : TH.down, opacity:.28})); });
+
+  const HM = 96, macd = svgEl('macd');
+  const dif = ema(closes, 12).map((v, i) => v - ema(closes, 26)[i]);
+  const dea = ema(dif, 9), hist = dif.map((v, i) => v - dea[i]);
+  const amp = Math.max.apply(null, hist.map(Math.abs).concat(dif.map(Math.abs))) * 1.15;
+  const MY = v => HM / 2 - v / amp * (HM / 2 - 6);
+  macd.appendChild(mk('line', {x1:0, y1:MY(0), x2:W, y2:MY(0), stroke:TH.rule, 'stroke-width':1}));
+  hist.forEach((v, i) => { const y = MY(v), z = MY(0);
+    macd.appendChild(mk('rect', {x:X(i) - step * 0.28, y:Math.min(y, z), width:Math.max(1, step * 0.56),
+      height:Math.max(1, Math.abs(z - y)), fill: v >= 0 ? 'rgba(163,58,50,.35)' : 'rgba(47,107,79,.32)'})); });
+  const mline = (a, c) => { let d = ''; a.forEach((v, i) => d += (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + MY(v).toFixed(1) + ' ');
+    macd.appendChild(mk('path', {d, fill:'none', stroke:c, 'stroke-width':1.3})); };
+  mline(dif, TH.dif); mline(dea, TH.dea);
+  document.getElementById('paneVol').style.display = state.ov.vol ? '' : 'none';
+  document.getElementById('paneMacd').style.display = state.ov.macd ? '' : 'none';
+
+  const lab = document.getElementById('xaxis'); lab.innerHTML = '';
+  for (let k = 0; k <= 5; k++){ const i = Math.round((n - 1) * k / 5);
+    const sp = document.createElement('span'); sp.textContent = dateLabel(view.dateIdx[i]); lab.appendChild(sp); }
+  document.getElementById('legend').innerHTML =
+    (state.ov.ma ? '<span style="color:' + TH.ma5 + '"><i></i>MA5</span><span style="color:' + TH.ma20 + '"><i></i>MA20</span><span style="color:' + TH.ma60 + '"><i></i>MA60</span>' : '')
+    + (state.ov.boll ? '<span style="color:#6E6EA8"><i></i>BOLL(20,2)</span>' : '')
+    + (state.ov.formula ? '<span style="color:' + TH.formula + '"><i></i>公式段 1（自定义线 + 状态柱）</span>' : '')
+    + '<span>' + n + ' 根</span>';
+  document.getElementById('ctitle').textContent = NAMES[state.sym];
+  document.getElementById('csub').textContent = state.sym + ' · ' + PN[state.period] + ' · '
+    + (state.adjust === 'qfq' ? '前复权' : '不复权') + ' · ' + n + ' 根 · 截至 ' + dateLabel(n - 1);
+  const last = bars[n - 1];
+  document.getElementById('rO').textContent = last.o.toFixed(2);
+  document.getElementById('rH').textContent = last.h.toFixed(2);
+  document.getElementById('rL').textContent = last.l.toFixed(2);
+  document.getElementById('rC').textContent = last.c.toFixed(2);
+  document.getElementById('rV').textContent = Math.round(last.v) + '万';
+  document.getElementById('pPeriod').textContent = PN[state.period];
+}
+
+/* ---------- 纸片编辑条（点摘要短语就在图表上方浮出来） ---------- */
+const SHEETS = {
+  period: {title:'周期与复权', sub:'周/月线由日线就地聚合，不额外下载数据', body: () => `
+    <div class="opt"><span class="lab">周期</span>
+      <button class="tlink${state.period === 'D' ? ' on' : ''}" data-p="D">日线</button>
+      <button class="tlink${state.period === 'W' ? ' on' : ''}" data-p="W">周线</button>
+      <button class="tlink${state.period === 'M' ? ' on' : ''}" data-p="M">月线</button></div>
+    <div class="opt"><span class="lab">复权</span>
+      <button class="tlink${state.adjust === 'qfq' ? ' on' : ''}" data-a="qfq">前复权</button>
+      <button class="tlink${state.adjust === 'raw' ? ' on' : ''}" data-a="raw">不复权</button></div>
+    <div class="opt"><span class="lab">说明</span><span style="font-size:12.5px;color:var(--muted)">
+      两份复权数据各存一个分区，来回切换不覆盖；不复权下画线不与前复权共用。</span></div>`},
+  layer: {title:'叠加层与附图', sub:'振荡型指标请放副图，主图 K 线才不会被压扁', body: () => `
+    <div class="opt"><span class="lab">主图</span>
+      <button class="tlink${state.ov.ma ? ' on' : ''}" data-ov="ma">均线 MA 5/20/60</button>
+      <button class="tlink${state.ov.boll ? ' on' : ''}" data-ov="boll">布林带 BOLL</button>
+      <button class="tlink${state.ov.formula ? ' on' : ''}" data-ov="formula">自定义公式叠层</button></div>
+    <div class="opt"><span class="lab">附图</span>
+      <button class="tlink${state.ov.vol ? ' on' : ''}" data-ov="vol">成交量</button>
+      <button class="tlink${state.ov.macd ? ' on' : ''}" data-ov="macd">MACD</button></div>
+    <div class="opt"><span class="lab">坐标轴</span><span style="font-size:12.5px;color:var(--muted)">
+      刻度随缩放重算，每个窗格纵轴各自跟随可视区间（放大后不会只剩一个刻度）。</span></div>`},
+  formula: {title:'公式与配方', sub:'配方 = 函数段 + 参数 + 每段目标窗格；开机自动恢复上次配方', body: () => `
+    <div class="opt"><span class="lab">当前</span><span style="font-size:12.5px;color:var(--green)">✓ 2 段 · 27 个变量 · 主图 1 · 副图 1</span></div>
+    <div class="opt"><span class="lab">操作</span>
+      <button class="tlink" onclick="flash('已打开公式编辑器（示意）')">✏️ 编辑公式…</button>
+      <button class="tlink" onclick="flash('已存入配方库（示意）')">💾 存为配方…</button>
+      <button class="tlink" onclick="flash('已打开配方库（示意）')">📚 配方库…</button>
+      <button class="tlink" onclick="flash('已送到市场回测页（示意）')">📤 送去做回测</button></div>`},
+  anno: {title:'标注', sub:'按「标的 + 周期」分开保存；坐标按日期锚定，不随数据更新漂移', body: () => `
+    <div class="opt"><span class="lab">工具</span>
+      <button class="tlink" onclick="flash('工具：趋势线')">╱ 趋势线</button>
+      <button class="tlink" onclick="flash('工具：水平线')">─ 水平线</button>
+      <button class="tlink" onclick="flash('工具：垂直线')">│ 垂直线</button>
+      <button class="tlink" onclick="flash('工具：斐波那契（7 档）')">≡ 斐波那契</button>
+      <button class="tlink" onclick="flash('工具：文字')">T 文字</button></div>
+    <div class="opt"><span class="lab">操作</span>
+      <button class="tlink" onclick="flash('已在可视窗口添加一条标注（示意）')">＋ 添加标注</button>
+      <button class="tlink" onclick="flash('请先在图上点一下那条线（变橙=已选中）')">🧽 删除选中</button>
+      <button class="tlink" onclick="flash('清空本标的标注需要二次确认（示意）')">🗑️ 清空本标的</button></div>
+    <div class="opt"><span class="lab">本周期</span><span style="font-size:12.5px;color:var(--muted)">已存 3 条：趋势线 1 · 水平线 1 · 斐波那契 1</span></div>`},
+  data: {title:'数据与同步', sub:'本地有数据 → 只补最新几天；本地没有 → 整段抓取', body: () => `
+    <div class="opt"><span class="lab">分区</span><span style="font-size:12.5px;color:var(--muted)">
+      kline_daily（前复权）· 140 根 · 截至 2026-09-16 ｜ 另一份 kline_daily_raw（不复权）未下载</span></div>
+    <div class="opt"><span class="lab">操作</span>
+      <button class="tlink" onclick="flash('已更新到最新（示意：新增 0 行）')">☁️ 更新到最新</button>
+      <button class="tlink" onclick="flash('「重新全量下载」只在数据管理页（危险动作隔离）')">重新全量下载…</button></div>`}
+};
+const sheet = document.getElementById('sheet');
+document.querySelectorAll('.phrase').forEach(p => p.addEventListener('click', () => openSheet(p.dataset.sheet)));
+function openSheet(key){
+  const cfg = SHEETS[key]; if (!cfg) return;
+  if (sheet.classList.contains('on') && sheet.dataset.key === key){ closeSheet(); return; }
+  sheet.dataset.key = key;
+  document.getElementById('sheetTitle').innerHTML = cfg.title + '<span>' + cfg.sub + '</span>';
+  document.getElementById('sheetBody').innerHTML = cfg.body();
+  sheet.classList.add('on');
+  document.querySelectorAll('.phrase').forEach(p => p.classList.toggle('on', p.dataset.sheet === key));
+  document.getElementById('sheetBody').querySelectorAll('.tlink[data-p]').forEach(b => b.addEventListener('click', () => {
+    state.period = b.dataset.p; render(); openSheet('period');
+  }));
+  document.getElementById('sheetBody').querySelectorAll('.tlink[data-ov]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.ov; state.ov[k] = !state.ov[k]; render(); openSheet('layer');
+  }));
+  document.getElementById('sheetBody').querySelectorAll('.tlink[data-a]').forEach(b => b.addEventListener('click', () => {
+    state.adjust = b.dataset.a; render(); openSheet('period');
+    document.getElementById('syncTxt').textContent = state.adjust === 'raw' ? '不复权 · 需单独取数' : '已是最新 · 本地命中';
+  }));
+}
+function closeSheet(){ sheet.classList.remove('on'); document.querySelectorAll('.phrase').forEach(p => p.classList.remove('on')); }
+function flash(text){ document.getElementById('syncTxt').textContent = text; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+/* ---------- 自选股 ---------- */
+document.getElementById('watchlist').addEventListener('click', e => {
+  const li = e.target.closest('li'); if (!li) return;
+  document.querySelectorAll('#watchlist li').forEach(x => x.classList.remove('on'));
+  li.classList.add('on'); state.sym = li.dataset.sym; render();
+});
+
+/* ---------- 十字光标 ---------- */
+const wrap = document.getElementById('panes'), xh = document.getElementById('xh');
+const vline = xh.querySelector('.v'), hline = xh.querySelector('.h'), tagbox = xh.querySelector('.tagbox');
+wrap.addEventListener('mousemove', ev => {
+  if (!S.n) return;
+  const pr0 = wrap.getBoundingClientRect(), r = pr0;      // xh 的坐标原点 = .panes（它自己）
+  const mr = document.getElementById('paneMain').getBoundingClientRect();
+  const frac = Math.min(1, Math.max(0, (ev.clientX - mr.left) / mr.width));
+  const i = Math.min(S.n - 1, Math.max(0, Math.round(frac * S.n - 0.5)));
+  xh.style.display = '';
+  const vx = mr.left - pr0.left + S.X(i) / W * mr.width;
+  vline.style.left = vx + 'px';
+  const hit = ['paneMain','paneVol','paneMacd'].map(id => document.getElementById(id))
+    .find(el => { const q = el.getBoundingClientRect(); return ev.clientY >= q.top && ev.clientY <= q.bottom; });
+  if (hit){ const q = hit.getBoundingClientRect(); hline.style.display = ''; hline.style.top = (q.top - r.top) + 'px'; }
+  const b = S.bars[i];
+  tagbox.textContent = dateLabel(S.dateIdx[i]) + '　开 ' + b.o.toFixed(2) + ' 高 ' + b.h.toFixed(2)
+    + ' 低 ' + b.l.toFixed(2) + ' 收 ' + b.c.toFixed(2) + '　量 ' + Math.round(b.v) + ' 万';
+  tagbox.style.left = Math.max(4, vx + 10) + 'px'; tagbox.style.top = '4px';
+});
+wrap.addEventListener('mouseleave', () => { xh.style.display = 'none'; });
+
+render();
+</script>
+</body>
+</html>

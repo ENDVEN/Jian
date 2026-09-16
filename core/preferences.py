@@ -42,6 +42,13 @@ DEFAULTS = {
     #   {"pane": "fn"|"cond"|"index"|"risk"|"fill"|None, "last": "fn"}
     #   pane = 当前展开的编辑卡片；last = 最近用过的那张（「⚙ 编辑配置」的落点）
     "backtest_ui": None,
+    # 1.23（§7-B6）：**行情工作台**界面状态 —— 与 backtest_ui 同源做法（记住上次）。
+    #   {"minute_period": "5m",            # 上次用的分钟档位
+    #    "main_chips": ["ma", ...],        # 工具行"最近使用"的主图叠加（MRU，前 3 可见）
+    #    "sub_chips": ["volume", ...],     # 同上（副图）
+    #    "rail_collapsed": False,          # 左栏是否折起
+    #    "panel_page": "watch"}            # 上次停留的工具页
+    "desk_ui": None,
 }
 
 
