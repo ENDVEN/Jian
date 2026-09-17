@@ -11,8 +11,11 @@
 `ui/widgets/desk_layers.py`（本模块只负责"编译 + 回执 + 资产化"）。
 
 【约定】状态留页面：`_formula_segments / _formula_params_text / _formula_programs /
-_formula_error / _formula_store / cb_formula / lbl_formula_status / _sub_visible`，
+_formula_error / _formula_store / lbl_formula_status / _sub_visible`，
 本模块只承载行为，读写一律走 `self.page.X`。
+
+★v6.24（§7-B8 R13）：显示开关（原 `cb_formula`）也**不再是控件** —— 它就是
+`layer_model` 里的**草稿槽**（`DRAFT_KEY`），由 `_register_draft()` 登记、chips 负责投影。
 """
 from PyQt6.QtWidgets import QDialog, QInputDialog, QMessageBox
 
@@ -20,8 +23,11 @@ from core.formula.program import FormulaProgramError, parse_program
 from core.utils import parse_params_text
 from data.formula_store import (SOURCE_MARKET, make_formula, segments_as_tuples)
 from ui.dialogs.formula_overlay import FormulaOverlayDialog
+from ui.dialogs.indicator_params import IndicatorParamsDialog
 from ui.widgets.chart_layers import scale_mismatch_hint
+from ui.widgets.custom_widgets import RecipeChip
 from ui.widgets.formula_library import FormulaLibraryDialog
+from ui.widgets.layer_model import DRAFT_KEY, TARGET_LABELS, TARGET_ORDER, LayerModel
 
 
 class DeskFormula:
@@ -41,13 +47,38 @@ class DeskFormula:
             return
         p._formula_segments = dialog.result_segments()
         p._formula_params_text = dialog.params_text()
+        self._register_draft()
         self._compile_formula()
         p.render_charts()
         p._refresh_chips()      # 段变了 ⇒ "公式副图 N"的候选也跟着变
 
-    def _compile_formula(self):
-        """把 (函数文本, 目标窗格) 编译成 programs（顺序与 `_formula_segments` 一一对应）。"""
+    def _register_draft(self, force_visible: bool = False) -> None:
+        """把当前 `_formula_segments` 登记为**草稿槽**（模型里那个 `draft` 条目）。
+
+        【为什么会有"没有记忆就默认可见"这一条】旧实现里那个总开关（`cb_formula`）
+        **默认是开的** ⇒ "贴了函数就该看得见"。换成模型之后，如果偏好里**还没有这个键**
+        （升级 / 首次运行），必须沿用这个默认 —— 否则老用户升级后会以为"公式丢了"，
+        那是**行为回归**，不是改进。
+        """
         p = self.page
+        if not p._formula_segments:
+            p.layer_model.set_draft(None)
+            return
+        p.layer_model.set_draft(p._formula_segments)
+        remembered = p._desk_ui.get("layer_enabled")
+        if force_visible or not remembered:
+            p.layer_model.set_enabled(DRAFT_KEY, True)
+        self.refresh_recipe_page()      # 草稿槽变了 ⇒ 配方库页跟着变（草稿也是一条 chip）
+
+    def _compile_formula(self):
+        """把 (函数文本, 目标窗格) 编译成 programs（顺序与 `_formula_segments` 一一对应）。
+
+        ⚠ 这里顺手**登记草稿槽**（"编译了什么，草稿就是什么"）—— 放在这一个入口，
+        而不是依赖每个调用方记得登记：直接赋值 `_formula_segments` 的路径（测试、将来的
+        外部调用）也会因此拿到一致的模型状态。
+        """
+        p = self.page
+        self._register_draft()
         p._formula_programs = []
         p._formula_error = ""
         if not p._formula_segments:
@@ -122,7 +153,143 @@ class DeskFormula:
             QMessageBox.warning(p, "无法保存", str(e))
             return
         saved = p._formula_store.upsert(formula)
+        # 存完**立刻让它生效**（否则"存了却看不见"），并重建模型让新配方出现在对应分区
+        self._rebuild_model()
+        p.layer_model.set_enabled(f"formula:{saved['id']}", True)
+        p._on_layer_switch_changed()
+        self.refresh_recipe_page()
         self._set_formula_status(True, f"✓ 已存入配方库：{saved['name']}")
+
+    # ==========================================
+    # 配方库页（§7-B8 R6/R13）：分区 chip 即开关，管理模式才给改名/删除
+    # ==========================================
+    def refresh_recipe_page(self) -> None:
+        """按 `layer_model` **重建**两个分区的配方 chip。
+
+        【为什么每次整块重建，而不是增量改】配方随时可能被加/删/改名（本页、保存、外部互送），
+        增量维护必然出现"删了还留着""改名了显示还是旧的"（§11.5-11 的老毛病）。
+        重建的代价 = 十几个控件，可以忽略；换来的是"界面永远等于模型"这条不变量。
+        """
+        p = self.page
+        lays = getattr(p, "formula_chip_lays", None)
+        if not lays:
+            return          # 页面还没建好（构造期早于本调用）
+        model = p.layer_model
+        for target in TARGET_ORDER:
+            items = model.items_for(target)
+            p.formula_section_labels[target].setText(
+                f"{TARGET_LABELS[target]}配方 · {len(items)} 条")
+            lay = lays[target]
+            while lay.count():
+                item = lay.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.setParent(None)
+                    widget.deleteLater()
+            for entry in items:
+                chip = RecipeChip(entry["key"], entry["name"], entry["target"],
+                                  builtin=entry.get("builtin", False),
+                                  has_params=model.has_params(entry["key"]))
+                chip.set_on(model.enabled(entry["key"]))
+                chip.set_manage(getattr(p, "_formula_manage", False))
+                chip.sigToggled.connect(p.toggle_recipe)
+                chip.sigParams.connect(p.open_params)      # ★R16：有参数的才有这个入口
+                if not entry.get("builtin"):
+                    chip.sigRename.connect(p.rename_recipe)
+                    chip.sigDelete.connect(p.delete_recipe)
+                lay.addWidget(chip)
+            p.formula_chip_hosts[target].sync_height()
+        enabled = len(model.enabled_list())
+        p.card_formula_lib.set_state(f"生效 {enabled} 条 · 共 {len(model.items)} 条")
+
+    def open_params(self, key: str) -> None:
+        """`⚙` 参数窗口（§7-B8 R16）。
+
+        · **没参数的条目直接返回**（`成交量`）——不摆假入口，也不假弹窗；
+        · 校验用**页面上正在看的那份行情**（比哑数据更有意义），"不另起一套试算"
+          落在**直接调 `TAEngine`**（与图上渲染同源的引擎）；
+        · 改完必须**重算**：内置走 `prepared_df`（引擎），用户配方清编译缓存（§11.5-11）。
+        """
+        p = self.page
+        if not p.layer_model.has_params(key):
+            return
+        sample = p.current_df if (p.current_df is not None and len(p.current_df)) else None
+        dialog = IndicatorParamsDialog(
+            p.layer_model, key, parent=p, sample_df=sample,
+            sample_label=(p.current_name or p.current_symbol) if sample is not None else "")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        p._recipe_programs = {}
+        p._on_layer_switch_changed()
+        self.refresh_recipe_page()
+        values = "、".join(f"{name}={value}"
+                          for name, value in p.layer_model.params_of(key).items())
+        # 回执写在渲染**之后**（否则会被 `_report_formula_status` 的图层统计覆盖）
+        self._set_formula_status(True, f"✓ 已应用参数：{values}")
+
+    def toggle_recipe(self, key: str) -> None:
+        """点配方 chip = 开/关。真源只有一处，翻过来之后走**同一条回流**（重渲染 + chips）。"""
+        p = self.page
+        if not p.layer_model.toggle(key):
+            return
+        p._on_layer_switch_changed()
+        self.refresh_recipe_page()
+
+    def set_formula_manage(self, on: bool) -> None:
+        """管理模式（危险动作的开关）。**内置项永远不显示操作** —— 那是刻意的。"""
+        p = self.page
+        p._formula_manage = bool(on)
+        p.btn_formula_manage.setText("✓ 管理模式（已开）" if p._formula_manage else "✏ 管理模式")
+        self.refresh_recipe_page()
+
+    def rename_recipe(self, key: str) -> None:
+        p = self.page
+        entry = p.layer_model.item(key)
+        if not entry or entry.get("builtin"):
+            return          # 内置不改名（连管理模式也改不了）
+        new_name, confirmed = QInputDialog.getText(p, "配方改名", "新名称：",
+                                                   text=str(entry.get("name") or ""))
+        if not confirmed:
+            return
+        if not p._formula_store.rename(entry.get("formula_id"), new_name):
+            QMessageBox.warning(p, "无法改名", "名称为空，或已经有同名的配方。")
+            return
+        self._rebuild_model()
+        self._set_formula_status(True, f"✓ 已改名为「{str(new_name).strip()}」")
+
+    def delete_recipe(self, key: str) -> None:
+        """删除配方。**必须说清"它会同时从图上移除"**（否则用户以为删的只是存档、图还在）。"""
+        p = self.page
+        entry = p.layer_model.item(key)
+        if not entry or entry.get("builtin"):
+            return
+        name = str(entry.get("name") or "")
+        was_on = p.layer_model.enabled(key)
+        detail = "\n· 它正在图上生效 —— 删除后会**同时从图上消失**" if was_on else ""
+        answer = QMessageBox.question(
+            p, "删除配方",
+            f"删除配方「{name}」？\n\n· 配方存档会被删除（不可撤销）{detail}")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        p._formula_store.delete(entry.get("formula_id"))
+        p.layer_model.set_enabled(key, False)
+        self._rebuild_model()
+        self._set_formula_status(True, f"✓ 已删除配方「{name}」")
+
+    def _rebuild_model(self) -> None:
+        """配方库变了（改名 / 删除 / 新存）⇒ **重建模型**，并保住开关与参数。
+
+        ⚠ 只重建、不重设：`enabled` / `params` 从旧模型原样搬过去，
+        被删掉的那条 key 由模型**自己清洗掉**（§11.5-18：坏值不许进界面）。
+        """
+        p = self.page
+        p.layer_model = LayerModel(formulas=p._formula_store.all(),
+                                   enabled=p.layer_model.enabled_list(),
+                                   params=p.layer_model.params_snapshot(),
+                                   draft=p._formula_segments)
+        p._recipe_programs = {}
+        p._on_layer_switch_changed()
+        self.refresh_recipe_page()
 
     def open_formula_library(self):
         p = self.page
@@ -162,7 +329,7 @@ class DeskFormula:
         p._formula_segments = pairs
         p._formula_params_text = str(params_text or "")
         p._sub_visible = {"sub1": True, "sub2": True, "sub3": True}   # 外来公式：副图先全开
-        p.cb_formula.setChecked(True)     # 刚送来的公式就该看得见
+        self._register_draft(force_visible=True)   # 刚送来的公式就该看得见（旧行为一致）
         self._compile_formula()
         p.render_charts()
         p._refresh_chips()
@@ -181,6 +348,7 @@ class DeskFormula:
             return
         p._formula_segments = pairs
         p._formula_params_text = formula.get("params_text", "")
+        self._register_draft()
         self._compile_formula()
         self._set_formula_status(True, f"✓ 已自动载入上次配方「{formula['name']}」"
                                        f"（{len(pairs)} 段）")

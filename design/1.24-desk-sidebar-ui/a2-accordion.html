@@ -1,0 +1,1033 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A 方案 v2 · 手风琴卡片（按 2026-09-17 反馈修订）</title>
+<link rel="stylesheet" href="shell.css">
+<style>
+/* ============================================================
+   A 方案 v2 —— 在你采纳的 A · 手风琴卡片 基础上，按 2026-09-17 的反馈修订。
+
+   本版共 8 处改动（编号与 ROADMAP.md 的 R1~R8 对应）：
+     R1 自选股：新增「分组标签」+ 分组右侧显示**组合当日整体涨跌**
+     R2 自选股：两条添加路径（输入代码/名称 快速添加 | 从自选股挑选）
+     R3 自选股：为「组合配置」预留互通入口（虚线预留位）
+     R4 整合：删掉「◫ 主图叠加 / 附图」页 —— 它的开关在顶栏 chips 里已经有
+     R5 公式与配方 → 重做成**纯「配方库」页**，配方以 chips 呈现，**徽标一眼区分主图/副图**
+     R6 附图：chips 带**顺序号 ①②③** + 「⇅ 排序」面板（治"副图不能调顺序"）
+     R7 纵轴对齐：所有窗格共用**固定左槽**（图里已按此绘制，长/短标签右对齐同一条线）
+     R8 标注：画线类型改**图标 + 名称 + 数字快捷键**，并支持 30+ 类型分类收纳
+   ============================================================ */
+.panel{width:338px}
+.pbody{padding:9px 11px}
+
+.acc{display:flex;flex-direction:column;gap:8px}
+.acard{border:1px solid var(--line2);border-radius:10px;background:#FCFDFF;overflow:hidden}
+.acard.open{background:#fff;border-color:var(--line);box-shadow:0 1px 2px rgba(16,24,40,.03)}
+.ahead{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;user-select:none}
+.ahead:hover{background:#F7FAFF}
+.ai{width:20px;text-align:center;font-size:13px;flex:0 0 auto}
+.at{font-size:12.6px;font-weight:800;color:var(--ink2);flex:0 0 auto}
+.astate{margin-left:auto;font-size:11.3px;color:var(--muted);white-space:nowrap}
+.astate.ok{color:#2E7D32;font-weight:700}
+.astate.warn{color:var(--orange);font-weight:700}
+.astate.bad{color:#C62828;font-weight:700}
+.aarrow{color:var(--faint);font-size:11px;transition:transform .15s;flex:0 0 auto}
+.acard:not(.open) .aarrow{transform:rotate(-90deg)}
+.abody{padding:0 11px 11px;display:flex;flex-direction:column;gap:7px}
+.acard:not(.open) .abody{display:none}
+.rowline{display:flex;align-items:center;gap:8px;font-size:12.3px;color:var(--ink2)}
+.rowline .sw{margin-left:auto}
+.btnrow{display:flex;gap:6px}
+.btnrow .btn{flex:1;text-align:center}
+
+/* ---------- R1/R2/R3：分组标签 + 组合涨跌 + 快速添加 ---------- */
+.gchips{display:flex;flex-wrap:wrap;gap:5px}
+.gchip{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;
+       border-radius:999px;padding:5px 10px;font-size:12px;color:var(--ink2);cursor:pointer}
+.gchip:hover{border-color:#A9C7EA;background:#F7FBFF}
+.gchip.on{background:var(--accent-soft);border-color:#BBDEFB;color:var(--accent-deep);font-weight:800}
+.gchip .gn{font-weight:700}
+.gchip .gv{font-size:11.2px;font-weight:700;font-variant-numeric:tabular-nums}
+.gchip .gv.up{color:#4CAF50}
+.gchip .gv.dn{color:#F44336}
+.gchip .gc{font-size:10.8px;color:var(--muted);font-weight:400}
+.gchip .gwarn{font-size:10.4px;color:var(--orange);font-weight:800;margin-left:1px}
+.gchip.add{border-style:dashed;color:var(--accent);border-color:#BBDEFB;background:#F7FBFF;font-weight:700}
+.quickadd{display:flex;gap:5px;align-items:center}
+.quickadd input{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:7px;padding:6px 9px;
+                font-size:12.1px;color:var(--ink);outline:none}
+.quickadd input:focus{border-color:#A9C7EA;box-shadow:0 0 0 2px #EAF3FE}
+.quickadd .sel{border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:11.8px;color:var(--ink2);background:#fff}
+.copyline{font-size:11.4px;color:var(--muted);line-height:1.6}
+
+.wl{list-style:none;margin:0;padding:0;border:1px solid var(--line2);border-radius:9px;overflow:hidden;background:#fff}
+.wl li{display:flex;align-items:center;gap:8px;padding:7px 9px;font-size:12.3px;color:var(--ink2);cursor:pointer;
+       border-bottom:1px solid #F4F7FB}
+.wl li:last-child{border-bottom:none}
+.wl li:hover{background:#F7FAFF}
+.wl li.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.wl .code{margin-left:auto;color:var(--muted);font-size:11.2px}
+.wl .chg{width:52px;text-align:right;font-size:11.4px;font-variant-numeric:tabular-nums}
+.picklist{max-height:132px;overflow:auto}
+
+/* ---------- R5：配方库（chips + 目标徽标）---------- */
+.rbadge{font-size:10.4px;font-weight:800;border-radius:5px;padding:1.5px 5px;flex:0 0 auto;
+        letter-spacing:.2px;color:#fff}
+.rbadge.main{background:#1976D2}     /* 主图 */
+.rbadge.sub{background:#7E57C2}      /* 副图 —— 去处只有两类：格位由"顺序"决定，不绑定第几格 */
+.rbuiltin{font-size:9.6px;font-weight:800;color:#8A94A6;border:1px solid #DCE3EC;border-radius:4px;
+          padding:0 4px;flex:0 0 auto}
+/* 顶栏「＋ 更多」= 配方库同类的**自动镜像**（不存第二份状态） */
+.morewrap{position:relative;flex:0 0 auto}
+.morepop{display:none;position:absolute;top:34px;right:0;z-index:30;width:268px;background:#fff;
+         border:1px solid var(--line);border-radius:11px;box-shadow:0 12px 30px rgba(16,24,40,.16);padding:10px}
+.morepop.show{display:block}
+.morepop .mpt{font-size:11.2px;font-weight:800;color:var(--ink2);margin-bottom:5px}
+.morepop .mpsrc{font-size:10.4px;font-weight:800;color:var(--faint);letter-spacing:.4px;margin:7px 0 3px}
+.morepop .mprow{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink2);
+                padding:5px 6px;border-radius:7px;cursor:pointer}
+.morepop .mprow:hover{background:#F7FAFF}
+.morepop .mprow.on{background:#EAF7EE;font-weight:800}
+.morepop .mprow .mps{margin-left:auto;font-size:10.6px;color:var(--muted);flex:0 0 auto}
+.morepop .mphint{font-size:10.8px;color:var(--muted);line-height:1.5;margin-top:7px;
+                 padding-top:7px;border-top:1px dashed #EEF1F6}
+.rwrap{display:flex;flex-wrap:wrap;gap:6px}
+.rchip{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:9px;
+       padding:6px 9px;font-size:12px;color:var(--ink2);cursor:pointer;max-width:100%}
+.rchip:hover{border-color:#A9C7EA;background:#F7FBFF}
+.rchip.on{background:#EAF7EE;border-color:#BFE3C8;font-weight:800}
+.rchip .rn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rchip .rok{color:#2E7D32;font-weight:800;font-size:11px}
+.rchip .rops{display:none;gap:3px;margin-left:2px}
+.rchip .rops button{border:none;background:transparent;color:var(--muted);font-size:11px;padding:0 2px;cursor:pointer}
+.rchip .rops button:hover{color:var(--accent)}
+body.manage .rchip .rops{display:flex}
+.secthead{display:flex;align-items:center;gap:6px;font-size:11.4px;font-weight:800;color:var(--muted);
+          margin:0 0 6px;letter-spacing:.3px}
+.secthead .cnt{font-weight:700;color:var(--faint)}
+.legend2{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted);align-items:center}
+
+/* ---------- R6：附图顺序（chips 带序号 + 排序面板）---------- */
+.orderNum{font-size:10.4px;font-weight:800;color:var(--accent);background:#E8F2FE;border-radius:4px;
+          padding:0 4px;margin-right:1px}
+.sortwrap{position:relative;flex:0 0 auto}
+.sortpop{display:none;position:absolute;top:34px;right:0;z-index:30;width:246px;background:#fff;
+         border:1px solid var(--line);border-radius:11px;box-shadow:0 12px 30px rgba(16,24,40,.16);padding:10px}
+.sortpop.show{display:block}
+.sortpop .spt{font-size:11.3px;font-weight:800;color:var(--ink2);margin-bottom:7px}
+.sprow{display:flex;align-items:center;gap:7px;font-size:12.1px;color:var(--ink2);padding:5px 4px;
+       border-bottom:1px dashed #EEF1F6}
+.sprow:last-of-type{border-bottom:none}
+.sprow .spn{width:18px;height:18px;border-radius:5px;background:#F1F4F9;display:grid;place-items:center;
+            font-size:10.6px;font-weight:800;color:var(--accent);flex:0 0 auto}
+.sprow .spb{margin-left:auto;display:flex;gap:3px}
+.sprow .spb button{border:1px solid var(--line);background:#FBFCFE;border-radius:5px;width:22px;height:20px;
+                   font-size:11px;color:var(--muted);cursor:pointer}
+.sprow .spb button:hover{border-color:#A9C7EA;color:var(--accent)}
+.sprow.first .spb button:first-child{opacity:.35}
+.sprow.last .spb button:last-child{opacity:.35}
+.sphint{font-size:10.9px;color:var(--muted);line-height:1.5;margin-top:7px}
+
+/* ---------- R8：画线类型（图标 + 名称 + 数字）---------- */
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+.tile{border:1px solid var(--line2);background:#fff;border-radius:8px;padding:6px 2px 5px;cursor:pointer;
+      display:flex;flex-direction:column;align-items:center;gap:3px;position:relative}
+.tile:hover{border-color:#A9C7EA;background:#F7FBFF}
+.tile.on{border-color:#BBDEFB;background:var(--accent-soft);box-shadow:0 0 0 1px #BBDEFB inset}
+.tile svg{display:block}
+.tile .tn{font-size:9.9px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.tile.on .tn{color:var(--accent-deep);font-weight:800}
+.tile .tk{position:absolute;top:2px;right:3px;font-size:8.8px;color:var(--faint);font-weight:700}
+.tile.on .tk{color:var(--accent)}
+/* ★ 03 修订：**没有搜索栏、没有折叠收纳** —— 32 种全部平铺直出。
+   让"多"不显乱，只靠四件事：① 按类分组 + 吸顶分类标题；② 每类一个色相（图标同色）；
+   ③ 统一的"图标 + 名称 + 编号"行式（右对齐编号）；④ 固定可视高度 + 内部滚动。 */
+.toolscroll{max-height:432px;overflow:auto;border:1px solid var(--line2);border-radius:9px;
+            background:#fff;padding:0 7px 7px}
+.cathead{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:6px;background:#fff;
+         padding:7px 1px 5px;font-size:10.6px;font-weight:800;letter-spacing:.5px;color:var(--muted);
+         border-bottom:1px solid #F0F3F8}
+.cathead .cbar{width:3px;height:11px;border-radius:2px;background:var(--c);flex:0 0 auto}
+.cathead .ccnt{margin-left:auto;color:var(--faint);font-weight:700}
+.tiles2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px;padding:5px 0 3px}
+.ltile{display:flex;align-items:center;gap:6px;border:1px solid transparent;border-radius:7px;
+       padding:4px 6px;font-size:11.4px;color:var(--ink2);cursor:pointer}
+.ltile:hover{background:#F7FAFF;border-color:var(--line)}
+.ltile.on{background:var(--accent-soft);border-color:#BBDEFB;font-weight:800;color:var(--accent-deep)}
+.ltile svg{flex:0 0 auto}
+.ltile .ltn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ltile .ltk{margin-left:auto;font-size:9.6px;color:var(--faint);font-weight:700;flex:0 0 auto}
+.ltile.on .ltk{color:var(--accent)}
+.anolist{list-style:none;margin:0;padding:0;font-size:12.2px}
+.anolist li{display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px dashed #EEF1F6;color:var(--ink2)}
+.anolist li:last-child{border-bottom:none}
+.anolist .dot{width:8px;height:8px;border-radius:2px;flex:0 0 auto}
+.anolist .tm{margin-left:auto;font-size:11px;color:var(--muted)}
+.anolist li.sel{background:#FFF6D9;border-radius:6px;padding-left:6px;font-weight:700}
+
+.planned{border:1px dashed #CBD6E4;border-radius:9px;padding:8px 10px;color:var(--muted);
+         font-size:11.6px;background:#FAFCFF}
+.planned b{color:var(--ink2)}
+.planned .tp{font-size:10.6px;font-weight:800;color:var(--faint);letter-spacing:.5px}
+.changed{background:#F3FBF6;border:1px solid #CBEBD6;border-radius:9px;padding:7px 10px;font-size:11.4px;color:#2E7D32}
+.changed b{color:#1B5E20}
+
+/* ---------- 四轮：排序模式（拖拽 + 防误触三道闸）----------
+   ① 必须**先进入排序模式** —— 平时列表是"点 = 选中"，根本不响应拖动；
+   ② 只有按住行首的 ⣿ **手柄**才能拖，点行本身永远不拖（手柄与行物理分离）；
+   ③ 拖错可「↺ 撤销」—— 比弹二次确认更不打断，对"拖歪了"也最有效。 */
+.sortbar{display:none;align-items:center;gap:6px;flex-wrap:wrap;background:#FFF8E1;border:1px solid #FFE082;
+         border-radius:8px;padding:6px 8px;font-size:11.2px;color:#8A6D1F}
+.card-sorting .sortbar{display:flex}
+.sortbar .sb{flex:1 1 100%;line-height:1.5}
+.sortbar button{border:1px solid #FFD54F;background:#fff;border-radius:6px;padding:3px 9px;
+                font-size:11.1px;color:#8A6D1F;cursor:pointer;font-weight:700}
+.sortbar button:hover{background:#FFFDF5}
+.grip{display:none;color:#B4BECB;font-size:13px;cursor:grab;flex:0 0 auto;user-select:none;line-height:1}
+.card-sorting .grip{display:inline-block}
+.card-sorting .wl li{cursor:default}
+.card-sorting .wl li:hover{background:transparent}
+.wl li.dragging{opacity:.45}
+.wl li.dropabove{box-shadow:inset 0 2px 0 var(--accent)}
+.wl li.dropbelow{box-shadow:inset 0 -2px 0 var(--accent)}
+
+.gear{margin-left:2px;font-size:11px;color:var(--muted);cursor:pointer;flex:0 0 auto;line-height:1}
+.gear:hover{color:var(--accent)}
+
+/* ---------- ⚙ 参数窗口（内置指标 / 配方共用；防误删三道闸）---------- */
+.modal{position:fixed;inset:0;background:rgba(16,24,40,.38);display:none;place-items:center;z-index:60}
+.modal.show{display:grid}
+.mbox{width:346px;background:#fff;border-radius:14px;box-shadow:0 24px 60px rgba(16,24,40,.28);overflow:hidden}
+.mhead{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line2)}
+.mhead .mt{font-size:13.4px;font-weight:800}
+.mhead .mx{margin-left:auto;color:var(--muted);cursor:pointer;font-size:14px;padding:0 3px}
+.mhead .mx:hover{color:var(--ink)}
+.mbody{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.prow{display:flex;align-items:center;gap:8px;font-size:12.3px;color:var(--ink2)}
+.prow .pl{width:82px;flex:0 0 auto}
+.prow input{width:72px;border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:12.2px;
+            text-align:right;outline:none;font-variant-numeric:tabular-nums}
+.prow input:focus{border-color:#A9C7EA;box-shadow:0 0 0 2px #EAF3FE}
+.prow input.bad{border-color:#F44336;background:#FFF5F5;color:#C62828;font-weight:700}
+.prow .punit{font-size:11px;color:var(--muted)}
+.prow .pdef{margin-left:auto;font-size:10.8px;color:var(--faint)}
+.pmsg{font-size:11.4px;border-radius:8px;padding:7px 9px;line-height:1.55}
+.pmsg.bad{background:#FDECEA;color:#C62828;border:1px solid #FFCDD2}
+.pmsg.ok{background:#EAF7EE;color:#2E7D32;border:1px solid #BFE3C8}
+.pmsg.warn{background:#FFF8E1;color:#8A6D1F;border:1px solid #FFE082}
+.mfoot{display:flex;gap:7px;align-items:center;padding:11px 14px;border-top:1px solid var(--line2);
+       background:#FCFDFF;flex-wrap:wrap}
+.mfoot .btn{text-align:center}
+.mfoot .sp{flex:1 1 100%;font-size:11.5px;color:#8A6D1F;line-height:1.5;margin-bottom:2px}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>行情工作台</h1>
+  <span class="grow"></span>
+  <div class="search"><span class="gray">🔍</span><input value="600519" placeholder="输入代码或中文名 (如: 600519 或 茅台)"></div>
+  <button class="btn pri">查阅</button>
+  <button class="btn ghost">☁️ 云端同步</button>
+  <span class="pill ok">已是最新</span>
+</div>
+
+<!-- L2 工具行：现在它是"主图叠加 / 附图"的唯一入口（R4） -->
+<div class="toolrow">
+  <span class="seglab">周期</span>
+  <div class="seg" data-onclick="minute"><button class="on">日</button><button>周</button><button>月</button><button>分钟</button></div>
+  <div class="seg minute" id="segMinute"><button class="on">1</button><button>5</button><button>15</button><button>30</button><button>60</button></div>
+  <span class="sep"></span>
+  <span class="seglab">复权</span>
+  <div class="seg"><button class="on">前复权</button><button>不复权</button></div>
+  <span class="sep"></span>
+
+  <span class="seglab">主图</span>
+  <!-- ★ chips = 配方库里「主图」类的投影（内置 + 你的配方，最近使用优先） -->
+  <span class="chip on"><i></i>均线 MA</span>
+  <span class="chip on"><i></i>MACD金叉+均线组</span>
+  <span class="chip"><i></i>布林带 BOLL</span>
+  <span class="morewrap">
+    <button class="chip more" id="btnMainMore">＋ 更多</button>
+    <div class="morepop" id="popMainMore">
+      <div class="mpt">主图 · 全部（= 配方库「主图」类）</div>
+      <div class="mpsrc">内置</div>
+      <div class="mprow on"><span class="rbadge main">主图</span>均线 MA 5/20/60<span class="mps">已开</span></div>
+      <div class="mprow"><span class="rbadge main">主图</span>布林带 BOLL<span class="mps">已关</span></div>
+      <div class="mpsrc">你的配方</div>
+      <div class="mprow on"><span class="rbadge main">主图</span>MACD金叉 + 均线组<span class="mps">已开</span></div>
+      <div class="mprow"><span class="rbadge main">主图</span>突破 20 日新高<span class="mps">已关</span></div>
+      <div class="mprow"><span class="rbadge main">主图</span>BBI + 多空分界<span class="mps">已关</span></div>
+      <div class="mphint">这里的内容<b>自动跟着配方库走</b>：配方库里新增 / 删除一条，这里立刻多一条 / 少一条。</div>
+    </div>
+  </span>
+
+  <span class="sep"></span>
+  <span class="seglab">附图</span>
+  <!-- ★ chips 带顺序号 = 它们在主图下方从上到下的排列；名字就是配方名（内置或你的） -->
+  <span class="chip on"><span class="orderNum">1</span>成交量</span>
+  <span class="chip on"><span class="orderNum">2</span>MACD</span>
+  <span class="chip on"><span class="orderNum">3</span>RSI 超买超卖</span>
+  <span class="morewrap">
+    <button class="chip more" id="btnSubMore">＋ 更多</button>
+    <div class="morepop" id="popSubMore">
+      <div class="mpt">附图 · 全部（= 配方库「副图」类）</div>
+      <div class="mpsrc">内置</div>
+      <div class="mprow on"><span class="rbadge sub">副图</span>成交量<span class="mps">已开</span></div>
+      <div class="mprow on"><span class="rbadge sub">副图</span>MACD<span class="mps">已开</span></div>
+      <div class="mpsrc">你的配方</div>
+      <div class="mprow on"><span class="rbadge sub">副图</span>RSI 超买超卖<span class="mps">已开</span></div>
+      <div class="mprow"><span class="rbadge sub">副图</span>量价背离<span class="mps">已关</span></div>
+      <div class="mphint">点一条 = 开关它。副图的<b>上下顺序</b>用右侧「⇅ 排序」调。</div>
+    </div>
+  </span>
+  <span class="sortwrap">
+    <button class="chip more" id="btnSortSub">⇅ 排序</button>
+    <div class="sortpop" id="sortPop">
+      <div class="spt">附图顺序（上 → 下）</div>
+      <div class="sprow first"><span class="spn">1</span>成交量
+        <span class="spb"><button>⬆</button><button>⬇</button></span></div>
+      <div class="sprow"><span class="spn">2</span>MACD
+        <span class="spb"><button>⬆</button><button>⬇</button></span></div>
+      <div class="sprow last"><span class="spn">3</span>RSI 超买超卖
+        <span class="spb"><button>⬆</button><button>⬇</button></span></div>
+      <div class="sphint">调整后立即生效并记住上次。顺序只决定"谁在上面"，<b>不改任何配方里的去处</b>。<br>
+        附图最多 5 个，这里用 ⬆⬇ 就够；<b>几十只的大列表（如分组成分）请用「拖拽排序」</b> ——
+        它会先让你<b>进入排序模式</b>、且<b>只认 ⣿ 手柄</b>，避免误触。</div>
+    </div>
+  </span>
+
+  <span class="grow"></span>
+  <button class="tb" title="打开左栏「✎ 标注工具」页">✎</button>
+  <span class="pill">3 条标注</span>
+</div>
+
+<div class="body">
+  <div class="side" id="side">
+    <div class="rail">
+      <!-- R4：图层页已删除 → 图标轨由 5 项变 4 项 -->
+      <button data-key="watch" class="on" title="自选股（含分组）">★</button>
+      <button data-key="lib" title="配方库（公式都在这）">ƒ</button>
+      <button data-key="anno" title="标注工具（画线都在这）">✎<span class="dot"></span></button>
+      <button data-key="data" title="数据与口径">⛁</button>
+      <button class="fold" id="foldBtn" title="折起工具面板，把宽度让给图表">⇤</button>
+    </div>
+
+    <div class="panel" id="panel">
+      <div class="phead">
+        <div><div class="pt" id="pageTitle">自选股</div><div class="ps" id="pageSub">双击即切换当前标的</div></div>
+      </div>
+
+      <div class="pbody">
+        <!-- ================= ★ 自选股（含分组）R1/R2/R3 ================= -->
+        <div data-page="watch" class="on">
+          <div class="acc">
+            <!-- ★ 03 修订：**添加股票是本页最主要的功能 ⇒ 放在分组之上** -->
+            <div class="acard open">
+              <div class="ahead"><span class="ai">➕</span><span class="at">添加股票</span>
+                <span class="astate">最主要功能</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="quickadd">
+                  <input placeholder="输入代码或名称，如 600519 / 茅台">
+                  <span class="sel">核心白马 ▾</span>
+                  <button class="btn pri sm" style="flex:0 0 auto">加入</button>
+                </div>
+                <button class="btn block sm">📋 从自选股里挑选…</button>
+                <div class="copyline">上排：知道代码/名称直接敲（自动补全，回车即加入），右侧下拉选归入哪个分组。<br>
+                  下排：从已有自选里勾选，批量移入某个分组。</div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">🏷</span><span class="at">分组</span>
+                <span class="astate ok">4 组 · 6 只</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="gchips">
+                  <span class="gchip on"><span class="gn">全部</span><span class="gc">6 只</span></span>
+                  <span class="gchip"><span class="gn">核心白马</span><span class="gv up">+0.82%</span></span>
+                  <span class="gchip" title="宁德时代今天没有行情数据（停牌 / 还没下载），未计入本组涨跌">
+                    <span class="gn">科技成长</span><span class="gv dn">−0.31%</span><span class="gwarn">⚠</span></span>
+                  <span class="gchip"><span class="gn">高股息</span><span class="gv up">+0.15%</span></span>
+                  <span class="gchip add">＋ 新建分组</span>
+                </div>
+                <div class="copyline"><b>标签右侧 = 这个分组今天整体涨跌</b>（当成一只"基金组合"看）。
+                  算法先说明白：<b>把组里每只股票的涨跌幅直接平均</b>（等权）——
+                  比如 4 只的涨跌分别是 +1.23 / +0.42 / +0.31 / −0.64，本组就是 <b>+0.33%</b>。
+                  以后你在「组合配置」里给它们设了占比，就改成<b>按占比算</b>。<br>
+                  <b>某只股票今天没数据时</b>（停牌 / 还没下载 / 已退市）：<b>不算它</b> ——
+                  绝不拿 0% 混进去把数字冲淡；并在标签上打一个 <span class="gwarn">⚠</span>，
+                  鼠标移上去看是哪一只、为什么。</div>
+                <div class="changed"><b>R1/R2/R3</b> 本轮新增：分组标签 + 组合当日涨跌；
+                  按你的意见「添加股票」已提到分组之上。</div>
+              </div>
+            </div>
+
+            <div class="acard open" id="grpCard">
+              <div class="ahead"><span class="ai">📌</span><span class="at">核心白马 · 4 只</span>
+                <span class="astate ok">组合 +0.82%</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="sortbar">
+                  <span class="sb">排序模式：<b>只有按住行首的 ⣿ 手柄才能拖</b>，点行永远只是选中 —— 手抖也拖不乱。</span>
+                  <button id="grpUndo">↺ 撤销</button>
+                  <button id="grpDone">✓ 完成</button>
+                </div>
+                <ul class="wl pickable" id="grpList">
+                  <li class="on"><span class="grip" draggable="true">⣿</span>贵州茅台<span class="code">600519</span><span class="chg" style="color:#4CAF50">+1.23%</span></li>
+                  <li><span class="grip" draggable="true">⣿</span>五 粮 液<span class="code">000858</span><span class="chg" style="color:#4CAF50">+0.42%</span></li>
+                  <li><span class="grip" draggable="true">⣿</span>中国平安<span class="code">601318</span><span class="chg" style="color:#4CAF50">+0.31%</span></li>
+                  <li><span class="grip" draggable="true">⣿</span>宁德时代<span class="code">300750</span><span class="chg" style="color:#F44336">-0.64%</span></li>
+                </ul>
+                <div class="btnrow">
+                  <button class="btn sm">↗ 移出本组</button><button class="btn sm">⬆</button><button class="btn sm">⬇</button>
+                </div>
+                <button class="btn block sm" id="grpSortBtn">⇅ 进入拖拽排序（大分组用）</button>
+                <div class="copyline">双击即切换图上标的；「移出本组」只调整分组，不会把股票从自选里删掉。<br>
+                  <b>排序两种作法</b>：条目少（如图中 4 只）用 ⬆⬇ 或 ⣿ 拖；
+                  <b>大分组（几十只）</b>就用「⇅ 进入拖拽排序」——
+                  <b>必须先进入排序模式、且只能按住 ⣿ 手柄拖</b>，拖错可「↺ 撤销」，不会误触。</div>
+              </div>
+            </div>
+
+            <div class="planned"><span class="tp">预留位 · 与「组合配置」互通（R3）</span><br>
+              新建的同级栏目「<b>组合配置</b>」里可以给本分组的成分股<b>设权重</b>，
+              再对这个组合<b>做整体回测</b>、据此调整成分与占比。
+              本条虚线位就是那个入口（点它跳到组合配置 / 把本组送进去）。</div>
+
+            <div class="acard">
+              <div class="ahead"><span class="ai">🗑</span><span class="at" style="color:#C62828">分组管理</span>
+                <span class="astate">影响分组结构</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="btnrow">
+                  <button class="btn sm">✏ 重命名</button>
+                  <button class="btn danger sm">🗑️ 删除分组</button>
+                </div>
+                <div class="copyline">删除分组只解除归类，**不会删除自选股本身**（需二次确认）。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= ƒ 配方库（R4/R5）================= -->
+        <div data-page="lib">
+          <div class="acc">
+            <div class="acard open">
+              <div class="ahead"><span class="ai">✅</span><span class="at">当前生效</span>
+                <span class="astate ok">主图 2 · 副图 3</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="secthead">主图 <span class="cnt">· 2</span></div>
+                <div class="rwrap">
+                  <span class="rchip on"><span class="rbadge main">主图</span><span class="rn">均线 MA 5/20/60</span><span class="rok">✓</span></span>
+                  <span class="rchip on"><span class="rbadge main">主图</span><span class="rn">MACD金叉 + 均线组</span><span class="rok">✓</span></span>
+                </div>
+                <div class="secthead" style="margin-top:8px">副图 <span class="cnt">· 3</span></div>
+                <div class="rwrap">
+                  <span class="rchip on"><span class="rbadge sub">副图</span><span class="rn">成交量</span><span class="rok">✓</span></span>
+                  <span class="rchip on"><span class="rbadge sub">副图</span><span class="rn">MACD</span><span class="rok">✓</span></span>
+                  <span class="rchip on"><span class="rbadge sub">副图</span><span class="rn">RSI 超买超卖</span><span class="rok">✓</span></span>
+                </div>
+                <div class="copyline">点生效中的 chip = 关掉 / 再点开启。<br>
+                  <b>顶栏「主图 / 附图」的 chips 与「＋ 更多」就是这份列表的投影</b> ——
+                  配方库改什么，工具栏里立刻跟着变（不存第二份状态）。</div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">✏️</span><span class="at">编辑公式</span>
+                <span class="astate">写好即入库</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <button class="btn pri block">✏️ 新建 / 编辑公式…</button>
+                <div class="copyline"><b>一条公式的「去处」在保存时定死</b>：选主图就只能叠在 K 线上，
+                  选副图就只能进附图 —— <b>副图的进不了主图，主图的也进不了副图</b>。
+                  （这样"这条到底是主图还是副图"从根上就不会再糊涂。）<br>
+                  <b>多段公式也一样</b>：段 1 / 段 2 / 段 3 的<b>去处必须相同</b>。
+                  若你把某段改成不同去处，保存时会<b>直接提示</b>
+                  「一条公式只能去一个地方，请拆成两条」—— <b>不静默替你改、也不静默放行</b>。</div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">🎯</span><span class="at">配方库</span>
+                <span class="astate">按去处分两块 · 9 条</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="secthead"><span class="rbadge main">主图</span> 主图配方
+                  <span class="cnt">· 内置 2 / 你的 3</span></div>
+                <div class="rwrap">
+                  <span class="rchip on"><span class="rbadge main">主图</span><span class="rn">均线 MA 5/20/60</span><span class="rbuiltin">内置</span><span class="gear" data-param="均线 MA 5/20/60">⚙</span><span class="rok">✓</span></span>
+                  <span class="rchip"><span class="rbadge main">主图</span><span class="rn">布林带 BOLL</span><span class="rbuiltin">内置</span><span class="gear" data-param="布林带 BOLL">⚙</span></span>
+                  <span class="rchip on"><span class="rbadge main">主图</span><span class="rn">MACD金叉 + 均线组</span><span class="rok">✓</span>
+                    <span class="rops"><button>✏</button><button>🗑</button></span></span>
+                  <span class="rchip"><span class="rbadge main">主图</span><span class="rn">突破 20 日新高</span>
+                    <span class="rops"><button>✏</button><button>🗑</button></span></span>
+                  <span class="rchip"><span class="rbadge main">主图</span><span class="rn">BBI + 多空分界</span>
+                    <span class="rops"><button>✏</button><button>🗑</button></span></span>
+                </div>
+
+                <div class="secthead" style="margin-top:9px"><span class="rbadge sub">副图</span> 副图配方
+                  <span class="cnt">· 内置 2 / 你的 2</span></div>
+                <div class="rwrap">
+                  <span class="rchip on"><span class="rbadge sub">副图</span><span class="rn">成交量</span><span class="rbuiltin">内置</span><span class="rok">✓</span></span>
+                  <span class="rchip on"><span class="rbadge sub">副图</span><span class="rn">MACD</span><span class="rbuiltin">内置</span><span class="gear" data-param="MACD">⚙</span><span class="rok">✓</span></span>
+                  <span class="rchip on"><span class="rbadge sub">副图</span><span class="rn">RSI 超买超卖</span><span class="gear" data-param="RSI 超买超卖">⚙</span><span class="rok">✓</span>
+                    <span class="rops"><button>✏</button><button>🗑</button></span></span>
+                  <span class="rchip"><span class="rbadge sub">副图</span><span class="rn">量价背离</span>
+                    <span class="rops"><button>✏</button><button>🗑</button></span></span>
+                </div>
+
+                <button class="btn block sm" id="btnManage" style="margin-top:9px">🛠 管理模式（改名 / 删除）</button>
+                <div class="legend2" style="margin-top:6px">
+                  <span><span class="rbadge main">主图</span> 叠在 K 线上</span>
+                  <span><span class="rbadge sub">副图</span> 主图下方成图</span>
+                  <span><span class="rbuiltin">内置</span> 只能开关，不能删改</span>
+                </div>
+                <div class="changed"><b>本轮四条</b>：① <b>去处定死</b>（副图进不了主图、主图也进不了副图），
+                  多段公式的<b>去处必须相同</b>，不一致就提示拆成两条；
+                  ② <b>内置指标（MA / BOLL / 成交量 / MACD）收进配方库</b>，
+                  与你自己的函数同一套开关与管理（不再有"找不到地方去"的孤立复选框）；
+                  ③ 配方<b>自动出现在顶栏「＋ 更多」</b>里，无需手动登记；
+                  ④ 内置项<b>不能改名</b>（内置是给不懂的用户用的，给了改名权反而可能改不回来），
+                  但<b>有参数的都有 ⚙</b> 可调（成交量这类没参数的就没有 ⚙）——
+                  点 ⚙ 试一下那道"防误删三道闸"。</div>
+              </div>
+            </div>
+
+            <div class="acard">
+              <div class="ahead"><span class="ai">📤</span><span class="at">送出去</span>
+                <span class="astate">与回测页互通</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <button class="btn block sm">📤 送去做回测</button>
+                <button class="btn block sm">💾 存为配方…</button>
+                <div class="copyline">回测不分主图 / 副图 —— 送过去时去处不随行（原有口径不变）。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= ✎ 标注工具（R8）================= -->
+        <div data-page="anno">
+          <div class="acc">
+            <!-- ★ 03 修订：不要搜索栏、不要"更多"收纳 —— 32 种一个个全平铺出来 -->
+            <div class="acard open">
+              <div class="ahead"><span class="ai">🛠</span><span class="at">画线类型</span>
+                <span class="astate ok" id="annoCur">当前：斐波那契回调</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="toolscroll" id="tilesWrap"></div>
+                <div class="copyline"><b>32 种全部直出</b>（不搜索、不折叠）。不显乱靠四件事：
+                  <b>分类色</b>（每类一个色相，图标同色）+ 统一的「图标 · 名称 · 编号」行式 +
+                  <b>吸顶分类标题</b>（滚动时当前类名一直挂在顶上）+ 固定高度内部滚动。
+                  编号 <b>1–9</b> 可直接按数字键换工具。</div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">📌</span><span class="at">已有标注</span>
+                <span class="astate warn">3 条 · 1 条已选中</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <ul class="anolist">
+                  <li class="sel"><span class="dot" style="background:#E65100"></span>斐波那契 · 1480.20 ~ 1560.40<span class="tm">07-18</span></li>
+                  <li><span class="dot" style="background:#1976D2"></span>趋势线<span class="tm">06-04</span></li>
+                  <li><span class="dot" style="background:#8A94A6"></span>水平线 · 1502.00<span class="tm">05-21</span></li>
+                </ul>
+                <button class="btn amber block">🧽 删除选中（也可按 Delete）</button>
+                <div class="copyline">按「标的 + 周期」分开保存；坐标按日期锚定，增量更新不会跑偏。</div>
+              </div>
+            </div>
+
+            <div class="acard">
+              <div class="ahead"><span class="ai">🗑</span><span class="at" style="color:#C62828">清空本标的标注</span>
+                <span class="astate">不可撤销 · 二次确认</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <button class="btn danger block">🗑️ 清空（仅当前标的 + 当前周期）</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= ⛁ 数据与口径（未改，按你意见暂缓）================= -->
+        <div data-page="data">
+          <div class="acc">
+            <div class="acard open">
+              <div class="ahead"><span class="ai">📐</span><span class="at">当前看的是哪一份</span>
+                <span class="astate ok">体检通过</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="copyline"><b>前复权 · 日线 · 4041 根</b>（2010-01-04 ~ 2026-09-16）<br>
+                  ⚠ 除权跳空最近一次 <b>2023-08-08（-24.8%）</b> —— 前复权只改除权日之前，
+                  所以只看最近一段两个口径本来就一样。</div>
+              </div>
+            </div>
+            <div class="acard open">
+              <div class="ahead"><span class="ai">☁️</span><span class="at">同步规则</span>
+                <span class="astate">增量优先</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="copyline">本地有 → 只补最新几天；本地没有 → 整段抓取。<br>
+                  分钟每次取最近一段快照（各档位深度不同），且不接批量预下载。<br>
+                  要丢弃本地重下历史，请到「🗄 数据管理」用「重新全量下载」。</div>
+              </div>
+            </div>
+            <div class="planned"><span class="tp">本页暂缓</span><br>
+              按你的意见「<b>数据与口径先按现在的做，后续再想</b>」—— 本轮未作改动。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pfoot">
+        <div data-page="watch" class="on"><div style="display:flex;gap:8px">
+          <button class="btn pri" style="flex:1">★ 把当前图上标的加入「核心白马」</button></div></div>
+        <div data-page="lib"><div style="display:flex;gap:8px">
+          <button class="btn pri" style="flex:1">✏️ 新建 / 编辑公式…</button></div></div>
+        <div data-page="anno"><div style="display:flex;gap:8px">
+          <button class="btn pri" style="flex:1">➕ 在图上添加标注</button></div></div>
+        <div data-page="data"><div style="display:flex;gap:8px">
+          <button class="btn block">🗄 打开数据管理…</button></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart">
+    <div class="chead"><span class="sym">贵州茅台 600519</span><span class="sub">日线 · 前复权 · 4041 根</span></div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">最新</div><div class="v num">1520.50</div></div>
+      <div class="kpi"><div class="l">涨跌幅</div><div class="v num" style="color:#4CAF50">+1.23%</div></div>
+      <div class="kpi"><div class="l">成交量</div><div class="v num">312.0 万</div></div>
+      <div class="kpi"><div class="l">MA20</div><div class="v num">1494.80</div></div>
+    </div>
+    <div class="legend"><span><i style="background:#1976D2"></i>MA5</span><span><i style="background:#E65100"></i>MA20</span>
+      <span><i style="background:#4CAF50"></i>涨</span><span><i style="background:#F44336"></i>跌</span>
+      <span style="margin-left:auto;color:#2E7D32">✔ 三张副图的纵轴共用同一条固定左槽（R7）</span></div>
+    <div class="panes">
+      <div class="pane main"><span class="plabel">主图 · K 线 + MA</span><svg id="chartMain"></svg></div>
+      <div class="pane vol"><span class="plabel">① 成交量</span><svg id="chartVol"></svg></div>
+      <div class="pane macd"><span class="plabel">② MACD</span><svg id="chartMacd"></svg></div>
+    </div>
+    <div class="xaxis"><span>2026-04</span><span>2026-05</span><span>2026-06</span><span>2026-07</span><span>2026-08</span><span>2026-09</span></div>
+    <div class="readout">
+      <b>2026-09-16</b><span>开 1502.00</span><span>高 1533.00</span><span>低 1498.00</span>
+      <span>收 <b>1520.50</b></span><span>量 3,120,400</span><span class="tag" style="color:#4CAF50">+1.23%</span>
+      <span>MA5 1508.4</span><span>MA20 1494.8</span>
+      <span class="tag">③ RSI 超买超卖（副图 · 示意未画出）</span>
+    </div>
+  </div>
+</div>
+
+<!-- ================= ⚙ 参数窗口（防误删三道闸 · 四轮新增）=================
+     ① 改动过、既没「应用」也没「校验」就关闭 ⇒ **二次确认**（不静默丢改动）；
+     ② 点「应用」时参数格式/范围不对 ⇒ **自动恢复成默认值**并告知（你要求的那条）；
+     ③ 随时可「↺ 恢复默认」。 -->
+<div class="modal" id="paramModal">
+  <div class="mbox">
+    <div class="mhead"><span>⚙</span><span class="mt" id="pmTitle">参数</span>
+      <span class="mx" id="pmClose" title="关闭">✕</span></div>
+    <div class="mbody">
+      <div class="pmsg warn" id="pmHint"></div>
+      <div id="pmRows"></div>
+      <div class="pmsg bad" id="pmMsg" style="display:none"></div>
+      <div class="pmsg ok" id="pmOk" style="display:none">校验通过：参数合法，能算出结果。</div>
+    </div>
+    <div class="mfoot" id="pmFoot">
+      <button class="btn sm" id="pmDefault">↺ 恢复默认</button>
+      <button class="btn sm" id="pmCheck">▶ 校验参数</button>
+      <button class="btn pri sm" id="pmApply">应用</button>
+    </div>
+    <div class="mfoot" id="pmConfirm" style="display:none">
+      <span class="sp">参数已改动，但**既没应用也没校验**。直接关掉就等于丢掉这次修改 —— 确定放弃？</span>
+      <button class="btn danger sm" id="pmDiscard">放弃改动</button>
+      <button class="btn sm" id="pmKeep">继续编辑</button>
+    </div>
+  </div>
+</div>
+
+<div class="badge"><span class="x" onclick="this.parentNode.remove()">✕</span>
+  <b>A 方案 v2</b> · 按 2026-09-17 反馈迭代四轮（R1~R16，详见 <code>ROADMAP.md</code>）<br>
+  <b>四轮（最新 · 全是"防手残"）</b>：① <b>拖拽排序</b>有三道闸 ——
+  须先进入排序模式 · <b>只认 ⣿ 手柄</b>（点行永远只是选中）· 拖错可撤销；
+  ② <b>⚙ 参数窗口</b>：内置项<b>不能改名但可调参数</b>；改动后未保存也未校验就关闭 ⇒ <b>二次确认</b>，
+  格式不对却点应用 ⇒ <b>自动恢复默认值</b>；③ 多段公式的去处<b>必须相同</b>，不一致直接提示拆成两条。<br>
+  前三轮：配方去处定死（主图/副图互不串门）· 内置指标收进配方库 · 顶栏「＋ 更多」= 配方库镜像 ·
+  添加股票提到分组之上 · 标注页 32 种全平铺（无搜索栏）· 图标轨 5 → 4 项。<br>
+  <span style="opacity:.75">试试：点「⇅ 进入拖拽排序」按住 ⣿ 拖一下（点行是拖不动的）· 点内置项的 ⚙ 走一遍三道闸 · 点顶栏「＋ 更多」看镜像。</span></div>
+
+<script src="shell.js"></script>
+<script>
+/* ============================================================
+   本页独有的交互（图标 + 排序面板 + 管理模式）
+   ============================================================ */
+(function () {
+
+  /* ---------- R8：画线类型图标（用 SVG 画，无图片资源）---------- */
+  var C = '#5B6472', A = '#1976D2';
+  function ico(kind, color) {
+    var c = color || C;
+    var s = 'stroke="' + c + '" stroke-width="1.3" fill="none" stroke-linecap="round"';
+    var dot = 'fill="' + c + '"';
+    switch (kind) {
+      case 'trend':   return '<path d="M3 17 L23 4" ' + s + '/><circle cx="3" cy="17" r="2" ' + dot + '/><circle cx="23" cy="4" r="2" ' + dot + '/>';
+      case 'ray':     return '<path d="M3 17 L23 5" ' + s + '/><path d="M23 5 l-4 1.5 M23 5 l-1.5 4" ' + s + '/><circle cx="3" cy="17" r="2" ' + dot + '/>';
+      case 'channel': return '<path d="M2 14 L22 4" ' + s + '/><path d="M4 19 L24 9" ' + s + '/>';
+      case 'hline':   return '<path d="M2 10 H24" ' + s + '/><circle cx="13" cy="10" r="2" ' + dot + '/>';
+      case 'vline':   return '<path d="M13 2 V21" ' + s + '/><circle cx="13" cy="11" r="2" ' + dot + '/>';
+      case 'cross':   return '<path d="M13 2 V21 M2 11 H24" ' + s + '/>';
+      case 'rect':    return '<rect x="3" y="5" width="18" height="11" rx="1.5" ' + s + '/>';
+      case 'tri':     return '<path d="M3 18 L13 4 L23 18 Z" ' + s + '/>';
+      case 'circle':  return '<circle cx="13" cy="11" r="8" ' + s + '/>';
+      case 'arrow':   return '<path d="M3 18 L21 5" ' + s + '/><path d="M21 5 l-6 0.6 M21 5 l-1.2 5.6" ' + s + '/>';
+      case 'fib':     return '<path d="M2 5 H24 M2 9 H24 M2 14 H24 M2 18 H24" ' + s + '/>';
+      case 'fan':     return '<path d="M3 18 L23 4 M3 18 L23 10 M3 18 L20 18" ' + s + '/><circle cx="3" cy="18" r="1.8" ' + dot + '/>';
+      case 'arc':     return '<path d="M4 18 A11 11 0 0 1 22 8" ' + s + '/><circle cx="4" cy="18" r="1.8" ' + dot + '/>';
+      case 'cyc':     return '<path d="M5 2 V20 M11 2 V20 M17 2 V20 M23 2 V20" ' + s + '/>';
+      case 'ruler':   return '<path d="M3 11 H23" ' + s + '/><path d="M3 8 v6 M23 8 v6" ' + s + '/>';
+      case 'text':    return '<path d="M4 5 H22 M13 5 V19" ' + s + '/>';
+      case 'num':     return '<path d="M4 6 H22 M11 6 V19" ' + s + '/>';
+      case 'sym':     return '<path d="M13 3 v16 M7 7 h12" ' + s + '/>';
+      default:        return '<path d="M3 17 L23 5" ' + s + '/>';
+    }
+  }
+
+  /* 32 种画线类型，按类分组 —— **全部平铺直出**（没有搜索栏、没有折叠收纳）。
+     每类一个色相：分类色条 + 图标同色，这是"看着不乱"的主要手段；
+     行式统一为「图标 · 名称 · 编号」，编号一律右对齐。 */
+  var CATS = [
+    ['趋势 / 通道', '#1976D2', [
+      ['趋势线', 'trend', '1'], ['射线', 'ray', '2'], ['线段', 'trend', '3'],
+      ['等距通道', 'channel', '4'], ['线性回归通道', 'channel', '5'], ['平行线', 'channel', '6']]],
+    ['水平 / 垂直', '#5C6BC0', [
+      ['水平线', 'hline', '7'], ['水平射线', 'hline', '8'], ['垂直线', 'vline', '9'],
+      ['垂直线段', 'vline', '10'], ['十字线', 'cross', '11']]],
+    ['形态', '#00897B', [
+      ['矩形', 'rect', '12'], ['三角形', 'tri', '13'], ['圆形', 'circle', '14'], ['椭圆', 'circle', '15'],
+      ['箭头', 'arrow', '16'], ['多箭头', 'arrow', '17'], ['圆弧', 'arc', '18']]],
+    ['斐波 / 分割', '#7E57C2', [
+      ['斐波那契回调', 'fib', '19'], ['斐波那契扩展', 'fib', '20'], ['斐波那契扇形', 'fan', '21'],
+      ['斐波那契弧线', 'arc', '22'], ['江恩箱', 'rect', '23']]],
+    ['时间 / 测量', '#E65100', [
+      ['周期线', 'cyc', '24'], ['等周期线', 'cyc', '25'], ['测量尺', 'ruler', '26'],
+      ['时间尺', 'ruler', '27'], ['价格尺', 'ruler', '28']]],
+    ['文字 / 标记', '#6D4C41', [
+      ['文字', 'text', '29'], ['标注框', 'rect', '30'], ['序号标记', 'num', '31'], ['符号标记', 'sym', '32']]]
+  ];
+
+  var selected = '斐波那契回调';
+
+  function paint() {
+    document.getElementById('tilesWrap').innerHTML = CATS.map(function (cat) {
+      var color = cat[1];
+      return '<div class="cathead" style="--c:' + color + '"><span class="cbar"></span>'
+        + '<span>' + cat[0] + '</span><span class="ccnt">' + cat[2].length + '</span></div>'
+        + '<div class="tiles2">' + cat[2].map(function (t) {
+            var on = (t[0] === selected) ? ' on' : '';
+            return '<div class="ltile' + on + '" data-name="' + t[0] + '">'
+              + '<svg width="20" height="16" viewBox="0 0 26 22">'
+              + ico(t[1], t[0] === selected ? A : color) + '</svg>'
+              + '<span class="ltn">' + t[0] + '</span><span class="ltk">' + t[2] + '</span></div>';
+          }).join('') + '</div>';
+    }).join('');
+  }
+
+  function pick(name) {
+    if (!name) return;
+    selected = name;
+    paint();
+    var head = document.getElementById('annoCur');
+    if (head) head.textContent = '当前：' + name;
+  }
+
+  /* 点一行 = 选中该工具（切换画线类型） */
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest('.ltile');
+    if (row) pick(row.dataset.name);
+  });
+
+  /* 编号 1–9 = 直接用数字键换工具（10 以后的编号只作对照，不强占键位） */
+  document.addEventListener('keydown', function (e) {
+    if (e.key < '1' || e.key > '9') return;
+    for (var i = 0; i < CATS.length; i++) {
+      var hit = CATS[i][2].filter(function (t) { return t[2] === e.key; })[0];
+      if (hit) { pick(hit[0]); return; }
+    }
+  });
+
+  paint();
+
+  /* ---------- 顶栏三个浮层：「主图 更多」/「附图 更多」/「⇅ 排序」 ---------- */
+  var POPUPS = ['popMainMore', 'popSubMore', 'sortPop'].map(function (id) {
+    return document.getElementById(id);
+  });
+  function closePops() {
+    POPUPS.forEach(function (el) { if (el) el.classList.remove('show'); });
+  }
+  [['btnMainMore', 'popMainMore'], ['btnSubMore', 'popSubMore'], ['btnSortSub', 'sortPop']]
+    .forEach(function (pair) {
+      var btn = document.getElementById(pair[0]);
+      var box = document.getElementById(pair[1]);
+      if (!btn || !box) return;
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var willShow = !box.classList.contains('show');
+        closePops();
+        box.classList.toggle('show', willShow);
+      });
+      box.addEventListener('click', function (e) { e.stopPropagation(); });
+    });
+  document.addEventListener('click', closePops);
+
+  /* 「＋ 更多」里点一条 = 开关它（与配方库共用同一份状态，这里只演示交互） */
+  POPUPS.forEach(function (box) {
+    if (!box) return;
+    box.querySelectorAll('.mprow').forEach(function (row) {
+      row.addEventListener('click', function () {
+        row.classList.toggle('on');
+        var state = row.querySelector('.mps');
+        if (state) state.textContent = row.classList.contains('on') ? '已开' : '已关';
+      });
+    });
+  });
+
+  /* ---------- R6：附图排序（⬆⬇ 换位 → 重新编号 → 同步到附图 chips） ---------- */
+  var pop = document.getElementById('sortPop');
+  function firstText(node) {
+    for (var i = 0; i < node.childNodes.length; i++) {
+      var c = node.childNodes[i];
+      if (c.nodeType === 3 && c.nodeValue.trim()) return c;
+    }
+    return null;
+  }
+  function renumber() {
+    var rows = pop.querySelectorAll('.sprow');
+    var chips = document.querySelectorAll('.toolrow .chip .orderNum');
+    rows.forEach(function (r, i) {
+      r.querySelector('.spn').textContent = String(i + 1);
+      r.classList.toggle('first', i === 0);
+      r.classList.toggle('last', i === rows.length - 1);
+      /* 让"排序"看得见效果：附图 chips 的序号与名字一起跟着走 */
+      var num = chips[i];
+      if (!num) return;
+      num.textContent = String(i + 1);
+      var src = firstText(r);
+      var dst = firstText(num.parentNode);
+      if (src && dst) dst.nodeValue = src.nodeValue.trim();
+    });
+  }
+  pop.addEventListener('click', function (e) {
+    var b = e.target.closest('.spb button');
+    if (!b) return;
+    var row = b.closest('.sprow');
+    var up = b.textContent.trim() === '⬆';
+    var sib = up ? row.previousElementSibling : row.nextElementSibling;
+    if (!sib || !sib.classList.contains('sprow')) return;   /* 首行不能再上移、尾行不能再下移 */
+    if (up) row.parentNode.insertBefore(row, sib);
+    else row.parentNode.insertBefore(sib, row);
+    renumber();
+  });
+
+  /* ---------- R5：配方库管理模式 ---------- */
+  document.getElementById('btnManage').addEventListener('click', function () {
+    document.body.classList.toggle('manage');
+    this.textContent = document.body.classList.contains('manage')
+      ? '🛠 退出管理' : '🛠 管理模式（显示改名 / 删除）';
+  });
+
+  /* ============================================================
+     四轮新增：① 排序模式（拖拽 + 防误触）  ② ⚙ 参数窗口（防误删三道闸）
+     ============================================================ */
+
+  /* ---------- ① 排序模式 ----------
+     防误触三道闸：
+       闸 1 平时列表是"点 = 选中"，**根本不响应拖动**；必须先点「⇅ 进入拖拽排序」；
+       闸 2 **只有按住 ⣿ 手柄**才能拖（手柄与行物理分离，点行永远只是选中）；
+       闸 3 拖错可「↺ 撤销」（比弹二次确认更不打断，对"拖歪了"也最有效）。 */
+  var grpCard = document.getElementById('grpCard');
+  var grpList = document.getElementById('grpList');
+  var grpBtn = document.getElementById('grpSortBtn');
+  var grpSnapshot = [];
+  var dragging = null;
+
+  function grpClearMarks() {
+    Array.prototype.forEach.call(grpList.children, function (li) {
+      li.classList.remove('dropabove', 'dropbelow');
+    });
+  }
+
+  grpBtn.addEventListener('click', function () {
+    grpSnapshot = Array.prototype.slice.call(grpList.children);
+    grpCard.classList.add('card-sorting');
+    grpBtn.style.display = 'none';
+  });
+  document.getElementById('grpDone').addEventListener('click', function () {
+    grpCard.classList.remove('card-sorting');
+    grpBtn.style.display = '';
+    grpClearMarks();
+  });
+  document.getElementById('grpUndo').addEventListener('click', function () {
+    grpSnapshot.forEach(function (li) { grpList.appendChild(li); });
+    grpClearMarks();
+  });
+
+  grpList.addEventListener('dragstart', function (e) {
+    var grip = e.target.closest ? e.target.closest('.grip') : null;
+    if (!grpCard.classList.contains('card-sorting') || !grip) {
+      e.preventDefault();                    /* 闸 1 + 闸 2：没进模式 / 没按手柄 ⇒ 一律不给拖 */
+      return;
+    }
+    dragging = grip.parentNode;
+    dragging.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', ''); } catch (err) { /* 个别环境不许设数据 */ }
+  });
+  grpList.addEventListener('dragover', function (e) {
+    if (!dragging) return;
+    e.preventDefault();
+    var over = e.target.closest ? e.target.closest('li') : null;
+    if (!over || over === dragging) return;
+    var rect = over.getBoundingClientRect();
+    var after = (e.clientY - rect.top) > rect.height / 2;   /* 落在下半 ⇒ 插到它后面 */
+    grpClearMarks();
+    over.classList.add(after ? 'dropbelow' : 'dropabove');
+    grpList.insertBefore(dragging, after ? over.nextSibling : over);
+  });
+  grpList.addEventListener('dragend', function () {
+    if (dragging) dragging.classList.remove('dragging');
+    dragging = null;
+    grpClearMarks();
+  });
+
+  /* ---------- ② ⚙ 参数窗口 ---------- */
+  var PARAMS = {
+    '均线 MA 5/20/60': [['周期 1', '5', '日', 5], ['周期 2', '20', '日', 20], ['周期 3', '60', '日', 60]],
+    '布林带 BOLL': [['周期', '20', '日', 20], ['倍数', '2', '倍', 2]],
+    'MACD': [['快线', '12', '日', 12], ['慢线', '26', '日', 26], ['信号', '9', '日', 9]],
+    'RSI 超买超卖': [['周期', '14', '日', 14], ['超买', '70', '', 70], ['超卖', '30', '', 30]]
+  };
+  var modal = document.getElementById('paramModal');
+  var pmRows = document.getElementById('pmRows');
+  var pmMsg = document.getElementById('pmMsg');
+  var pmOk = document.getElementById('pmOk');
+  var pmFoot = document.getElementById('pmFoot');
+  var pmConfirm = document.getElementById('pmConfirm');
+  var pmTitle = document.getElementById('pmTitle');
+  var pmHint = document.getElementById('pmHint');
+  var pmCurrent = '';
+  var pmDirty = false;
+  var pmChecked = false;
+
+  function pmInputs() { return pmRows.querySelectorAll('input'); }
+  function pmValues() {
+    return Array.prototype.map.call(pmInputs(), function (i) { return i.value.trim(); });
+  }
+  function pmBad(v) {
+    var n = Number(v);
+    return v === '' || !isFinite(n) || n <= 0 || n > 250;
+  }
+  function pmDefaults() {
+    return PARAMS[pmCurrent].map(function (r) { return r[3]; });
+  }
+  function pmPaint() {
+    var ok = true;
+    Array.prototype.forEach.call(pmInputs(), function (i) {
+      var bad = pmBad(i.value.trim());
+      i.classList.toggle('bad', bad);
+      if (bad) ok = false;
+    });
+    return ok;
+  }
+  function pmSetValues(list) {
+    Array.prototype.forEach.call(pmInputs(), function (i, idx) { i.value = list[idx]; });
+  }
+  function pmOpen(name) {
+    pmCurrent = name;
+    pmTitle.textContent = name + ' · 参数';
+    pmHint.innerHTML = '内置项<b>不能改名</b>（内置是给不懂的人用的，给了改名权反而可能改不回来），'
+      + '但<b>参数可以调</b>。改完建议先点「▶ 校验参数」再应用。';
+    pmRows.innerHTML = PARAMS[name].map(function (r) {
+      return '<div class="prow"><span class="pl">' + r[0] + '</span>'
+        + '<input value="' + r[1] + '"><span class="punit">' + r[2] + '</span>'
+        + '<span class="pdef">默认 ' + r[3] + '</span></div>';
+    }).join('');
+    pmDirty = false;
+    pmChecked = false;
+    pmMsg.style.display = 'none';
+    pmOk.style.display = 'none';
+    pmFoot.style.display = 'flex';
+    pmConfirm.style.display = 'none';
+    Array.prototype.forEach.call(pmInputs(), function (i) {
+      i.addEventListener('input', function () {
+        pmDirty = true;                 /* 有改动 ⇒ 未验证 */
+        pmChecked = false;
+        pmOk.style.display = 'none';
+        pmPaint();
+      });
+    });
+    pmPaint();
+    modal.classList.add('show');
+  }
+  function pmHardClose() { modal.classList.remove('show'); }
+  function pmRequestClose() {
+    /* 闸 ①：改过、却既没「应用」也没「校验」 ⇒ 二次确认，绝不静默丢改动 */
+    if (pmDirty && !pmChecked) {
+      pmFoot.style.display = 'none';
+      pmConfirm.style.display = 'flex';
+      return;
+    }
+    pmHardClose();
+  }
+
+  document.addEventListener('click', function (e) {
+    var gear = e.target.closest ? e.target.closest('.gear') : null;
+    if (gear) pmOpen(gear.dataset.param);
+  });
+  document.getElementById('pmClose').addEventListener('click', pmRequestClose);
+  document.getElementById('pmKeep').addEventListener('click', function () {
+    pmConfirm.style.display = 'none';
+    pmFoot.style.display = 'flex';
+  });
+  document.getElementById('pmDiscard').addEventListener('click', pmHardClose);
+  modal.addEventListener('click', function (e) { if (e.target === modal) pmRequestClose(); });
+
+  document.getElementById('pmDefault').addEventListener('click', function () {   /* 闸 ③ */
+    var defs = pmDefaults();
+    pmSetValues(defs);
+    pmDirty = true;
+    pmChecked = false;
+    pmOk.style.display = 'none';
+    pmPaint();
+    pmMsg.className = 'pmsg warn';
+    pmMsg.textContent = '已恢复成默认值 ' + defs.join(' / ') + '。点「应用」才会真正生效。';
+    pmMsg.style.display = 'block';
+  });
+  document.getElementById('pmCheck').addEventListener('click', function () {
+    if (!pmPaint()) {
+      pmMsg.className = 'pmsg bad';
+      pmMsg.textContent = '参数不合法（要 1~250 的数字，不能留空）—— 请改好，或点「↺ 恢复默认」。';
+      pmMsg.style.display = 'block';
+      pmOk.style.display = 'none';
+      return;
+    }
+    pmMsg.style.display = 'none';
+    pmOk.style.display = 'block';
+    pmDirty = false;
+    pmChecked = true;                   /* 校验通过 = 视为已验证 ⇒ 关闭时不再追问 */
+  });
+  document.getElementById('pmApply').addEventListener('click', function () {
+    if (!pmPaint()) {
+      /* 闸 ②：点应用时格式/范围不对 ⇒ **自动恢复默认值**并告知（不静默改、也不放行） */
+      var defs = pmDefaults();
+      pmSetValues(defs);
+      pmPaint();
+      pmMsg.className = 'pmsg bad';
+      pmMsg.textContent = '检测到参数格式不对：已自动恢复成默认值 ' + defs.join(' / ')
+        + '。确认无误后再点一次「应用」。';
+      pmMsg.style.display = 'block';
+      pmOk.style.display = 'none';
+      pmDirty = false;
+      pmChecked = true;
+      return;
+    }
+    pmHardClose();
+  });
+
+  /* 手风琴（与 A v1 一致） */
+  document.querySelectorAll('.acard .ahead').forEach(function (h) {
+    h.addEventListener('click', function () { h.parentNode.classList.toggle('open'); });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 B · 主从下钻（Drill-down）</title>
+<link rel="stylesheet" href="shell.css">
+<style>
+/* ============================================================
+   样板 B · 交互模型 =「主从下钻 / Master–Detail」
+   一句话：**面板第一屏永远是"功能清单"** —— 每行 = 一个功能组 + 当前状态 + ›；
+          点进去才是该组的详情，**一屏只做一件事**，永远不需要滚动。
+
+   为什么这样设计（对应你给的三个优先级）：
+   ① 交互体验：不再"在长面板里翻找"，而是"先看目录、再进单间"。
+      每行右侧直接写状态（"2/3 开"、"3 条 · 1 选中"），所以**不进去也知道现状**。
+      详情页顶部有 ← 返回，路径短且可预期。
+   ② 美观：清单行 = 图标 + 标题 + 状态 + 箭头，四栏对齐、密度均匀，
+      没有"小标题 + 控件"一块一块的视觉噪声；面板高度天然稳定（行数固定）。
+   ③ 扩展性：**新功能 = 新一行**（必要时配一个详情页）；
+      主清单不会随着功能变多而变成"长滚动页" —— 这是四套里最强的一条。
+   ⚠ 代价：改两个参数要往返两次（所以每页的最高频动作仍留一个常驻主操作在底部）。
+   ============================================================ */
+.panel{width:330px}
+.pbody{padding:10px 11px}
+
+.dmaster{display:flex;flex-direction:column;gap:6px}
+.drow{display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid var(--line2);
+      border-radius:10px;background:#FCFDFF;cursor:pointer;user-select:none}
+.drow:hover{background:#F7FAFF;border-color:#C9D6E8}
+.drow .di{width:22px;height:22px;border-radius:7px;background:#F1F4F9;display:grid;place-items:center;
+          font-size:12px;flex:0 0 auto}
+.drow:hover .di{background:var(--accent-soft)}
+.drow .dt{font-size:12.6px;font-weight:800;color:var(--ink2)}
+.drow .ds{margin-left:auto;font-size:11.3px;color:var(--muted);white-space:nowrap}
+.drow .ds.ok{color:#2E7D32;font-weight:700}
+.drow .ds.warn{color:var(--orange);font-weight:700}
+.drow .ds.bad{color:#C62828;font-weight:700}
+.drow .ar{color:var(--faint);font-size:12px;flex:0 0 auto}
+.drow.danger{background:#FFF7F7;border-color:#FFE0E0}
+.drow.danger:hover{background:#FFF1F1;border-color:#FFCDD2}
+.drow.planned{border-style:dashed;background:#FAFCFF;cursor:default}
+.drow.planned .dt{color:var(--muted);font-weight:700}
+.drow.planned:hover{background:#FAFCFF;border-color:#CBD6E4}
+
+.dview{display:none;flex-direction:column;gap:9px}
+.dview.on{display:flex}
+.dback{display:flex;align-items:center;gap:7px;font-size:12.2px;color:var(--accent);font-weight:700;
+       cursor:pointer;user-select:none;padding:2px 0 7px;border-bottom:1px solid var(--line2)}
+.dback:hover{color:var(--accent-deep)}
+.dback .crumb{color:var(--muted);font-weight:400}
+.titlerow{display:flex;align-items:center;gap:8px;font-size:12.4px;font-weight:800;color:var(--ink2)}
+.substat{font-size:11.5px;color:var(--muted);line-height:1.65}
+.rowline{display:flex;align-items:center;gap:8px;font-size:12.3px;color:var(--ink2);padding:3px 0}
+.rowline .sw{margin-left:auto}
+.wl{list-style:none;margin:0;padding:0;border:1px solid var(--line2);border-radius:9px;overflow:hidden;background:#fff}
+.wl li{display:flex;align-items:center;gap:8px;padding:7px 9px;font-size:12.3px;color:var(--ink2);cursor:pointer;border-bottom:1px solid #F4F7FB}
+.wl li:last-child{border-bottom:none}
+.wl li:hover{background:#F7FAFF}
+.wl li.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.wl .code{margin-left:auto;color:var(--muted);font-size:11.2px}
+.wl .chg{width:52px;text-align:right;font-size:11.4px}
+.kvchips{display:flex;gap:5px;flex-wrap:wrap}
+.kv{font-size:11px;background:#F2F5FA;border-radius:6px;padding:2px 7px;color:var(--ink2)}
+.kv.b{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.slots{display:flex;gap:5px}
+.slot{flex:1;border:1px dashed #CBD6E4;border-radius:8px;padding:7px 4px;text-align:center;
+      font-size:11px;color:var(--muted);background:#FAFCFF}
+.slot.on{border-style:solid;border-color:#BFE3C8;background:#EAF7EE;color:#2E7D32;font-weight:700}
+.btnrow{display:flex;gap:6px}
+.btnrow .btn{flex:1;text-align:center}
+.anolist{list-style:none;margin:0;padding:0;font-size:12.2px}
+.anolist li{display:flex;align-items:center;gap:7px;padding:6px 0;border-bottom:1px dashed #EEF1F6;color:var(--ink2)}
+.anolist li:last-child{border-bottom:none}
+.anolist .dot{width:8px;height:8px;border-radius:2px;flex:0 0 auto}
+.anolist .tm{margin-left:auto;font-size:11px;color:var(--muted)}
+.anolist li.sel{background:#FFF6D9;border-radius:6px;padding-left:6px;font-weight:700}
+.globalbar{display:flex;align-items:center;gap:7px;font-size:11.4px;color:var(--muted);line-height:1.5}
+.globalbar b{color:var(--ink2)}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>行情工作台</h1>
+  <span class="grow"></span>
+  <div class="search"><span class="gray">🔍</span><input value="600519" placeholder="输入代码或中文名 (如: 600519 或 茅台)"></div>
+  <button class="btn pri">查阅</button>
+  <button class="btn ghost">☁️ 云端同步</button>
+  <span class="pill ok">已是最新</span>
+</div>
+
+<div class="toolrow">
+  <span class="seglab">周期</span>
+  <div class="seg" data-onclick="minute"><button class="on">日</button><button>周</button><button>月</button><button>分钟</button></div>
+  <div class="seg minute" id="segMinute"><button class="on">1</button><button>5</button><button>15</button><button>30</button><button>60</button></div>
+  <span class="sep"></span>
+  <span class="seglab">复权</span>
+  <div class="seg"><button class="on">前复权</button><button>不复权</button></div>
+  <span class="sep"></span>
+  <span class="seglab">主图</span>
+  <span class="chip on"><i></i>均线 MA</span><span class="chip"><i></i>布林带 BOLL</span><span class="chip on"><i></i>自定义公式</span>
+  <span class="chip more">＋ 更多</span>
+  <span class="sep"></span>
+  <span class="seglab">附图</span>
+  <span class="chip on"><i></i>成交量</span><span class="chip on"><i></i>MACD</span>
+  <span class="chip more">＋ 更多</span>
+  <span class="grow"></span>
+  <button class="tb" title="打开左栏「✎ 标注工具」页">✎</button>
+  <span class="pill">3 条标注</span>
+</div>
+
+<div class="body">
+  <div class="side" id="side">
+    <div class="rail">
+      <button data-key="watch" class="on" title="自选股">★</button>
+      <button data-key="formula" title="公式与配方">ƒ</button>
+      <button data-key="layer" title="主图叠加 / 附图">◫</button>
+      <button data-key="anno" title="标注工具（画线都在这）">✎<span class="dot"></span></button>
+      <button data-key="data" title="数据与口径">⛁</button>
+      <button class="fold" id="foldBtn" title="折起工具面板，把宽度让给图表">⇤</button>
+    </div>
+
+    <div class="panel" id="panel">
+      <div class="phead">
+        <div><div class="pt" id="pageTitle">自选股</div><div class="ps" id="pageSub">双击即切换当前标的</div></div>
+      </div>
+
+      <div class="pbody">
+        <!-- ===== ★ 自选股 ===== -->
+        <div data-page="watch" class="on">
+          <div class="dmaster">
+            <div class="drow" data-goto="w-cur" data-crumb="当前标的">
+              <span class="di">📍</span><span class="dt">当前标的</span>
+              <span class="ds">贵州茅台 600519</span><span class="ar">›</span></div>
+            <div class="drow" data-goto="w-list" data-crumb="自选清单">
+              <span class="di">📌</span><span class="dt">自选清单</span>
+              <span class="ds">6 只 · 可调序</span><span class="ar">›</span></div>
+            <div class="drow planned"><span class="di">🏷</span><span class="dt">分组 / 标签</span>
+              <span class="ds">规划中</span></div>
+          </div>
+          <div class="dview" data-detail="w-cur">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">自选股 / 当前标的</span></div>
+            <div class="titlerow">贵州茅台 <span class="gray num">600519</span>
+              <span class="pill ok" style="margin-left:auto">+1.23%</span></div>
+            <div class="substat">图上正在看的就是这一只。切换方式：进「自选清单」双击任意一行。</div>
+            <button class="btn block pri">★ 把当前标的加入自选</button>
+          </div>
+          <div class="dview" data-detail="w-list">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">自选股 / 自选清单</span></div>
+            <ul class="wl pickable">
+              <li class="on">贵州茅台<span class="code">600519</span><span class="chg" style="color:#4CAF50">+1.23%</span></li>
+              <li>宁德时代<span class="code">300750</span><span class="chg" style="color:#F44336">-0.64%</span></li>
+              <li>五 粮 液<span class="code">000858</span><span class="chg" style="color:#4CAF50">+0.42%</span></li>
+              <li>西藏天路<span class="code">600326</span><span class="chg" style="color:#4CAF50">+2.10%</span></li>
+              <li>比亚迪<span class="code">002594</span><span class="chg" style="color:#F44336">-1.05%</span></li>
+              <li>中国平安<span class="code">601318</span><span class="chg" style="color:#4CAF50">+0.31%</span></li>
+            </ul>
+            <div class="btnrow">
+              <button class="btn sm">🗑 移除</button><button class="btn sm">⬆ 上移</button><button class="btn sm">⬇ 下移</button>
+            </div>
+            <div class="substat">双击列表即切换标的；顺序 = 你的关注顺序。</div>
+          </div>
+        </div>
+
+        <!-- ===== ƒ 公式与配方 ===== -->
+        <div data-page="formula">
+          <div class="dmaster">
+            <div class="drow" data-goto="f-cur" data-crumb="当前公式">
+              <span class="di">ƒ</span><span class="dt">当前公式</span>
+              <span class="ds ok">3 段 · 27 变量 · ✓</span><span class="ar">›</span></div>
+            <div class="drow" data-goto="f-store" data-crumb="资产化">
+              <span class="di">📦</span><span class="dt">资产化</span>
+              <span class="ds">存 / 取 / 送</span><span class="ar">›</span></div>
+            <div class="drow planned"><span class="di">🧪</span><span class="dt">函数调试器</span>
+              <span class="ds">规划中</span></div>
+          </div>
+          <div class="dview" data-detail="f-cur">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">公式与配方 / 当前公式</span></div>
+            <div class="kvchips"><span class="kv b">段1 → 主图</span><span class="kv b">段2 → 副图 1</span><span class="kv b">段3 → 副图 2</span></div>
+            <div class="substat">来自配方「MACD + 自研均线组」（开机自动恢复上次用过的）。<br>
+              函数在某只标的上算不出来时，这里直接给 ❌，不打断整页渲染。</div>
+            <button class="btn block pri">✏️ 编辑公式…</button>
+          </div>
+          <div class="dview" data-detail="f-store">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">公式与配方 / 资产化</span></div>
+            <button class="btn block">💾 存为配方…</button>
+            <button class="btn block">📚 配方库…</button>
+            <button class="btn block">📤 送去做回测</button>
+            <div class="substat">配方 = 函数段 + 参数 + 每段目标窗格；回测不区分主图 / 副图。</div>
+          </div>
+        </div>
+
+        <!-- ===== ◫ 主图叠加 / 附图 ===== -->
+        <div data-page="layer">
+          <div class="dmaster">
+            <div class="drow" data-goto="l-main" data-crumb="主图叠加">
+              <span class="di">🎛</span><span class="dt">主图叠加</span>
+              <span class="ds">2 / 3 开</span><span class="ar">›</span></div>
+            <div class="drow" data-goto="l-sub" data-crumb="附图">
+              <span class="di">📊</span><span class="dt">附图</span>
+              <span class="ds">量 · MACD 开</span><span class="ar">›</span></div>
+            <div class="drow" data-goto="l-fsub" data-crumb="公式副图">
+              <span class="di">🧮</span><span class="dt">公式副图</span>
+              <span class="ds">2 / 3 格显示</span><span class="ar">›</span></div>
+            <div class="drow planned"><span class="di">＋</span><span class="dt">内置指标扩容</span>
+              <span class="ds">KDJ / RSI 规划中</span></div>
+          </div>
+          <div class="dview" data-detail="l-main">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">主图叠加</span></div>
+            <div class="rowline">均线 (MA 5/20/60)<span class="sw on"></span></div>
+            <div class="rowline">布林带 (BOLL)<span class="sw"></span></div>
+            <div class="rowline">自定义公式<span class="sw on"></span></div>
+            <div class="substat">真源就是这三个开关；工具行的 chips 只是它们的投影（同一份状态，不存两处）。</div>
+          </div>
+          <div class="dview" data-detail="l-sub">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">附图</span></div>
+            <div class="rowline">成交量<span class="sw on"></span></div>
+            <div class="rowline">MACD<span class="sw on"></span></div>
+            <div class="substat">振荡型指标（MACD / RSI / 量能）放附图，主图 K 线才不会被压扁。</div>
+          </div>
+          <div class="dview" data-detail="l-fsub">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">公式副图</span></div>
+            <div class="slots"><span class="slot on">副图1 开</span><span class="slot on">副图2 开</span><span class="slot">副图3</span></div>
+            <div class="substat">只控制该格显示，不会删你的函数段；关掉再打开内容还在。</div>
+          </div>
+        </div>
+
+        <!-- ===== ✎ 标注工具 ===== -->
+        <div data-page="anno">
+          <div class="dmaster">
+            <div class="drow" data-goto="a-type" data-crumb="画线类型">
+              <span class="di">🛠</span><span class="dt">画线类型</span>
+              <span class="ds">斐波那契</span><span class="ar">›</span></div>
+            <div class="drow" data-goto="a-list" data-crumb="已有标注">
+              <span class="di">📌</span><span class="dt">已有标注</span>
+              <span class="ds warn">3 条 · 1 选中</span><span class="ar">›</span></div>
+            <div class="drow danger" data-goto="a-clear" data-crumb="清空">
+              <span class="di">🗑</span><span class="dt" style="color:#C62828">清空本标的标注</span>
+              <span class="ds bad">不可撤销</span><span class="ar">›</span></div>
+          </div>
+          <div class="dview" data-detail="a-type">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">标注工具 / 画线类型</span></div>
+            <div class="seg">
+              <button>浏览</button><button>趋势</button><button>水平</button>
+              <button>垂直</button><button class="on">斐波</button><button>文字</button>
+            </div>
+            <div class="substat">选好类型后点下面「➕ 在图上添加标注」；拖动线条 / 端点，松手自动保存。</div>
+            <button class="btn block pri">➕ 在图上添加标注</button>
+          </div>
+          <div class="dview" data-detail="a-list">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">标注工具 / 已有标注</span></div>
+            <ul class="anolist">
+              <li class="sel"><span class="dot" style="background:#E65100"></span>斐波那契 · 1480.20 ~ 1560.40<span class="tm">07-18</span></li>
+              <li><span class="dot" style="background:#1976D2"></span>趋势线<span class="tm">06-04</span></li>
+              <li><span class="dot" style="background:#8A94A6"></span>水平线 · 1502.00<span class="tm">05-21</span></li>
+            </ul>
+            <button class="btn amber block">🧽 删除选中（也可按 Delete）</button>
+            <div class="substat">按「标的 + 周期」分开保存；坐标按日期锚定 ⇒ 增量更新与前复权修正都不会跑偏。</div>
+          </div>
+          <div class="dview" data-detail="a-clear">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">标注工具 / 清空</span></div>
+            <div class="substat" style="color:#C62828">将删除当前标的 + 当前周期下的全部标注。此操作不可撤销，会二次确认。</div>
+            <button class="btn danger block">🗑️ 确认清空（仅当前标的 + 当前周期）</button>
+          </div>
+        </div>
+
+        <!-- ===== ⛁ 数据与口径 ===== -->
+        <div data-page="data">
+          <div class="dmaster">
+            <div class="drow" data-goto="d-cur" data-crumb="当前看的是哪一份">
+              <span class="di">📐</span><span class="dt">当前看的是哪一份</span>
+              <span class="ds ok">体检通过</span><span class="ar">›</span></div>
+            <div class="drow" data-goto="d-sync" data-crumb="同步规则">
+              <span class="di">☁️</span><span class="dt">同步规则</span>
+              <span class="ds">增量优先</span><span class="ar">›</span></div>
+            <div class="drow" data-goto="d-mgmt" data-crumb="数据管理">
+              <span class="di">🗄</span><span class="dt">数据管理</span>
+              <span class="ds">重下 / 清空在这</span><span class="ar">›</span></div>
+            <div class="drow planned"><span class="di">📊</span><span class="dt">横截面扫描（M2）</span>
+              <span class="ds">规划中</span></div>
+          </div>
+          <div class="dview" data-detail="d-cur">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">数据与口径 / 当前看的是哪一份</span></div>
+            <div class="rowline">口径<span style="margin-left:auto;color:#2E7D32;font-weight:700">前复权</span></div>
+            <div class="rowline">周期<span style="margin-left:auto;color:var(--muted)">日线</span></div>
+            <div class="rowline">根数<span style="margin-left:auto;color:var(--muted)">4041（2010-01-04 ~ 2026-09-16）</span></div>
+            <div class="substat">⚠ 除权跳空最近一次 <b>2023-08-08（-24.8%）</b> —— 前复权以最新价为锚、只改除权日之前，所以只看最近一段时两个口径本来就一模一样（这不是开关失效）。</div>
+          </div>
+          <div class="dview" data-detail="d-sync">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">数据与口径 / 同步规则</span></div>
+            <div class="substat">本地有 → 只补最新几天；本地没有 → 整段抓取。<br>
+              分钟每次取最近一段快照（各档位可回溯的交易日数不同），且不接批量预下载。<br>
+              按哪个口径点同步，就只更新那一份（前复权 / 不复权两份可以新鲜度不同）。</div>
+          </div>
+          <div class="dview" data-detail="d-mgmt">
+            <div class="dback" onclick="window.__back()">← <span class="crumb">数据与口径 / 数据管理</span></div>
+            <div class="substat">「重新全量下载」「清空分区」这类危险动作只在「🗄 数据管理」页出现，本页只负责说明与跳转（§10-10 物理隔离）。</div>
+            <button class="btn block">🗄 打开数据管理…</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="pfoot">
+        <div class="globalbar">
+          <span class="pill blue">前复权</span><span class="pill blue">日线</span>
+          <span><b>4041</b> 根</span><span>体检 <b style="color:#2E7D32">✓</b></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart">
+    <div class="chead"><span class="sym">贵州茅台 600519</span><span class="sub">日线 · 前复权 · 4041 根</span></div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">最新</div><div class="v num">1520.50</div></div>
+      <div class="kpi"><div class="l">涨跌幅</div><div class="v num" style="color:#4CAF50">+1.23%</div></div>
+      <div class="kpi"><div class="l">成交量</div><div class="v num">312.0 万</div></div>
+      <div class="kpi"><div class="l">MA20</div><div class="v num">1494.80</div></div>
+    </div>
+    <div class="legend"><span><i style="background:#1976D2"></i>MA5</span><span><i style="background:#E65100"></i>MA20</span>
+      <span><i style="background:#4CAF50"></i>涨</span><span><i style="background:#F44336"></i>跌</span></div>
+    <div class="panes">
+      <div class="pane main"><span class="plabel">主图 · K 线 + MA</span><svg id="chartMain"></svg></div>
+      <div class="pane vol"><span class="plabel">成交量</span><svg id="chartVol"></svg></div>
+      <div class="pane macd"><span class="plabel">MACD</span><svg id="chartMacd"></svg></div>
+    </div>
+    <div class="xaxis"><span>2026-04</span><span>2026-05</span><span>2026-06</span><span>2026-07</span><span>2026-08</span><span>2026-09</span></div>
+    <div class="readout">
+      <b>2026-09-16</b><span>开 1502.00</span><span>高 1533.00</span><span>低 1498.00</span>
+      <span>收 <b>1520.50</b></span><span>量 3,120,400</span><span class="tag" style="color:#4CAF50">+1.23%</span><span>MA5 1508.4</span><span>MA20 1494.8</span>
+    </div>
+  </div>
+</div>
+
+<div class="badge"><span class="x" onclick="this.parentNode.remove()">✕</span>
+  <b>样板 B · 主从下钻</b><br>
+  第一屏是功能清单（每行带状态），点进去才看详情 · 底部常驻口径条 · 新功能 = 新一行。<br>
+  <span style="opacity:.75">点任意一行试下钻，点「← 返回」回清单。</span></div>
+
+<script src="shell.js"></script>
+<script>
+/* 下钻：清单 → 详情；面板底部的口径条**两个视图都在**，永远可见 */
+(function () {
+  function pageOf(el) { return el.closest('[data-page]'); }
+
+  window.__goto = function (id, el) {
+    var page = pageOf(el);
+    if (!page) return;
+    var master = page.querySelector('.dmaster');
+    if (master) master.style.display = 'none';
+    page.querySelectorAll('.dview').forEach(function (v) { v.classList.toggle('on', v.dataset.detail === id); });
+  };
+
+  window.__back = function () {
+    var page = document.querySelector('[data-page].on');
+    if (!page) return;
+    var master = page.querySelector('.dmaster');
+    if (master) master.style.display = '';
+    page.querySelectorAll('.dview').forEach(function (v) { v.classList.remove('on'); });
+  };
+
+  /* 点图标轨切页时，永远回到"清单"这一屏（符合"清单是首页"的心智） */
+  window.__onRail = function () { window.__back(); };
+})();
+</script>
+</body>
+</html>

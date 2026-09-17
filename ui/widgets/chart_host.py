@@ -32,7 +32,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ui.widgets.chart_pane import ChartPane
-from ui.widgets.chart_style import CROSSHAIR_COLOR, style_axis
+from ui.widgets.chart_style import (AXIS_TEXT_WIDTH, CROSSHAIR_COLOR, style_axis,
+                                    unify_axis_width)
 
 DEFAULT_MAIN_STRETCH = 3
 DEFAULT_SUB_STRETCH = 1
@@ -136,6 +137,11 @@ class ChartHost(QWidget):
     def pane_names(self) -> list[str]:
         return [p.name for p in self._panes]
 
+    @property
+    def pane_order(self) -> list[str]:
+        """当前窗格顺序（含主图；**第 0 个恒为主图**）—— 给断言与"记住上次顺序"用（§7-B8 R7）。"""
+        return [p.name for p in self._panes]
+
     def pane(self, name: str) -> ChartPane | None:
         for item in self._panes:
             if item.name == name:
@@ -197,6 +203,22 @@ class ChartHost(QWidget):
         """透传给内部的 GraphicsLayoutWidget（页面统一背景色用）。"""
         self._glw.setBackground(color)
 
+    def align_axis_widths(self, axis_name: str = 'left',
+                          text_width: int = AXIS_TEXT_WIDTH) -> float:
+        """让**全部窗格**的同一根轴共用**同一个固定宽度**（★ §7-B8 R8）
+        —— 治"副图多了纵轴缩进不一致"，且**不留空白**。
+
+        收口在 `chart_style.unify_axis_width`（全 app 唯一的轴宽度来源，§10-9 同类纪律），
+        宿主这里只做"把窗格列表递过去"。
+
+        【为什么现在不挑调用时机】第一版按"各窗格**天然宽度的最大值**"来算，于是
+        ① 必须等画过一次才有准确值、② 会把窄窗格也撑到最宽那个而留出一大片空白
+        （用户截图反馈）。第二版改用**固定预留宽度**（`style.tickTextWidth`）⇒
+        与量程无关、与是否画过无关 ⇒ **幂等、可重复调用**，也不需要等一轮事件循环。
+        :return: 实际使用的文本宽度；0.0 = 没做（没有窗格 / 失败）
+        """
+        return unify_axis_width([p.plot_item for p in self._panes], axis_name, text_width)
+
     def remove_pane(self, name: str) -> bool:
         """删除一张副图。主图不可删（返回 False）。"""
         pane = self.pane(name)
@@ -227,6 +249,54 @@ class ChartHost(QWidget):
     def pane_stretch(self, name: str) -> int:
         """读取窗格的相对高度权重（0 = 未登记）。"""
         return self._stretch.get(name, 0)
+
+    def move_pane(self, name: str, new_index: int) -> bool:
+        """把某张副图挪到新的位置（★ §7-B8 R7）。
+
+        :param name:      副图名（**主图不可移**：它是永远的第 0 张，返回 False）
+        :param new_index: 目标位置 —— 1 = 主图下面第一格；越界自动夹到合法区间
+        :return: 顺序**真的变了**才返回 True（原地不动 / 名字不存在都返回 False）
+
+        【为什么需要它】用户实测原话："现阶段的副图有严格的顺序排列，用户没办法去调整顺序"。
+        旧实现只有 `add_pane`（**永远追加到底部**），确实没有任何换序手段。
+
+        【为什么不能只挪列表】换序必须**连带重算三件事**，少一件就出错：
+          ① 行排布（`_reindex_rows` —— `QGraphicsGridLayout` 不会自动塌缩）；
+          ② 高度权重（`_apply_stretch` —— stretch 是按行号设的）；
+          ③ **底部刻度轴的归属**（`_refit_axes` —— "只有最下面那张显示刻度值"）。
+          ⚠ 漏掉 ③ 会出现"日期轴挂在中间那张副图上"这种一眼可见的错。
+        """
+        pane = self.pane(name)
+        if pane is None or pane is self._panes[0]:
+            return False
+        old_index = self._panes.index(pane)
+        target = max(1, min(int(new_index), len(self._panes) - 1))
+        if target == old_index:
+            return False
+        self._panes.pop(old_index)
+        self._panes.insert(target, pane)
+        self._reindex_rows()
+        self._refit_axes()
+        return True
+
+    def set_pane_order(self, names) -> bool:
+        """按给定名字顺序**整体重排**副图（主图永远第 0）—— 给"记住上次顺序"用（§7-B8 R7）。
+
+        ⚠ 必须**给全**所有副图名：少给一个就返回 False 且**什么都不做** ——
+        宁可拒绝，也不许"静默丢掉一张窗格"（§10-4 诚实原则）。
+        """
+        wanted = [str(n) for n in (names or [])]
+        existing = {p.name: p for p in self._panes[1:]}
+        if sorted(wanted) != sorted(existing):
+            return False
+        ordered = [existing[n] for n in wanted]
+        before = [p.name for p in self._panes]
+        self._panes = [self._panes[0]] + ordered
+        if [p.name for p in self._panes] == before:
+            return False
+        self._reindex_rows()
+        self._refit_axes()
+        return True
 
     def clear(self) -> None:
         """清空所有窗格的内容（叠层 + 标注），**保留窗格结构**。"""

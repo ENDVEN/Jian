@@ -189,6 +189,11 @@ class DeskData:
         p.current_df = df
         p.render_charts()
         p._refresh_adjust_hint(loaded_from_lake=True)
+        # ★v6.24（§7-B8 R3）：这一只的数据刚更新过 ⇒ 组合涨跌快照必须失效，
+        #   否则缓存 TTL 内会拿"同步前的旧读数"当今天（见 data/watchlist_change）
+        invalidate = getattr(p, "invalidate_change_cache", None)
+        if callable(invalidate):
+            invalidate()
 
     # ==========================================
     # 周期（★STEP 3b：一级档位 + 分钟二级档位；UI 与测试走**同一个入口**）

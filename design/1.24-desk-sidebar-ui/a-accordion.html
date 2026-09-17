@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 A · 手风琴卡片（Accordion）</title>
+<link rel="stylesheet" href="shell.css">
+<style>
+/* ============================================================
+   样板 A · 交互模型 =「手风琴卡片 / Accordion」
+   一句话：**卡头本身就是状态行** —— 收起也知道自己配了什么；
+          每页只有一组卡，主操作钉在面板底部（永远在手边）。
+
+   为什么这样设计（对应你给的三个优先级）：
+   ① 交互体验：把"找功能"变成"扫一眼卡头"。5 页各自只剩 2~3 张卡，
+      不用滚动就能看全；收起状态**带状态摘要**，所以"折叠"不等于"看不见"。
+      主操作 fixed 在底部 ⇒ 高频动作永远不因为翻找而丢掉。
+   ② 美观：卡片 = 白卡 + 10px 圆角 + 极浅描边，与 1.22 回测页同一套语言；
+      卡头左图标 / 中标题 / 右状态 三栏对齐，视线成一条竖线。
+   ③ 扩展性：**新功能 = 新卡片**（或卡片里加一行），版式不用动；
+      卡片数量超出时 pbody 内部滚动，卡头永远吸顶。
+   ============================================================ */
+.panel{width:330px}
+.pbody{padding:9px 11px}
+
+.acc{display:flex;flex-direction:column;gap:8px}
+.acard{border:1px solid var(--line2);border-radius:10px;background:#FCFDFF;overflow:hidden}
+.acard.open{background:#fff;border-color:var(--line);box-shadow:0 1px 2px rgba(16,24,40,.03)}
+.ahead{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;user-select:none}
+.ahead:hover{background:#F7FAFF}
+.ai{width:20px;text-align:center;font-size:13px;flex:0 0 auto}
+.at{font-size:12.6px;font-weight:800;color:var(--ink2);flex:0 0 auto}
+.astate{margin-left:auto;font-size:11.3px;color:var(--muted);white-space:nowrap}
+.astate.ok{color:#2E7D32;font-weight:700}
+.astate.warn{color:var(--orange);font-weight:700}
+.aarrow{color:var(--faint);font-size:11px;transition:transform .15s;flex:0 0 auto}
+.acard:not(.open) .aarrow{transform:rotate(-90deg)}
+.abody{padding:0 11px 11px;display:flex;flex-direction:column;gap:7px}
+.acard:not(.open) .abody{display:none}
+
+.rowline{display:flex;align-items:center;gap:8px;font-size:12.3px;color:var(--ink2)}
+.rowline .n{margin-left:auto;font-size:11.4px;color:var(--muted)}
+.rowline .sw{margin-left:auto}
+.btnrow{display:flex;gap:6px}
+.btnrow .btn{flex:1;text-align:center}
+
+.wl{list-style:none;margin:0;padding:0;border:1px solid var(--line2);border-radius:9px;overflow:hidden;background:#fff}
+.wl li{display:flex;align-items:center;gap:8px;padding:7px 9px;font-size:12.3px;color:var(--ink2);cursor:pointer;border-bottom:1px solid #F4F7FB}
+.wl li:last-child{border-bottom:none}
+.wl li:hover{background:#F7FAFF}
+.wl li.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.wl li.on::before{content:"●";font-size:8px;color:var(--accent)}
+.wl .code{margin-left:auto;color:var(--muted);font-size:11.2px}
+.wl .chg{width:52px;text-align:right;font-size:11.4px}
+
+.statline{font-size:11.6px;color:var(--muted);line-height:1.6}
+.kvchips{display:flex;gap:5px;flex-wrap:wrap}
+.kv{font-size:11px;background:#F2F5FA;border-radius:6px;padding:2px 7px;color:var(--ink2)}
+.kv.b{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.kv.w{background:#FFF3E0;color:var(--orange);font-weight:700}
+.slots{display:flex;gap:5px}
+.slot{flex:1;border:1px dashed #CBD6E4;border-radius:8px;padding:6px 4px;text-align:center;
+      font-size:11px;color:var(--muted);background:#FAFCFF}
+.slot.on{border-style:solid;border-color:#BFE3C8;background:#EAF7EE;color:#2E7D32;font-weight:700}
+.anolist{list-style:none;margin:0;padding:0;font-size:12.2px}
+.anolist li{display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px dashed #EEF1F6;color:var(--ink2)}
+.anolist li:last-child{border-bottom:none}
+.anolist .dot{width:8px;height:8px;border-radius:2px;flex:0 0 auto}
+.anolist .tm{margin-left:auto;font-size:11px;color:var(--muted)}
+.anolist li.sel{background:#FFF6D9;border-radius:6px;padding-left:6px;font-weight:700}
+.pfoot .inner{display:flex;align-items:center;gap:8px}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>行情工作台</h1>
+  <span class="grow"></span>
+  <div class="search"><span class="gray">🔍</span><input value="600519" placeholder="输入代码或中文名 (如: 600519 或 茅台)"></div>
+  <button class="btn pri">查阅</button>
+  <button class="btn ghost">☁️ 云端同步</button>
+  <span class="pill ok">已是最新</span>
+</div>
+
+<div class="toolrow">
+  <span class="seglab">周期</span>
+  <div class="seg" data-onclick="minute">
+    <button class="on">日</button><button>周</button><button>月</button><button>分钟</button>
+  </div>
+  <div class="seg minute" id="segMinute">
+    <button class="on">1</button><button>5</button><button>15</button><button>30</button><button>60</button>
+  </div>
+  <span class="sep"></span>
+  <span class="seglab">复权</span>
+  <div class="seg"><button class="on">前复权</button><button>不复权</button></div>
+  <span class="caliber">分钟只有真实成交价一种口径</span>
+  <span class="sep"></span>
+  <span class="seglab">主图</span>
+  <span class="chip on"><i></i>均线 MA</span>
+  <span class="chip"><i></i>布林带 BOLL</span>
+  <span class="chip on"><i></i>自定义公式</span>
+  <span class="chip more">＋ 更多</span>
+  <span class="sep"></span>
+  <span class="seglab">附图</span>
+  <span class="chip on"><i></i>成交量</span>
+  <span class="chip on"><i></i>MACD</span>
+  <span class="chip more">＋ 更多</span>
+  <span class="grow"></span>
+  <button class="tb" title="打开左栏「✎ 标注工具」页">✎</button>
+  <span class="pill">3 条标注</span>
+</div>
+
+<div class="body">
+  <div class="side" id="side">
+    <div class="rail">
+      <button data-key="watch" class="on" title="自选股">★</button>
+      <button data-key="formula" title="公式与配方">ƒ</button>
+      <button data-key="layer" title="主图叠加 / 附图">◫</button>
+      <button data-key="anno" title="标注工具（画线都在这）">✎<span class="dot"></span></button>
+      <button data-key="data" title="数据与口径">⛁</button>
+      <button class="fold" id="foldBtn" title="折起工具面板，把宽度让给图表">⇤</button>
+    </div>
+
+    <div class="panel" id="panel">
+      <div class="phead">
+        <div>
+          <div class="pt" id="pageTitle">自选股</div>
+          <div class="ps" id="pageSub">双击即切换当前标的</div>
+        </div>
+      </div>
+
+      <div class="pbody">
+        <!-- ===== ★ 自选股 ===== -->
+        <div data-page="watch" class="on">
+          <div class="acc">
+            <div class="acard open">
+              <div class="ahead"><span class="ai">📌</span><span class="at">自选列表</span>
+                <span class="astate">6 只 · 当前 600519</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <ul class="wl pickable">
+                  <li class="on">贵州茅台<span class="code">600519</span><span class="chg" style="color:#4CAF50">+1.23%</span></li>
+                  <li>宁德时代<span class="code">300750</span><span class="chg" style="color:#F44336">-0.64%</span></li>
+                  <li>五 粮 液<span class="code">000858</span><span class="chg" style="color:#4CAF50">+0.42%</span></li>
+                  <li>西藏天路<span class="code">600326</span><span class="chg" style="color:#4CAF50">+2.10%</span></li>
+                  <li>比亚迪<span class="code">002594</span><span class="chg" style="color:#F44336">-1.05%</span></li>
+                  <li>中国平安<span class="code">601318</span><span class="chg" style="color:#4CAF50">+0.31%</span></li>
+                </ul>
+                <div class="statline">双击列表即切换标的；顺序 = 你的关注顺序。</div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">🧰</span><span class="at">列表操作</span>
+                <span class="astate">增删 / 调序</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="btnrow">
+                  <button class="btn sm">🗑 移除</button>
+                  <button class="btn sm">⬆ 上移</button>
+                  <button class="btn sm">⬇ 下移</button>
+                </div>
+                <div class="statline">移除只影响自选清单，不动本地行情数据。</div>
+              </div>
+            </div>
+
+            <div class="planned"><span class="tp">预留位 · 规划中</span><br>
+              加「分组 / 标签」或「涨跌预警」时，<b>直接在这页再加一张卡片</b>即可，
+              图标轨与顶栏都不用改。</div>
+          </div>
+        </div>
+
+        <!-- ===== ƒ 公式与配方 ===== -->
+        <div data-page="formula">
+          <div class="acc">
+            <div class="acard open">
+              <div class="ahead"><span class="ai">ƒ</span><span class="at">当前公式</span>
+                <span class="astate ok">3 段 · 27 变量 · ✓</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="kvchips">
+                  <span class="kv b">段1 → 主图</span><span class="kv b">段2 → 副图 1</span><span class="kv b">段3 → 副图 2</span>
+                </div>
+                <div class="statline">来自配方「MACD + 自研均线组」（开机自动恢复）。</div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">📦</span><span class="at">资产化</span>
+                <span class="astate">存 / 取 / 送</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <button class="btn block">💾 存为配方…</button>
+                <button class="btn block">📚 配方库…</button>
+                <button class="btn block">📤 送去做回测</button>
+                <div class="statline">配方 = 函数段 + 参数 + 每段目标窗格。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== ◫ 主图叠加 / 附图 ===== -->
+        <div data-page="layer">
+          <div class="acc">
+            <div class="acard open">
+              <div class="ahead"><span class="ai">🎛</span><span class="at">主图叠加</span>
+                <span class="astate">2 / 3 开</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="rowline">均线 (MA 5/20/60)<span class="sw on"></span></div>
+                <div class="rowline">布林带 (BOLL)<span class="sw"></span></div>
+                <div class="rowline">自定义公式<span class="sw on"></span></div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">📊</span><span class="at">附图</span>
+                <span class="astate ok">量 · MACD 开</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="rowline">成交量<span class="sw on"></span></div>
+                <div class="rowline">MACD<span class="sw on"></span></div>
+                <div class="rowline" style="margin-top:2px">公式副图 1 / 2 / 3</div>
+                <div class="slots"><span class="slot on">副图1 开</span><span class="slot on">副图2 开</span><span class="slot">副图3</span></div>
+                <div class="statline">公式副图只控制该格显示，不会删你的函数段。</div>
+              </div>
+            </div>
+
+            <div class="planned"><span class="tp">预留位 · 规划中</span><br>
+              内置指标要扩容（成交量 / MACD 之外的 <b>KDJ、RSI、BOLL 副图</b>）时，
+              进这张「附图」卡片再加一行即可 —— 这正是 §7-B6 保留的扩展口。</div>
+          </div>
+        </div>
+
+        <!-- ===== ✎ 标注工具 ===== -->
+        <div data-page="anno">
+          <div class="acc">
+            <div class="acard open">
+              <div class="ahead"><span class="ai">🛠</span><span class="at">画线类型</span>
+                <span class="astate">当前：斐波那契</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="seg">
+                  <button>浏览</button><button>趋势</button><button>水平</button>
+                  <button>垂直</button><button class="on">斐波</button><button>文字</button>
+                </div>
+                <div class="statline">选好类型后点下方「➕ 添加标注」；拖动线条 / 端点调整，松手自动保存。</div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">📌</span><span class="at">已有标注</span>
+                <span class="astate warn">3 条 · 1 条已选中</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <ul class="anolist">
+                  <li class="sel"><span class="dot" style="background:#E65100"></span>斐波那契 · 1480.20 ~ 1560.40<span class="tm">07-18</span></li>
+                  <li><span class="dot" style="background:#1976D2"></span>趋势线<span class="tm">06-04</span></li>
+                  <li><span class="dot" style="background:#8A94A6"></span>水平线 · 1502.00<span class="tm">05-21</span></li>
+                </ul>
+                <button class="btn amber block">🧽 删除选中（也可按 Delete）</button>
+                <div class="statline">按「标的 + 周期」分开保存；坐标按日期锚定，增量更新不会跑偏。</div>
+              </div>
+            </div>
+
+            <div class="acard">
+              <div class="ahead"><span class="ai">🗑</span><span class="at" style="color:#C62828">清空本标的标注</span>
+                <span class="astate">不可撤销 · 需二次确认</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <button class="btn danger block">🗑️ 清空（仅当前标的 + 当前周期）</button>
+                <div class="statline">危险动作**单独占一张卡并默认收起**，与高频操作物理隔离（§10-10）。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== ⛁ 数据与口径 ===== -->
+        <div data-page="data">
+          <div class="acc">
+            <div class="acard open">
+              <div class="ahead"><span class="ai">📐</span><span class="at">当前看的是哪一份</span>
+                <span class="astate ok">体检通过</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="statline">
+                  <b>前复权 · 日线 · 4041 根</b>（2010-01-04 ~ 2026-09-16）<br>
+                  ⚠ 除权跳空最近一次 <b>2023-08-08（-24.8%）</b> —— 前复权只改除权日之前，所以只看最近一段两个口径本来就一样。
+                </div>
+              </div>
+            </div>
+
+            <div class="acard open">
+              <div class="ahead"><span class="ai">☁️</span><span class="at">同步规则</span>
+                <span class="astate">增量优先</span><span class="aarrow">▾</span></div>
+              <div class="abody">
+                <div class="statline">
+                  本地有 → 只补最新几天；本地没有 → 整段抓取。<br>
+                  分钟每次取最近一段快照（各档位深度不同），且不接批量预下载。<br>
+                  要丢弃本地重下历史，请到「🗄 数据管理」用「重新全量下载」。
+                </div>
+              </div>
+            </div>
+
+            <div class="planned"><span class="tp">预留位 · 规划中</span><br>
+              <b>全市场横截面扫描（M2）</b> / <b>广度统计（M3）</b> 落地时，
+              在这页加一张「扫描」卡片即可；数据管理页仍是危险动作的唯一出口。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pfoot">
+        <div data-page="watch" class="on"><div class="inner">
+          <button class="btn pri" style="flex:1">★ 把当前标的加入自选</button></div></div>
+        <div data-page="formula"><div class="inner">
+          <button class="btn pri" style="flex:1">✏️ 编辑公式…</button></div></div>
+        <div data-page="layer"><div class="inner">
+          <span class="hint">工具行只显示最近用过的 3 个；其余在「＋ 更多」里。</span></div></div>
+        <div data-page="anno"><div class="inner">
+          <button class="btn pri" style="flex:1">➕ 在图上添加标注</button></div></div>
+        <div data-page="data"><div class="inner">
+          <button class="btn block">🗄 打开数据管理…</button></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart">
+    <div class="chead"><span class="sym">贵州茅台 600519</span><span class="sub">日线 · 前复权 · 4041 根</span></div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">最新</div><div class="v num">1520.50</div></div>
+      <div class="kpi"><div class="l">涨跌幅</div><div class="v num" style="color:#4CAF50">+1.23%</div></div>
+      <div class="kpi"><div class="l">成交量</div><div class="v num">312.0 万</div></div>
+      <div class="kpi"><div class="l">MA20</div><div class="v num">1494.80</div></div>
+    </div>
+    <div class="legend"><span><i style="background:#1976D2"></i>MA5</span><span><i style="background:#E65100"></i>MA20</span>
+      <span><i style="background:#4CAF50"></i>涨</span><span><i style="background:#F44336"></i>跌</span></div>
+    <div class="panes">
+      <div class="pane main"><span class="plabel">主图 · K 线 + MA</span><svg id="chartMain"></svg></div>
+      <div class="pane vol"><span class="plabel">成交量</span><svg id="chartVol"></svg></div>
+      <div class="pane macd"><span class="plabel">MACD</span><svg id="chartMacd"></svg></div>
+    </div>
+    <div class="xaxis"><span>2026-04</span><span>2026-05</span><span>2026-06</span><span>2026-07</span><span>2026-08</span><span>2026-09</span></div>
+    <div class="readout">
+      <b>2026-09-16</b><span>开 1502.00</span><span>高 1533.00</span><span>低 1498.00</span>
+      <span>收 <b>1520.50</b></span><span>量 3,120,400</span><span class="tag" style="color:#4CAF50">+1.23%</span><span>MA5 1508.4</span><span>MA20 1494.8</span>
+    </div>
+  </div>
+</div>
+
+<div class="badge"><span class="x" onclick="this.parentNode.remove()">✕</span>
+  <b>样板 A · 手风琴卡片</b><br>
+  卡头 = 状态行（收起也知道配了什么）· 主操作钉在底部 · 新功能 = 新卡片。<br>
+  <span style="opacity:.75">点左侧图标切页、点卡头折叠、点 ⇤ 折起面板。</span></div>
+
+<script src="shell.js"></script>
+<script>
+/* 手风琴：点卡头折叠/展开（默认展开的卡在 HTML 里带 open） */
+document.querySelectorAll('.acard .ahead').forEach(function (h) {
+  h.addEventListener('click', function () { h.parentNode.classList.toggle('open'); });
+});
+</script>
+</body>
+</html>

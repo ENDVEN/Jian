@@ -2,9 +2,10 @@
 import pyqtgraph as pg
 from pyqtgraph import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDateEdit, QDateTimeEdit,
-                             QDoubleSpinBox, QFrame, QHBoxLayout, QLabel,
-                             QListWidget, QPushButton, QSpinBox)
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+                             QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLayout,
+                             QListWidget, QPushButton, QScrollArea, QSizePolicy,
+                             QSpinBox, QVBoxLayout, QWidget)
+from PyQt6.QtCore import QPoint, QRect, Qt, QSize, pyqtSignal
 
 from config import settings
 
@@ -448,3 +449,573 @@ class CandlestickItem(pg.GraphicsObject):
 
     def boundingRect(self): 
         return QtCore.QRectF(self.picture.boundingRect())
+
+
+# ==========================================
+# 自动换行布局（§7-B8 · 分组胶囊数量不定，必须能换行）
+# ==========================================
+class FlowLayout(QLayout):
+    """按可用宽度自动换行（Qt 官方 FlowLayout 示例的紧凑版）。
+
+    【为什么需要它】`QHBoxLayout` 会把超出宽度的胶囊**压扁**（而不是换行），
+    在 338px 的侧栏里"4 个分组"就会挤成看不清；`QGridLayout` 则要求预先知道列数，
+    而胶囊宽度取决于组名长度（"高股息" vs "科技成长"），列数算不准。
+    """
+
+    def __init__(self, parent=None, margin: int = 0, spacing: int = 5):
+        super().__init__(parent)
+        self._items: list = []
+        self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+
+    def addItem(self, item):                    # noqa: N802 (Qt 约定)
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index):                    # noqa: N802
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):                    # noqa: N802
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):              # noqa: N802
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:        # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:    # noqa: N802
+        return self._do_layout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):                # noqa: N802
+        super().setGeometry(rect)
+        self._do_layout(rect, False)
+
+    def sizeHint(self):                         # noqa: N802
+        return self.minimumSize()
+
+    def minimumSize(self):                      # noqa: N802
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        return size + QSize(margins.left() + margins.right(),
+                            margins.top() + margins.bottom())
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        margins = self.contentsMargins()
+        area = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
+        x, y, line_height = area.x(), area.y(), 0
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + self.spacing()
+            if next_x - self.spacing() > area.right() and line_height > 0:
+                x = area.x()
+                y = y + line_height + self.spacing()
+                next_x = x + hint.width() + self.spacing()
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y() + margins.bottom()
+
+
+class FlowHost(QWidget):
+    """承载 `FlowLayout` 的宿主：把"换行后需要多高"钉进自己的 `minimumHeight`。
+
+    【这个坑的实录】`QWidget` 默认 `hasHeightForWidth() = False` ⇒ 父布局按
+    `sizeHint()` 给固定高度 ⇒ **换行后的第二行被裁掉**（渲染探针里实测：
+    "分组胶囊只剩上半截"）。只覆写 `heightForWidth()` **不够** —— 它要沿着
+    "胶囊宿主 → 卡片 → 页面 → 堆叠页 → 面板"一层层往上传，
+    链条上任何一环不转发就**静默失效**（不报错、只是少一行）。
+    ⇒ 所以这里同时做两件事：
+      ① `heightForWidth()` 透出去（父链配合时走这条优雅路径）；
+      ② `sync_height()` 按**当前宽度**算出所需高度直接设 `minimumHeight`
+         —— 这条**不依赖父链配合**，是真正兜底的。
+    """
+
+    def __init__(self, parent=None, spacing: int = 5):
+        super().__init__(parent)
+        self.flow = FlowLayout(self, spacing=spacing)
+        policy = self.sizePolicy()
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def hasHeightForWidth(self) -> bool:        # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:    # noqa: N802
+        return self.flow.heightForWidth(width)
+
+    def sync_height(self, width: int = None) -> int:
+        """按给定（或当前）宽度算出行数所需高度并设为 `minimumHeight`。
+
+        调用时机：**每次重建子控件之后**（此时才知道有几个、各自多宽），
+        以及自身被 resize 时（宽度变了 ⇒ 换行数可能变）。
+        """
+        width = int(width or self.width() or 0)
+        if width <= 1:
+            width = 300     # 还没被布局分配过宽度 ⇒ 先按侧栏最小可用宽估一次，resize 时会纠正
+        needed = self.flow.heightForWidth(width)
+        if needed != self.minimumHeight():
+            self.setMinimumHeight(needed)
+        return needed
+
+    def resizeEvent(self, event):               # noqa: N802
+        super().resizeEvent(event)
+        self.sync_height()
+
+
+# ==========================================
+# 页面内容区（§7-B8 第 5 批）：内容放不下就滚 + 底部主操作钉住
+# ==========================================
+SCROLL_REGION_QSS = (
+    "QScrollArea { background:transparent; border:none; }"
+    "QScrollArea > QWidget > QWidget { background:transparent; }"
+    "QScrollBar:vertical { width:6px; background:transparent; margin:0; }"
+    "QScrollBar::handle:vertical { background:#D5DDE8; border-radius:3px; min-height:24px; }"
+    "QScrollBar::handle:vertical:hover { background:#BFC9D8; }"
+    "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+    "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:transparent; }")
+
+
+class ScrollRegion(QScrollArea):
+    """页面**内容区**：卡片按内容高度堆叠、超出就滚；底部主操作留在外面（永远够得着）。
+
+    【为什么页面需要它（v6.24 · 第 5 批）】之前页面用 `lay.addWidget(card, 1)` 把卡片拉满，
+    两头都坏：① 内容少的卡片变成**巨大空框**（标题被垂直居中、内容飘在中段）——
+    正是用户说的"展开还是不展开都要占据大量页面内容，又完全不为交互考虑"；
+    ② 内容一多就**把底部按钮顶出可视区**（主操作够不着）。
+    现在分工明确：内容区负责"放不下就滚"，外层 `lay` 只放**钉底**的主操作。
+
+    `content` = 往里面 `addWidget(卡片)` 的布局。⚠ **卡片一律不要贪心拉伸**，
+    除非它本来是"越长越好"的东西（自选清单、画线工具目录）。
+    """
+
+    def __init__(self, parent=None, spacing: int = 8):
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet(SCROLL_REGION_QSS)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        holder = QWidget()
+        self.content = QVBoxLayout(holder)
+        self.content.setContentsMargins(0, 0, 0, 0)
+        self.content.setSpacing(spacing)
+        self.setWidget(holder)
+
+
+# ==========================================
+# 手风琴卡片（§7-B8 · A 方案的核心交互）
+# ==========================================
+ACCORD_QSS = (
+    "QFrame#AccordionCard { background:#FFFFFF; border:1px solid #E4E9F0; border-radius:10px; }"
+    "QFrame#AccordionCard[open=\"0\"] { background:#FBFCFE; border-color:#EAEFF6; }"
+    "QFrame#AccordionHead { background:transparent; border:none;"
+    " border-top-left-radius:9px; border-top-right-radius:9px; }"
+    "QFrame#AccordionHead:hover { background:#F4F9FF; }"
+    "QLabel#AccordionIcon { font-size:13px; border:none; background:transparent; }"
+    "QLabel#AccordionTitle { font-size:12.6px; font-weight:800; color:#3A4250;"
+    " border:none; background:transparent; }"
+    "QLabel#AccordionArrow { font-size:11px; color:#B6BEC9; border:none; background:transparent; }")
+_ACCORD_STATE_QSS = ("font-size:11.3px; font-weight:700; color:%s;"
+                     " border:none; background:transparent;")
+# 状态色（四档，与 §7-B8 样板一致；"bad" 只给"会影响数据"的动作）
+ACCORD_STATE_COLOR = {"": "#8A94A6", "ok": "#2E7D32", "warn": "#E65100", "bad": "#C62828"}
+
+
+class ClickFrame(QFrame):
+    """整行可点的容器（Qt 没有现成的"可点卡片头"，别让人去点 12px 的小箭头）。
+
+    ⚠ 公开件（不是 `_ClickFrame`）：配方 chip / 分组胶囊 / 画线类型 tile 都要用它，
+    跨模块导入私有名是坏味道（改个名字就会静默断在各种地方）。
+    """
+
+    sigClicked = pyqtSignal()
+
+    def mouseReleaseEvent(self, event):        # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.pos()):
+            self.sigClicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class AccordionCard(QFrame):
+    """手风琴卡片：**卡头即状态行**（§7-B8 · 用户 2026-09-17 采纳的 A 方案）。
+
+    为什么不是"标题栏 + 折叠三角"：
+      · 收起后**卡头仍然在**，并带着状态文字（"4 组 · 6 只" / "组合 +0.82%"）
+        ⇒ 用户不必展开就知道里面配了什么（治 §7-B6 记的"状态看不见"这条病灶）；
+      · **整行可点**（不是只有小箭头）—— 只有 12px 的箭头可点是常见的手感坑；
+      · 状态文字走 `set_state()` 单一入口 ⇒ 各页不各自拼样式（§10-9）。
+    """
+
+    sigToggled = pyqtSignal(bool)
+
+    def __init__(self, title: str, icon: str = "", parent=None, open: bool = True):
+        super().__init__(parent)
+        self.setObjectName("AccordionCard")
+        self.setStyleSheet(ACCORD_QSS)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(0)
+        # 卡头永远**贴顶**：收起后内容区隐藏、卡片若仍被外力撑高，多余高度留在底部，
+        # 而不是把卡头垂直居中（第 5 批实测：不设它，收起后卡头被顶到卡片正中间）
+        box.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self._head = ClickFrame()
+        self._head.setObjectName("AccordionHead")
+        self._head.setCursor(Qt.CursorShape.PointingHandCursor)
+        head = QHBoxLayout(self._head)
+        head.setContentsMargins(11, 9, 11, 9)
+        head.setSpacing(8)
+
+        self.icon = QLabel(icon)
+        self.icon.setObjectName("AccordionIcon")
+        self.icon.setFixedWidth(20)
+        self.icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        head.addWidget(self.icon)
+
+        self.title = QLabel(title)
+        self.title.setObjectName("AccordionTitle")
+        head.addWidget(self.title)
+        head.addStretch()
+
+        self._state = QLabel("")
+        head.addWidget(self._state)
+
+        self._arrow = QLabel("▾")
+        self._arrow.setObjectName("AccordionArrow")
+        head.addWidget(self._arrow)
+
+        # ⚠⚠ 卡头**必须钉成固定高**（v6.24 · 第 5 批修的真 bug）：
+        #   卡头与内容区默认都是 `Preferred` ⇒ 父布局把整张卡拉高时，多出来的高度会被
+        #   **两者平分** ⇒ 卡头变成一个大框、标题被垂直居中，而内容区的内容贴在自己顶端
+        #   ⇒ 页面上就是"标题悬在半空、内容离它老远"；**卡片收起时更糟**：内容一隐藏，
+        #   全部多余高度压到卡头身上（一整个空框里就一行小字）。
+        #   正确做法 = 卡头 Fixed（永远 = 自己文字的高度），多余高度**全部给内容区**。
+        head_policy = self._head.sizePolicy()
+        head_policy.setVerticalPolicy(QSizePolicy.Policy.Fixed)
+        self._head.setSizePolicy(head_policy)
+        box.addWidget(self._head)
+
+        # 内容放进**独立容器**：收起时只需隐藏这一个 widget
+        # （若直接往布局里加控件，逐个 setVisible 会漏掉嵌套布局里的控件）
+        self._host = QWidget()
+        self.body = QVBoxLayout(self._host)
+        self.body.setContentsMargins(11, 0, 11, 11)
+        self.body.setSpacing(7)
+        # 拉伸因子给**内容区**：卡片被拉高时，长高的是内容区，不是卡头（见上面那段说明）
+        box.addWidget(self._host, 1)
+
+        self._head.sigClicked.connect(self._toggle)
+        self._open = True
+        self.set_open(open)
+
+    # ---- 标题 / 状态 ----
+    def set_title(self, text: str) -> None:
+        self.title.setText(text)
+
+    def title_text(self) -> str:
+        return self.title.text()
+
+    def state_text(self) -> str:
+        return self._state.text()
+
+    def set_state(self, text: str, kind: str = "", tooltip: str = "") -> None:
+        """右上角状态。`kind`："" 灰 / ok 绿 / warn 橙 / bad 红。"""
+        self._state.setText(text)
+        self._state_kind = kind or ""
+        self._state.setStyleSheet(_ACCORD_STATE_QSS % ACCORD_STATE_COLOR.get(kind, "#8A94A6"))
+        self._state.setToolTip(tooltip or text)
+
+    def state_kind(self) -> str:
+        """状态档位（测试用：验证"有缺数据时要转成警示色"这类口径）。"""
+        return getattr(self, "_state_kind", "")
+
+    # ---- 折叠 ----
+    def is_open(self) -> bool:
+        return self._open
+
+    def set_open(self, value: bool) -> None:
+        self._open = bool(value)
+        self._host.setVisible(self._open)
+        self._arrow.setText("▾" if self._open else "▸")
+        self.setProperty("open", "1" if self._open else "0")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        # ★ 收起/展开会改变卡片的高度需求（内容区显示/隐藏）⇒ 让卡片高度**立即**跟上：
+        #   `updateGeometry()` 通知父布局、`adjustSize()` 直接把自己收到 sizeHint ——
+        #   第 5 批实测：只靠 updateGeometry / 父布局 invalidate+activate **都不够**，
+        #   收起后卡片高度纹丝不动（Qt 在 QScrollArea 里不重排这条链）；adjustSize 才真能缩。
+        self.updateGeometry()
+        self.adjustSize()
+
+    def _toggle(self) -> None:
+        self.set_open(not self._open)
+        self.sigToggled.emit(self._open)
+
+
+# ==========================================
+# 分组胶囊（§7-B8 R1）：组名 + **组合当日涨跌**
+# ==========================================
+GROUP_CHIP_QSS_ON = (
+    "QFrame#GroupChip { background:#E8F2FE; border:1px solid #BBDEFB; border-radius:999px; }"
+    "QFrame#GroupChip QLabel { border:none; background:transparent; }"
+    "QLabel#GroupChipName { font-size:12px; font-weight:800; color:#1565C0; }"
+    "QLabel#GroupChipCount { font-size:10.8px; color:#8A94A6; }")
+GROUP_CHIP_QSS_OFF = (
+    "QFrame#GroupChip { background:#FFFFFF; border:1px solid #E4E9F0; border-radius:999px; }"
+    "QFrame#GroupChip:hover { background:#F7FBFF; border-color:#A9C7EA; }"
+    "QFrame#GroupChip QLabel { border:none; background:transparent; }"
+    "QLabel#GroupChipName { font-size:12px; font-weight:700; color:#3A4250; }"
+    "QLabel#GroupChipCount { font-size:10.8px; color:#8A94A6; }")
+GROUP_CHIP_QSS_ADD = (
+    "QFrame#GroupChip { background:#F7FBFF; border:1px dashed #BBDEFB; border-radius:999px; }"
+    "QFrame#GroupChip:hover { background:#EAF3FE; border-color:#A9C7EA; }"
+    "QFrame#GroupChip QLabel { border:none; background:transparent; }"
+    "QLabel#GroupChipName { font-size:12px; font-weight:700; color:#1976D2; }")
+_CHIP_TEXT_QSS = ("font-size:11.2px; font-weight:700; color:%s;"
+                  " border:none; background:transparent;")
+CHIP_VALUE_UP = "#4CAF50"       # 与 K 线涨色同源（涨=绿）
+CHIP_VALUE_DOWN = "#F44336"     # 与 K 线跌色同源（跌=红）
+CHIP_VALUE_NEUTRAL = "#5B6472"  # 平盘（0.00%）用中性灰 —— 「平」既不是涨也不是跌
+CHIP_WARN_COLOR = "#E65100"
+
+
+class GroupChip(ClickFrame):
+    """分组胶囊：`组名 ＋ 组合当日涨跌`（一个分组 ≈ 一只"自建基金"，§7-B8 R1）。
+
+    · `key is None` = "全部"（**聚合视图，不是真实分组** —— 别把它写进存储）；
+    · 涨跌留空 = 还没算 / 算不出来 ⇒ **只显示组名**，不留 "0.00%" 这种假数；
+    · `set_warn()` = 组里**有票今天没数据**（不算它，但要在标签上打 ⚠。
+      绝不拿 0% 混进去把数字冲淡 —— 那是看不见的假口径）。
+    """
+
+    sigPicked = pyqtSignal(object)      # 参数 = 分组键（None = 全部）
+
+    def __init__(self, key, name: str, count: int = 0, parent=None):
+        super().__init__(parent)
+        self.setObjectName("GroupChip")
+        self.key = key
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 5, 10, 5)
+        row.setSpacing(6)
+
+        self._name = QLabel(name)
+        self._name.setObjectName("GroupChipName")
+        row.addWidget(self._name)
+
+        self._count = QLabel("")
+        self._count.setObjectName("GroupChipCount")
+        row.addWidget(self._count)
+
+        self._value = QLabel("")
+        row.addWidget(self._value)
+
+        self._warn = QLabel("")
+        row.addWidget(self._warn)
+
+        # 空标签**必须隐藏**：留下的空 QLabel 会白占一个 spacing（每个胶囊 ~12px），
+        # 结果是"胶囊虚胖、一行只放得下一个"（渲染探针实测过）
+        self._value.setVisible(False)
+        self._warn.setVisible(False)
+
+        self._selected = False
+        self.set_count(count)
+        self.set_selected(False)
+        self.sigClicked.connect(lambda: self.sigPicked.emit(self.key))
+
+    def set_count(self, count) -> None:
+        text = "" if count is None else f"{count} 只"
+        self._count.setText(text)
+        self._count.setVisible(bool(text))
+
+    def count_text(self) -> str:
+        return self._count.text()
+
+    def value_text(self) -> str:
+        return self._value.text()
+
+    def value_color(self) -> str:
+        """当前涨跌值的颜色（测试用：钉住"平盘不是绿"这条口径）。"""
+        return getattr(self, "_value_color", "")
+
+    def warn_text(self) -> str:
+        return self._warn.text()
+
+    def warn_tooltip(self) -> str:
+        return self._warn.toolTip()
+
+    def set_value(self, text: str = "", up=None) -> None:
+        """右侧涨跌值：`up=True` 绿 / `False` 红 / **`None` 中性灰**（平盘）。
+
+        `text=""`（还没算出来 / 算不出来）⇒ **整段隐藏**，不留 "0.00%" 这种假数。
+        """
+        text = text or ""
+        self._value.setText(text)
+        self._value.setVisible(bool(text))
+        if text:
+            color = (CHIP_VALUE_UP if up is True
+                     else CHIP_VALUE_DOWN if up is False else CHIP_VALUE_NEUTRAL)
+            self._value_color = color
+            self._value.setStyleSheet(_CHIP_TEXT_QSS % color)
+
+    def set_warn(self, tooltip: str = "") -> None:
+        self._warn.setText("⚠" if tooltip else "")
+        self._warn.setVisible(bool(tooltip))
+        self._warn.setStyleSheet(_CHIP_TEXT_QSS % CHIP_WARN_COLOR)
+        self._warn.setToolTip(tooltip)
+
+    def set_selected(self, on: bool) -> None:
+        self._selected = bool(on)
+        self.setStyleSheet(GROUP_CHIP_QSS_ON if self._selected else GROUP_CHIP_QSS_OFF)
+
+    def is_selected(self) -> bool:
+        return self._selected
+
+
+RECIPE_BADGE_MAIN = "#1976D2"       # 主图 = 蓝（与样板一致）
+RECIPE_BADGE_SUB = "#7E57C2"        # 副图 = 紫
+RECIPE_CHIP_QSS_OFF = (
+    "QFrame#RecipeChip { background:#FFFFFF; border:1px solid #E4E9F0; border-radius:9px; }"
+    "QFrame#RecipeChip:hover { background:#F7FBFF; border-color:#A9C7EA; }"
+    "QFrame#RecipeChip QLabel { border:none; background:transparent; }"
+    "QLabel#RecipeChipName { font-size:12px; color:#3A4250; }")
+RECIPE_CHIP_QSS_ON = (
+    "QFrame#RecipeChip { background:#EAF7EE; border:1px solid #BFE3C8; border-radius:9px; }"
+    "QFrame#RecipeChip QLabel { border:none; background:transparent; }"
+    "QLabel#RecipeChipName { font-size:12px; font-weight:800; color:#2E7D32; }")
+RECIPE_BADGE_QSS = ("color:%s; font-size:%s; font-weight:%s; border-radius:%s;"
+                    " padding:%s; background:%s; border:%s;")
+RECIPE_OPS_BTN_QSS = ("QPushButton { border:none; background:transparent; color:#8A94A6;"
+                      " font-size:11px; padding:0 3px; }"
+                      "QPushButton:hover { color:#1976D2; }")
+
+
+class RecipeChip(ClickFrame):
+    """配方库里的一个条目（§7-B8 R6）：**徽标 + 名称 +（管理模式下的）操作**。
+
+    【为什么徽标是必需的】用户原话："保存的时候选了主图还是副图，但**从配方库载入时
+    完全看不出**这个配方到底是主图的还是副图的" ⇒ 徽标不是装饰，是在治一个真实痛点。
+    ★三轮定稿之后它更强了：**去处只有两类且互不串门** ⇒ "徽标 = 去处"语义上唯一正确。
+
+    · **内置项**：徽标写「内置」、**只能开关不能删改**（连管理模式也不给 ✏/🗑）；
+    · 点击 = 开/关（点的是行本体；点 ✏/🗑 不会误触发开关，因为按钮会吃掉那个点击）；
+    · `⚙` 参数入口**不在这里加** —— 它跟 R16 的窗口一起做（有就是有、没有就是没有，
+      绝不放一个点了没反应的按钮）。
+    """
+
+    sigToggled = pyqtSignal(str)
+    sigRename = pyqtSignal(str)
+    sigDelete = pyqtSignal(str)
+    sigParams = pyqtSignal(str)
+
+    def __init__(self, key: str, name: str, target: str, builtin: bool = False,
+                 has_params: bool = False, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RecipeChip")
+        self.key = str(key)
+        self.builtin = bool(builtin)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(7, 5, 7, 5)
+        row.setSpacing(6)
+
+        badge = QLabel("内置" if builtin else ("主图" if target == "main" else "副图"))
+        badge.setObjectName("RecipeChipBadge")
+        if builtin:
+            badge.setStyleSheet(RECIPE_BADGE_QSS % ("#5B6472", "9.6px", "800", "4px",
+                                                    "0 4px", "#FFFFFF", "1px solid #DCE3EC"))
+        else:
+            color = RECIPE_BADGE_MAIN if target == "main" else RECIPE_BADGE_SUB
+            badge.setStyleSheet(RECIPE_BADGE_QSS % ("#FFFFFF", "10.4px", "800", "5px",
+                                                    "1px 5px", color, "none"))
+        self.badge = badge
+        row.addWidget(badge)
+
+        self.name = QLabel(str(name))
+        self.name.setObjectName("RecipeChipName")
+        row.addWidget(self.name)
+
+        # ★v6.24（§7-B8 R16）：**有参数才有 ⚙** —— `成交量` 那种没有参数的就不给，
+        #   "有就是有、没有就是没有"，绝不放一个点了没反应的入口。
+        self.btn_params = None
+        if has_params:
+            self.btn_params = QPushButton("⚙")
+            self.btn_params.setStyleSheet(RECIPE_OPS_BTN_QSS)
+            self.btn_params.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_params.setToolTip("参数设置（改了要「应用」才生效；内置参数有范围校验）")
+            self.btn_params.clicked.connect(lambda: self.sigParams.emit(self.key))
+            row.addWidget(self.btn_params)
+
+        # 操作（✏ / 🗑）—— 默认隐藏，进「管理模式」才出现（§10-10：危险动作不与高频操作同排）
+        self._ops = QWidget()
+        ops = QHBoxLayout(self._ops)
+        ops.setContentsMargins(0, 0, 0, 0)
+        ops.setSpacing(0)
+        self.btn_rename = QPushButton("✏")
+        self.btn_delete = QPushButton("🗑")
+        for button in (self.btn_rename, self.btn_delete):
+            button.setStyleSheet(RECIPE_OPS_BTN_QSS)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_rename.setToolTip("改名（内置项不可改名）")
+        self.btn_delete.setToolTip("删除这条配方（会同时从图上移除）")
+        ops.addWidget(self.btn_rename)
+        ops.addWidget(self.btn_delete)
+        self._ops.setVisible(False)
+        row.addWidget(self._ops)
+
+        self._on = False
+        self.set_on(False)
+        self._sync_ops()
+        self.sigClicked.connect(lambda: self.sigToggled.emit(self.key))
+        self.btn_rename.clicked.connect(lambda: self.sigRename.emit(self.key))
+        self.btn_delete.clicked.connect(lambda: self.sigDelete.emit(self.key))
+
+    # ---- 状态 ----
+    def set_on(self, value: bool) -> None:
+        self._on = bool(value)
+        self.setStyleSheet(RECIPE_CHIP_QSS_ON if self._on else RECIPE_CHIP_QSS_OFF)
+
+    def is_on(self) -> bool:
+        return self._on
+
+    def has_param_button(self) -> bool:
+        """这个条目有没有 `⚙`（测试用：钉住"没参数就不给假入口"）。"""
+        return self.btn_params is not None
+
+    def set_manage(self, value: bool) -> None:
+        """管理模式开关。**内置项永远不显示操作** —— 那是刻意的（怕用户改回不来）。"""
+        self._manage = bool(value)
+        self._sync_ops()
+
+    def ops_visible(self) -> bool:
+        """操作区是否显示。
+
+        ⚠ 用 `isVisibleTo(self)` 而不是 `isVisible()`：后者要求**整条祖先链都可见**，
+        页面没 `show()` 时永远返回 False —— 那样断言会"因为窗口没显示"而假绿/假红。
+        """
+        return self._ops.isVisibleTo(self)
+
+    def _sync_ops(self) -> None:
+        self._ops.setVisible(getattr(self, "_manage", False) and not self.builtin)
+
+
+class AddChip(ClickFrame):
+    """「＋ 新建分组」胶囊（**虚线边** = "这里能造新的"，与真实分组一眼区分）。"""
+
+    def __init__(self, text: str = "＋ 新建分组", parent=None):
+        super().__init__(parent)
+        self.setObjectName("GroupChip")
+        self.setStyleSheet(GROUP_CHIP_QSS_ADD)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 5, 10, 5)
+        row.setSpacing(6)
+        self.label = QLabel(text)
+        self.label.setObjectName("GroupChipName")
+        row.addWidget(self.label)

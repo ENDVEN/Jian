@@ -25,7 +25,10 @@ PANEL_MIN_WIDTH = 250
 PANEL_MAX_WIDTH = 400
 # 左栏折起时的总宽度 = 图标轨 + 左右间距（★STEP 4：折起必须**把宽度还给图表**）
 RAIL_TOTAL_WIDTH = 60
-PANEL_DEFAULT_WIDTH = 372
+# ⚠ 这是**"图标轨 + 面板"的合计宽**，不是面板自身的宽：
+#   面板实际宽 = 398 - 52(图标轨) - 8(间距) = **338** —— 与 §7-B8 A 方案样板一致
+#   （372 时代面板只有 312：分组胶囊一行放不下两个，虚胖。离屏渲染实测过）
+PANEL_DEFAULT_WIDTH = 398
 
 # 图标轨按钮：默认灰、选中蓝底 + 左侧竖条（与样板 A 的观感一致；样式只在本文件写一份）
 RAIL_BTN_QSS = ("QPushButton { background: transparent; border: none; border-radius: 8px;"

@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>1.24 行情工作台 · 侧边栏重设计 · 四套样板</title>
+<style>
+:root{
+  --bg:#F4F6FA; --card:#fff; --line:#E4E9F0; --ink:#1F2430; --ink2:#3C4552;
+  --muted:#8A94A6; --faint:#B4BECB; --accent:#1976D2; --accent-soft:#E8F2FE;
+  --up:#2E7D32; --down:#C62828; --orange:#E65100;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13.5px/1.65 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;padding:26px 30px 70px}
+h1{font-size:22px;margin:0 0 6px}
+h2{font-size:16px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--accent)}
+h3{font-size:13.5px;margin:16px 0 8px;color:var(--ink2)}
+.lead{color:var(--muted);margin:0 0 22px;max-width:1060px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;
+      box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.05)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.sample{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+        box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.06);display:flex;flex-direction:column}
+.shead{padding:13px 16px 10px;display:flex;align-items:flex-start;gap:10px}
+.shead .k{width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;
+          font-weight:800;font-size:14px;flex:0 0 auto}
+.shead .t{font-weight:800;font-size:14.5px}
+.shead .d{color:var(--muted);font-size:12.3px;margin-top:2px}
+.shot{position:relative;width:100%;height:372px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+      background:#EDF1F6;overflow:hidden}
+.shot iframe{position:absolute;top:0;left:0;width:1440px;height:886px;border:0;transform:scale(.42);
+             transform-origin:top left}
+@media (max-width:1500px){ .grid{grid-template-columns:1fr} }
+.sfoot{display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:12.3px;color:var(--ink2);flex-wrap:wrap}
+.sfoot a{color:var(--accent);font-weight:700;text-decoration:none}
+.sfoot a:hover{text-decoration:underline}
+.pill{font-size:11.5px;border-radius:999px;padding:3px 9px;font-weight:700;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.pill.g{background:#EAF7EE;color:var(--up)}
+.pill.o{background:#FFF3E0;color:var(--orange)}
+.pill.r{background:#FDECEA;color:var(--down)}
+.pill.gray{background:#F1F4F9;color:var(--muted)}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:12.8px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #EEF1F6;vertical-align:top}
+th{background:#F7F9FC;font-weight:700;color:var(--ink2);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td.c{text-align:center;white-space:nowrap}
+code{background:#F4F6FA;border:1px solid #E7EAF0;border-radius:5px;padding:1px 5px;font-family:Consolas,monospace;font-size:12.2px}
+.note{background:#FFFBF0;border:1px solid #F3E2B8;border-radius:10px;padding:12px 14px;font-size:12.8px;color:#6B5A22}
+.note b{color:#8A6D1F}
+.ask{background:#F7FBFF;border:1px solid #CFE4FA;border-radius:10px;padding:14px 16px;font-size:13px}
+.ask ol{margin:8px 0 0 18px;padding:0}
+.ask li{margin-bottom:8px}
+ul.tight{margin:6px 0 0 18px;padding:0}
+ul.tight li{margin-bottom:5px}
+.kv{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.metric{background:#FBFCFE;border:1px solid #E7EAF0;border-radius:10px;padding:10px 14px;min-width:180px}
+.metric .l{color:var(--muted);font-size:12px}
+.metric .v{font-size:19px;font-weight:800}
+.metric .v.bad{color:var(--down)}
+.swatch{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
+.swatch i{width:16px;height:16px;border-radius:4px;display:inline-block;border:1px solid rgba(0,0,0,.08)}
+.bar{height:6px;border-radius:3px;background:#E7EAF0;overflow:hidden;min-width:90px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.bar i.g{background:#4CAF50}
+.bar i.o{background:#FFB74D}
+</style>
+</head>
+<body>
+
+<h1>1.24 · 行情工作台「侧边栏重设计」· 四套样板</h1>
+<p class="lead">
+  你的原话：<b>"把行情页里的侧边栏 UI 再次重新设计……现阶段的侧边栏功能虽然整合过去了，
+  但是 UI 设计完全混乱和用户不友好，必须重新设计侧边栏展开后的 UI 排版样式。"</b><br>
+  你给的优先级：<b>① 交互体验 &gt; ② 可视化美观 &gt; ③ 后期加新功能的兼容性</b>。
+  下面是 4 套<b>可交互样板</b> —— 四套的<b>交互模型彼此不同（不是换皮）</b>，
+  但都装得下现有的<b>全部功能</b>，也都按同样的方式给未来留了位。
+</p>
+
+<h2>一、先把"现状为什么乱"量出来（数字来自代码，不是感觉）</h2>
+<div class="card">
+  <div class="kv">
+    <div class="metric"><div class="l">面板默认宽度（<code>PANEL_DEFAULT_WIDTH</code>）</div><div class="v bad">372 px</div></div>
+    <div class="metric"><div class="l">图标轨宽度</div><div class="v">52 px（折起后左栏 60 px）</div></div>
+    <div class="metric"><div class="l">分页面板</div><div class="v">5 页 · <b>同一个宽度</b></div></div>
+    <div class="metric"><div class="l">自选列表</div><div class="v bad">写死 150 px 高</div></div>
+  </div>
+  <ul class="tight">
+    <li><b>① 页与页之间只有"位移"，没有"层级"</b>：五页共用同一个 372px 宽度，每页都是
+      「小标题 + 控件平铺」—— 用户无法一眼判断"哪个是我的高频操作"。</li>
+    <li><b>② 主次不分</b>：公式页 4 个按钮<b>等高纵排</b>（编辑 / 存为配方 / 配方库 / 送去做回测），
+      看不出哪个是主操作；自选页的操作是 <code>★ 🗑 ⬆ ⬇</code> 一行图标，语义很弱。</li>
+    <li><b>③ 分组没有容器</b>：图层页 5 个复选框平铺，"主图叠加 / 附图"两组只靠一段间距分隔。</li>
+    <li><b>④ 数据页大半屏是空的</b>：只有一行回执 + 一段灰字说明，剩下全是留白。</li>
+    <li><b>⑤ 折起态只剩图标轨</b>：页名只靠 tooltip，你得先记住 5 个符号是什么意思。</li>
+    <li><b>⑥ 状态回执看不见</b>：复权 / 公式 / 标注三处回执挤在窄栏里（这也是 §7-B6 记的"最痛点"）。</li>
+  </ul>
+  <div class="note" style="margin-top:12px">
+    <b>本轮只动"面板内部怎么排"，不动功能：</b>五页内容、每个控件、每个状态口径都保持原样；
+    图标轨与折起行为沿用 §7-B6 已验收的成果 —— 也就是 §7-B7 写的
+    <b>"只能换容器与排布，不许改控件名 / 方法名"</b>（否则 <code>smoke_pages_overlay</code>
+    的迁移护栏会立刻红）。配色也仍是现状（白卡 + <code>#1976D2</code>），深色主题继续推迟。
+  </div>
+</div>
+
+<h2>二、四套样板（点标题可全屏打开 · 都能点得动）</h2>
+<div class="grid">
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#1976D2">A</div>
+      <div><div class="t">手风琴卡片（Accordion）</div>
+        <div class="d">卡头 = 状态行（收起也知道配了什么）· 主操作钉在面板底部 · 新功能 = 新卡片</div></div>
+      <span style="flex:1"></span><span class="pill g">迁移成本最低</span>
+    </div>
+    <div class="shot"><iframe src="a-accordion.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span class="swatch"><i style="background:#fff"></i><i style="background:#E4E9F0"></i><i style="background:#1976D2"></i>现状配色</span>
+      <span>·</span><span>交互 <b>★★★★</b></span><span>·</span><span>扩展 <b>★★★★</b></span>
+      <span style="flex:1"></span><a href="a-accordion.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#0E7490">B</div>
+      <div><div class="t">主从下钻（Drill-down）</div>
+        <div class="d">第一屏永远是功能清单（每行带状态）· 点进去一屏只做一件事 · 新功能 = 新一行</div></div>
+      <span style="flex:1"></span><span class="pill">永不滚动</span>
+    </div>
+    <div class="shot"><iframe src="b-drilldown.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span class="swatch"><i style="background:#fff"></i><i style="background:#E4E9F0"></i><i style="background:#0E7490"></i>同配色</span>
+      <span>·</span><span>交互 <b>★★★★★</b></span><span>·</span><span>扩展 <b>★★★★★</b></span>
+      <span style="flex:1"></span><a href="b-drilldown.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#7E57C2">C</div>
+      <div><div class="t">状态优先（Status-first）</div>
+        <div class="d">顶部常驻「我现在配的是什么」6 行 · 点任一行 = 跳到对应页并高亮 · 治"我配了什么看不见"</div></div>
+      <span style="flex:1"></span><span class="pill o">最治痛点</span>
+    </div>
+    <div class="shot"><iframe src="c-status-first.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span class="swatch"><i style="background:#F7FAFF"></i><i style="background:#1976D2"></i><i style="background:#4CAF50"></i>同配色</span>
+      <span>·</span><span>交互 <b>★★★★</b></span><span>·</span><span>扩展 <b>★★★</b></span>
+      <span style="flex:1"></span><a href="c-status-first.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#455A64">D</div>
+      <div><div class="t">紧凑设置表单（Settings Form）</div>
+        <div class="d">面板 300px（比现状窄 72px，还给图表）· 标签左 / 控件右 · 细线分组 · 新配置 = 新一行</div></div>
+      <span style="flex:1"></span><span class="pill gray">密度最高</span>
+    </div>
+    <div class="shot"><iframe src="d-dense-form.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot"><span class="swatch"><i style="background:#fff"></i><i style="background:#E4E9F0"></i><i style="background:#455A64"></i>同配色</span>
+      <span>·</span><span>交互 <b>★★★</b></span><span>·</span><span>扩展 <b>★★★★</b></span>
+      <span style="flex:1"></span><a href="d-dense-form.html" target="_blank">全屏打开 →</a></div>
+  </div>
+
+</div>
+
+<h2>二·补、A 方案 v2 —— 按你 2026-09-17 的反馈修订（这是当前候选稿）</h2>
+<div class="card" style="border:2px solid #BBDEFB;box-shadow:0 4px 18px rgba(25,118,210,.12)">
+  <p style="margin:0 0 12px">
+    你已采纳 <b>A</b>，并提出"先把现有功能改好，再动版式"。下面是按你的意见改出的
+    <b>A v2</b>（16 条 <code>R1–R16</code>，完整路线图见
+    <a href="ROADMAP.md" style="color:#1976D2;font-weight:700">ROADMAP.md</a>）—— 请先看它是否符合预期。
+  </p>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start">
+    <div style="position:relative;height:404px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#EDF1F6">
+      <iframe src="a2-accordion.html" style="position:absolute;top:0;left:0;width:1440px;height:886px;border:0;transform:scale(.458);transform-origin:top left"></iframe>
+    </div>
+    <div>
+      <div class="pill" style="margin-bottom:8px;display:inline-block">R1 – R12</div>
+      <ul class="tight" style="margin-top:0">
+        <li><b>R1</b> 自选股新增<b>分组标签</b></li>
+        <li><b>R2</b> 两条添加入口（输代码/名称 · 从自选挑选）<br>
+          <span style="color:#2E7D32"><b>↑ 已按二轮意见提到分组之上</b></span></li>
+        <li><b>R3</b> 分组标签右侧显示<b>组合当日涨跌</b></li>
+        <li><b>R4</b> 预留位：与新的「组合配置」栏目互通</li>
+        <li><b>R5</b> 删掉「主副图叠加」页（<b>图标轨 5 → 4 项</b>）</li>
+        <li><b>R6</b> 公式页重做成<b>配方库</b>：分区 + 徽标区分主图/副图</li>
+        <li><b>R7</b> 附图 chips 带<b>顺序号</b> + 「⇅ 排序」面板</li>
+        <li><b>R8</b> 附图纵轴共用<b>固定左槽</b>（治缩进不一致）</li>
+        <li><b>R9</b> 附图数量仍由 chips 控制</li>
+        <li><b>R10</b> 画线类型<b>图标 + 编号</b></li>
+        <li><b>R11</b> <b>32 种全平铺</b>，靠分类色 + 吸顶类名不显乱<br>
+          <span style="color:#2E7D32"><b>↑ 已删掉搜索栏与「更多」收纳</b></span></li>
+        <li><b>R12</b> 数据与口径：<b>本轮不动</b></li>
+        <li><b>R13</b> <b>内置指标（MA / BOLL / 量 / MACD）收进配方库</b>，与你的函数同权管理<br>
+          <span style="color:#2E7D32"><b>↑ 三轮新增</b></span></li>
+        <li><b>R14</b> 顶栏「＋ 更多」= <b>配方库同类的自动镜像</b>；附图 chips 显示配方名<br>
+          <span style="color:#2E7D32"><b>↑ 三轮新增</b></span></li>
+        <li><b>R15</b> <b>拖拽排序</b>（大列表用）—— 三道闸防误触：须先进排序模式 · 只认 ⣿ 手柄 · 可撤销<br>
+          <span style="color:#2E7D32"><b>↑ 四轮新增</b></span></li>
+        <li><b>R16</b> <b>⚙ 参数窗口</b> —— 内置不能改名但可调参数；未保存未校验就关 ⇒ 二次确认；
+          格式不对点应用 ⇒ 自动回默认值<br>
+          <span style="color:#2E7D32"><b>↑ 四轮新增</b></span></li>
+        <li style="list-style:none;margin-top:8px;padding:7px 9px;background:#F3FBF6;border:1px solid #CBEBD6;border-radius:8px;color:#1B5E20">
+          <b>三轮另定</b>：配方<b>去处定死</b> —— 主图只能进主图、副图只能进副图（<b>互不串门</b>）。<br>
+          <b>四轮另定（防手残）</b>：多段公式的<b>去处必须相同</b>，不一致直接提示拆成两条；
+          参数改动<b>绝不静默丢弃</b>。
+        </li>
+      </ul>
+      <a href="a2-accordion.html" target="_blank" style="color:#1976D2;font-weight:700;text-decoration:none">全屏打开 A v2 →</a>
+    </div>
+  </div>
+
+  <h3 style="margin-top:18px">顺手核实的两处"真实缺陷"（不是审美问题，是代码里确实缺能力）</h3>
+  <table>
+    <tr><th style="width:150px">问题</th><th>代码证据</th><th style="width:230px">修法</th></tr>
+    <tr>
+      <td><b>副图不能调顺序</b><br><span style="color:#8A94A6">你：副图有严格顺序，用户没法调整</span></td>
+      <td><code>chart_host.py</code> 只有 <code>add_pane()</code>（永远追加到底部）与 <code>remove_pane()</code>，
+        <b>没有 <code>move_pane</code></b>；<code>desk_layers.render_charts()</code> 还按硬编码顺序
+        （量 → MACD → 公式副图 1/2/3）创建。</td>
+      <td>宿主新增 <code>move_pane(name, index)</code>（改序 + 重排行 + <b>重算"最下面那张显示日期轴"</b>）；
+        页面按偏好里的顺序创建。</td>
+    </tr>
+    <tr>
+      <td><b>副图纵轴缩进不一致</b><br><span style="color:#8A94A6">你：数字长的和数字小的缩进完全不一样</span></td>
+      <td><code>chart_style.style_axis()</code> 只设画笔与文字色，<b>从不设轴宽度</b>；
+        pyqtgraph 的 <code>AxisItem</code> 宽度由自身刻度文本自动算 ⇒
+        <code>3,120,400</code>(9 字符) 与 <code>-0.05</code>(5 字符) 左槽宽度不同 ⇒ 左边缘必然错位。</td>
+      <td>所有窗格 left axis 统设固定宽度（<code>autoExpandTextSpace=False</code> +
+        <code>setWidth(全部窗格最大标签宽)</code>），收口到一处；A v2 图里已按"固定左槽 + 右对齐"绘制。</td>
+    </tr>
+  </table>
+
+  <div class="note" style="margin-top:12px">
+    <b>还有一个语义问题需要你拍板（ROADMAP 第五节）</b>：配方是<b>多段</b>的
+    （段1→主图、段2→副图1 是完全合法的）。所以"一个配方是主图还是副图"本身可能是<b>混合</b>的。
+    A v2 的做法 = 按各段 target 打出<b>全部徽标</b>、"含主图段"优先归入主图区。
+    若你希望"一个配方只属于一个去处"，那就得限制配方只能单目标 —— 这会改数据契约，请明确。
+  </div>
+</div>
+
+<h2>三、四套到底差在哪（对着你给的优先级看）</h2>
+<div class="card">
+  <table>
+    <tr>
+      <th style="width:74px">样板</th><th>交互模型一句话</th>
+      <th style="width:130px">① 交互体验</th><th style="width:130px">② 美观</th><th style="width:150px">③ 加新功能的成本</th>
+      <th style="width:120px">主要代价</th>
+    </tr>
+    <tr>
+      <td><b>A</b> 手风琴卡片</td>
+      <td>卡头就是状态行；点卡头折叠；主操作钉在底部</td>
+      <td>一眼扫完 5 页；<b>收起也知道配了什么</b>；高频动作不用找</td>
+      <td>白卡 + 圆角，与 1.22 回测页同一套语言</td>
+      <td>新功能 = 新卡片（版式不动）</td>
+      <td>卡片多起来会需要内部滚动</td>
+    </tr>
+    <tr>
+      <td><b>B</b> 主从下钻</td>
+      <td>清单 → 详情；清单行右侧直接写状态</td>
+      <td><b>永不滚动</b>、路径可预期；想找什么先看目录</td>
+      <td>四栏对齐、密度均匀，没有"一块一块"的噪声</td>
+      <td>新功能 = 新一行（<b>最强</b>）</td>
+      <td>改两个设置要往返两次</td>
+    </tr>
+    <tr>
+      <td><b>C</b> 状态优先</td>
+      <td>顶部 6 行"我现在配的是什么"，点一行即跳转</td>
+      <td>直接解决"配了什么看不见"；<b>状态即入口</b></td>
+      <td>只读区 ↔ 操作区对比清晰，信息密度高</td>
+      <td>有状态就加一行（需控制总行数）</td>
+      <td>顶部固定占高；状态行会随功能增长</td>
+    </tr>
+    <tr>
+      <td><b>D</b> 紧凑表单</td>
+      <td>标签左 / 控件右，细线分组，面板收窄到 300</td>
+      <td>位置固定可预期（靠"数第几行"就能找到）</td>
+      <td>视觉噪声最低，面板最窄、图表最宽</td>
+      <td>新配置 = 新一行（最省地方）</td>
+      <td>长文案塞不下（只能进 tooltip）；偏"设置页"气</td>
+    </tr>
+  </table>
+
+  <h3>四套都做到了的事（所以你只需挑"手感"）</h3>
+  <ul class="tight">
+    <li><b>功能一个不少</b>：自选（增删 / 调序 / 双击切换）、公式（编辑 / 存为配方 / 配方库 / 送去做回测）、
+      图层（MA / BOLL / 公式 / 量 / MACD / 公式副图 1-2-3）、标注（6 类工具 + 添加 / 删除 / 清空）、
+      数据口径（复权 / 周期 / 根数 / 除权跳空 / 同步规则 / 跳数据管理）—— 五页全覆盖。</li>
+    <li><b>危险动作一律隔离</b>：清空标注 / 清空分区这类不可撤销的动作，都单独放、与高频按钮不同排（§10-10）。</li>
+    <li><b>都给未来留了位</b>：每套样板里都有一个虚线「预留位」（KDJ/RSI 副图、横截面扫描 M2、分组标签…），
+      展示"以后加功能往哪长"——这是你第三条要求的直接回答。</li>
+    <li><b>都保留图标轨 + 折起</b>，折起后宽度还给图表（§7-B6 已验收的行为，一处不动）。</li>
+  </ul>
+</div>
+
+<h2>四、我的建议（按你给的优先级排序）</h2>
+<div class="card">
+  <p style="margin:0 0 10px">
+    <b>如果只能选一套：我建议 A（手风琴卡片）。</b>理由：按"交互 &gt; 美观 &gt; 扩展"这三条一起算，
+    A 是<b>唯一三项都不掉分</b>的 —— 它保住了"一屏看全五页"（不用来回下钻），
+    同时用"卡头即状态"把 C 想解决的"看不见"顺手解决了，还用"主操作钉底部"解决了公式页的主次问题；
+    配色与 1.22 完全同源，视觉上不会有"又换了一套软件"的感觉。
+  </p>
+  <p style="margin:0 0 10px">
+    <b>如果愿意让我做一次小混搭：</b>我推荐 <b>A + C 的常驻状态（压缩成 2~3 行的一条摘要）</b> ——
+    面板顶部加一条"前复权 · 日线 · 4041 根 · 体检 ✓"的可点击摘要条（而不是 C 的 6 行大块），
+    既拿到"状态永远可见"，又不吃掉面板高度。
+  </p>
+  <p style="margin:0">
+    <b>如果你更在意"以后功能越加越多也不乱"：</b>那选 B。它是四套里唯一<b>天生不会变成长滚动页</b>的，
+    代价只是"改两个设置要进出两次"—— 而每页底部我仍然留了一个常驻主操作来补这个代价。
+  </p>
+  <div class="note" style="margin-top:12px">
+    ⚠ 四套样板里的行情（600519 / 4041 根 / 除权跳空 2023-08-08）都是<b>示意数据</b>，
+    只为把版式撑起来给人眼看，<b>不参与</b> App 任何逻辑；本轮<b>没有改任何一行业务代码</b>。
+  </div>
+</div>
+
+<h2>五、拍板记录（口径已全清，可以开工）</h2>
+<div class="card">
+  <div class="ask">
+    <ol>
+      <li><b>✅ A 方案</b> 已采纳（本页保留四套仅为历史对照）。</li>
+      <li><b>✅ R1–R16 全部口径已定</b>（详见 <a href="ROADMAP.md" style="color:#1976D2;font-weight:700">ROADMAP.md</a>
+        第三节的施工顺序、第五节的拍板记录）。</li>
+      <li><b>✅ 待拍板：0 条</b> —— 只剩"你在样板里确认手感"。
+        ROADMAP 第七节另附我提议的 <b>P1–P9 后续改进</b>（不挡开工，建议最先做
+        <b>P1「'今天涨跌'要说实话」</b>：本地数据旧了就别写"今天"，改写"截至 09-16"）。</li>
+    </ol>
+  </div>
+  <p class="lead" style="margin:14px 0 0">
+    下一步我按 ROADMAP 第三节的顺序出**施工步骤**（每步独立可验收、一个 commit 一步），
+    <b>功能先行、版式收尾</b>：① 修两处真实缺陷（副图排序 / 纵轴对齐）→ ② 分组标签 →
+    ③ 配方库收编内置 + ⚙ 参数窗口（<b>必须同批</b>）→ ④ 拖拽排序 → ⑤ 版式落地 → ⑥ 组合配置单独立项。
+    每步都跑 <code>py tests/smoke_chart.py</code>（444）+ <code>py tests/smoke_pages_overlay.py</code>（261）
+    确认"护栏没被碰坏"。
+  </p>
+</div>
+
+</body>
+</html>

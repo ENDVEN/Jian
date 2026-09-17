@@ -4,26 +4,20 @@
 【职责】选工具 / 添加 / 逐个删除 / 清空 + 面板回执（"现在能画什么、已画了几条"）。
 真正的持久化与图元管理在 `ui/widgets/annotation_layer.py`（管线 B），本模块**只做交互编排**。
 
-【工具清单不手写第二份】分段控件的短标签由 `KIND_LABELS` 派生 —— 交互层加了新类型，
-这里自动跟上（§10-7：口径不重复）。
+【工具清单不手写第二份（★v6.24 换了个来源）】类型清单现在来自
+`ui/widgets/annotation_catalog.py` 的**目录**（32 种、6 类，含"只登记暂不渲染"的预留位）；
+"能画哪些"仍以 `annotation_layer.DRAWABLE_KINDS` 为准 —— 两者**必须一致**，冒烟里有双向断言守着。
 
 【约定】状态留页面（`_annotations`、`current_symbol/current_period`、
-`seg_tool`、`lbl_annotation_status`、`lbl_anno_pill`、`btn_delete_annotation`），
-本模块只承载行为，读写一律走 `self.page.X`。
+**`current_tool`（v6.24：取代 `seg_tool` 的"停在哪一格"）**、`lbl_annotation_status`、
+`lbl_anno_pill`、`btn_delete_annotation`），本模块只承载行为，读写一律走 `self.page.X`。
 """
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from core.utils import period_label
-from data.annotations import KIND_LABELS, KIND_TEXT
+from data.annotations import KIND_TEXT
+from ui.widgets import annotation_catalog
 from ui.widgets.annotation_layer import DRAWABLE_KINDS
-
-# 画线工具的分段控件（★STEP 4：从工具行搬进「✎ 标注」页；类型清单仍与交互层同源）。
-# 分段控件窄，所以用短标签；**完整名以 `KIND_LABELS` 为准**（不手写第二份口径）。
-_TOOL_SHORT_LABELS = {"trend": "趋势", "hline": "水平", "vline": "垂直",
-                      "fib": "斐波", "text": "文字"}
-TOOL_SEGMENTS = (("", "浏览"),) + tuple(
-    (kind, _TOOL_SHORT_LABELS.get(kind, KIND_LABELS.get(kind, kind)))
-    for kind in DRAWABLE_KINDS)
 
 
 class DeskAnnotations:
@@ -36,17 +30,35 @@ class DeskAnnotations:
     # 选工具
     # ==========================================
     def select_tool(self, kind: str) -> None:
-        """选画线工具（分段控件与测试**同一入口**）。空串 = 浏览（不新建）。"""
+        """选画线工具 —— **全 app 唯一入口**（目录 tile / 数字快捷键 / Esc 都走这里）。
+
+        空串 = 浏览模式（不新建）。
+
+        ★v6.24（§7-B8 R10/R11）：类型目录里有 32 种，其中只有一部分**已实现**
+        ⇒ 点到未实现的：**明确告知"还没实现"**（连同"它归在哪一类、编号几"），
+        绝不允许"点了没反应也不说话"（§9-Q 教训：不静默）。
+        """
         p = self.page
         kind = str(kind or "")
         if kind and kind not in DRAWABLE_KINDS:
+            hint = annotation_catalog.placeholder_hint(kind)
+            self._refresh_annotation_status(hint=hint or "这个类型还不能用")
             return
-        if not p.seg_tool.set_current(kind):
-            return
+        p.current_tool = kind
+        self._sync_tool_tiles()
         self._apply_tool(kind)
 
-    def _on_tool_clicked(self, kind: str) -> None:
-        self._apply_tool(str(kind))
+    def select_tool_number(self, number: int) -> None:
+        """数字快捷键 1–9 ⇒ 选中目录里对应编号的类型（未实现的会明确告知）。"""
+        found = annotation_catalog.entry(number)
+        if found:
+            self.select_tool(found["kind"])
+
+    def _sync_tool_tiles(self) -> None:
+        """把选中态同步到目录里的 tile（tile 是**投影**，真源是 `page.current_tool`）。"""
+        p = self.page
+        for kind, tile in (getattr(p, "anno_tiles", None) or {}).items():
+            tile.set_selected(kind == p.current_tool)
 
     def _apply_tool(self, kind: str) -> None:
         p = self.page

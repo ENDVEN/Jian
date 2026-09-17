@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 C · 状态优先（Status-first）</title>
+<link rel="stylesheet" href="shell.css">
+<style>
+/* ============================================================
+   样板 C · 交互模型 =「状态优先 / Status-first」
+   一句话：面板**最上面永远有一块「我现在配的是什么」**（6 行状态，任何页都在），
+          点任一状态行 = 跳到对应页并高亮那个分组 —— 状态是入口，不是装饰。
+
+   为什么这样设计（对应你给的三个优先级）：
+   ① 交互体验：直接治 §7-B6 记的**最痛点**"我配了什么看不见"。
+      状态块常驻 ⇒ 不管你在哪一页，周期 / 复权 / 叠加 / 附图 / 公式 / 标注 六件事
+      永远一眼可见；而且它**可点击**（状态行本身就是"去改它"的入口）。
+   ② 美观：状态块 = 一张浅底卡 + 两列表格（名称 / 值），信息密度高但不吵；
+      下面操作区用"细线分区 + 小标题"，与状态块形成"只读区 ↔ 操作区"的清晰对撞。
+   ③ 扩展性：新功能只要"有状态"就加一行（自动进入总览）；
+      没状态的就加一个分区。⚠ 代价：状态行会随功能增长，需要控制行数（建议 6~8 行内）。
+   ============================================================ */
+.panel{width:338px}
+.pbody{padding:0}
+
+.status{background:#F7FAFF;border-bottom:1px solid var(--line2);padding:10px 12px 9px}
+.stitle{display:flex;align-items:center;gap:6px;font-size:11.3px;font-weight:800;color:var(--accent-deep);
+        letter-spacing:.4px;margin-bottom:7px}
+.stitle .pv{margin-left:auto;font-size:10.6px;color:var(--muted);font-weight:700;
+            background:#fff;border:1px solid var(--line);border-radius:999px;padding:2px 8px}
+.srow{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;cursor:pointer;font-size:12.2px}
+.srow:hover{background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+.srow .sk{color:var(--muted);width:62px;flex:0 0 auto}
+.srow .sv{color:var(--ink2);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow .sv.warn{color:var(--orange)}
+.srow .sd{margin-left:auto;font-size:10.8px;color:var(--faint)}
+.srow:hover .sd{color:var(--accent)}
+.dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:#D7DEE8}
+.dot.on{background:#4CAF50}
+.dot.warn{background:#FFB74D}
+.dot.off{background:#D7DEE8}
+
+.oparea{padding:10px 12px}
+.optitle{font-size:11.3px;font-weight:800;color:var(--muted);letter-spacing:.4px;margin:0 0 8px}
+.csec{padding:9px 0;border-bottom:1px dashed #EEF1F6}
+.csec:last-child{border-bottom:none;padding-bottom:2px}
+.csec .st{display:flex;align-items:center;gap:6px;font-size:12.1px;font-weight:800;color:var(--ink2);margin-bottom:7px}
+.csec .st .lg{margin-left:auto;font-size:11px;color:var(--muted);font-weight:400}
+.rowline{display:flex;align-items:center;gap:8px;font-size:12.3px;color:var(--ink2);padding:3px 0}
+.rowline .sw{margin-left:auto}
+.hint{font-size:11.5px;color:var(--muted);line-height:1.6;margin-top:6px}
+.wl{list-style:none;margin:0;padding:0;border:1px solid var(--line2);border-radius:9px;overflow:hidden;background:#fff}
+.wl li{display:flex;align-items:center;gap:8px;padding:7px 9px;font-size:12.3px;color:var(--ink2);cursor:pointer;border-bottom:1px solid #F4F7FB}
+.wl li:last-child{border-bottom:none}
+.wl li:hover{background:#F7FAFF}
+.wl li.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.wl .code{margin-left:auto;color:var(--muted);font-size:11.2px}
+.wl .chg{width:52px;text-align:right;font-size:11.4px}
+.btnrow{display:flex;gap:6px}
+.btnrow .btn{flex:1;text-align:center}
+.kvchips{display:flex;gap:5px;flex-wrap:wrap}
+.kv{font-size:11px;background:#F2F5FA;border-radius:6px;padding:2px 7px;color:var(--ink2)}
+.kv.b{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.slots{display:flex;gap:5px}
+.slot{flex:1;border:1px dashed #CBD6E4;border-radius:8px;padding:7px 4px;text-align:center;
+      font-size:11px;color:var(--muted);background:#FAFCFF}
+.slot.on{border-style:solid;border-color:#BFE3C8;background:#EAF7EE;color:#2E7D32;font-weight:700}
+.planned{border:1px dashed #CBD6E4;border-radius:9px;padding:8px 10px;color:var(--muted);
+         font-size:11.6px;background:#FAFCFF;margin-top:8px}
+.planned b{color:var(--ink2)}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>行情工作台</h1>
+  <span class="grow"></span>
+  <div class="search"><span class="gray">🔍</span><input value="600519" placeholder="输入代码或中文名 (如: 600519 或 茅台)"></div>
+  <button class="btn pri">查阅</button>
+  <button class="btn ghost">☁️ 云端同步</button>
+  <span class="pill ok">已是最新</span>
+</div>
+
+<div class="toolrow">
+  <span class="seglab">周期</span>
+  <div class="seg" data-onclick="minute"><button class="on">日</button><button>周</button><button>月</button><button>分钟</button></div>
+  <div class="seg minute" id="segMinute"><button class="on">1</button><button>5</button><button>15</button><button>30</button><button>60</button></div>
+  <span class="sep"></span>
+  <span class="seglab">复权</span>
+  <div class="seg"><button class="on">前复权</button><button>不复权</button></div>
+  <span class="sep"></span>
+  <span class="seglab">主图</span>
+  <span class="chip on"><i></i>均线 MA</span><span class="chip"><i></i>布林带 BOLL</span><span class="chip on"><i></i>自定义公式</span>
+  <span class="chip more">＋ 更多</span>
+  <span class="sep"></span>
+  <span class="seglab">附图</span>
+  <span class="chip on"><i></i>成交量</span><span class="chip on"><i></i>MACD</span>
+  <span class="chip more">＋ 更多</span>
+  <span class="grow"></span>
+  <button class="tb" title="打开左栏「✎ 标注工具」页">✎</button>
+  <span class="pill">3 条标注</span>
+</div>
+
+<div class="body">
+  <div class="side" id="side">
+    <div class="rail">
+      <button data-key="watch" class="on" title="自选股">★</button>
+      <button data-key="formula" title="公式与配方">ƒ</button>
+      <button data-key="layer" title="主图叠加 / 附图">◫</button>
+      <button data-key="anno" title="标注工具（画线都在这）">✎<span class="dot on"></span></button>
+      <button data-key="data" title="数据与口径">⛁</button>
+      <button class="fold" id="foldBtn" title="折起工具面板，把宽度让给图表">⇤</button>
+    </div>
+
+    <div class="panel" id="panel">
+      <div class="phead">
+        <div><div class="pt" id="pageTitle">自选股</div><div class="ps" id="pageSub">双击即切换当前标的</div></div>
+      </div>
+
+      <!-- ★ 常驻状态块：任何一页都在，点一行 = 跳到对应页并高亮 -->
+      <div class="status">
+        <div class="stitle">📋 我现在配的是什么<span class="pv">600519 · 600326</span></div>
+        <div class="srow" data-jump="data" data-focus="sec-caliber">
+          <span class="dot on"></span><span class="sk">口径</span><span class="sv">前复权 · 4041 根</span><span class="sd">去改 ›</span></div>
+        <div class="srow" data-jump="data" data-focus="sec-caliber">
+          <span class="dot on"></span><span class="sk">周期</span><span class="sv">日线（可切分钟）</span><span class="sd">去改 ›</span></div>
+        <div class="srow" data-jump="layer" data-focus="sec-main-layer">
+          <span class="dot on"></span><span class="sk">主图叠加</span><span class="sv">均线 · 自定义公式</span><span class="sd">去改 ›</span></div>
+        <div class="srow" data-jump="layer" data-focus="sec-sub-layer">
+          <span class="dot on"></span><span class="sk">附图</span><span class="sv">成交量 · MACD</span><span class="sd">去改 ›</span></div>
+        <div class="srow" data-jump="formula" data-focus="sec-formula">
+          <span class="dot on"></span><span class="sk">公式</span><span class="sv">3 段 · 27 变量 · ✓</span><span class="sd">去改 ›</span></div>
+        <div class="srow" data-jump="anno" data-focus="sec-anno">
+          <span class="dot warn"></span><span class="sk">标注</span><span class="sv warn">3 条 · 1 条已选中</span><span class="sd">去改 ›</span></div>
+      </div>
+
+      <div class="pbody">
+        <!-- ===== ★ 自选股 ===== -->
+        <div data-page="watch" class="on"><div class="oparea">
+          <div class="optitle">★ 自选股 · 操作</div>
+          <div class="csec">
+            <div class="st">📍 当前标的<span class="lg">图上正在看</span></div>
+            <div class="rowline">贵州茅台 <span class="gray num">600519</span>
+              <span style="margin-left:auto;color:#4CAF50;font-weight:700">+1.23%</span></div>
+            <button class="btn block pri" style="margin-top:7px">★ 把当前标的加入自选</button>
+          </div>
+          <div class="csec">
+            <div class="st">📌 自选清单<span class="lg">双击即切换</span></div>
+            <ul class="wl pickable">
+              <li class="on">贵州茅台<span class="code">600519</span><span class="chg" style="color:#4CAF50">+1.23%</span></li>
+              <li>宁德时代<span class="code">300750</span><span class="chg" style="color:#F44336">-0.64%</span></li>
+              <li>五 粮 液<span class="code">000858</span><span class="chg" style="color:#4CAF50">+0.42%</span></li>
+              <li>西藏天路<span class="code">600326</span><span class="chg" style="color:#4CAF50">+2.10%</span></li>
+              <li>比亚迪<span class="code">002594</span><span class="chg" style="color:#F44336">-1.05%</span></li>
+            </ul>
+          </div>
+          <div class="csec">
+            <div class="st">🧰 列表操作</div>
+            <div class="btnrow"><button class="btn sm">🗑 移除</button><button class="btn sm">⬆ 上移</button><button class="btn sm">⬇ 下移</button></div>
+            <div class="hint">顺序 = 你的关注顺序；移除只影响清单，不动本地数据。</div>
+          </div>
+        </div></div>
+
+        <!-- ===== ƒ 公式与配方 ===== -->
+        <div data-page="formula"><div class="oparea">
+          <div class="optitle">ƒ 公式与配方 · 操作</div>
+          <div class="csec" id="sec-formula">
+            <div class="st">ƒ 当前公式<span class="lg">开机自动恢复</span></div>
+            <div class="kvchips"><span class="kv b">段1 → 主图</span><span class="kv b">段2 → 副图 1</span><span class="kv b">段3 → 副图 2</span></div>
+            <div class="hint">来自配方「MACD + 自研均线组」。</div>
+            <button class="btn block pri" style="margin-top:8px">✏️ 编辑公式…</button>
+          </div>
+          <div class="csec">
+            <div class="st">📦 资产化</div>
+            <button class="btn block">💾 存为配方…</button>
+            <button class="btn block" style="margin-top:6px">📚 配方库…</button>
+            <button class="btn block" style="margin-top:6px">📤 送去做回测</button>
+            <div class="hint">配方 = 函数段 + 参数 + 每段目标窗格。</div>
+          </div>
+        </div></div>
+
+        <!-- ===== ◫ 主图叠加 / 附图 ===== -->
+        <div data-page="layer"><div class="oparea">
+          <div class="optitle">◫ 图层 · 操作</div>
+          <div class="csec" id="sec-main-layer">
+            <div class="st">🎛 主图叠加<span class="lg">2 / 3 开</span></div>
+            <div class="rowline">均线 (MA 5/20/60)<span class="sw on"></span></div>
+            <div class="rowline">布林带 (BOLL)<span class="sw"></span></div>
+            <div class="rowline">自定义公式<span class="sw on"></span></div>
+          </div>
+          <div class="csec" id="sec-sub-layer">
+            <div class="st">📊 附图<span class="lg">量 · MACD 开</span></div>
+            <div class="rowline">成交量<span class="sw on"></span></div>
+            <div class="rowline">MACD<span class="sw on"></span></div>
+            <div class="st" style="margin:8px 0 6px">🧮 公式副图</div>
+            <div class="slots"><span class="slot on">副图1 开</span><span class="slot on">副图2 开</span><span class="slot">副图3</span></div>
+            <div class="hint">真源就是这些开关；工具行 chips 只是投影。工具行只显示最近用过的 3 个。</div>
+          </div>
+        </div></div>
+
+        <!-- ===== ✎ 标注工具 ===== -->
+        <div data-page="anno"><div class="oparea">
+          <div class="optitle">✎ 标注工具 · 操作</div>
+          <div class="csec" id="sec-anno">
+            <div class="st">🛠 画线类型<span class="lg">当前：斐波那契</span></div>
+            <div class="seg">
+              <button>浏览</button><button>趋势</button><button>水平</button>
+              <button>垂直</button><button class="on">斐波</button><button>文字</button>
+            </div>
+            <button class="btn block pri" style="margin-top:8px">➕ 在图上添加标注</button>
+            <div class="hint">拖动线条 / 端点调整，松手自动保存。</div>
+          </div>
+          <div class="csec">
+            <div class="st">📌 已有标注<span class="lg">3 条 · 1 条已选中</span></div>
+            <div class="rowline">斐波那契 · 1480.20 ~ 1560.40<span style="margin-left:auto" class="gray">07-18</span></div>
+            <div class="rowline">趋势线<span style="margin-left:auto" class="gray">06-04</span></div>
+            <div class="rowline">水平线 · 1502.00<span style="margin-left:auto" class="gray">05-21</span></div>
+            <button class="btn amber block" style="margin-top:7px">🧽 删除选中（也可按 Delete）</button>
+          </div>
+          <div class="csec">
+            <div class="st" style="color:#C62828">🗑 危险动作<span class="lg">隔离在最后</span></div>
+            <button class="btn danger block">🗑️ 清空本标的标注（需二次确认）</button>
+            <div class="hint">按「标的 + 周期」分开保存；坐标按日期锚定，增量更新不会跑偏。</div>
+          </div>
+          <div class="planned"><b>预留位 · 规划中</b><br>加「测量 / 区间统计」等新画线类型时，
+            只扩展这一页的分段控件；状态块里的「标注」行无需改动。</div>
+        </div></div>
+
+        <!-- ===== ⛁ 数据与口径 ===== -->
+        <div data-page="data"><div class="oparea">
+          <div class="optitle">⛁ 数据与口径 · 说明</div>
+          <div class="csec" id="sec-caliber">
+            <div class="st">📐 当前看的是哪一份<span class="lg">体检通过</span></div>
+            <div class="rowline">口径<span style="margin-left:auto;color:#2E7D32;font-weight:700">前复权</span></div>
+            <div class="rowline">周期<span style="margin-left:auto;color:var(--muted)">日线</span></div>
+            <div class="rowline">根数<span style="margin-left:auto;color:var(--muted)">4041（2010-01-04 ~ 2026-09-16）</span></div>
+            <div class="hint">⚠ 除权跳空最近一次 <b>2023-08-08（-24.8%）</b> —— 前复权以最新价为锚、只改除权日之前，所以只看最近一段时两个口径本来就一模一样（这不是开关失效）。</div>
+          </div>
+          <div class="csec">
+            <div class="st">☁️ 同步规则</div>
+            <div class="hint">本地有 → 只补最新几天；本地没有 → 整段抓取。<br>
+              分钟每次取最近一段快照（各档位深度不同），且不接批量预下载。</div>
+          </div>
+          <div class="csec">
+            <div class="st">🗄 数据管理<span class="lg">危险动作只在那边</span></div>
+            <button class="btn block">🗄 打开数据管理…</button>
+          </div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart">
+    <div class="chead"><span class="sym">贵州茅台 600519</span><span class="sub">日线 · 前复权 · 4041 根</span></div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">最新</div><div class="v num">1520.50</div></div>
+      <div class="kpi"><div class="l">涨跌幅</div><div class="v num" style="color:#4CAF50">+1.23%</div></div>
+      <div class="kpi"><div class="l">成交量</div><div class="v num">312.0 万</div></div>
+      <div class="kpi"><div class="l">MA20</div><div class="v num">1494.80</div></div>
+    </div>
+    <div class="legend"><span><i style="background:#1976D2"></i>MA5</span><span><i style="background:#E65100"></i>MA20</span>
+      <span><i style="background:#4CAF50"></i>涨</span><span><i style="background:#F44336"></i>跌</span></div>
+    <div class="panes">
+      <div class="pane main"><span class="plabel">主图 · K 线 + MA</span><svg id="chartMain"></svg></div>
+      <div class="pane vol"><span class="plabel">成交量</span><svg id="chartVol"></svg></div>
+      <div class="pane macd"><span class="plabel">MACD</span><svg id="chartMacd"></svg></div>
+    </div>
+    <div class="xaxis"><span>2026-04</span><span>2026-05</span><span>2026-06</span><span>2026-07</span><span>2026-08</span><span>2026-09</span></div>
+    <div class="readout">
+      <b>2026-09-16</b><span>开 1502.00</span><span>高 1533.00</span><span>低 1498.00</span>
+      <span>收 <b>1520.50</b></span><span>量 3,120,400</span><span class="tag" style="color:#4CAF50">+1.23%</span><span>MA5 1508.4</span><span>MA20 1494.8</span>
+    </div>
+  </div>
+</div>
+
+<div class="badge"><span class="x" onclick="this.parentNode.remove()">✕</span>
+  <b>样板 C · 状态优先</b><br>
+  顶部「我现在配的是什么」常驻 6 行，点任一行 → 跳到对应页并高亮那个分组。<br>
+  <span style="opacity:.75">试试点状态块的「附图」或「标注」那一行。</span></div>
+
+<script src="shell.js"></script>
+<script>
+/* 状态行 = 入口：先切页，再把该分组高亮一下 */
+document.querySelectorAll('.srow').forEach(function (row) {
+  row.addEventListener('click', function () {
+    window.DeskShell.showPage(row.dataset.jump);
+    var target = document.getElementById(row.dataset.focus);
+    if (target) {
+      target.classList.remove('flash');
+      void target.offsetWidth;          /* 重启动画 */
+      target.classList.add('flash');
+      target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  });
+});
+</script>
+</body>
+</html>

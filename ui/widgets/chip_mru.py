@@ -53,15 +53,19 @@ def normalize_recent(values, *, pool=None, history: int = HISTORY_LIMIT) -> list
     return out[:max(0, int(history))]
 
 
-def push_recent(recent, key: str, *, history: int = HISTORY_LIMIT) -> list[str]:
+def push_recent(recent, key: str, *, pool=None, history: int = HISTORY_LIMIT) -> list[str]:
     """把 `key` 推到队首（"最近使用"= 最近**启用**过一次）。
 
     注意：**取消勾选不会调用它** —— 关闭的项要留在原位变灰（规则 3）。
+
+    ⚠ `pool` 在 v6.24（§7-B8 R13）变成**必须传**的东西：候选池不再是一张静态表
+    （配方库加一条就有新 key），不传的话新键会被 `normalize_recent` 当成池外键**丢掉**
+    —— 表现是"配方用过了却不进最近使用"，而且**不报错**。
     """
     key = str(key or "")
     if not key:
-        return normalize_recent(recent, history=history)
-    rest = [k for k in normalize_recent(recent, history=history + 1) if k != key]
+        return normalize_recent(recent, pool=pool, history=history)
+    rest = [k for k in normalize_recent(recent, pool=pool, history=history + 1) if k != key]
     return [key] + rest[:max(0, int(history) - 1)]
 
 
@@ -77,7 +81,9 @@ def resolve_chips(recent, enabled, *, limit: int = CHIP_LIMIT, pool=None) -> lis
     """
     allowed = tuple(pool) if pool else None
     limit = max(0, int(limit))
-    history = normalize_recent(recent)
+    # ⚠ 历史必须**用它自己那个池**来清洗（v6.24）：默认池是静态表，会把动态 key
+    #   （配方）静默丢掉 ⇒ 表现是"配方关掉后不在工具行留灰位"，违反 §7-B6-D 规则 3
+    history = normalize_recent(recent, pool=pool)
     enabled_set = {str(k) for k in (enabled or []) if str(k)}
 
     def _allowed(key: str) -> bool:

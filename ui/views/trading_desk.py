@@ -65,7 +65,7 @@ from data.sync_service import ADJUST_QFQ
 from data.watchlist_store import WatchlistStore
 from ui.widgets.chart_style import apply_pokorny_style
 from ui.widgets.chip_mru import normalize_recent
-from ui.widgets.desk_annotations import TOOL_SEGMENTS, DeskAnnotations  # noqa: F401
+from ui.widgets.desk_annotations import DeskAnnotations
 from ui.widgets.desk_chips import DeskChips
 from ui.widgets.desk_data import (MINUTE_SEGMENTS, PERIOD_CHOICES,  # noqa: F401
                                   PERIOD_GROUP_MIN, PERIOD_GROUPS, DeskData)
@@ -73,6 +73,7 @@ from ui.widgets.desk_formula import DeskFormula
 from ui.widgets.desk_layers import (DEFAULT_VISIBLE_BARS,  # noqa: F401
                                     SUB_PLOT_HEIGHT, DeskLayers)
 from ui.widgets.desk_layout import RAIL_ITEMS, DeskLayout
+from ui.widgets.layer_model import LayerModel
 from ui.widgets.desk_panel import (PANEL_DEFAULT_WIDTH,  # noqa: F401
                                    RAIL_TOTAL_WIDTH, DeskPanelController)
 from ui.widgets.desk_readout import DeskReadout
@@ -96,6 +97,15 @@ class TradingDeskView(QWidget):
         self.main_win = main_win
         self.data_lake = DataLakeManager()
         self.watchlist = WatchlistStore()
+        # ★v6.24（§7-B8 R1）：**"我在看哪一组"是页面状态、不进存储** —— 存储里只回答
+        #   "这只票属于哪一组"（§11.5-11 单一状态源）。None = 全部（聚合视图）。
+        self.watch_group = None
+        # ★v6.24（§7-B8 R3）：分组当日涨跌的快照缓存（带 TTL）。**懒建** ——
+        #   它在第一次刷新时才需要 loader，而 loader 要用到 data_lake（此刻已就绪）。
+        self.watch_change = None
+        # ★v6.24（§7-B8 R15）：拖拽排序模式 + 闸 3 的顺序底片（进模式时拍一张）
+        self.watch_sort_mode = False
+        self._watch_sort_snapshot: list = []
 
         self.current_symbol = None
         self.current_name = ""
@@ -115,7 +125,8 @@ class TradingDeskView(QWidget):
         # ★STEP 5：读数条 provider 只认"本次真正渲染的那一份 df"（见 render_charts 末尾）
         self._rendered_df = pd.DataFrame()
         # ★STEP 3c：工具行 chips 的"最近使用"历史（记住上次）+ 公式副图逐窗格显示开关。
-        # ⚠ 真源永远是那几个既有的 QCheckBox（chip 只是它的投影）—— 见 `toggle_chip`。
+        # ⚠ 真源是 `layer_model`（**v6.24 起不再是 QCheckBox**）；chips 只是它的投影 ——
+        #   见 `desk_chips.toggle_chip` 与 §11.5-11「单一状态源」。
         self._chip_recent = {
             "main": normalize_recent(self._desk_ui.get("main_chips")),
             "sub": normalize_recent(self._desk_ui.get("sub_chips")),
@@ -134,7 +145,21 @@ class TradingDeskView(QWidget):
         self._formula_params_text = ""
         self._formula_programs: list = []
         self._formula_error = ""
+        # ★v6.24（§7-B8 R13）：**已存配方**按 key 编译的缓存（草稿仍用 `_formula_programs`）
+        self._recipe_programs: dict = {}
+        # ★v6.24（§7-B8 R6）：配方库的「管理模式」（开启后才显示改名/删除；内置项永不显示）
+        self._formula_manage = False
+        # ★v6.24（§7-B8 R10）：当前画线工具 —— 取代旧 `seg_tool` 的"停在哪一格"
+        #   （空串 = 浏览模式；tile 只是它的投影，§11.5-11）
+        self.current_tool = ""
         self._formula_store = get_formula_store()      # 与回测页共用同一个实例
+        # ★v6.24（§7-B8 R13）：图层/配方的**单一真源** —— 取代 `cb_ma/cb_boll/cb_formula/
+        #   cb_vol/cb_macd` 这 5 个 QCheckBox（§11.5-11：同一件事不许两份状态）。
+        #   内置 4 项 + 草稿槽 + 用户配方混排；开关与内置参数都记住上次。
+        self.layer_model = LayerModel(
+            formulas=self._formula_store.all(),
+            enabled=self._desk_ui.get("layer_enabled"),
+            params=self._desk_ui.get("layer_params"))
 
         self._annotation_store = AnnotationStore()
         self._annotations = None               # 需等 ChartHost 建好（见 _setup_ui）
@@ -153,6 +178,9 @@ class TradingDeskView(QWidget):
         self._setup_ui()
         # P7：开机自动恢复"上次用过的配方" —— 直接治好"公式重启就丢"
         self._restore_last_formula()
+        # ★v6.24（§7-B8 R6）：配方库页开机就画一次 —— 配方库为空时也得把两个分区摆出来，
+        #   否则用户看到的是"一片空白"，会以为功能坏了（幂等，可重复调用）
+        self.refresh_recipe_page()
         self._refresh_watchlist()
 
     # ==========================================
@@ -246,11 +274,24 @@ class TradingDeskView(QWidget):
             "sub_chips": data.get("sub_chips") or [],
             "rail_collapsed": bool(data.get("rail_collapsed", False)),
             "panel_page": data.get("panel_page") or "watch",
+            # ★v6.24（§7-B8 R13）：图层开关与内置指标参数 —— 取代 5 个 QCheckBox 的记忆
+            #   （坏值由 `LayerModel` 清洗：未知 key / 越界参数一律回落默认）
+            "layer_enabled": data.get("layer_enabled") or [],
+            "layer_params": data.get("layer_params") or {},
         }
 
     def _save_desk_ui(self, **changes) -> None:
         self._desk_ui.update(changes)
         preferences.set(DESK_UI_KEY, dict(self._desk_ui))
+
+    def _persist_layer_state(self) -> None:
+        """把图层真源（开关 + 内置指标参数）记进偏好 —— **唯一落点**（§11.5-11）。
+
+        别处（chips / ⚙ 参数窗口 / 配方库）都只改 `layer_model`，由这里负责记忆；
+        否则"改一处漏一处"必然发生（§7-B6-D 第 6 条同族）。
+        """
+        self._save_desk_ui(layer_enabled=self.layer_model.enabled_list(),
+                           layer_params=self.layer_model.params_snapshot())
 
     # ==========================================
     # 图表区杂项（两处渲染共用的轴样式，§9-O7）
@@ -299,6 +340,50 @@ class TradingDeskView(QWidget):
 
     def move_watchlist(self, delta: int):
         return self._watch.move_watchlist(delta)
+
+    # ---- §7-B8 R1/R2：分组筛选 / 快添加 / 右键菜单（薄壳，实现全在 desk_watch）----
+    def watch_quick_add(self):
+        return self._watch.watch_quick_add()
+
+    def watch_group_selected(self, key):
+        return self._watch.watch_group_selected(key)
+
+    def watch_list_menu(self, pos):
+        return self._watch.watch_list_menu(pos)
+
+    def create_watch_group(self):
+        return self._watch.create_watch_group()
+
+    def rename_watch_group(self):
+        return self._watch.rename_watch_group()
+
+    def delete_watch_group(self):
+        return self._watch.delete_watch_group()
+
+    def invalidate_change_cache(self):
+        return self._watch.invalidate_change_cache()
+
+    # ---- §7-B8 R15：拖拽排序（三道闸）----
+    def set_watch_sort_mode(self, on):
+        return self._watch.set_watch_sort_mode(on)
+
+    def undo_watch_sort(self):
+        return self._watch.undo_watch_sort()
+
+    def finish_watch_sort(self):
+        return self._watch.finish_watch_sort()
+
+    def on_watch_rows_moved(self, *args):
+        return self._watch.on_watch_rows_moved(*args)
+
+    def apply_watch_sort(self):
+        return self._watch.apply_watch_sort()
+
+    def pick_watch_into_group(self):
+        return self._watch.pick_watch_into_group()
+
+    def move_selected_to_group(self, symbols, group):
+        return self._watch.move_selected_to_group(symbols, group)
 
     def _on_watch_activated(self, item):
         return self._watch._on_watch_activated(item)
@@ -461,6 +546,25 @@ class TradingDeskView(QWidget):
     def open_formula_library(self):
         return self._formula.open_formula_library()
 
+    # ---- §7-B8 R6/R13：配方库页（分区 chip 即开关；管理模式才给改名/删除）----
+    def refresh_recipe_page(self):
+        return self._formula.refresh_recipe_page()
+
+    def toggle_recipe(self, key):
+        return self._formula.toggle_recipe(key)
+
+    def set_formula_manage(self, on):
+        return self._formula.set_formula_manage(on)
+
+    def rename_recipe(self, key):
+        return self._formula.rename_recipe(key)
+
+    def delete_recipe(self, key):
+        return self._formula.delete_recipe(key)
+
+    def open_params(self, key):
+        return self._formula.open_params(key)
+
     def send_formula_to_backtest(self) -> int:
         return self._formula.send_formula_to_backtest()
 
@@ -477,6 +581,10 @@ class TradingDeskView(QWidget):
     # ==========================================
     def select_tool(self, kind: str) -> None:
         return self._annos.select_tool(kind)
+
+    def select_tool_number(self, number: int) -> None:
+        """数字快捷键 1–9（§7-B8 R10）—— 走与 tile 完全同一条 `select_tool` 路径。"""
+        return self._annos.select_tool_number(number)
 
     def _on_tool_clicked(self, kind: str) -> None:
         return self._annos._on_tool_clicked(kind)

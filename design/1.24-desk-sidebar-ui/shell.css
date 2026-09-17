@@ -1,0 +1,166 @@
+/* ============================================================
+   design/1.24-desk-sidebar-ui/shell.css
+   四套「行情工作台 · 侧边栏重设计」样板**共用**的页面外壳。
+
+   只放四套都要用的东西：顶栏两行（L1/L2）+ 图表卡（L0）+ 图标轨 + 通用原子。
+   每套样板**自己**的侧边栏排版写在各自文件的 <style> 里 ——
+   这样对照时"差异只在面板内部"可以一眼看出来。
+
+   配色 = 现状（白卡 / #E4E9F0 / #1976D2）；深色主题已拍板推迟，本轮零色板改动。
+   涨跌色跟 App 一致（CandlestickItem：close>=open 走 COLOR_PROFIT 绿）。
+   ============================================================ */
+:root{
+  --bg:#F4F6FA; --card:#fff; --line:#E4E9F0; --line2:#EEF1F6;
+  --ink:#212121; --ink2:#3C4552; --muted:#8A94A6; --faint:#B4BECB;
+  --accent:#1976D2; --accent-deep:#1565C0; --accent-soft:#E8F2FE;
+  --up:#4CAF50; --down:#F44336; --orange:#E65100;
+  --shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.06);
+  --radius:12px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);overflow:hidden;
+     font:13px/1.55 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+     display:flex;flex-direction:column;padding:12px 14px 0;gap:9px}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input{font:inherit}
+.num{font-variant-numeric:tabular-nums;font-family:Consolas,"Cascadia Mono",monospace}
+.grow{flex:1}
+.gray{color:var(--muted)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ---------- L1 顶栏：标题 + 查阅 + 云端同步 ---------- */
+.top{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.top h1{margin:0;font-size:22px;font-weight:800;letter-spacing:.2px}
+.search{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;
+        border-radius:8px;padding:7px 12px;box-shadow:var(--shadow)}
+.search input{border:none;outline:none;width:196px;color:var(--ink);background:transparent}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 13px;font-size:12.5px;
+     color:var(--ink2);box-shadow:0 1px 1px rgba(16,24,40,.03)}
+.btn:hover{border-color:#C9D6E8;background:#F7FAFF}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700;
+         box-shadow:0 4px 12px rgba(25,118,210,.24)}
+.btn.pri:hover{background:var(--accent-deep)}
+.btn.ghost{border-color:#BBDEFB;color:var(--accent);font-weight:700}
+.btn.ghost:hover{background:var(--accent-soft)}
+.btn.danger{background:#FFEBEE;border-color:#FFCDD2;color:#C62828;font-weight:700}
+.btn.amber{background:#FFF8E1;border-color:#FFE082;color:var(--orange);font-weight:700}
+.btn.block{display:block;width:100%;text-align:center}
+.btn.sm{padding:6px 10px;font-size:12.2px}
+.pill{font-size:11.5px;border-radius:999px;padding:4px 10px;font-weight:700;
+      background:#F1F4F9;color:var(--muted);white-space:nowrap}
+.pill.blue{background:var(--accent-soft);color:var(--accent-deep)}
+.pill.ok{background:#EAF7EE;color:#2E7D32}
+.pill.warn{background:#FFF3E0;color:var(--orange)}
+.pill.bad{background:#FDECEA;color:#C62828}
+
+/* ---------- L2 工具行：周期 / 复权 / chips / 标注入口 ---------- */
+.toolrow{display:flex;align-items:center;gap:8px;flex:0 0 auto;overflow-x:auto;padding-bottom:2px}
+.seglab{font-size:12px;color:var(--muted);font-weight:700;flex:0 0 auto}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:0 0 auto;background:#fff}
+.seg button{padding:6px 11px;font-size:12.4px;color:var(--muted);background:#FBFCFE}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button:hover{background:#F4F9FF}
+.seg button.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.seg.minute{display:none}
+.seg.minute.show{display:flex}
+.sep{width:1px;height:20px;background:var(--line);flex:0 0 auto}
+.chip{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);
+      background:#FBFCFE;color:var(--muted);font-size:12.3px;white-space:nowrap;flex:0 0 auto}
+.chip:hover{border-color:#A9C7EA;background:#F4F9FF}
+.chip.on{background:#EAF7EE;border-color:#BFE3C8;color:#2E7D32;font-weight:700}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--faint);display:block}
+.chip.on i{background:#4CAF50;box-shadow:0 0 0 3px #EAF7EE}
+.chip.more{border-style:dashed;color:var(--accent);border-color:#BBDEFB;background:#F7FBFF;font-weight:700}
+.tb{border:1px solid var(--line);border-radius:8px;width:32px;height:30px;display:grid;place-items:center;
+    color:var(--muted);background:#FBFCFE;font-size:13px;flex:0 0 auto}
+.tb:hover{border-color:#A9C7EA;color:var(--accent)}
+.caliber{font-size:11.5px;color:var(--orange);flex:0 0 auto}
+
+/* ---------- 主体：左栏（图标轨 + 面板）+ 图表 ---------- */
+.body{flex:1 1 auto;min-height:0;display:flex;gap:9px;padding-bottom:12px}
+.side{flex:0 0 auto;display:flex;gap:8px;min-height:0}
+
+/* 图标轨（常驻 52px；折起后仍能切页） */
+.rail{width:52px;flex:0 0 auto;background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+      box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;
+      padding:8px 6px;gap:4px}
+.rail button{width:40px;height:38px;border-radius:9px;color:var(--muted);font-size:16px;
+             display:grid;place-items:center;position:relative}
+.rail button:hover{background:#F2F5FA;color:var(--ink2)}
+.rail button.on{background:var(--accent-soft);color:var(--accent);font-weight:700}
+.rail button.on::before{content:"";position:absolute;left:-6px;top:9px;bottom:9px;width:3px;
+                        border-radius:0 3px 3px 0;background:var(--accent)}
+.rail .fold{margin-top:auto;font-size:13px;color:var(--faint)}
+.rail .dot{position:absolute;right:6px;top:5px;width:6px;height:6px;border-radius:50%;background:#4CAF50}
+
+/* 面板（各样板内部排版不同，这里只给"壳"） */
+.panel{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);
+       display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.phead{display:flex;align-items:center;gap:8px;padding:11px 13px 9px;border-bottom:1px solid var(--line2);flex:0 0 auto}
+.phead .pt{font-size:13.5px;font-weight:800;color:var(--ink)}
+.phead .ps{font-size:11.5px;color:var(--muted)}
+.phead .foldbtn{margin-left:auto;font-size:12px;color:var(--muted);padding:3px 7px;border-radius:6px;flex:0 0 auto}
+.phead .foldbtn:hover{background:#F2F5FA;color:var(--accent)}
+.pbody{flex:1 1 auto;min-height:0;overflow:auto;padding:11px 13px}
+.pfoot{flex:0 0 auto;border-top:1px solid var(--line2);padding:9px 13px;background:#FCFDFF}
+.pages{display:contents}
+[data-page]{display:none}
+[data-page].on{display:block}
+
+/* 折起：面板宽度归零，宽度还给图表（与 §7-B6 STEP 4 的真实行为一致） */
+.side.collapsed .panel{display:none}
+
+/* 分段小标题 / 灰字说明（现状语言） */
+.sec{font-size:11.5px;font-weight:800;color:var(--muted);letter-spacing:.4px;margin:0 0 6px}
+.hint{font-size:11.6px;color:var(--muted);line-height:1.62}
+.card{border:1px solid var(--line2);border-radius:10px;background:#FCFDFF;padding:10px 11px}
+
+/* 开关（A/C/D 三套都用；Qt 侧对应 QCheckBox，名字不变） */
+.sw{width:34px;height:19px;border-radius:999px;background:#D7DEE8;position:relative;flex:0 0 auto;
+    transition:background .15s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;
+           background:#fff;box-shadow:0 1px 3px rgba(16,24,40,.25);transition:left .15s}
+.sw.on{background:#4CAF50}
+.sw.on::after{left:17px}
+
+/* ---------- L0 图表卡 ---------- */
+.chart{flex:1 1 auto;min-width:0;background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+       box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+.chead{display:flex;align-items:flex-end;gap:10px;padding:11px 15px 2px;flex:0 0 auto}
+.chead .sym{font-size:15.5px;font-weight:800}
+.chead .sub{font-size:11.8px;color:var(--muted);padding-bottom:2px}
+.kpis{display:flex;gap:8px;padding:8px 15px 0;flex:0 0 auto}
+.kpi{background:#FBFCFE;border:1px solid var(--line2);border-radius:9px;padding:5px 10px;min-width:96px}
+.kpi .l{color:var(--muted);font-size:10.8px}
+.kpi .v{font-size:15px;font-weight:800}
+.legend{display:flex;gap:14px;padding:7px 15px 0;font-size:11.6px;color:var(--muted);flex:0 0 auto}
+.legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:4px}
+.panes{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:3px;padding:5px 10px 0}
+.pane{position:relative;background:#fff}
+.pane.main{flex:1 1 auto;min-height:0}
+.pane.vol{height:78px;flex:0 0 auto}
+.pane.macd{height:88px;flex:0 0 auto}
+.pane svg{width:100%;height:100%;display:block}
+.plabel{position:absolute;left:6px;top:2px;font-size:10.4px;color:var(--faint);letter-spacing:.4px}
+.readout{display:flex;align-items:center;gap:12px;padding:7px 15px 9px;font-size:11.8px;color:var(--ink2);
+         flex:0 0 auto;border-top:1px solid var(--line2);background:#FCFDFF;flex-wrap:wrap}
+.readout b{font-weight:700}
+.readout .tag{background:#F1F4F9;border-radius:6px;padding:2px 7px;font-size:11px;color:var(--ink2);font-weight:700}
+.xaxis{display:flex;justify-content:space-between;padding:2px 15px 4px;font-size:10.8px;color:var(--faint);flex:0 0 auto}
+
+/* 规划中 / 预留位（四套都用它展示"后期加功能往哪长"） */
+.planned{border:1px dashed #CBD6E4;border-radius:10px;padding:8px 10px;color:var(--muted);
+         font-size:11.8px;background:#FAFCFF}
+.planned b{color:var(--ink2)}
+.planned .tp{font-size:10.6px;font-weight:800;color:var(--faint);letter-spacing:.5px}
+
+/* 被"跳转"命中时的瞬时高亮（C 样板点状态行 → 跳到对应分组） */
+.flash{animation:flash 0.9s ease-out}
+@keyframes flash{0%{background:#FFF6D9;box-shadow:0 0 0 2px #FFE082 inset}100%{background:transparent;box-shadow:none}}
+
+/* 右下角说明角标 */
+.badge{position:fixed;right:14px;bottom:12px;background:rgba(33,33,33,.9);color:#fff;border-radius:10px;
+       padding:9px 13px;font-size:12px;line-height:1.6;z-index:40;max-width:430px}
+.badge b{color:#8BC34A}
+.badge .x{float:right;margin-left:10px;opacity:.6;cursor:pointer}

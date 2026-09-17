@@ -260,13 +260,27 @@ check("已支持的 STICKLINE 不进未渲染名单",
 
 print("== 行情页：内置指标与用户公式统一图层（§7-B3 P4，窗格已迁 ChartHost）==")
 mkt = win.page_market
+
+
+# ★v6.24（§7-B8 R13）：图层开关的**唯一真源**已从 5 个 QCheckBox 换成 `mkt.layer_model`。
+#   ⚠ 旧写法 `_layer("ma", True)` 之所以"顺手重渲染"，是因为 QCheckBox 的
+#     `stateChanged` 连着回流；换真源之后**那个信号不存在了** ⇒ 测试也必须显式走同一条
+#     回流路径，否则会写出"改了状态但图没动"的**假测试**（最坏的一类：它绿着，功能是坏的）。
+def _layer(key, on=True):
+    if str(key) == "formula":
+        mkt._compile_formula()      # 确保草稿槽已在模型里（测试常直接赋值 _formula_segments）
+        key = "draft"
+    mkt.layer_model.set_enabled(key, on)
+    mkt._on_layer_switch_changed()
+
+
 mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
 mkt.current_df = df                      # 复用上面的合成行情
-mkt.cb_ma.setChecked(True)
-mkt.cb_boll.setChecked(False)
-mkt.cb_vol.setChecked(True)
-mkt.cb_macd.setChecked(False)
-mkt.cb_formula.setChecked(True)
+_layer("ma", True)
+_layer("boll", False)
+_layer("volume", True)
+_layer("macd", False)
+_layer("formula", True)
 mkt._formula_segments = [("STICKLINE(C > MA(C,5), 0, 0, 3, 0), COLORFF0000;", 'main')]
 mkt._formula_params_text = ""
 mkt._compile_formula()
@@ -283,10 +297,10 @@ check("用户状态柱 → _StickItem（与内置走同一渲染器）",
       sum(1 for it in mkt._layer_items if it.__class__.__name__ == '_StickItem') == 1)
 
 # 开关行为与 MA/BOLL **完全一致**（重渲染）：关掉公式只影响公式图层，内置指标保留
-mkt.cb_formula.setChecked(False)
+_layer("formula", False)
 check("关掉公式后只剩内置图层（3 条）", len(mkt._layer_items) == 3
       and all(it.__class__.__name__ != '_StickItem' for it in mkt._layer_items))
-mkt.cb_formula.setChecked(True)
+_layer("formula", True)
 check("再打开恢复公式图层（4 个）", len(mkt._layer_items) == 4)
 
 # 公式在某标的上算不出来时：不打断整页渲染，只把原因写在面板上
@@ -308,7 +322,7 @@ check("副图量级误放主图 → 面板给出'改用副图'的建议",
 check("完整引导进 tooltip", "相差很大" in mkt.lbl_formula_status.toolTip())
 
 print("== 行情页：多副图 + 跨段共享变量池（v6.8 · P5）==")
-mkt.cb_macd.setChecked(True)          # 触发一次重渲染（与用户点开关等价）
+_layer("macd", True)          # 触发一次重渲染（与用户点开关等价）
 mkt._formula_segments = [
     ("基线 := MA(C,5);\n主图线: 基线, COLORWHITE;", 'main'),
     ("离差: C - 基线, COLORYELLOW;", 'sub1'),          # 引用段1变量 → 跨目标共享池
@@ -339,10 +353,10 @@ check("非最下窗格保留轴线（旧观感）", mkt.main_plot.getAxis('botto
 check("状态汇总落点分布", "主图 1" in mkt.lbl_formula_status.text()
       and "副图 2 格" in mkt.lbl_formula_status.text())
 
-mkt.cb_formula.setChecked(False)
+_layer("formula", False)
 check("关掉开关后公式副图全部消失", mkt.formula_plots == {}
       and mkt.host.pane_names == ['main', 'vol', 'macd'])
-mkt.cb_formula.setChecked(True)
+_layer("formula", True)
 check("重新打开后按需恢复", set(mkt.formula_plots) == {'sub1', 'sub2'})
 
 print("== 公式对话框：每段目标窗格 + 示例模板 ==")
@@ -393,7 +407,7 @@ mkt._annotations._store = store
 
 mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
 mkt.current_df = df
-mkt.cb_ma.setChecked(True)          # 触发一次完整重渲染（含标注 bind）
+_layer("ma", True)          # 触发一次完整重渲染（含标注 bind）
 check("标注层已绑定当前标的", mkt._annotations._symbol == 'sh600000')
 check("初始无标注、删除按钮禁用",
       mkt._annotations.count() == 0 and not mkt.btn_delete_annotation.isEnabled())
@@ -420,7 +434,7 @@ check("落库坐标是日期（不是 bar 序号）", trend["points"][0][0] ==
 check("新建后删除按钮可用（已自动选中新对象）", mkt.btn_delete_annotation.isEnabled())
 
 # —— 重渲染（改指标开关）后标注仍在：证明"读盘恢复"而非"内存残留" ——
-mkt.cb_boll.setChecked(True)
+_layer("boll", True)
 check("重渲染后 3 条标注仍在图上", len(mkt._annotations._items) == 3)
 check("重渲染不产生重复条目", store.count('sh600000') == 3)
 
@@ -562,6 +576,13 @@ from ui.widgets.annotation_layer import DRAWABLE_KINDS  # noqa: E402
 # ⚠ 同样用**临时库**：自选股与标注都不碰用户真实文件
 tmp_p8 = tempfile.mkdtemp(prefix="jian_p8_")
 mkt.watchlist = WatchlistStore(os.path.join(tmp_p8, "watchlist.json"))
+# ★ 换库之后必须**同时**归零筛选条件并重刷目标分组下拉 ——
+#   否则「目标分组」还是拿**上一个库（= 用户真实库）**的分组名填的，
+#   于是断言结果取决于"用户真实库里有没有那个分组"（本套件真红过：
+#   用户库里有个「红利组合」，新增就落到它名下 ⇒ 清单被筛成 1 条）。
+#   ⚠ 这正是 §11.7 那条纪律的另一面：**测试不只不能写脏用户库，也不能读它当依据**。
+mkt.watch_group = None
+mkt._refresh_watchlist()
 p8_store = AnnotationStore(os.path.join(tmp_p8, "annotations.json"))
 mkt._annotations._store = p8_store
 
@@ -574,11 +595,13 @@ mkt.add_to_watchlist()
 check("重复加入不产生重复项", mkt.watchlist.count() == 1)
 mkt.watchlist.add('sz000001', '平安银行')
 mkt._refresh_watchlist()
-check("列表条数与库一致", mkt.lst_watch.count() == 2)
+check(f"列表条数与库一致（库={mkt.watchlist.symbols()} 组={mkt.watch_group!r} "
+      f"列表={mkt.lst_watch.count()}）", mkt.lst_watch.count() == 2)
 
 mkt.lst_watch.setCurrentRow(1)
 mkt.move_watchlist(-1)
-check("上移改变顺序（顺序 = 用户关注顺序）", mkt.watchlist.symbols()[0] == 'SZ000001')
+check(f"上移改变顺序（顺序 = 用户关注顺序；实={mkt.watchlist.symbols()}）",
+      mkt.watchlist.symbols()[0] == 'SZ000001')
 mkt.move_watchlist(1)
 check("下移恢复原顺序", mkt.watchlist.symbols()[1] == 'SZ000001')
 
@@ -593,8 +616,338 @@ check("双击自选即切换标的（本地无数据时自动转同步）",
 
 mkt.lst_watch.setCurrentRow(1)
 mkt.remove_from_watchlist()
-check("移除选中项（库与列表同步）",
+check(f"移除选中项（库与列表同步；实 库={mkt.watchlist.count()} 列表={mkt.lst_watch.count()}）",
       mkt.watchlist.count() == 1 and mkt.lst_watch.count() == 1)
+
+# ==========================================
+# ★ §7-B8 R1/R2/R3（v6.24）：自选分组 / 两种添加入口 / 移出本组
+# ==========================================
+from data.watchlist_store import DEFAULT_GROUP  # noqa: E402
+from ui.widgets.custom_widgets import AddChip, GroupChip  # noqa: E402
+
+mkt.show_rail_page("watch")
+_watch_body = mkt.desk_panel.body("watch")
+check("自选页按 A 方案重排：添加卡 / 分组卡 / 清单卡 / 预留位 / 分组管理都在自选页内",
+      all(_watch_body.isAncestorOf(w) for w in (
+          mkt.card_watch_add, mkt.card_watch_groups, mkt.card_watch_list,
+          mkt.lbl_watch_planned, mkt.card_watch_manage)))
+check("分组管理默认**收起**（影响结构的动作不摊在日常动线里），添加卡片默认展开",
+      not mkt.card_watch_manage.is_open() and mkt.card_watch_add.is_open())
+
+mkt.card_watch_groups.set_open(False)
+check("手风琴收起：内容隐藏但**卡头仍在**（收起后卡头就是唯一可见的状态行）",
+      mkt.card_watch_groups.is_open() is False
+      and not mkt.watch_chip_host.isVisibleTo(mkt.card_watch_groups)
+      and mkt.card_watch_groups.title.isVisibleTo(mkt.card_watch_groups))
+mkt.card_watch_groups.set_open(True)
+check("再展开 ⇒ 内容回来（折叠可逆）",
+      mkt.card_watch_groups.is_open() and mkt.watch_chip_host.isVisibleTo(mkt.card_watch_groups))
+
+
+def _chip_widgets():
+    return [mkt.watch_chip_lay.itemAt(i).widget()
+            for i in range(mkt.watch_chip_lay.count())]
+
+
+def _group_chips():
+    return [w for w in _chip_widgets() if isinstance(w, GroupChip)]
+
+
+mkt.watchlist.add('600519', '贵州茅台')
+mkt.watchlist.create_group('核心白马')
+mkt._refresh_watchlist()
+_chip_keys = [chip.key for chip in _group_chips()]
+check("分组胶囊每次从 store **重建**：「全部」在前 + 默认分组 + 新建的空组（空组也要看得见）",
+      _chip_keys[0] is None and set(_chip_keys[1:]) == {DEFAULT_GROUP, '核心白马'})
+check("「＋ 新建分组」胶囊在同一条动线里（虚线边 = 与真实分组一眼区分）",
+      any(isinstance(w, AddChip) for w in _chip_widgets()))
+check("目标分组下拉与胶囊**同源**（都来自 store.groups()，不存第二份状态）",
+      [mkt.cmb_watch_group.itemData(i) for i in range(mkt.cmb_watch_group.count())]
+      == mkt.watchlist.groups())
+check("卡头即状态：分组卡写着「N 组 · M 只」，清单卡写着当前组名与只数",
+      "组" in mkt.card_watch_groups.state_text()
+      and "只" in mkt.card_watch_list.title_text())
+
+mkt.watch_group_selected('核心白马')
+check("点分组胶囊 ⇒ 清单只显示该组成员（空组 = 0 条，既不崩也不隐藏）",
+      mkt.watch_group == '核心白马' and mkt.lst_watch.count() == 0)
+mkt.watch_group_selected(None)
+check("切回「全部」⇒ 清单恢复全部成员",
+      mkt.watch_group is None and mkt.lst_watch.count() == mkt.watchlist.count())
+
+# 快添加：把"名称 → 代码"的解析换成假函数（测试不碰真花名册、更不联网）
+_saved_resolver = mkt._watch._resolve_keyword
+mkt._watch._resolve_keyword = lambda keyword: (('600519', '贵州茅台')
+                                              if keyword == '茅台' else ('', ''))
+mkt.txt_watch_quick.setText('茅台')
+mkt.cmb_watch_group.setCurrentIndex(mkt.cmb_watch_group.findData('核心白马'))
+mkt.add_to_watchlist()
+check("★ 快添加：输入名称 → 解析成代码 → 进**下拉选中的分组**，并自动切到该组",
+      mkt.watchlist.group_of('600519') == '核心白马' and mkt.watch_group == '核心白马'
+      and mkt.lst_watch.count() == 1 and mkt.txt_watch_quick.text() == '')
+check("快添加：查不到的词返回空（由调用方提示，**不静默塞一个错代码**进自选）",
+      mkt._watch._resolve_keyword('查无此票') == ('', '') and mkt.watchlist.count() == 2)
+mkt._watch._resolve_keyword = _saved_resolver
+
+mkt.lst_watch.setCurrentRow(0)
+check("按钮文字随上下文变：正在看某个分组 ⇒ 「移出本组」",
+      mkt.btn_watch_remove.text() == '↗ 移出本组')
+mkt.remove_from_watchlist()
+check("★ 「移出本组」只解绑归类：票**仍留在自选里**，只是回到默认分组",
+      mkt.watchlist.count() == 2 and mkt.watchlist.group_of('600519') == DEFAULT_GROUP
+      and mkt.lst_watch.count() == 0)
+mkt.watch_group_selected(None)
+check("切回「全部」⇒ 按钮变成「移除」（同一个按钮、按上下文换含义）",
+      mkt.btn_watch_remove.text() == '🗑 移除' and mkt.lst_watch.count() == 2)
+
+mkt.watch_group_selected(DEFAULT_GROUP)
+mkt.rename_watch_group()
+check("默认分组不可改名（点了只给回执，不弹输入框）",
+      mkt.watch_group == DEFAULT_GROUP and mkt.watchlist.count() == 2)
+mkt.delete_watch_group()
+check("★ 默认分组不可删（它是所有解绑动作的落点；点了也不会弹确认框）",
+      mkt.watchlist.has_group(DEFAULT_GROUP) and mkt.watchlist.count() == 2)
+mkt.watch_group_selected(None)
+mkt.rename_watch_group()
+check("「全部」不可改名（它是聚合视图，不是真实分组）", mkt.watch_group is None)
+
+# ---- ★ §7-B8 R3：组合当日涨跌（等权 + 缺数据不算 + ⚠）----
+from data.sync_service import ADJUST_NONE, ADJUST_QFQ  # noqa: E402
+from data.watchlist_change import ChangeSnapshot  # noqa: E402
+from ui.widgets.custom_widgets import CHIP_VALUE_NEUTRAL, CHIP_VALUE_UP  # noqa: E402
+
+_BARS = {
+    'SH600000': [('2026-09-16', 10.0), ('2026-09-17', 10.5)],      # +5.00%
+    'SZ000001': [('2026-09-16', 20.0), ('2026-09-17', 19.6)],      # −2.00%
+    '600519':   [('2026-09-16', 100.0), ('2026-09-17', 100.0)],    # 0.00%（平）
+}
+
+
+def _fake_loader(symbol):
+    """假日线：不在表里的票返回空表 ⇒ 走"没有行情数据"那条缺失分支（不碰真库、不联网）。"""
+    bars = _BARS.get(symbol) or []
+    return pd.DataFrame({'date': [d for d, _c in bars], 'close': [c for _d, c in bars]})
+
+
+def _chip_by_key(key):
+    return next((chip for chip in _group_chips() if chip.key == key), None)
+
+
+mkt.watchlist.clear()
+mkt.watchlist.add('SH600000', '测试股')
+mkt.watchlist.add('SZ000001', '平安银行')
+mkt.watchlist.add('600519', '贵州茅台')
+mkt.watchlist.add('300750', '宁德时代')       # 没有行情数据 ⇒ 该打 ⚠
+mkt.watch_group = None
+mkt.watch_change = ChangeSnapshot(_fake_loader, ttl_seconds=600)
+mkt._refresh_watchlist()
+
+check("「全部」是聚合视图：**显示只数、不显示涨跌**（与样板一致，也免得胶囊虚胖）",
+      _chip_by_key(None).count_text() == "4 只" and _chip_by_key(None).value_text() == "")
+
+_all_chip = _chip_by_key(DEFAULT_GROUP)
+check("★ 组合当日涨跌（等权）：(−2.00% + 0.00% + 5.00%) / 3 = +1.00%（**缺数据那只不进分母**）",
+      _all_chip is not None and _all_chip.value_text() == "+1.00%")
+check("★ 明确排除「按 0% 冲淡」那个错值（4 只全算会是 +0.75%）",
+      _all_chip.value_text() != "+0.75%")
+check("涨用绿（与 K 线涨色同源）", _all_chip.value_color() == CHIP_VALUE_UP)
+check("⚠ 打在胶囊上，tooltip 说得出「是哪一只、为什么」",
+      _all_chip.warn_text() == "⚠" and "宁德时代" in _all_chip.warn_tooltip()
+      and "没算进去" in _all_chip.warn_tooltip())
+check("卡头也写组合涨跌（**收起时照样看得见**）",
+      mkt.card_watch_list.state_text() == "组合 +1.00%")
+check("有票缺数据 ⇒ 卡头转**警示色**（不是假装一切正常）",
+      mkt.card_watch_list.state_kind() == "warn")
+
+mkt.watchlist.create_group('上涨组')
+mkt.watchlist.create_group('平盘组')
+mkt.watchlist.create_group('空组')
+mkt.watchlist.set_group('SH600000', '上涨组')
+mkt.watchlist.set_group('600519', '平盘组')
+mkt._refresh_watchlist()
+check("单票组 = 该票自己的涨跌",
+      _chip_by_key('上涨组').value_text() == "+5.00%"
+      and _chip_by_key('上涨组').value_color() == CHIP_VALUE_UP)
+check("★ 平盘（0.00%）用**中性灰** —— 把「平」画成绿会让人以为它在涨",
+      _chip_by_key('平盘组').value_text() == "0.00%"
+      and _chip_by_key('平盘组').value_color() == CHIP_VALUE_NEUTRAL)
+check("空组 ⇒ **不写 0.00%**（一只都没算出来），只显示「0 只」",
+      _chip_by_key('空组').value_text() == "" and _chip_by_key('空组').count_text() == "0 只")
+check("这一组没有缺数据的票 ⇒ 不打 ⚠", _chip_by_key('上涨组').warn_text() == "")
+
+mkt.current_adjust = ADJUST_NONE          # 顶部切到"不复权"
+mkt._refresh_watchlist()
+check("★ 组合涨跌固定读**前复权**日线，与顶部「复权」选择无关（那个只管图上给你看哪一份）",
+      _chip_by_key('上涨组').value_text() == "+5.00%")
+mkt.current_adjust = ADJUST_QFQ
+
+check("快照在两次刷新之间被复用（不是每次刷新都重读 N 份日线）",
+      mkt.watch_change.cached_count() == 4)
+mkt.invalidate_change_cache()
+check("同步完成后快照失效（否则 TTL 内会拿同步前的旧读数当今天）",
+      mkt.watch_change.cached_count() == 0)
+mkt._refresh_watchlist()
+check("失效后刷新会重新算（缓存重新长出条目）", mkt.watch_change.cached_count() == 4)
+
+# ---- ★ §7-B8 R2：第二种添加入口「📋 从自选股里挑选…」----
+from ui.dialogs.watchlist_picker import WatchlistPickerDialog  # noqa: E402
+
+check("「从自选股里挑选…」按钮在**添加卡片**里（与快添加同一条动线）",
+      mkt.card_watch_add.isAncestorOf(mkt.btn_watch_pick)
+      and mkt.btn_watch_pick.isVisibleTo(mkt.card_watch_add))
+
+_picker = WatchlistPickerDialog(entries=mkt.watchlist.entries_all(),
+                                groups=mkt.watchlist.groups(),
+                                current_group=DEFAULT_GROUP, parent=mkt)
+check("弹窗列出**全部自选**（不是只有当前分组）—— 整理分组时必须能跨组挑",
+      _picker.list_widget.count() == mkt.watchlist.count() == 4)
+check("弹窗的目标下拉与分组胶囊**同源**",
+      [_picker.cmb_group.itemData(i) for i in range(_picker.cmb_group.count())]
+      == mkt.watchlist.groups())
+check("没选任何一只时「移入」是灰的（点了什么都不做的按钮最让人困惑）",
+      _picker.selected_symbols() == [] and not _picker.btn_move.isEnabled())
+
+_picker.list_widget.setCurrentRow(0)
+_picker.list_widget.item(2).setSelected(True)
+check("多选生效，且按钮上写着「选了几只」（用户不必猜）",
+      len(_picker.selected_symbols()) == 2 and _picker.btn_move.isEnabled()
+      and "2 只" in _picker.btn_move.text())
+_picker.cmb_group.setCurrentIndex(_picker.cmb_group.findData('空组'))
+check("弹窗只回答「选了哪些 / 移到哪」，**自己不落库**",
+      _picker.target_group() == '空组' and mkt.watchlist.group_of('SH600000') == '上涨组')
+
+_moved = mkt.move_selected_to_group(_picker.selected_symbols(), _picker.target_group())
+check("★ 批量移入：条数正确，且票**一只都没少**（只改归类，绝不删票）",
+      _moved == 2 and mkt.watchlist.count() == 4
+      and set(mkt.watchlist.symbols_in('空组')) == set(_picker.selected_symbols()))
+check("移完**自动切到目标分组**（否则「移进去了却看不见」）",
+      mkt.watch_group == '空组' and mkt.lst_watch.count() == 2)
+check("★ 已在目标组里的票不会被重复计数（幂等，不产生假回执）",
+      mkt.move_selected_to_group(['SH600000'], '空组') == 0)
+
+mkt.watch_group_selected(None)
+check("回到「全部」视图：4 只一只不少", mkt.lst_watch.count() == 4)
+
+# ---- ★ §7-B8 R15 / 2b 余项：自选行的三段式绘制（名称 · 代码右对齐 · 涨跌列）----
+import pandas as _pd  # noqa: E402
+from PyQt6.QtCore import QRect  # noqa: E402
+from PyQt6.QtGui import QPainter, QPixmap  # noqa: E402
+from PyQt6.QtWidgets import QStyleOptionViewItem  # noqa: E402
+
+from data.watchlist_change import ChangeSnapshot  # noqa: E402
+from ui.widgets.watch_row_delegate import (DIR_UNKNOWN, DIR_UP, ROLE_SYMBOL,  # noqa: E402
+                                           WatchRowDelegate, change_of)
+
+
+def _bars(pct):
+    return _pd.DataFrame({"date": ["2026-09-16", "2026-09-17"],
+                          "close": [100.0, 100.0 * (1 + pct / 100.0)]})
+
+
+mkt.watch_change = ChangeSnapshot(
+    lambda symbol: _bars(2.5) if symbol == "600519" else _pd.DataFrame())
+mkt._refresh_watchlist()
+_rows = {mkt.lst_watch.item(i).data(ROLE_SYMBOL): change_of(mkt.lst_watch.item(i))
+         for i in range(mkt.lst_watch.count())}
+check("★ 行右侧带涨跌列：有数据的行 =「+2.50%」（方向=涨）",
+      _rows.get("600519") == ("+2.50%", DIR_UP))
+check("★ 没数据的行写「—」（**绝不是 0.00%** —— 没数据就说没数据，§10-4）",
+      all(value == ("—", DIR_UNKNOWN) for key, value in _rows.items() if key != "600519"))
+
+check("用 delegate 而非 setItemWidget（后者会把**选中高亮**盖掉）",
+      isinstance(mkt.lst_watch.itemDelegate(), WatchRowDelegate)
+      and mkt.watch_row_delegate.sizeHint(
+          QStyleOptionViewItem(), mkt.lst_watch.model().index(0, 0)).height() == 27)
+
+# 真画一行进 pixmap：绘制路径的冒烟 + 量"三段各自落了墨"
+_pix = QPixmap(300, 27)
+_pix.fill(Qt.GlobalColor.transparent)
+_painter = QPainter(_pix)
+_option = QStyleOptionViewItem()
+_option.rect = QRect(0, 0, 300, 27)
+_option.font = mkt.font()
+mkt.watch_row_delegate.paint(_painter, _option, mkt.lst_watch.model().index(0, 0))
+_painter.end()
+_image = _pix.toImage()
+
+
+def _inked(x0, x1):
+    return any(_image.pixelColor(x, 13).alpha() > 0 for x in range(x0, x1))
+
+
+check("★ 一行真的画出来了：左侧名称段有墨 + 最右涨跌列有墨（右对齐列真的存在）",
+      _inked(0, 120) and _inked(300 - 56 - 10, 300))
+
+
+def _watch_order():
+    return [mkt.lst_watch.item(i).data(ROLE_SYMBOL) for i in range(mkt.lst_watch.count())]
+
+
+# ---- ★ §7-B8 R15：拖拽排序（三道闸防误触）----
+from PyQt6.QtCore import QModelIndex, QPoint  # noqa: E402
+from PyQt6.QtWidgets import QAbstractItemView  # noqa: E402
+
+from ui.widgets.watch_sort_list import HANDLE_WIDTH  # noqa: E402
+
+mkt.watch_group_selected("空组")
+mkt._refresh_watchlist()
+check("★ 闸 1：平时列表**根本不响应拖动**（`NoDragDrop` ⇒ 浏览时手滑不会改任何顺序）",
+      mkt.lst_watch.is_sort_mode() is False
+      and mkt.lst_watch.dragDropMode() == QAbstractItemView.DragDropMode.NoDragDrop
+      and mkt.lst_watch.acceptDrops() is False)
+
+mkt.set_watch_sort_mode(True)
+check("★ 进排序模式：切成 InternalMove + 出现提示条与「撤销 / 完成」",
+      mkt.lst_watch.is_sort_mode() and mkt.watch_sort_mode
+      and mkt.lst_watch.dragDropMode() == QAbstractItemView.DragDropMode.InternalMove
+      and mkt.watch_sort_bar.isVisibleTo(mkt.card_watch_list)
+      and mkt.watch_row_delegate.is_sort_mode())
+check("★ 边缘自动滚动 + 落位提示线都开着（大列表这两条缺一不可）",
+      mkt.lst_watch.hasAutoScroll() and mkt.lst_watch.autoScrollMargin() == 24
+      and mkt.lst_watch.showDropIndicator())
+
+# 闸 2 的命中判定：直接量"按下点算不算落在手柄带里"（不依赖窗口是否真的显示出来）
+_item_at, _item_rect = mkt.lst_watch.itemAt, mkt.lst_watch.visualItemRect
+mkt.lst_watch.itemAt = lambda point: mkt.lst_watch.item(0)
+mkt.lst_watch.visualItemRect = lambda item: QRect(0, 0, 250, 27)
+check("★ 闸 2 的命中判定：落行首手柄带 ⇒ 能拖；落行本体 ⇒ 不拖（两个热区物理分开）",
+      mkt.lst_watch._hit_handle(QPoint(HANDLE_WIDTH - 2, 13)) is True
+      and mkt.lst_watch._hit_handle(QPoint(HANDLE_WIDTH + 40, 13)) is False)
+mkt.lst_watch.itemAt, mkt.lst_watch.visualItemRect = _item_at, _item_rect
+
+mkt.lst_watch._drag_armed = False
+mkt.lst_watch.startDrag(Qt.DropAction.MoveAction)
+check("★ 闸 2：不是从 ⣿ 起的拖 ⇒ `startDrag` **直接吞掉**（什么都不发生，也不报错）",
+      mkt.lst_watch.is_drag_armed() is False)
+
+# 用 `moveRow` 真模拟一次"拖拽结束后的行移动"，再走落盘入口
+_sort_group = mkt.watch_group
+_order_before = mkt.watchlist.symbols_in(_sort_group)
+mkt.lst_watch.model().moveRow(QModelIndex(), 0, QModelIndex(), 2)
+_after_drag = [mkt.lst_watch.item(i).data(ROLE_SYMBOL)
+               for i in range(mkt.lst_watch.count())]
+check("模拟一次行移动：列表顺序确实变了（与底片不同）", _after_drag != _order_before)
+
+mkt.apply_watch_sort()
+check("★ 拖拽结束才落盘：把**当前列表顺序**写回 store（只在本组内重排）",
+      mkt.watchlist.symbols_in(_sort_group) == _after_drag)
+check("★ 其它分组一格不动（拖拽不会顺手改分组）",
+      mkt.watchlist.symbols_in(DEFAULT_GROUP)
+      == [entry["symbol"] for entry in mkt.watchlist.entries_in(DEFAULT_GROUP)])
+
+mkt.undo_watch_sort()
+check("★ 闸 3：撤销 ⇒ 回到**进排序模式之前**的顺序，并退出排序模式",
+      mkt.watchlist.symbols_in(_sort_group) == _order_before
+      and mkt.watch_sort_mode is False and not mkt.lst_watch.is_sort_mode()
+      and not mkt.watch_sort_bar.isVisibleTo(mkt.card_watch_list)
+      and not mkt.watch_row_delegate.is_sort_mode())
+
+mkt.watch_group_selected(None)
+mkt.set_watch_sort_mode(True)
+check("★ 「全部」视图**拒绝**进排序模式（跨组拖动等于顺手改分组）：按钮回弹 + 说明原因",
+      mkt.watch_sort_mode is False and not mkt.btn_watch_sort.isChecked()
+      and "先选一个分组" in mkt.card_watch_list.state_text())
+mkt.watch_group_selected(None)
 
 # ---- 周期：周/月由日线就地聚合 ----
 mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
@@ -623,9 +976,59 @@ check("切月线：根数 = 月线聚合根数且标注按 monthly 取",
       and mkt._annotations._period == 'M' and mkt._annotations.count() == 0)
 
 # ---- 新画线类型：斐波那契 / 文字 ----
-check("画线工具 = 浏览 + 交互层声明的全部可画类型（两处同源；★STEP 4 起是分段控件）",
-      mkt.seg_tool.count() == 1 + len(DRAWABLE_KINDS)
-      and mkt.seg_tool.current_key() == 'trend')
+from ui.widgets import annotation_catalog  # noqa: E402
+
+check("★ 画线类型目录：32 种 / 6 类全部直出（**无搜索栏、不折叠**）",
+      len(mkt.anno_tiles) == annotation_catalog.TOTAL == 32
+      and len(mkt.anno_headers) == len(annotation_catalog.CATEGORIES) == 6)
+check("★ 目录里标「已实现」的，必须**真的能画**（双向一致 —— 说能画却画不出就是骗人）",
+      {key for key, entry in mkt.anno_tiles.items() if entry.implemented}
+      == set(DRAWABLE_KINDS)
+      and {e["kind"] for e in annotation_catalog.implemented_entries()} == set(DRAWABLE_KINDS))
+check("★ 未实现的照常出现并**标注「待实现」**（不静默、也不假装能用）",
+      all(tile.todo_text() == "" for tile in mkt.anno_tiles.values() if tile.implemented)
+      and sum(1 for tile in mkt.anno_tiles.values() if tile.todo_text() == "待实现")
+      == annotation_catalog.TOTAL - len(DRAWABLE_KINDS))
+check("★ 面板高度**不随类型数增长**（目录最小高 + 放不下就内部滚动，外层内容区兜底）",
+      mkt.anno_scroll.minimumHeight() == 320
+      and mkt.anno_scroll.verticalScrollBar().maximum() > 0)
+check("★ 每类一个色相（色相是「让 32 种不乱」最关键的一条）",
+      len({header.color for header in mkt.anno_headers.values()})
+      == len(mkt.anno_headers) == 6)
+
+# 选中态是**投影**：真源是 `current_tool`，tile 跟着它走
+mkt.select_tool(KIND_FIB)
+check("★ 选中态只是投影：真源 `current_tool` + tile 高亮同源",
+      mkt.current_tool == KIND_FIB and mkt.anno_tiles[KIND_FIB].is_selected()
+      and not mkt.anno_tiles[KIND_TREND].is_selected())
+mkt.select_tool_number(1)
+check("★ 数字快捷键 1 ⇒ 目录里编号 1 的类型（趋势线）",
+      mkt.current_tool == KIND_TREND and mkt.anno_tiles[KIND_TREND].is_selected())
+mkt.select_tool_number("不是数字")
+check("非法快捷键输入不炸也不改状态", mkt.current_tool == KIND_TREND)
+
+# ★ 未实现的类型：**点了必须有话说**（§9-Q：不静默）
+mkt.select_tool("ray")
+check("★ 点到未实现的类型 ⇒ 明确告知「还没实现」（连同它归在哪一类 / 编号几）",
+      "还没实现" in mkt.lbl_annotation_status.text()
+      and mkt.current_tool == KIND_TREND          # 工具没被切走
+      and not mkt.anno_tiles["ray"].is_selected())
+mkt.select_tool(KIND_TREND)
+
+# 吸顶分类标题（R11 第 4 条）：滚下去之后顶部一直显示"当前是类"
+mkt.anno_scroll.set_sections([
+    (0, "趋势 / 通道　5 种", "#1976D2"),
+    (200, "水平 / 垂直　5 种", "#00897B"),
+    (400, "形态　6 种", "#7E57C2")])
+mkt.anno_scroll.verticalScrollBar().setValue(0)
+check("滚到最上面时**不显示**吸顶条（真实标题就在眼前，显示两个会打架）",
+      mkt.anno_scroll.sticky_text() == "")
+mkt.anno_scroll.verticalScrollBar().setValue(250)
+check("★ 滚过第一类之后 ⇒ 顶部吸住「水平 / 垂直」（分类参照不会滚丢）",
+      "水平 / 垂直" in mkt.anno_scroll.sticky_text())
+mkt.anno_scroll.verticalScrollBar().setValue(420)
+check("再滚 ⇒ 吸顶条换成「形态」", "形态" in mkt.anno_scroll.sticky_text())
+mkt.anno_scroll.verticalScrollBar().setValue(0)
 
 mkt.select_tool(KIND_FIB)
 fib_item = mkt._annotations.create_default()
@@ -685,8 +1088,8 @@ from ui.widgets.adaptive_axis import handle_for  # noqa: E402
 
 # ---- 行情工作台：主图 + 量/MACD 副图逐格自适应 ----
 mkt.select_period_group("D")               # 回到日线（前面测过周/月）
-mkt.cb_vol.setChecked(True)
-mkt.cb_macd.setChecked(True)
+_layer("volume", True)
+_layer("macd", True)
 mkt.current_df = df                        # 200 根合成日线（前面被前置过 5 根，这里复位）
 mkt.render_charts()
 app.processEvents()
@@ -938,11 +1341,11 @@ from ui.widgets.chip_mru import CHIP_LIMIT, CHIP_POOLS, chip_label  # noqa: E402
 
 mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
 mkt.current_df = df.copy()
-mkt.cb_ma.setChecked(True)
-mkt.cb_boll.setChecked(False)
-mkt.cb_vol.setChecked(True)
-mkt.cb_macd.setChecked(True)
-mkt.cb_formula.setChecked(True)
+_layer("ma", True)
+_layer("boll", False)
+_layer("volume", True)
+_layer("macd", True)
+_layer("formula", True)
 mkt.render_charts()
 
 check("工具行 chips 每组 ≤ 3 个（溢出交给「＋ 更多」，配置不会完全不可见）",
@@ -952,28 +1355,219 @@ check("工具行 chips 每组 ≤ 3 个（溢出交给「＋ 更多」，配置�
 _saved_chips = {}
 mkt._save_desk_ui = lambda **kw: (mkt._desk_ui.update(kw), _saved_chips.update(kw))
 mkt.toggle_chip("boll")
-check("点 chip = 改**真源复选框**（chip 只是投影，不是第二套状态）",
-      mkt.cb_boll.isChecked() and "boll" in mkt.chips_for("main"))
+check("点 chip = 改**真源**（`layer_model`；chip 只是投影，不是第二套状态）",
+      mkt.layer_model.enabled("boll") and "boll" in mkt.chips_for("main"))
 check("刚用过的项排到最前（最近使用优先）", mkt.chips_for("main")[0] == "boll")
 check("最近使用历史落偏好（下次打开还记得）",
       _saved_chips.get("main_chips", [])[:1] == ["boll"])
 
 mkt.toggle_chip("boll")
-check("取消勾选：复选框关掉，但 chips 里**留位变灰**（否则关掉就再也点不回来）",
-      not mkt.cb_boll.isChecked() and "boll" in mkt.chips_for("main"))
+check("取消勾选：真源关掉，但 chips 里**留位变灰**（否则关掉就再也点不回来）",
+      not mkt.layer_model.enabled("boll") and "boll" in mkt.chips_for("main"))
 
-mkt.cb_macd.setChecked(False)
-check("反向投影：从左栏复选框关闭 → chips 同样变灰（两个方向同一份状态）",
-      "macd" in mkt.chips_for("sub"))
-mkt.cb_macd.setChecked(True)
+# ⚠ 这条不变量在**子图池**上已经测不动了：那一刻子图已有 3 项在开（占满工具行的 3 个位置），
+#   灰位**没有空位可放**（这是规则本身的正确行为，不是 bug）。所以换到主图池上验同一条：
+#   "从真源关闭（非 chip 路径）⇒ chips 里仍留灰位"。
+_layer("ma", False)
+check(f"反向投影：从真源（非 chip 路径）关闭 → chips 里留灰位（两个方向同一份状态；"
+      f"实 chips={mkt.chips_for('main')}）",
+      "ma" in mkt.chips_for("main"))
+_layer("ma", True)
+_layer("macd", True)
 
-mkt.cb_boll.setChecked(True)
+_layer("boll", True)
 check("已启用项一定出现在 chips 里（不会『开了却看不到』）",
       "boll" in mkt.chips_for("main") and len(mkt.chips_for("main")) <= CHIP_LIMIT)
 
-check("「＋ 更多」菜单列出**完整候选池**（去掉已显示的）",
-      {a.text() for a in mkt._main_more_menu.actions() if a.isCheckable()}
-      == {chip_label(k) for k in set(CHIP_POOLS["main"]) - set(mkt.chips_for("main"))})
+# ---- ★ §7-B8 R13/R14：配方库 = 图层真源；**多配方可同时开** + 顶栏镜像是投影 ----
+from data.formula_store import FormulaStore, make_formula  # noqa: E402
+from ui.widgets.chip_mru import chip_label  # noqa: E402
+from ui.widgets.layer_model import LayerModel  # noqa: E402
+
+# ⚠ 换**临时**配方库，并且把由它派生的一切一起重建
+#   （§11.5-32：测试不只不能写脏用户库，也不能**读**它当依据）
+_tmp_formula = FormulaStore(os.path.join(tmp_p8, "formulas.json"))
+_main_recipe = _tmp_formula.upsert(make_formula(
+    "我的均线", [("主图线: MA(C,10), COLORWHITE;", "main")]))
+_sub_recipe = _tmp_formula.upsert(make_formula(
+    "离差指标", [("离差值: C - MA(C,5), COLORWHITE;", "sub1")]))
+_main_key = f"formula:{_main_recipe['id']}"
+_sub_key = f"formula:{_sub_recipe['id']}"
+
+mkt._formula_store = _tmp_formula
+mkt._recipe_programs = {}
+mkt.layer_model = LayerModel(formulas=_tmp_formula.all(), enabled=["volume"], params={})
+mkt.current_df = df.copy()
+mkt.render_charts()
+check("模型里出现两条配方，且**内置在前、你的在后**",
+      mkt.layer_model.keys()[4:] == [_main_key, _sub_key])
+check("未启用的配方**不渲染**（开关真的在起作用，不是摆设）",
+      not mkt._layer_formula and mkt.formula_plots == {})
+
+mkt.layer_model.set_enabled(_main_key, True)
+mkt.layer_model.set_enabled(_sub_key, True)
+mkt.render_charts()
+check("★ 多配方同时开：主图配方并进主图、副图配方**自己占一格**",
+      len(mkt._layer_formula.get('main', [])) == 1
+      and len(mkt._layer_formula.get(_sub_key, [])) == 1)
+check("★ 副图窗格键 = **配方 key**（不绑「第几格」⇒ 以后调顺序不会让语义漂移）",
+      set(mkt.formula_plots) == {_sub_key}
+      and mkt.host.pane_names == ['main', 'vol', _sub_key])
+check("★ chip 上写的是**配方名**（不是「公式副图 1」）—— 用户一眼知道那一格是什么",
+      chip_label(_sub_key) != mkt._chips._label(_sub_key) == "离差指标")
+check("两个池都**从模型动态取**（配方出现在候选里）",
+      _main_key in mkt._chips._chip_candidates("main")
+      and _sub_key in mkt._chips._chip_candidates("sub"))
+
+# 「＋ 更多」的镜像：需要**池比工具行容量大**才看得出"被收进来的那些"
+_sub_recipe2 = _tmp_formula.upsert(make_formula(
+    "动量指标", [("动量: C - MA(C,5), COLORWHITE;", "sub1")]))
+_sub_key2 = f"formula:{_sub_recipe2['id']}"
+mkt.layer_model = LayerModel(formulas=_tmp_formula.all(),
+                             enabled=["volume", "macd", _main_key, _sub_key], params={})
+mkt._recipe_programs = {}
+mkt.render_charts()
+mkt._refresh_chips()
+_texts = [a.text() for a in mkt._sub_more_menu.actions()]
+check(f"★ 顶栏「＋ 更多」= 配方库**镜像**（分段 + 标出已开/已关；实={_texts}）",
+      "你的配方" in _texts
+      and any("动量指标" in text and "已关" in text for text in _texts)
+      and all(("已开" in text or "已关" in text or text in ("内置", "你的配方"))
+              for text in _texts))
+check("★ 镜像里那条点一下就能开（不是只读展示）",
+      any(a.isCheckable() and "动量指标" in a.text()
+          for a in mkt._sub_more_menu.actions()))
+
+mkt.toggle_chip(_sub_key)
+check(f"★ 点 chip 关掉一条配方：只掉它自己那一格，**主图配方不受影响**"
+      f"（enabled={mkt.layer_model.enabled(_sub_key)} plots={list(mkt.formula_plots)} "
+      f"main={len(mkt._layer_formula.get('main', []))}）",
+      mkt.layer_model.enabled(_sub_key) is False and _sub_key not in mkt.formula_plots
+      and len(mkt._layer_formula.get('main', [])) == 1)
+check("★ 关掉后它仍留在工具行上变灰（§7-B6-D 规则 3：关掉也要能点回来）",
+      _sub_key in mkt.chips_for("sub")
+      and _sub_key not in mkt._chips._chip_enabled_keys("sub"))
+mkt.layer_model.set_enabled(_main_key, False)
+mkt.render_charts()
+
+# ---- ★ §7-B8 R6：配方库**页版式**（分区 + 徽标 + 图例 + 管理模式）----
+def _recipe_chips(target):
+    lay = mkt.formula_chip_lays[target]
+    return [lay.itemAt(i).widget() for i in range(lay.count())]
+
+
+mkt.show_rail_page("formula")
+mkt.refresh_recipe_page()
+check("配方库页：两个分区（主图/副图）+ 图例 + 管理模式 + 主操作都在本页",
+      mkt.card_formula_lib.isAncestorOf(mkt.lbl_formula_legend)
+      and set(mkt.formula_section_labels) == {"main", "sub"}
+      and "主图配方" in mkt.formula_section_labels["main"].text()
+      and "条" in mkt.formula_section_labels["sub"].text())
+check("★ 徽标一眼分辨去处：内置 / 主图 / 副图 三种（治「载入时看不出是主图还是副图」）",
+      [chip.badge.text() for chip in _recipe_chips("main")][:2] == ["内置", "内置"]
+      and any(chip.badge.text() == "主图" for chip in _recipe_chips("main"))
+      and any(chip.badge.text() == "副图" for chip in _recipe_chips("sub")))
+
+mkt.set_formula_manage(True)
+check("★ 管理模式：用户配方出现 ✏/🗑，但**内置项一个都不出现**（改了怕你改不回来）",
+      all(not chip.ops_visible() for chip in _recipe_chips("main") if chip.builtin)
+      and all(chip.ops_visible() for chip in _recipe_chips("main") if not chip.builtin)
+      and all(not chip.ops_visible() for chip in _recipe_chips("sub") if chip.builtin))
+mkt.set_formula_manage(False)
+check("退出管理模式 ⇒ 操作全部收起（危险动作不与高频操作同排）",
+      all(not chip.ops_visible() for chip in _recipe_chips("main")))
+
+_toggle_key = next(chip.key for chip in _recipe_chips("sub")
+                   if chip.key.startswith("formula:"))
+_before = mkt.layer_model.enabled(_toggle_key)
+mkt.toggle_recipe(_toggle_key)
+check(f"★ 点配方 chip = **直接开关**，且页面与真源同时变（不是各存一份；"
+      f"key={_toggle_key} 前={_before} 后={mkt.layer_model.enabled(_toggle_key)} "
+      f"chip_on={[c.is_on() for c in _recipe_chips('sub') if c.key == _toggle_key]}）",
+      mkt.layer_model.enabled(_toggle_key) != _before
+      and all(chip.is_on() == mkt.layer_model.enabled(_toggle_key)
+              for chip in _recipe_chips("sub") if chip.key == _toggle_key))
+mkt.toggle_recipe(_toggle_key)
+check("再点一次 ⇒ 回到原状态（可逆）",
+      mkt.layer_model.enabled(_toggle_key) == _before)
+
+# ---- ★ §7-B8 R16：⚙ 参数窗口（三道闸）----
+from ui.dialogs.indicator_params import IndicatorParamsDialog, trial_run  # noqa: E402
+
+check("★ 有参数才有 ⚙：MA / BOLL 有，**成交量没有**（绝不放点了没反应的假入口）",
+      all(chip.has_param_button() for chip in _recipe_chips("main")
+          if chip.key in ("ma", "boll"))
+      and all(not chip.has_param_button() for chip in _recipe_chips("sub")
+              if chip.key == "volume"))
+
+mkt.layer_model.set_enabled("ma", True)
+_dlg = IndicatorParamsDialog(mkt.layer_model, "ma", parent=mkt, sample_df=df.copy())
+check("窗口按参数规格生成输入框，且**范围口径进了 tooltip**（不是冷冰冰一句「不合法」）",
+      list(_dlg.editors) == ["周期1", "周期2", "周期3"]
+      and "1 ~ 250" in _dlg.editors["周期1"].toolTip())
+
+_dlg.editors["周期1"].setText("8")
+_dlg.reject()
+check("★ 闸①：改过参数就想关窗 ⇒ **拦下来**（绝不静默丢改动）",
+      _dlg.discard_bar_visible() is True)
+_dlg._on_keep_editing()
+check("「继续编辑」⇒ 确认条收起（窗口还在）", _dlg.discard_bar_visible() is False)
+
+_dlg.editors["周期1"].setText("abc")
+_dlg._on_apply()
+check("★ 闸②：格式不对点「应用」⇒ **自动回默认值并告知**（不放行、也不静默改）",
+      _dlg.was_applied() is False
+      and mkt.layer_model.params_of("ma")["周期1"] == 5
+      and _dlg.editors["周期1"].text() == "5"
+      and "已恢复为默认值" in _dlg.message_text())
+_dlg.editors["周期2"].setText("300")
+_dlg._on_apply()
+check("★ 越界（>250）同样回默认并告知",
+      mkt.layer_model.params_of("ma")["周期2"] == 20
+      and "已恢复为默认值" in _dlg.message_text())
+
+_dlg.editors["周期1"].setText("8")
+_dlg._on_validate()
+check(f"★ 「校验」拿**真实行情**试算一遍（实={_dlg.message_text()!r}）",
+      _dlg.was_validated() is True and "校验通过" in _dlg.message_text())
+_dlg.reject()
+check("★ 校验通过后关窗**不再追问**（否则改了合法参数还老拦人）",
+      _dlg.discard_bar_visible() is False)
+
+_dlg.editors["周期1"].setText("9")
+_dlg._on_reset()
+check("★ 闸③：一键恢复默认（并提示「点应用才生效」）",
+      mkt.layer_model.params_of("ma") == {"周期1": 5, "周期2": 20, "周期3": 60}
+      and "点「应用」才生效" in _dlg.message_text())
+
+_dlg.editors["周期1"].setText("8")
+_dlg.editors["周期2"].setText("13")
+_dlg._on_apply()
+check("★ 合法参数点「应用」⇒ 真的生效（模型 → 引擎形参都跟着变）",
+      _dlg.was_applied() is True
+      and mkt.layer_model.engine_options()["ma"] == {"windows": (8, 13, 60)})
+check("★ 试算判据是「**真的算出了值**」而不是「没报错」：窗口过大 ⇒ 不通过",
+      trial_run("ma", {"windows": (250, 260, 280)}, df.copy())[0] is False
+      and trial_run("ma", {"windows": (5, 20, 60)}, df.copy())[0] is True)
+mkt.layer_model.reset_params("ma")
+mkt.show_rail_page("watch")
+
+# ⚠ 收尾：本段用 `toggle_chip` 走过"回流"，那会把 `layer_enabled` 写进偏好 ⇒
+#   后面那些"草稿默认可见"的老断言依赖的是**没有记忆**这条路径（升级/首次运行）。
+#   所以必须把这份"记忆"撤掉，否则本段就变成了对后面测试的隐式污染（§11.5-32 同族）。
+mkt._desk_ui.pop("layer_enabled", None)
+mkt._desk_ui.pop("layer_params", None)
+
+# ⚠ 收尾：本段用 `toggle_chip` 走过"回流"，那会把 `layer_enabled` 写进偏好 ⇒
+#   后面那些"草稿默认可见"的老断言依赖的是**没有记忆**这条路径（升级/首次运行）。
+#   所以必须把这份"记忆"撤掉，否则本段就变成了对后面测试的隐式污染（§11.5-32 同族）。
+mkt._desk_ui.pop("layer_enabled", None)
+mkt._desk_ui.pop("layer_params", None)
+
+check("「＋ 更多」菜单列出**完整候选池**（去掉已显示的；池是**动态的**、标签用配方名）",
+      {a.text().split("　")[0] for a in mkt._main_more_menu.actions() if a.isCheckable()}
+      == {mkt._chips._label(key)
+          for key in set(mkt._chips._chip_candidates("main")) - set(mkt.chips_for("main"))})
 
 # ---- 公式副图 chip：控制**这一格的显示**（不删用户的函数段）----
 mkt._formula_segments = [("DIFF: EMA(C,5) - EMA(C,20);", 'sub1')]
@@ -993,7 +1587,7 @@ mkt.render_charts()
 print("\n== §7-B6 STEP 5 · 读数条接线（业务读数由页面给）+ 三处回执一行化 ==")
 mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
 mkt.current_df = df.copy()
-mkt.cb_ma.setChecked(True)
+_layer("ma", True)
 mkt.render_charts()
 _rdf = mkt._rendered_df
 _row = _rdf.iloc[-1]
@@ -1096,17 +1690,34 @@ mkt.render_charts()
 print("\n== §7-B6 STEP 4 · 左栏：图标轨 + 分页面板 + 折起（控件搬家不重建）==")
 from ui.views.trading_desk import RAIL_ITEMS  # noqa: E402
 
-check("图标轨 5 项、面板 5 页，键一一对应",
-      mkt.rail.keys() == [key for key, _icon, _title in RAIL_ITEMS] == mkt.desk_panel.keys())
+check("图标轨 4 项、面板 4 页，键一一对应（v6.24 删掉「◫ 主图叠加/附图」页）",
+      mkt.rail.keys() == [key for key, _icon, _title in RAIL_ITEMS] == mkt.desk_panel.keys()
+      and len(RAIL_ITEMS) == 4)
+# ★ 反向断言：删掉的东西**不许再存在**（否则"删了页但控件还在"会静默骗过所有人）
+_revived = [name for name in ("cb_ma", "cb_boll", "cb_formula", "cb_vol", "cb_macd")
+            if hasattr(mkt, name)]
+check(f"★ 左栏那 5 个 QCheckBox 已退休、不许复活（还在的：{_revived or '无'}）",
+      not _revived and "layer" not in mkt.desk_panel.keys() and "layer" not in mkt.rail.keys())
 
 # ---- 搬家不重建：控件仍挂在**正确的页**上（父级链能追到该页容器）----
 _MOVED = [("lst_watch", "watch"), ("btn_watch_add", "watch"), ("btn_watch_up", "watch"),
+          # ★v6.24 §7-B8 R1/R2：自选页重排后新增的控件，同样"换容器可以，换页/换名字不行"
+          ("card_watch_add", "watch"), ("card_watch_groups", "watch"),
+          ("card_watch_list", "watch"), ("card_watch_manage", "watch"),
+          ("txt_watch_quick", "watch"), ("cmb_watch_group", "watch"),
+          ("watch_chip_host", "watch"), ("lbl_watch_planned", "watch"),
+          ("btn_watch_pick", "watch"),
+          ("btn_watch_down", "watch"), ("btn_watch_remove", "watch"),
+          ("btn_watch_rename", "watch"), ("btn_watch_delete_group", "watch"),
           ("btn_edit_formula", "formula"), ("lbl_formula_status", "formula"),
-          ("cb_ma", "layer"), ("cb_boll", "layer"), ("cb_formula", "layer"),
-          ("cb_vol", "layer"), ("cb_macd", "layer"),
-          ("seg_tool", "anno"), ("btn_add_annotation", "anno"),
+          ("anno_scroll", "anno"), ("btn_anno_browse", "anno"),
+          ("btn_add_annotation", "anno"),
           ("btn_delete_annotation", "anno"), ("btn_clear_lines", "anno"),
-          ("lbl_annotation_status", "anno"), ("lbl_adjust_hint", "data")]
+          ("lbl_annotation_status", "anno"), ("lbl_adjust_hint", "data"),
+          # ★v6.24 §7-B8 第 4/5 批：拖拽排序 + 内容区可滚（新增控件同样不许换页/换名）
+          ("btn_watch_sort", "watch"), ("watch_sort_bar", "watch"),
+          ("card_formula_lib", "formula"), ("card_anno_tools", "anno"),
+          ("scroll_watch", "watch"), ("scroll_formula", "formula"), ("scroll_anno", "anno")]
 
 
 def _in_page(widget, page):
@@ -1123,16 +1734,41 @@ _missing = [name for name, page in _MOVED
             if not hasattr(mkt, name) or not _in_page(getattr(mkt, name), page)]
 check(f"搬家后控件都挂在正确的页上（{len(_MOVED)} 项 · 异常：{_missing or '无'}）", not _missing)
 
+# ---- ★ §7-B8 第 5 批：内容区可滚 + 卡头不被拉伸（修"卡片撑成巨大空框"）----
+from PyQt6.QtWidgets import QSizePolicy  # noqa: E402
+from ui.widgets.custom_widgets import ScrollRegion  # noqa: E402
+
+check("三个页面都有各自的内容区（ScrollRegion，放不下就滚而不是顶掉底部按钮）",
+      isinstance(mkt.scroll_watch, ScrollRegion)
+      and isinstance(mkt.scroll_formula, ScrollRegion)
+      and isinstance(mkt.scroll_anno, ScrollRegion))
+check("★ 配方页：卡片在**内容区里**（贴顶堆叠、不贪心拉伸），主操作在外层**钉底**",
+      mkt.scroll_formula.widget().isAncestorOf(mkt.card_formula_lib)
+      and not mkt.scroll_formula.widget().isAncestorOf(mkt.btn_edit_formula))
+check("★ 画线页：目录卡在内容区里、底部三键在外层钉底",
+      mkt.scroll_anno.widget().isAncestorOf(mkt.card_anno_tools)
+      and not mkt.scroll_anno.widget().isAncestorOf(mkt.btn_add_annotation))
+check("★ 卡头**钉成固定高**（父布局把卡片拉高时，多出来的高度全给内容区、不给卡头）",
+      mkt.card_formula_lib._head.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
+      and mkt.card_anno_tools._head.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed)
+
+mkt.card_formula_lib.set_open(False)
+_collapsed_hint = mkt.card_formula_lib.sizeHint().height()
+mkt.card_formula_lib.set_open(True)
+_expanded_hint = mkt.card_formula_lib.sizeHint().height()
+check("★ 收起卡片 → 高度需求**收缩到只剩卡头**，展开 → 恢复（不再「收起也占满整页」）",
+      _collapsed_hint < 60 and _expanded_hint > _collapsed_hint)
+
 # ---- 信号没断（搬家最容易的翻车点：连了但对象换了/丢了）----
 mkt.current_symbol, mkt.current_name = 'sh600000', '测试股'
 mkt.current_df = df.copy()
-mkt.cb_ma.setChecked(True)
-mkt.cb_boll.setChecked(True)
+_layer("ma", True)
+_layer("boll", True)
 check(f"搬家后信号仍活着：均线 3 + 布林 2（上/下轨，中轨由 MA20 承担）⇒ 图层 5 条"
-      f"（MA={mkt.cb_ma.isChecked()} BOLL={mkt.cb_boll.isChecked()}"
+      f"（MA={mkt.layer_model.enabled('ma')} BOLL={mkt.layer_model.enabled('boll')}"
       f" 实际={len(mkt._layer_builtin)} 周期={mkt.current_period}）",
       len(mkt._layer_builtin) == 5)
-mkt.cb_boll.setChecked(False)
+_layer("boll", False)
 
 # ---- 切页 = 只切可见性（§11.5-25 的 isVisibleTo 口径）----
 mkt.show_rail_page("formula")
@@ -1259,13 +1895,28 @@ DESK_PUBLIC_ATTRS = (
     "main_plot", "host", "formula_plots", "_axes", "_annotations", "_main_more_menu",
     # 控件（换容器可以，换名字不行）
     "txt_search", "btn_search", "btn_sync", "lbl_sync_status", "lst_watch",
-    "cb_ma", "cb_boll", "cb_formula", "cb_vol", "cb_macd",
+    # ★v6.24（§7-B8 R13）：5 个 QCheckBox 已退休 ⇒ 公共面换成**图层真源**（模型 + 唯一落点）
+    "layer_model", "_persist_layer_state",
     "btn_edit_formula", "lbl_formula_status", "lbl_annotation_status", "lbl_adjust_hint",
     "btn_add_annotation", "btn_delete_annotation", "btn_clear_lines",
     # ★STEP 3b/3c/4：顶栏第 2 行 + 左栏（迁移期新增的公共面，同样不许改名）
-    "seg_period", "seg_minute", "seg_adjust", "seg_tool",
+    "seg_period", "seg_minute", "seg_adjust",
+    # ★v6.24（§7-B8 R10/R11）：`seg_tool` 已退休（换成 32 种类型目录）⇒ 公共面换成这一组
+    "anno_scroll", "anno_tiles", "anno_headers", "btn_anno_browse",
+    "current_tool", "select_tool_number",
     "lbl_minute_depth", "lbl_caliber_note", "lbl_anno_pill", "btn_anno_tool",
     "rail", "desk_panel",
+    # ★v6.24 §7-B8 R1/R2：自选分组 + 快添加（迁移期新增的公共面，同样不许改名）
+    "card_watch_add", "card_watch_groups", "card_watch_list", "card_watch_manage",
+    "txt_watch_quick", "cmb_watch_group", "watch_chip_host", "watch_chip_lay",
+    "lbl_watch_planned", "btn_watch_rename", "btn_watch_delete_group", "watch_group",
+    "watch_change", "invalidate_change_cache", "watch_quick_add", "watch_list_menu",
+    "btn_watch_pick", "pick_watch_into_group", "move_selected_to_group",
+    "watch_sort_mode", "btn_watch_sort", "btn_watch_sort_undo", "btn_watch_sort_done",
+    "watch_sort_bar", "watch_row_delegate", "set_watch_sort_mode", "undo_watch_sort",
+    "finish_watch_sort", "on_watch_rows_moved", "apply_watch_sort",
+    "scroll_watch", "scroll_formula", "scroll_anno",
+    "card_formula_lib", "card_anno_tools",
     # ★STEP 6：行为模块句柄（页面只转发；测试按模块核对实现位置）
     "_layout", "_panel", "_data", "_layers", "_formula", "_annos", "_chips",
     "_watch", "_readout",
@@ -1295,8 +1946,9 @@ check("周期/复权下拉已被分段控件取代（旧控件名不该再存在
 # ⚠ STEP 4 已办：画线工具下拉换成「✎ 标注」页里的分段控件 ⇒ **迁移期三处旧入口至此全部清掉**。
 check("迁移期三处旧入口已全部清除（`cb_period` / `cb_adjust` / `cmb_tool` 都不该存在）",
       not any(hasattr(mkt, name) for name in ("cb_period", "cb_adjust", "cmb_tool")))
-check("取而代之：三个分段控件 `seg_period` / `seg_adjust` / `seg_tool` 齐备",
-      all(hasattr(mkt, name) for name in ("seg_period", "seg_adjust", "seg_tool")))
+check("取而代之：周期 / 复权仍是分段控件（**画线类型已不是** —— v6.24 换成 32 种目录）",
+      all(hasattr(mkt, name) for name in ("seg_period", "seg_adjust"))
+      and not hasattr(mkt, "seg_tool"))
 
 # ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）

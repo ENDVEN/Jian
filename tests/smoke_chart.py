@@ -1148,6 +1148,274 @@ try:
     check("坏数据（空代码）与重复项被跳过，好数据照常读出",
           tolerant.symbols() == ["SH600000", "SZ000001"])
 
+    # ---- 分组（v6.24 · §7-B8 R1）：分类语义 + 删组不删股票 + 组内移动 ----
+    from data.watchlist_store import DEFAULT_GROUP, GROUP_NAME_MAX, normalize_group
+
+    check("分组名归一化：空白折叠 + 空值落到默认组（**绝不产生空串分组**）",
+          normalize_group("  核心  白马 ") == "核心 白马"
+          and normalize_group("") == DEFAULT_GROUP and normalize_group(None) == DEFAULT_GROUP)
+    check("旧文件（v1，无 group 字段）读进来自动归到默认分组 —— 向后兼容",
+          tolerant.group_of("SH600000") == DEFAULT_GROUP
+          and tolerant.groups() == [DEFAULT_GROUP])
+
+    grouped = WatchlistStore(str(tmp / "grouped.json"))
+    grouped.add("600519", "贵州茅台")
+    grouped.add("000858", "五 粮 液")
+    check("不传 group 的新增落到默认分组",
+          grouped.group_of("600519") == grouped.group_of("000858") == DEFAULT_GROUP)
+    check("新建分组生效", grouped.create_group("核心白马") and "核心白马" in grouped.groups())
+    check("重名 / 空名 / 超长名一律拒绝（不静默改名、不静默截断）",
+          not grouped.create_group("核心白马") and not grouped.create_group("   ")
+          and not grouped.create_group("长" * (GROUP_NAME_MAX + 1)))
+    check("空分组也留得住（chips 要能显示 0 只，否则用户以为新建失败）",
+          grouped.group_counts().get("核心白马") == 0)
+
+    check("显式给 group 的新增直接进该组",
+          grouped.add("601318", "中国平安", group="核心白马")
+          and grouped.group_of("601318") == "核心白马")
+    check("已存在的股票显式给组 ⇒ 移组（返回 False = 本来就在，不是新增）",
+          grouped.add("000858", "五 粮 液", group="核心白马") is False
+          and grouped.group_of("000858") == "核心白马")
+    check("★ 已存在的股票**不传** group ⇒ 保持原组不动（不许静默改用户的分类）",
+          grouped.add("000858", "五 粮 液") is False
+          and grouped.group_of("000858") == "核心白马")
+
+    check("entries_in / symbols_in / group_counts 三者一致",
+          grouped.symbols_in("核心白马") == ["000858", "601318"]
+          and grouped.group_counts()["核心白马"] == 2
+          and len(grouped.entries_in()) == 3)
+
+    # ★组内移动：跨组边界**不许**把票挪进别的组
+    check("组内上移生效（核心白马内 601318 上移到 000858 之前）",
+          grouped.move("601318", -1) is True
+          and grouped.symbols_in("核心白马") == ["601318", "000858"])
+    check("★ 组内移动不会把票挪进别的组（总表顺序变了，分组归属一个没变）",
+          grouped.group_of("601318") == "核心白马" and grouped.group_of("000858") == "核心白马"
+          and grouped.group_of("600519") == DEFAULT_GROUP)
+    check("组内边界返回 False（已到组内首尾 / 组里只有自己）",
+          not grouped.move("601318", -1) and not grouped.move("000858", 1)
+          and not grouped.move("600519", -1) and not grouped.move("600519", 1))
+
+    check("set_group 把单只移进已存在的组",
+          grouped.set_group("600519", "核心白马") and grouped.group_of("600519") == "核心白马")
+    check("★ set_group 对**不存在的组**返回 False（不顺手建一个错别字组 = 脏数据）",
+          grouped.set_group("600519", "查无此组") is False
+          and "查无此组" not in grouped.groups())
+    check("批量移组返回真实移动条数",
+          grouped.move_symbols_to_group(["600519", "601318"], DEFAULT_GROUP) == 2
+          and grouped.group_counts()[DEFAULT_GROUP] == 2)
+
+    check("重命名分组：连带成员一起改",
+          grouped.rename_group("核心白马", "白马") and grouped.group_of("000858") == "白马"
+          and "核心白马" not in grouped.groups())
+    check("★ 重命名到已存在的组 ⇒ 拒绝（不静默合并两个分组 = 不可逆的分类丢失）",
+          grouped.create_group("科技") and not grouped.rename_group("白马", "科技")
+          and grouped.group_of("000858") == "白马")
+
+    check("★ 删分组 = 成员解绑回默认组，**股票一条都不少**（§5 铁律：不连带删数据）",
+          grouped.delete_group("白马") == 1 and grouped.count() == 3
+          and grouped.group_of("000858") == DEFAULT_GROUP and "白马" not in grouped.groups())
+    check("默认分组不可删（它是所有解绑动作的落点）",
+          grouped.delete_group(DEFAULT_GROUP) == 0 and grouped.count() == 3)
+    check("删不存在的组返回 0（不误伤）", grouped.delete_group("查无此组") == 0)
+
+    _reopened = WatchlistStore(str(tmp / "grouped.json"))
+    check("分组名与成员的归属一起落盘、可重启读回",
+          _reopened.group_of("000858") == DEFAULT_GROUP and "科技" in _reopened.groups()
+          and _reopened.count() == 3)
+
+    # ---- 拖拽排序的落盘入口（v6.24 · §7-B8 R15）：**只重排本组，其它组一格不动** ----
+    drag_store = WatchlistStore(str(tmp / "drag.json"))
+    drag_store.create_group("A组")
+    drag_store.create_group("B组")
+    for _symbol in ("600000", "600001", "600002"):
+        drag_store.add(_symbol, group="A组")
+    for _symbol in ("000001", "000002"):
+        drag_store.add(_symbol, group="B组")
+    _b_before = drag_store.symbols_in("B组")
+    _a_before = drag_store.symbols_in("A组")
+
+    check("重排某组：本组顺序真的变了", drag_store.reorder_group("A组", list(reversed(_a_before)))
+          and drag_store.symbols_in("A组") == list(reversed(_a_before)))
+    check("★ 重排一个组时，**另一个组在总表里的相对位置一格不动**（只改写本组占的槽位）",
+          drag_store.symbols_in("B组") == _b_before)
+    check("★ 成员集合对不上就拒绝：多给 / 少给 / 重复 一律不动（不猜、不补、不删）",
+          drag_store.reorder_group("A组", ["600000", "600001"]) is False
+          and drag_store.reorder_group("A组", ["600000", "600001", "600002", "600003"]) is False
+          and drag_store.reorder_group("A组", ["600000", "600000", "600001"]) is False)
+    check("顺序没变化 ⇒ 返回 False（不白写一次盘）",
+          drag_store.reorder_group("A组", drag_store.symbols_in("A组")) is False)
+    check("不存在的组 ⇒ 拒绝（不顺手建组）",
+          drag_store.reorder_group("查无此组", ["600000"]) is False)
+    check("默认分组也能重排（它就是普通分组的一个特例）",
+          drag_store.add("600004", "四号") and drag_store.add("600005", "五号")
+          and drag_store.reorder_group(DEFAULT_GROUP, ["600005", "600004"])
+          and drag_store.symbols_in(DEFAULT_GROUP) == ["600005", "600004"])
+    _drag_reopened = WatchlistStore(str(tmp / "drag.json"))
+    check("重排结果落盘、可重启读回",
+          _drag_reopened.symbols_in("A组") == list(reversed(_a_before)))
+
+    # ---- 组合当日涨跌（v6.24 · §7-B8 R3）：等权 + 缺数据不算 + ⚠ ----
+    import pandas as _pd
+
+    from data.watchlist_change import (ChangeSnapshot, baseline_date, direction_of,
+                                       format_pct, group_summary, last_bar)
+
+    def _bars(pairs):
+        """`[(日期, 收盘), ...]` → 日线表（只造组合涨跌用得到的列）。"""
+        return _pd.DataFrame({"date": [d for d, _c in pairs],
+                              "close": [c for _d, c in pairs]})
+
+    check("单只：末根涨跌幅 = 末收 / 前收 − 1",
+          abs(last_bar(_bars([("2026-09-16", 100.0), ("2026-09-17", 101.23)]))[1] - 1.23) < 1e-9)
+    check("单只：只有 1 根 / 空表 / None ⇒ 涨跌幅 None（**算不出来 ≠ 0%**）",
+          last_bar(_bars([("2026-09-17", 10.0)]))[1] is None
+          and last_bar(_bars([]))[1] is None and last_bar(None)[1] is None)
+    check("单只：日期截到 YYYY-MM-DD（带时间的值也截）",
+          last_bar(_bars([("2026-09-16", 10.0), ("2026-09-17 00:00:00", 11.0)]))[0] == "2026-09-17")
+    check("单只：收盘缺失的行被跳过，日期跟着**有效根**走",
+          last_bar(_pd.DataFrame({"date": ["2026-09-15", "2026-09-16", "2026-09-17"],
+                                  "close": [10.0, None, 11.0]}))[0] == "2026-09-17")
+
+    _snap = {
+        "AAA": {"date": "2026-09-17", "pct": 1.0, "reason": ""},
+        "BBB": {"date": "2026-09-17", "pct": 3.0, "reason": ""},
+        "CCC": {"date": "", "pct": None, "reason": "没有行情数据（还没下载？）"},
+        "DDD": {"date": "2026-09-10", "pct": 99.0, "reason": ""},   # 停牌：最后一天不是基准日
+    }
+    check("基准日 = 快照里最新的最后交易日（**不用系统时钟**，周末/节假日不会错）",
+          baseline_date(_snap) == "2026-09-17" and baseline_date({}) == "")
+    _sum = group_summary(_snap, ["AAA", "BBB", "CCC", "DDD"])
+    check("★ 等权平均：只对「算得出来」的票取平均（+1% / +3% ⇒ +2.00%）",
+          abs(_sum["pct"] - 2.0) < 1e-9 and _sum["counted"] == 2 and _sum["total"] == 4)
+    check("★ 缺数据的票**从分母里剔除**：绝不是拿 0% 冲淡（否则会变成 +1.00%）",
+          abs(_sum["pct"] - 1.0) > 0.5)
+    check("★ 停牌的票也不冒充今天：最后一天 ≠ 基准日的 ⇒ 不算它",
+          "DDD" in dict(_sum["missing"]) and abs(_sum["pct"] - 50.0) > 1.0)
+    check("⚠ 明细说得出「是哪一只、为什么」（未下载 vs 最后一天不是基准日）",
+          dict(_sum["missing"])["CCC"].startswith("没有行情数据")
+          and "最后一天是 2026-09-10" in dict(_sum["missing"])["DDD"])
+    check("一只都算不出来 ⇒ pct is None（**与「涨跌 0%」必须能分辨**）",
+          group_summary(_snap, ["CCC", "DDD"])["pct"] is None
+          and group_summary({}, ["AAA"])["pct"] is None)
+    check("空分组 ⇒ 0 只、pct None（不崩）",
+          group_summary(_snap, [])["pct"] is None and group_summary(_snap, [])["total"] == 0)
+    check("给了权重就按权重算（为「组合配置」R4 留的口子）",
+          abs(group_summary(_snap, ["AAA", "BBB"],
+                            weights={"AAA": 3.0, "BBB": 1.0})["pct"] - 1.5) < 1e-9)
+    check("格式化：涨带 +、跌用 U+2212、平写 0.00%、**None 写空串**",
+          format_pct(0.823) == "+0.82%" and format_pct(-0.314) == "\u22120.31%"
+          and format_pct(0.0) == "0.00%" and format_pct(None) == "")
+    check("方向：平**不是涨**（把 0.00% 画成绿的会让人以为它在涨）",
+          direction_of(1.0) is True and direction_of(-1.0) is False
+          and direction_of(0.0) is None and direction_of(None) is None)
+
+    _calls = []
+    _cached = ChangeSnapshot(
+        lambda symbol: (_calls.append(symbol) or
+                        _bars([("2026-09-16", 10.0), ("2026-09-17", 11.0)])))
+    _cached.build(["AAA", "BBB"])
+    _cached.build(["AAA", "BBB"])
+    check("★ 快照带 TTL 缓存：同一分钟内反复刷新**零 IO**（loader 只被调 2 次）",
+          _calls == ["AAA", "BBB"])
+    _cached.build(["AAA", "BBB"], force=True)
+    check("force=True 绕过缓存（数据刚更新时用）", len(_calls) == 4)
+    _cached.clear()
+    _cached.build(["AAA"])
+    check("clear 之后重新读（同步完成 / 换复权时清）", len(_calls) == 5)
+    _broken = ChangeSnapshot(lambda symbol: (_ for _ in ()).throw(RuntimeError("boom")))
+    check("单只读失败**不会让整页崩**：变成一条带原因的缺失",
+          _broken.build(["AAA"])["AAA"]["pct"] is None
+          and "读取失败" in _broken.build(["AAA"])["AAA"]["reason"])
+
+    # ---- 图层/配方**单一真源**（v6.24 · §7-B8 R13）：内置 + 用户混排 ----
+    from ui.widgets.layer_model import (BUILTIN_KEYS, DEFAULT_ENABLED, LayerModel,
+                                        TARGET_MAIN, TARGET_SUB, formula_key,
+                                        recipe_target)
+
+    _recipes = [
+        {"id": "r1", "name": "我的均线", "segments": [{"text": "MA(C,10)", "target": "main"}]},
+        {"id": "r2", "name": "RSI 超买超卖",
+         "segments": [{"text": "RSI(C,14)", "target": "sub1"}]},
+        {"id": "r3", "name": "ma",        # ★ 故意与内置同名的配方
+         "segments": [{"text": "MA(C,5)", "target": "sub2"}]},
+        {"id": "r4", "name": "多段混的旧档",
+         "segments": [{"text": "A", "target": "main"}, {"text": "B", "target": "sub1"}]},
+        {"id": "r5", "name": "", "segments": [{"text": "空名", "target": "main"}]},
+    ]
+    _model = LayerModel(formulas=_recipes)
+    check("模型 = 内置 4 项 + 用户配方，且**内置在前、你的在后**（用户原话的顺序）",
+          _model.keys()[:4] == list(BUILTIN_KEYS)
+          and _model.keys()[4:] == ["formula:r1", "formula:r2", "formula:r3", "formula:r4"])
+    check("空名配方不进列表（坏数据不占位）", not _model.has(formula_key({"id": "r5"})))
+    check("★ 用户配方 key 带前缀 ⇒ **把配方起名叫「ma」也不会与内置撞库**",
+          _model.has("formula:r3") and _model.label("formula:r3") == "ma"
+          and _model.label("ma") == "均线 MA" and _model.is_builtin("ma"))
+    check("去处只有两类：全 main 段 ⇒ 主图；含副图段 ⇒ 副图",
+          recipe_target(_recipes[0]) == TARGET_MAIN
+          and recipe_target(_recipes[1]) == TARGET_SUB
+          and recipe_target(_recipes[3]) == TARGET_SUB)
+    check("分类与顺序：主图区 = 内置 MA/BOLL + 我的均线；副图区 = 内置量/MACD + 三条配方",
+          [item["key"] for item in _model.items_for(TARGET_MAIN)]
+          == ["ma", "boll", "formula:r1"]
+          and [item["key"] for item in _model.items_for(TARGET_SUB)]
+          == ["volume", "macd", "formula:r2", "formula:r3", "formula:r4"])
+    check("★ chips 候选池**从模型动态取**（配方库加一条，工具行立刻能选到）",
+          _model.pool_for(TARGET_SUB) == ("volume", "macd", "formula:r2", "formula:r3",
+                                          "formula:r4")
+          and _model.pool_of_key("formula:r2") == TARGET_SUB
+          and _model.pool_of_key("ma") == TARGET_MAIN)
+    check("默认开启与改造前初始态一致（量 = 开，MA/BOLL/MACD = 关）",
+          _model.enabled_keys() == list(DEFAULT_ENABLED) == ["volume"])
+    check("开关：未知 key 一律拒绝**且不记忆**（不许出现幽灵项）",
+          _model.set_enabled("查无此项", True) is False
+          and _model.enabled("查无此项") is False)
+    _model.toggle("ma")
+    check("toggle 返回操作后的状态，且按列表顺序枚举（顺序可预期）",
+          _model.enabled("ma") and _model.enabled_keys() == ["ma", "volume"])
+    check("内置项名称来自内置表（内置不改名 —— 改不了，也没有改名入口）",
+          _model.label("boll") == "布林带 BOLL" and _model.is_builtin("boll")
+          and not _model.is_builtin("formula:r1"))
+    check("★ 有参数才有 ⚙：成交量没有参数 ⇒ **不给假入口**",
+          _model.has_params("macd") and not _model.has_params("volume")
+          and not _model.has_params("formula:r1"))
+    check("参数默认值来自内置表（MA 5/20/60、MACD 12/26/9）",
+          _model.params_of("ma") == {"周期1": 5, "周期2": 20, "周期3": 60}
+          and _model.params_of("macd") == {"快线": 12, "慢线": 26, "信号": 9})
+    check("★ 参数越界 / 非数字一律**拒绝且不改动**（R16 闸②的判据）",
+          _model.set_param("macd", "快线", 0) is False
+          and _model.set_param("macd", "快线", "abc") is False
+          and _model.set_param("macd", "快线", 999) is False
+          and _model.params_of("macd")["快线"] == 12)
+    check("合法修改生效，且**引擎形参映射按名字走**（MA 三个参数打进 windows 元组）",
+          _model.set_param("ma", "周期1", 8) and _model.set_param("ma", "周期3", 120)
+          and _model.engine_options()["ma"] == {"windows": (8, 20, 120)})
+    check("BOLL / MACD 的形参名各自独立（不共用一张映射表）",
+          _model.set_enabled("boll", True) and _model.set_enabled("macd", True)
+          and _model.engine_options()["boll"] == {"window": 20, "num_std": 2.0}
+          and _model.engine_options()["macd"] == {"fast": 12, "slow": 26, "signal": 9})
+    check("★ 未启用的内置项**不进引擎参数**（开关真的在起作用，不是摆设）",
+          _model.set_enabled("boll", False)
+          and "boll" not in _model.engine_options())
+    check("整组参数体检给人话结果（带该参数自己的范围）",
+          _model.validate_params("macd")[0] is True
+          and _model.validate_params("volume") == (True, ""))
+    check("一键恢复默认（R16 闸③）",
+          _model.reset_params("ma") == {"周期1": 5, "周期2": 20, "周期3": 60})
+    check("参数快照只含**有参数的**内置项（用户配方没有参数，不该混进去）",
+          set(_model.params_snapshot()) == {"ma", "boll", "macd"})
+
+    _dirty = LayerModel(formulas=_recipes, enabled=["ma", "查无此项", "formula:r2"],
+                        params={"ma": {"周期1": 0, "查无此参数": 1}, "查无此项": {"a": 1}})
+    check("★ 坏偏好被清洗：未知 key 丢掉、越界参数回落默认（绝不把脏值带进界面）",
+          _dirty.enabled_keys() == ["ma", "formula:r2"]
+          and _dirty.params_of("ma")["周期1"] == 5
+          and "查无此参数" not in _dirty.params_of("ma"))
+    check("分区枚举跳过空类（UI 不为空类画分区）",
+          LayerModel(formulas=[]).items_by_target()
+          and [target for target, _items in LayerModel(formulas=[]).items_by_target()]
+          == [TARGET_MAIN, TARGET_SUB])
+
     # ---- 斐波那契 / 文字：绘制 + **附属图元随主图元一起删**（§11.5-15 同类风险）----
     from data.annotations import KIND_FIB, KIND_TEXT, KIND_TREND
     from ui.widgets.annotation_layer import AnnotationLayer
@@ -1749,6 +2017,108 @@ check(f"一字板的横档**明显比 1px 头发丝粗**（{_flat_ink} vs {_hair
       _flat_ink >= _hair_ink * 1.8)
 check(f"普通 K 线照常画（{_normal_ink} 个非白像素），改画法没影响其它 bar",
       _normal_ink > _hair_ink)
+
+# ==========================================
+# v6.24 · §7-B8 R7/R8（用户 2026-09-17 反馈的两处**真实缺陷**）
+#   R7 副图**不能调顺序** —— 旧实现只有 `add_pane`（永远追加到底部），没有任何换序手段；
+#   R8 副图变多后**左侧坐标轴缩进不一致** —— pyqtgraph 的 `AxisItem` 宽度按**自己的**
+#      刻度文本算：量柱 `3.1204e+06`(9 字符) vs MACD `-0.05`(5 字符) ⇒ 左槽不同宽。
+#      离屏实测错位 24px（89px vs 65px），统一后两侧绘图区左边缘完全对齐。
+# ==========================================
+print("\n== v6.24 · §7-B8 R7/R8（副图可换序 + 纵轴共用固定左槽）==")
+from PyQt6.QtWidgets import QApplication  # noqa: E402
+
+from ui.widgets import chart_style  # noqa: E402
+from ui.widgets.chart_host import ChartHost  # noqa: E402
+
+_app = QApplication.instance() or QApplication([])
+
+_host = ChartHost(bottom_axis_mode='no_values')
+for _n in ('vol', 'macd', 'rsi'):
+    _host.add_pane(_n, fixed_height=120)
+check("宿主具备 move_pane（旧实现只有 add_pane 追加 ⇒ 这正是「无法调顺序」的根因）",
+      hasattr(_host, 'move_pane') and hasattr(_host, 'set_pane_order'))
+check("初始顺序 = 主图 + 追加顺序", _host.pane_order == ['main', 'vol', 'macd', 'rsi'])
+
+# ---- R8 根因：不同量级 ⇒ pyqtgraph 生成的刻度文本长度差很多（这就是错位的来源）----
+_host.pane('vol').plot_item.setYRange(0, 3120400)
+_host.pane('macd').plot_item.setYRange(-0.05, 0.05)
+_ax_vol = _host.pane('vol').plot_item.getAxis('left')
+_ax_macd = _host.pane('macd').plot_item.getAxis('left')
+_lab_vol = [str(t) for t in _ax_vol.tickStrings([0, 3120400], 1.0, 780100)]
+_lab_macd = [str(t) for t in _ax_macd.tickStrings([-0.05, 0.05], 1.0, 0.025)]
+check("根因钉住：量柱刻度文本比 MACD 长得多（'%s' vs '%s'）" % (_lab_vol[-1], _lab_macd[-1]),
+      max(len(t) for t in _lab_vol) >= max(len(t) for t in _lab_macd) + 2)
+
+# ---- R8 复现：先**真的画一次**（pyqtgraph 的轴宽只有画过才会按刻度文本展开）----
+_host.resize(760, 560)
+_host.show()
+_host.grab()                        # 公共 API 触发绘制 → AxisItem 按自己的刻度文本算宽
+_app.processEvents()
+
+
+def _left_widths():
+    return [_host.pane(n).plot_item.getAxis('left').width() for n in _host.pane_order]
+
+
+def _left_edges():
+    return [_host.pane(n).plot_item.getViewBox().sceneBoundingRect().left()
+            for n in _host.pane_order]
+
+
+_before = _left_widths()
+check("★ 复现缺陷：改前各窗格左轴宽度**本来互不相同**（%s）—— 这正是「缩进不一致」的根因"
+      % _before, len(set(_before)) > 1)
+check("★ 复现缺陷：改前绘图区左边缘本来错位 %.1f px" % (max(_left_edges()) - min(_left_edges())),
+      max(_left_edges()) - min(_left_edges()) > 1.0)
+
+# ---- R8 修法（第二版）：统一**预留文本宽度**，而不是 setWidth(最宽的那根) ----
+_width = _host.align_axis_widths()
+_app.processEvents()
+_after = _left_widths()
+check("统一左槽后：四根左轴宽度**完全相等**（%s → %s）" % (_before, _after),
+      len(set(_after)) == 1)
+check("★ 不再留大片空白：统一宽度只比**最窄**那根多 %d px（第一版是撑到最宽那根 = 多 %d px）"
+      % (max(_after) - min(_before), max(_before) - min(_before)),
+      max(_after) - min(_before) <= 20)
+check("预留宽度是合理的布局常量（AXIS_TEXT_WIDTH=%d ≤ 64）" % chart_style.AXIS_TEXT_WIDTH,
+      chart_style.AXIS_TEXT_WIDTH <= 64)
+check("幂等：再调一次宽度不变（第二版不再依赖「画过一次」，也不会越调越宽）",
+      _host.align_axis_widths() == _width)
+check("★ 统一后绘图区左边缘**对齐**（最大错位 %.1f px）"
+      % (max(_left_edges()) - min(_left_edges())),
+      max(_left_edges()) - min(_left_edges()) < 1.0)
+_host.grab()
+_app.processEvents()
+check("对齐不会被重绘顶回来（再画一次宽度仍相等）", len(set(_left_widths())) == 1)
+check("空输入安全：没有窗格时返回 0.0 且不抛（装饰性逻辑绝不连累渲染）",
+      chart_style.unify_axis_width([]) == 0.0)
+
+# ---- R7 修法：换序 ----
+check("move_pane 把 rsi 挪到主图下面第一格", _host.move_pane('rsi', 1) is True)
+check("顺序真的变了", _host.pane_order == ['main', 'rsi', 'vol', 'macd'])
+check("主图不可移动（返回 False，且它仍是第 0 张）",
+      _host.move_pane('main', 2) is False and _host.pane_order[0] == 'main')
+check("原地不动返回 False（不做无意义重排）", _host.move_pane('rsi', 1) is False)
+check("越界自动夹到合法区间（不会 IndexError）",
+      _host.move_pane('rsi', 99) is True and _host.pane_order[-1] == 'rsi')
+check("不存在的窗格名返回 False", _host.move_pane('查无此格', 1) is False)
+check("★ 换序后「最下面那张显示刻度值」的归属**跟着重算**",
+      _host.bottom_axis_pane == _host.pane_order[-1])
+check("★ 换序后只有最下窗格 showValues=True（漏算这一步 ⇒ 日期轴会挂在中间那张副图上）",
+      [_host.pane(n).plot_item.getAxis('bottom').style['showValues']
+       for n in _host.pane_order] == [False, False, False, True])
+check("换序没有打断 x 轴联动（每张副图仍链到主图）",
+      all(_host.x_linked(n) for n in _host.pane_order[1:]))
+
+check("set_pane_order 给全 ⇒ 生效",
+      _host.set_pane_order(['macd', 'vol', 'rsi']) is True
+      and _host.pane_order == ['main', 'macd', 'vol', 'rsi'])
+_keep = list(_host.pane_order)
+check("★ set_pane_order 少给一个 ⇒ 拒绝且**顺序原样不动**（绝不静默丢窗格）",
+      _host.set_pane_order(['macd']) is False and _host.pane_order == _keep)
+check("set_pane_order 给一模一样的顺序 ⇒ False（不做无意义改动）",
+      _host.set_pane_order(['macd', 'vol', 'rsi']) is False)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:

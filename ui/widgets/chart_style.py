@@ -58,6 +58,62 @@ def style_axis(plot_item, axis_name: str, pen_color: str = AXIS_PEN_COLOR,
     return axis
 
 
+# ==========================================
+# 纵轴"固定左槽"（§7-B8 R8）：让多窗格的绘图区左边缘对齐
+# ==========================================
+# 纵轴预留的**刻度文本**宽度（px）。它是**布局常量**（与 SUB_PLOT_HEIGHT 同类）：
+#   所有窗格共用它 ⇒ 绘图区左边缘必然对齐；
+#   同时它**足够小** ⇒ 不会像第一版那样"把窄标签窗格也撑到最宽那个"而留下一大片空白。
+AXIS_TEXT_WIDTH = 52
+AXIS_MIN_TEXT_WIDTH = 40      # 下限（防止调用方传入过小值把标签挤到只剩一两个刻度）
+
+
+def unify_axis_width(plot_items, axis_name: str = 'left',
+                     text_width: int = AXIS_TEXT_WIDTH) -> float:
+    """★ §7-B8 R8 修法：让一组窗格的同一根轴**共用同一个固定宽度**
+    —— 既让绘图区左边缘对齐，又**不留空白**。
+
+    【治什么】用户实测（原话）："随着副图的变多，左侧的坐标轴还会出现对不齐的情况，
+    有些坐标大数字长，有些坐标小数字就小，这也导致两者的缩进完全不一致。"
+    根因 = pyqtgraph 的 `AxisItem` 宽度按**自己**的刻度文本算 ⇒
+    主图（`35` / `5`）、量柱（`4e+08`）、MACD（`100`）三种标签长度不同，左槽宽度就不同。
+    离屏实测：轴宽 `[41, 65, 89]`、绘图区左边缘 `[51, 75, 99]` ⇒ **错位 48px**。
+
+    【为什么**不能**用 setWidth(最宽的那根)】（第一版就是这么写的，**被用户截图推翻**）
+    那等于"把窄标签的窗格也撑到最宽那个"：实测 `[41,65,89] → [89,89,89]`，
+    主图凭空多出 **48px 空白**。用户原话："坐标轴占据了大量的空间，
+    并且造成了比较大的一个空白，请你重新设计一个可以规避这种情况的方案。"
+
+    【第二版做法：改用 pyqtgraph 自己为此准备的三个开关】
+      · `tickTextWidth = 固定值` —— 所有窗格预留**同样的**文本宽度（这才是"预留宽度"的正主）；
+      · `autoExpandTextSpace = False` —— **禁止**它再按自己的标签把轴撑开
+        （实测留着 True 就会被最长的撑回去、对齐立刻失效：`41/65/89`）；
+      · `autoReduceTextSpace = True` —— 标签真的超宽时，让 pyqtgraph **自动减少刻度条数 /
+        降低刻度精度**去适配（`textFillLimits` 就是干这个的），而**不是**把数字裁掉。
+    【实测（同一组三窗格）】改后轴宽 `[57, 57, 57]`、左边缘 `[67, 67, 67]` ⇒ **错位 0**，
+    且只比最窄的那根多 **16px**（对比第一版的 +48px）。
+
+    【安全性】整体 try/except + 失败返回 0.0 ⇒ 这类"装饰性"逻辑绝不许连累图表（§10-2 同精神）。
+    :param text_width: 预留的刻度文本宽度。太小会让 pyqtgraph 减少刻度条数、
+                       太大就退化成第一版的空白。默认 52 是按本项目标签形态（≤6 字符）定的。
+    :return: 实际使用的文本宽度；**0.0 = 没做任何事**（空列表 / 失败），供断言区分"跳过"与"成功"
+    """
+    items = [it for it in (plot_items or []) if it is not None]
+    if not items:
+        return 0.0
+    try:
+        width = max(AXIS_MIN_TEXT_WIDTH, int(text_width))
+        for it in items:
+            axis = it.getAxis(axis_name)
+            axis.setWidth(None)          # 清掉任何历史钉死值，回到"由 tickTextWidth 决定"
+            axis.setStyle(tickTextWidth=width,
+                          autoExpandTextSpace=False,    # 不许按自己的标签撑开（否则对齐全废）
+                          autoReduceTextSpace=True)     # 超宽时减刻度，而不是裁字
+        return float(width)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def apply_pokorny_style(chart, title: str = "", background='w',
                         grid_alpha: float = GRID_ALPHA, margins=15):
     """

@@ -24,7 +24,8 @@ from core.indicators import TAEngine
 from core.utils import (is_minute_period, parse_params_text, period_label,
                         resample_ohlcv)
 from core.formula.program import (FormulaProgramError,
-                                  execute_programs_with_draws_grouped)
+                                  execute_programs_with_draws_grouped, parse_program)
+from data.formula_store import segments_as_tuples
 from data.sync_service import adjust_label
 from ui.widgets.adaptive_axis import slice_span
 from ui.widgets.chart_layers import (builtin_indicator_layers, layer_value_range)
@@ -32,6 +33,7 @@ from ui.widgets.chart_pane import ChartPane
 from ui.widgets.custom_widgets import CandlestickItem
 from ui.widgets.draw_overlay import OverlayPainter, overlay_extent
 from ui.widgets.indicator_panes import fill_macd_pane, fill_volume_pane
+from ui.widgets.layer_model import DRAFT_KEY, TARGET_MAIN, TARGET_SUB
 
 # 附图（成交量 / MACD / 公式副图）统一高度
 SUB_PLOT_HEIGHT = 150
@@ -65,10 +67,11 @@ class DeskLayers:
         df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
         if df.empty:
             return df
-        selected = [key for key, checkbox in
-                    (('ma', p.cb_ma), ('boll', p.cb_boll), ('macd', p.cb_macd))
-                    if checkbox.isChecked()]
-        return TAEngine.apply(df, selected)
+        # ★v6.24（§7-B8 R13）：指标开关的**唯一真源** = `layer_model`（不再是 QCheckBox）；
+        #   参数也来自它（`engine_options()` 只对**已启用**的内置项产出 ⇒ 开关真的在起作用）
+        selected = [key for key in ('ma', 'boll', 'macd')
+                    if p.layer_model.enabled(key)]
+        return TAEngine.apply(df, selected, **p.layer_model.engine_options())
 
     # ==========================================
     # 渲染（幂等，可安全重复调用）
@@ -106,38 +109,34 @@ class DeskLayers:
 
         # ---- 统一图层：内置指标与用户公式**都翻成 DrawData**，窗格全部就位后一次落笔 ----
         p._layer_builtin = builtin_indicator_layers(
-            df, ma=p.cb_ma.isChecked(), boll=p.cb_boll.isChecked())
+            df, ma=p.layer_model.enabled('ma'), boll=p.layer_model.enabled('boll'))
         p._layer_formula = self._formula_layers(df)
         p._layer_bars = len(df)
         p._report_formula_status(df)
 
-        if p.cb_vol.isChecked():
-            vol_pane = p.host.add_pane('vol', fixed_height=SUB_PLOT_HEIGHT)
-            p._apply_pokorny_axis(vol_pane.plot_item)
-            fill_volume_pane(vol_pane.plot_item, df, x_data)
-
-        if p.cb_macd.isChecked():
-            macd_pane = p.host.add_pane('macd', fixed_height=SUB_PLOT_HEIGHT)
-            p._apply_pokorny_axis(macd_pane.plot_item)
-            fill_macd_pane(macd_pane.plot_item, df, x_data)
-
-        # ---- 公式副图（v6.8：每段可选 副图 1/2/3，按需创建）----
-        if p.cb_formula.isChecked():
-            for target in sorted(p._layer_formula):
-                if target == 'main' or not p._layer_formula[target]:
-                    continue
-                # ★STEP 3c：工具行"公式副图 N"chip 可以让某一格单独不显示
-                # （函数段本身还留着 —— 关的是**这一格的显示**，不是把用户的函数删掉）
-                if not p._sub_visible.get(target, True):
-                    continue
-                pane = p.host.add_pane(target, fixed_height=SUB_PLOT_HEIGHT)
+        # ---- 副图：**按模型顺序**装配（内置量/MACD、草稿的 sub1-3、已存配方各占一格）----
+        #   ★v6.24（§7-B8 R7/R13）：顺序由**列表**决定 —— 这正是"格位由顺序决定、
+        #   配方不绑定第几格"的落地；用户调顺序 = 调列表顺序（入口在第 4 批）。
+        for key in p.layer_model.enabled_keys(target=TARGET_SUB):
+            if key == 'volume':
+                pane = p.host.add_pane('vol', fixed_height=SUB_PLOT_HEIGHT)
                 p._apply_pokorny_axis(pane.plot_item)
-                span = layer_value_range(p._layer_formula[target])
-                if span and span[0] <= 0 <= span[1]:
-                    # 穿越 0 的振荡型指标给一条零轴参考线（不穿越就不画，免得误导）
-                    pane.plot_item.addLine(
-                        y=0, pen=pg.mkPen(color='#BDBDBD', style=Qt.PenStyle.DashLine))
-                p.formula_plots[target] = pane.plot_item
+                fill_volume_pane(pane.plot_item, df, x_data)
+                continue
+            if key == 'macd':
+                pane = p.host.add_pane('macd', fixed_height=SUB_PLOT_HEIGHT)
+                p._apply_pokorny_axis(pane.plot_item)
+                fill_macd_pane(pane.plot_item, df, x_data)
+                continue
+            if key == DRAFT_KEY:
+                # 草稿沿用老语义：每段可选 副图 1/2/3，且逐格还能单独隐藏
+                # （★STEP 3c：关的是**这一格的显示**，不是把用户的函数删掉）
+                for target in ('sub1', 'sub2', 'sub3'):
+                    if p._layer_formula.get(target) and p._sub_visible.get(target, True):
+                        self._add_formula_pane(target)
+                continue
+            if p._layer_formula.get(key):
+                self._add_formula_pane(key)
 
         self._paint_layers()
 
@@ -148,6 +147,13 @@ class DeskLayers:
         # ⚠ 必须放在 setXRange **之后**：attach 内部会按当前的 x 区间算一次刻度与量程
         p._axes.attach(df['date'], self._adaptive_providers(df))
 
+        # ---- ★§7-B8 R8：让**所有窗格**的左轴共用同一个固定宽度 ----
+        # 治"副图变多后左侧坐标轴对不齐"（长数字窗格与短数字窗格左槽宽度不同）。
+        # 第二版 = 统一**预留文本宽度**（`tickTextWidth` 常量），因此与 y 量程无关、
+        # 也不依赖"是否画过一次"，更不会把窄标签窗格撑宽留白（第一版的问题）。
+        # 放在这里只是"渲染收尾顺手做一次"，时机不再敏感（幂等，可重复调用）。
+        p.host.align_axis_widths()
+
         # 【P6】K 线 + 可视窗口就位后再恢复标注；**按 (标的, 周期) 取**，日线画线不串到周线
         p._annotations.bind(p.current_symbol, df['date'], period=p.current_period)
         p._refresh_annotation_status()
@@ -157,31 +163,115 @@ class DeskLayers:
         # ★STEP 5：不悬停时读数条显示**最新一根**（常驻摘要，不移动十字光标）
         p._refresh_readout_default()
 
+    def _add_formula_pane(self, pane_key: str) -> None:
+        """建一张公式副图（并按需画零轴参考线）。窗格键 = 草稿的 `sub1..3` 或配方 key。"""
+        p = self.page
+        pane = p.host.add_pane(pane_key, fixed_height=SUB_PLOT_HEIGHT)
+        p._apply_pokorny_axis(pane.plot_item)
+        span = layer_value_range(p._layer_formula.get(pane_key) or [])
+        if span and span[0] <= 0 <= span[1]:
+            # 穿越 0 的振荡型指标给一条零轴参考线（不穿越就不画，免得误导）
+            pane.plot_item.addLine(
+                y=0, pen=pg.mkPen(color='#BDBDBD', style=Qt.PenStyle.DashLine))
+        p.formula_plots[pane_key] = pane.plot_item
+
     # ==========================================
     # 统一图层（v6.6 · §7-B3 P4）
     # ==========================================
     def _formula_layers(self, df) -> dict:
-        """按目标窗格分组求值。**失败不打断整页渲染**，只把原因写进面板状态。
+        """把**所有已启用的用户级项目**求值成 `{窗格键: [DrawData]}`。
 
-        ⚠ 各段共用**同一个变量池**（后段引用前段变量）—— 所以引擎**只求值一次**，
+        ★v6.24（§7-B8 R13）：从"只算当前载入的那一条"改成**遍历已启用的条目**
+        —— 配方库里开几条就算几条（与内置指标**同权管理**，这才是 R13 的本意）。
+        窗格键的取法：
+          · 草稿（未存盘的函数）⇒ 沿用旧的 `main / sub1 / sub2 / sub3`（编辑器里每段可选目标）；
+          · 已存配方 ⇒ **一个配方一个窗格**（主图配方并入 `main`，副图配方的窗格键 = 配方 key）——
+            这正是 R6 的定稿："一条公式只能去一个地方" + "格位由顺序决定，配方不绑定第几格"。
+
+        ⚠ 各段共用**同一个变量池**（后段引用前段变量）—— 所以每条**只求值一次**，
         再按段归位（`execute_programs_with_draws_grouped`）。
         """
         p = self.page
         targets: dict = {}
+        for key in p.layer_model.enabled_keys():
+            if p.layer_model.is_builtin(key):
+                continue                     # 内置走 `builtin_indicator_layers`，不在这里
+            if key == DRAFT_KEY:
+                self._merge_draft(df, targets)
+            else:
+                self._merge_recipe(df, key, targets)
+        return targets
+
+    def _execute_grouped(self, programs, segments, params, df):
+        """一次求值 + 按段归位（共用返回 `(成功?, {目标: [DrawData]})`）。"""
+        try:
+            _variables, groups = execute_programs_with_draws_grouped(programs, df, params)
+        except FormulaProgramError as e:
+            return False, str(e)
+        grouped: dict = {}
+        for (_text, target), draws in zip(segments, groups):
+            grouped.setdefault(target, []).extend(draws)
+        return True, grouped
+
+    def _merge_draft(self, df, targets: dict) -> None:
+        """草稿：沿用"每段可选目标窗格"的老语义（编辑器里就是这么选的）。"""
+        p = self.page
         if not p._formula_programs:
             if p._formula_error:
                 p._set_formula_status(False, f"❌ {p._formula_error}")
-            return targets
-        params = parse_params_text(p._formula_params_text)
-        try:
-            _variables, groups = execute_programs_with_draws_grouped(
-                p._formula_programs, df, params)
-        except FormulaProgramError as e:
-            p._set_formula_status(False, f"❌ 执行失败: {e}")
-            return targets
-        for (_text, target), draws in zip(p._formula_segments, groups):
+            return
+        ok, grouped = self._execute_grouped(p._formula_programs, p._formula_segments,
+                                           parse_params_text(p._formula_params_text), df)
+        if not ok:
+            p._set_formula_status(False, f"❌ 执行失败: {grouped}")
+            return
+        for target, draws in grouped.items():
             targets.setdefault(target, []).extend(draws)
-        return targets
+
+    def _merge_recipe(self, df, key: str, targets: dict) -> None:
+        """已存配方：**一个配方一个窗格**（副图配方的窗格键就是它自己的 key）。"""
+        p = self.page
+        item = p.layer_model.item(key)
+        formula = p._formula_store.get(item.get("formula_id") or "")
+        if formula is None:
+            return
+        programs = self._compile_recipe(key)
+        if not programs:
+            return
+        pairs = segments_as_tuples(formula)
+        ok, grouped = self._execute_grouped(programs, pairs,
+                                           parse_params_text(formula.get("params_text", "")), df)
+        if not ok:
+            p._set_formula_status(False, f"❌ 配方「{item.get('name')}」执行失败: {grouped}")
+            return
+        pane = 'main' if item.get("target") == TARGET_MAIN else key
+        for draws in grouped.values():
+            targets.setdefault(pane, []).extend(draws)
+
+    def _compile_recipe(self, key: str):
+        """编译某条配方（按 key 缓存；配方内容变了由 `desk_formula` 清缓存）。"""
+        p = self.page
+        cache = getattr(p, "_recipe_programs", None)
+        if cache is None:
+            cache = {}
+            p._recipe_programs = cache
+        if key in cache and cache[key] is not None:
+            return cache[key]
+        item = p.layer_model.item(key)
+        formula = p._formula_store.get(item.get("formula_id") or "")
+        if formula is None:
+            cache[key] = []
+            return []
+        programs = []
+        for text, _target in segments_as_tuples(formula):
+            try:
+                programs.append(parse_program(text))
+            except FormulaProgramError as e:
+                p._set_formula_status(False, f"❌ 配方「{item.get('name')}」: {e}")
+                cache[key] = []
+                return []
+        cache[key] = programs
+        return programs
 
     def _paint_layers(self):
         """把「内置指标 + 用户公式」画到各自窗格 —— 全 app 唯一渲染器（§10-11）。
@@ -196,16 +286,15 @@ class DeskLayers:
         main_pane = p.host.main_pane
         main_pane.clear_overlays()
         OverlayPainter(main_pane, x).render(p._layer_builtin)
-        if p.cb_formula.isChecked():
-            OverlayPainter(main_pane, x).render(p._layer_formula.get('main', []))
+        # 主图上的用户图层（草稿的主图段 + 主图配方的图层）——空列表渲染什么都没发生
+        OverlayPainter(main_pane, x).render(p._layer_formula.get('main', []))
         items += main_pane.overlay_items
 
-        if p.cb_formula.isChecked():
-            for target, plot_item in p.formula_plots.items():
-                pane = ChartPane.wrap(plot_item, name=target, role='sub')
-                pane.clear_overlays()
-                OverlayPainter(pane, x).render(p._layer_formula.get(target, []))
-                items += pane.overlay_items
+        for target, plot_item in p.formula_plots.items():
+            pane = ChartPane.wrap(plot_item, name=target, role='sub')
+            pane.clear_overlays()
+            OverlayPainter(pane, x).render(p._layer_formula.get(target, []))
+            items += pane.overlay_items
 
         p._layer_items = items
 
@@ -242,20 +331,18 @@ class DeskLayers:
 
         high = df['high'].to_numpy(dtype=float)
         low = df['low'].to_numpy(dtype=float)
-        main_draws = list(p._layer_builtin)
-        if p.cb_formula.isChecked():
-            main_draws += p._layer_formula.get('main', [])
+        main_draws = list(p._layer_builtin) + list(p._layer_formula.get('main', []))
         overlay_lo, overlay_hi = overlay_extent(main_draws, n)
         providers['main'] = (lambda i0, i1, _lo=np.fmin(low, overlay_lo),
                              _hi=np.fmax(high, overlay_hi): slice_span(_lo, _hi, i0, i1))
 
-        if p.cb_vol.isChecked():
+        if p.layer_model.enabled('volume'):
             volume = df['volume'].to_numpy(dtype=float)
             baseline = np.zeros(n, dtype=float)
             providers['vol'] = (lambda i0, i1, _lo=baseline, _hi=volume:
                                 slice_span(_lo, _hi, i0, i1))
 
-        if p.cb_macd.isChecked():
+        if p.layer_model.enabled('macd'):
             arrays = [df[column].to_numpy(dtype=float)
                       for column in ('MACD_line', 'MACD_signal', 'MACD_hist')
                       if column in df.columns]
@@ -265,12 +352,11 @@ class DeskLayers:
                 providers['macd'] = (lambda i0, i1, _lo=macd_lo, _hi=macd_hi:
                                      slice_span(_lo, _hi, i0, i1))
 
-        if p.cb_formula.isChecked():
-            for target in p.formula_plots:
-                draws = p._layer_formula.get(target, [])
-                if not draws:
-                    continue
-                span_lo, span_hi = overlay_extent(draws, n)
-                providers[target] = (lambda i0, i1, _lo=span_lo, _hi=span_hi:
-                                     slice_span(_lo, _hi, i0, i1))
+        for target in p.formula_plots:
+            draws = p._layer_formula.get(target, [])
+            if not draws:
+                continue
+            span_lo, span_hi = overlay_extent(draws, n)
+            providers[target] = (lambda i0, i1, _lo=span_lo, _hi=span_hi:
+                                 slice_span(_lo, _hi, i0, i1))
         return providers

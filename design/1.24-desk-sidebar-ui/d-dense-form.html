@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>样板 D · 紧凑设置表单（Settings Form）</title>
+<link rel="stylesheet" href="shell.css">
+<style>
+/* ============================================================
+   样板 D · 交互模型 =「紧凑设置表单 / Settings Form」
+   一句话：把它当成一块**桌面软件的设置面板** —— 标签在左、控件在右，
+          细线分组、小标题，面板窄（300px）、密度最高，一屏看全所有配置。
+
+   为什么这样设计（对应你给的三个优先级）：
+   ① 交互体验：控件位置**固定且可预期**（标签左 / 开关右永远对齐），
+      眼睛只需沿一条竖直扫描线上下移动；行高统一 30px ⇒ 找到东西靠"数第几行"就行。
+      开关（switch）比复选框更像"当前是否生效"，扫一眼全是绿的/灰的就知道配了什么。
+   ② 美观：不用卡片、不用分隔块，靠"细线 + 小标题"分区 —— 视觉噪声四套里最低，
+      信息密度最高；面板收窄到 300px，多出来的 72px 直接还给图表。
+   ③ 扩展性：**新配置 = 新的一行**（最省地方）；需要分组时加一条细线 + 一个小标题。
+      ⚠ 代价：状态"值"只能挤在右侧，长文案（如除权跳空）不适合放这里，得靠详情页 / tooltip。
+   ============================================================ */
+.panel{width:300px}
+.pbody{padding:0}
+
+.strip{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#F7FAFF;
+       border-bottom:1px solid var(--line2);font-size:11.4px;color:var(--muted);flex-wrap:wrap}
+.strip b{color:var(--ink2)}
+
+.fgroup{padding:10px 12px 4px}
+.gtitle{font-size:10.8px;font-weight:800;color:var(--faint);letter-spacing:.6px;margin:0 0 2px}
+.frow{display:flex;align-items:center;gap:8px;min-height:30px;font-size:12.2px;color:var(--ink2);
+      border-bottom:1px solid #F4F7FB}
+.frow:last-child{border-bottom:none}
+.frow .lbl{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.frow .val{font-size:11.3px;color:var(--muted);white-space:nowrap}
+.frow .val.ok{color:#2E7D32;font-weight:700}
+.frow .val.warn{color:var(--orange);font-weight:700}
+.frow .sw{flex:0 0 auto}
+.frow.sub{padding-left:10px;color:var(--muted)}
+.frow.planned{border-bottom:1px dashed #E4E9F0;color:var(--faint)}
+.frow.planned .lbl{color:var(--muted)}
+
+.fbtn{display:block;width:100%;text-align:left;padding:7px 9px;border:1px solid var(--line);
+      border-radius:7px;background:#fff;font-size:12.2px;color:var(--ink2);margin-bottom:6px}
+.fbtn:hover{background:#F7FAFF;border-color:#C9D6E8}
+.fbtn.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+.fbtn.pri:hover{background:var(--accent-deep)}
+.fbtn.amber{background:#FFF8E1;border-color:#FFE082;color:var(--orange);font-weight:700}
+.fbtn.danger{background:#FFEBEE;border-color:#FFCDD2;color:#C62828;font-weight:700}
+.fbtn .k{margin-left:6px;font-size:10.8px;opacity:.7;float:right;font-weight:400}
+.hint{font-size:11.2px;color:var(--muted);line-height:1.55;padding:2px 0 4px}
+
+.wl{list-style:none;margin:0;padding:0;border:1px solid var(--line2);border-radius:8px;overflow:hidden;background:#fff}
+.wl li{display:flex;align-items:center;gap:7px;padding:6px 8px;font-size:12.1px;color:var(--ink2);cursor:pointer;
+       border-bottom:1px solid #F4F7FB}
+.wl li:last-child{border-bottom:none}
+.wl li:hover{background:#F7FAFF}
+.wl li.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+.wl .code{margin-left:auto;color:var(--muted);font-size:11px}
+.wl .chg{width:50px;text-align:right;font-size:11.2px}
+.miniseg{display:flex;flex-wrap:wrap;gap:4px}
+.miniseg button{border:1px solid var(--line);background:#FBFCFE;border-radius:6px;padding:4px 8px;
+                font-size:11.6px;color:var(--muted)}
+.miniseg button:hover{border-color:#A9C7EA;color:var(--accent)}
+.miniseg button.on{background:var(--accent-soft);border-color:#BBDEFB;color:var(--accent-deep);font-weight:700}
+.slots{display:flex;gap:4px}
+.slot{flex:1;border:1px dashed #CBD6E4;border-radius:6px;padding:4px 2px;text-align:center;
+      font-size:10.8px;color:var(--muted);background:#FAFCFF;cursor:pointer}
+.slot.on{border-style:solid;border-color:#BFE3C8;background:#EAF7EE;color:#2E7D32;font-weight:700}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>行情工作台</h1>
+  <span class="grow"></span>
+  <div class="search"><span class="gray">🔍</span><input value="600519" placeholder="输入代码或中文名 (如: 600519 或 茅台)"></div>
+  <button class="btn pri">查阅</button>
+  <button class="btn ghost">☁️ 云端同步</button>
+  <span class="pill ok">已是最新</span>
+</div>
+
+<div class="toolrow">
+  <span class="seglab">周期</span>
+  <div class="seg" data-onclick="minute"><button class="on">日</button><button>周</button><button>月</button><button>分钟</button></div>
+  <div class="seg minute" id="segMinute"><button class="on">1</button><button>5</button><button>15</button><button>30</button><button>60</button></div>
+  <span class="sep"></span>
+  <span class="seglab">复权</span>
+  <div class="seg"><button class="on">前复权</button><button>不复权</button></div>
+  <span class="sep"></span>
+  <span class="seglab">主图</span>
+  <span class="chip on"><i></i>均线 MA</span><span class="chip"><i></i>布林带 BOLL</span><span class="chip on"><i></i>自定义公式</span>
+  <span class="chip more">＋ 更多</span>
+  <span class="sep"></span>
+  <span class="seglab">附图</span>
+  <span class="chip on"><i></i>成交量</span><span class="chip on"><i></i>MACD</span>
+  <span class="chip more">＋ 更多</span>
+  <span class="grow"></span>
+  <button class="tb" title="打开左栏「✎ 标注工具」页">✎</button>
+  <span class="pill">3 条标注</span>
+</div>
+
+<div class="body">
+  <div class="side" id="side">
+    <div class="rail">
+      <button data-key="watch" class="on" title="自选股">★</button>
+      <button data-key="formula" title="公式与配方">ƒ</button>
+      <button data-key="layer" title="主图叠加 / 附图">◫</button>
+      <button data-key="anno" title="标注工具（画线都在这）">✎<span class="dot"></span></button>
+      <button data-key="data" title="数据与口径">⛁</button>
+      <button class="fold" id="foldBtn" title="折起工具面板，把宽度让给图表">⇤</button>
+    </div>
+
+    <div class="panel" id="panel">
+      <div class="phead" style="padding:9px 12px 8px">
+        <div><div class="pt" id="pageTitle">自选股</div><div class="ps" id="pageSub">双击即切换当前标的</div></div>
+      </div>
+
+      <!-- 一行式状态条（与 C 的六行总览相比：这里只留最近一次操作 + 体检结果） -->
+      <div class="strip">
+        <span class="pill blue">前复权</span><span class="pill blue">日线</span>
+        <span><b>4041</b> 根</span><span class="pill ok">体检 ✓</span>
+      </div>
+
+      <div class="pbody">
+        <!-- ===== ★ 自选股 ===== -->
+        <div data-page="watch" class="on">
+          <div class="fgroup">
+            <div class="gtitle">自选股 · 当前标的</div>
+            <div class="frow"><span class="lbl">贵州茅台 600519</span><span class="val ok">+1.23%</span></div>
+            <button class="fbtn pri" style="margin-top:8px">★ 把当前标的加入自选</button>
+          </div>
+          <div class="fgroup">
+            <div class="gtitle">自选清单 · 双击切换</div>
+            <ul class="wl pickable">
+              <li class="on">贵州茅台<span class="code">600519</span><span class="chg" style="color:#4CAF50">+1.23%</span></li>
+              <li>宁德时代<span class="code">300750</span><span class="chg" style="color:#F44336">-0.64%</span></li>
+              <li>五 粮 液<span class="code">000858</span><span class="chg" style="color:#4CAF50">+0.42%</span></li>
+              <li>西藏天路<span class="code">600326</span><span class="chg" style="color:#4CAF50">+2.10%</span></li>
+              <li>比亚迪<span class="code">002594</span><span class="chg" style="color:#F44336">-1.05%</span></li>
+            </ul>
+            <div class="frow" style="border-bottom:none;margin-top:6px"><span class="lbl gray">移除 / 调序</span>
+              <button class="btn sm">🗑</button><button class="btn sm">⬆</button><button class="btn sm">⬇</button></div>
+          </div>
+        </div>
+
+        <!-- ===== ƒ 公式与配方 ===== -->
+        <div data-page="formula">
+          <div class="fgroup">
+            <div class="gtitle">当前公式</div>
+            <div class="frow"><span class="lbl">段数 / 变量</span><span class="val ok">3 段 · 27 变量 · ✓</span></div>
+            <div class="frow"><span class="lbl">目标窗格</span><span class="val">主图 · 副图1 · 副图2</span></div>
+            <div class="frow sub"><span class="lbl">来源</span><span class="val">配方「MACD + 自研均线组」</span></div>
+            <div class="hint">函数在某只标的上算不出来时会直接给 ❌，不打断整页渲染。</div>
+            <button class="fbtn pri">✏️ 编辑公式…</button>
+          </div>
+          <div class="fgroup">
+            <div class="gtitle">资产化</div>
+            <button class="fbtn">💾 存为配方…</button>
+            <button class="fbtn">📚 配方库…</button>
+            <button class="fbtn">📤 送去做回测</button>
+            <div class="hint">配方 = 函数段 + 参数 + 每段目标窗格。</div>
+          </div>
+        </div>
+
+        <!-- ===== ◫ 主图叠加 / 附图 ===== -->
+        <div data-page="layer">
+          <div class="fgroup">
+            <div class="gtitle">主图叠加</div>
+            <div class="frow"><span class="lbl">均线 (MA 5/20/60)</span><span class="sw on"></span></div>
+            <div class="frow"><span class="lbl">布林带 (BOLL)</span><span class="sw"></span></div>
+            <div class="frow"><span class="lbl">自定义公式</span><span class="sw on"></span></div>
+          </div>
+          <div class="fgroup">
+            <div class="gtitle">附图</div>
+            <div class="frow"><span class="lbl">成交量</span><span class="sw on"></span></div>
+            <div class="frow"><span class="lbl">MACD</span><span class="sw on"></span></div>
+            <div class="frow"><span class="lbl">公式副图</span><span class="val">2 / 3 格</span></div>
+            <div style="padding:2px 0 6px"><div class="slots">
+              <span class="slot on">副图1</span><span class="slot on">副图2</span><span class="slot">副图3</span></div></div>
+            <div class="hint">副图开关只控制显示，不会删函数段；工具行只放最近用过的 3 个。</div>
+          </div>
+          <div class="fgroup">
+            <div class="gtitle">预留 · 规划中</div>
+            <div class="frow planned"><span class="lbl">KDJ / RSI 内置副图</span><span class="val">未开始</span></div>
+          </div>
+        </div>
+
+        <!-- ===== ✎ 标注工具 ===== -->
+        <div data-page="anno">
+          <div class="fgroup">
+            <div class="gtitle">画线类型</div>
+            <div class="miniseg">
+              <button>浏览</button><button>趋势</button><button>水平</button>
+              <button>垂直</button><button class="on">斐波</button><button>文字</button>
+            </div>
+            <button class="fbtn pri" style="margin-top:8px">➕ 在图上添加标注<span class="k">拖动松手即存</span></button>
+          </div>
+          <div class="fgroup">
+            <div class="gtitle">已有标注 · 3 条（1 条选中）</div>
+            <div class="frow"><span class="lbl">斐波那契 · 1480.20 ~ 1560.40</span><span class="val">07-18</span></div>
+            <div class="frow"><span class="lbl">趋势线</span><span class="val">06-04</span></div>
+            <div class="frow"><span class="lbl">水平线 · 1502.00</span><span class="val">05-21</span></div>
+            <button class="fbtn amber" style="margin-top:8px">🧽 删除选中<span class="k">Delete</span></button>
+          </div>
+          <div class="fgroup">
+            <div class="gtitle">危险动作 · 隔离</div>
+            <button class="fbtn danger">🗑️ 清空本标的标注<span class="k">需二次确认</span></button>
+            <div class="hint">按「标的 + 周期」分开保存；坐标按日期锚定，增量更新不会跑偏。</div>
+          </div>
+        </div>
+
+        <!-- ===== ⛁ 数据与口径 ===== -->
+        <div data-page="data">
+          <div class="fgroup">
+            <div class="gtitle">当前看的是哪一份</div>
+            <div class="frow"><span class="lbl">口径</span><span class="val ok">前复权</span></div>
+            <div class="frow"><span class="lbl">周期</span><span class="val">日线</span></div>
+            <div class="frow"><span class="lbl">根数</span><span class="val">4041（2010-01-04 ~ 2026-09-16）</span></div>
+            <div class="frow"><span class="lbl">除权跳空</span><span class="val warn">2023-08-08（-24.8%）</span></div>
+            <div class="hint">前复权以最新价为锚、只改除权日之前 ⇒ 只看最近一段时两个口径本来就一样（这不是开关失效）。</div>
+          </div>
+          <div class="fgroup">
+            <div class="gtitle">同步规则</div>
+            <div class="frow"><span class="lbl">本地有数据</span><span class="val">只补最新几天</span></div>
+            <div class="frow"><span class="lbl">本地没数据</span><span class="val">整段抓取</span></div>
+            <div class="frow"><span class="lbl">分钟</span><span class="val">每次取最近一段快照</span></div>
+            <div class="hint">要丢弃本地重下历史，请到「🗄 数据管理」用「重新全量下载」。</div>
+            <button class="fbtn" style="margin-top:8px">🗄 打开数据管理…</button>
+          </div>
+          <div class="fgroup">
+            <div class="gtitle">预留 · 规划中</div>
+            <div class="frow planned"><span class="lbl">全市场横截面扫描（M2）</span><span class="val">未开始</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart">
+    <div class="chead"><span class="sym">贵州茅台 600519</span><span class="sub">日线 · 前复权 · 4041 根</span></div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">最新</div><div class="v num">1520.50</div></div>
+      <div class="kpi"><div class="l">涨跌幅</div><div class="v num" style="color:#4CAF50">+1.23%</div></div>
+      <div class="kpi"><div class="l">成交量</div><div class="v num">312.0 万</div></div>
+      <div class="kpi"><div class="l">MA20</div><div class="v num">1494.80</div></div>
+    </div>
+    <div class="legend"><span><i style="background:#1976D2"></i>MA5</span><span><i style="background:#E65100"></i>MA20</span>
+      <span><i style="background:#4CAF50"></i>涨</span><span><i style="background:#F44336"></i>跌</span></div>
+    <div class="panes">
+      <div class="pane main"><span class="plabel">主图 · K 线 + MA</span><svg id="chartMain"></svg></div>
+      <div class="pane vol"><span class="plabel">成交量</span><svg id="chartVol"></svg></div>
+      <div class="pane macd"><span class="plabel">MACD</span><svg id="chartMacd"></svg></div>
+    </div>
+    <div class="xaxis"><span>2026-04</span><span>2026-05</span><span>2026-06</span><span>2026-07</span><span>2026-08</span><span>2026-09</span></div>
+    <div class="readout">
+      <b>2026-09-16</b><span>开 1502.00</span><span>高 1533.00</span><span>低 1498.00</span>
+      <span>收 <b>1520.50</b></span><span>量 3,120,400</span><span class="tag" style="color:#4CAF50">+1.23%</span><span>MA5 1508.4</span><span>MA20 1494.8</span>
+    </div>
+  </div>
+</div>
+
+<div class="badge"><span class="x" onclick="this.parentNode.remove()">✕</span>
+  <b>样板 D · 紧凑设置表单</b><br>
+  面板 300px（比现状 372 窄 72px，直接还给图表）· 标签左 / 控件右 · 细线分组 · 新配置 = 新一行。<br>
+  <span style="opacity:.75">注意：这是四套里信息密度最高、视觉噪声最低的一套。</span></div>
+
+<script src="shell.js"></script>
+<script>
+/* 公式副图小格：点一下切显示（与 "真源是隐藏的复选框" 语义一致，这里只演示观感） */
+document.querySelectorAll('.slot').forEach(function (s) {
+  s.addEventListener('click', function () { s.classList.toggle('on'); });
+});
+/* 小分段控件 */
+document.querySelectorAll('.miniseg').forEach(function (g) {
+  g.addEventListener('click', function (e) {
+    if (e.target.tagName === 'BUTTON') e.target.classList.toggle('on');
+  });
+});
+</script>
+</body>
+</html>
