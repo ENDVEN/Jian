@@ -40,3 +40,8 @@ samples/*
 *实例*.txt
 # 实例/真实交割单 Excel 含资金账户等隐私，禁止入库
 *交割单*.xlsx
+
+# === AI 生成的文档库 (repowiki) - 防止误 push ===
+# .qoder/repowiki 是 AI 自动生成的文档库，包含 77+ 个 Markdown 文件
+# 这些文档仅供本地参考，不应提交到版本控制系统
+.qoder/repowiki/
