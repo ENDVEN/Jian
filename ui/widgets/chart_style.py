@@ -237,3 +237,26 @@ def ensure_contrast(color: str, background: str = LIGHT_BACKGROUND) -> str:
         if _visible(luminance(_to_hex(blended)), bg_lum):
             return _to_hex(blended)
     return _to_hex(target)
+
+
+# ---- 画线填充（价格带 / 时间区间 / 平行通道 / 回归通道共用 · §7-B9 H-7）----
+# 【为什么 alpha 这么低】用户实测：高饱和大幅填充"严重影响 K 线阅读"。
+#   填充的作用只是让"这是一段区间"可辨识，**画面主角必须仍是 K 线** ——
+#   宁可淡到几乎看不见，也不能反过来把 K 线盖住（宁可变难看，也要能读盘）。
+FILL_ALPHA = 18           # 未选中
+FILL_ALPHA_ON = 36        # 选中：略深一档（"哪条被选中"仍要一眼可见，但不能盖盘）
+
+
+def annotation_fill(color: str, selected: bool = False,
+                    background: str = LIGHT_BACKGROUND) -> tuple:
+    """画线填充的**唯一配色口径**（价格带 / 时间区间 / 平行通道 / 回归通道全走这里）。
+
+    :return: `(r, g, b, alpha)` —— 调用方用 `pg.mkColor(tuple)` 转 QBrush。
+    ⚠ **将来适配深色/系统主题时只改本函数**（按 `background` 亮度调色相与 alpha），
+    `annotation_items` 的区间带与填充带都已收敛到这里 —— **别再各处自调透明度**。
+    """
+    if not color:
+        color = DEFAULT_OVERLAY_COLOR
+    rgb = _to_rgb(ensure_contrast(color, background))
+    alpha = FILL_ALPHA_ON if selected else FILL_ALPHA
+    return (rgb[0], rgb[1], rgb[2], int(alpha))

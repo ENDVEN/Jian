@@ -35,7 +35,9 @@
   ② **周期切换**：日 / 周 / 月 / **分钟档位** —— 日周月由 `core.utils.resample_ohlcv` 就地聚合，
      列名与日线一致 ⇒ K 线/指标/公式/标注**全部零改动**；
      ⚠ 标注按 `(标的, **周期**)` 分开存：日线画的线不会跑到周线上（§7-B3 P6 的既定设计）；
-  ③ **画线工具栏 5 类**：趋势线 / 水平线 / 垂直线 / 斐波那契 / 文字（家在左栏「✎ 标注」页）；
+  ③ **画线工具 27 种**（目录共 32 种、分 6 类，剩下 5 种登记但没做、点它会明说）：
+     画法在 `ui/widgets/annotation_shapes.py`（一种类型一个规格）+ `annotation_items.py` /
+     `annotation_decos.py`；交互与持久化在 `annotation_layer.py`（家在左栏「✎ 标注」页）；
   ④ **1.23 版式收口（§7-B6 · 样板 A 骨架）**：顶栏两行（L1 查询 / L2 周期·复权·chips）+
      左栏图标轨（可折起，把宽度还给图表）+ 常驻读数条（日期/O/H/L/C/量/MA5/MA20）。
 
@@ -595,8 +597,11 @@ class TradingDeskView(QWidget):
     def _reset_tool(self):
         return self._annos._reset_tool()
 
-    def add_annotation(self):
-        return self._annos.add_annotation()
+    # ⚠ `add_annotation` 薄壳已于 v6.26（§7-B9 拍板①）随「➕ 添加标注」按钮一起**删除** ——
+    #   新建标注的唯一路径现在是"在图上点出来"（`AnnotationLayer.commit_draw`）。
+    def ask_annotation_text(self, kind: str):
+        """需要文字的类型（文字 / 评论气泡）在落库前问一句 —— 转发给 `desk_annotations`。"""
+        return self._annos.ask_annotation_text(kind)
 
     def delete_selected_annotation(self):
         return self._annos.delete_selected_annotation()

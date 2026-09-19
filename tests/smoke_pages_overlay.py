@@ -568,7 +568,8 @@ mkt.save_formula_as()
 check("同名再保存 = 覆盖，不新增条目", fstore.count() == before)
 
 print("== 行情工作台（v6.12 · P8）：自选股 / 周期 / 新画线类型 ==")
-from data.annotations import KIND_FIB, KIND_TEXT, AnnotationStore  # noqa: E402
+from data.annotations import (KIND_FIB, KIND_TEXT, AnnotationStore,  # noqa: E402
+                              price_text, regression_channel, requires_text)
 from data.watchlist_store import WatchlistStore  # noqa: E402
 from core.utils import resample_ohlcv  # noqa: E402
 from ui.widgets.annotation_layer import DRAWABLE_KINDS  # noqa: E402
@@ -1007,13 +1008,134 @@ check("★ 数字快捷键 1 ⇒ 目录里编号 1 的类型（趋势线）",
 mkt.select_tool_number("不是数字")
 check("非法快捷键输入不炸也不改状态", mkt.current_tool == KIND_TREND)
 
-# ★ 未实现的类型：**点了必须有话说**（§9-Q：不静默）
-mkt.select_tool("ray")
-check("★ 点到未实现的类型 ⇒ 明确告知「还没实现」（连同它归在哪一类 / 编号几）",
-      "还没实现" in mkt.lbl_annotation_status.text()
-      and mkt.current_tool == KIND_TREND          # 工具没被切走
-      and not mkt.anno_tiles["ray"].is_selected())
+# ★ 点不动的类型：**必须有话说**（§9-Q：不静默）
+#   ⚠ 两条纪律都得守：① **不许写死"哪个类型没实现"**（写死的下场 = 扩容那天变假失败，
+#   同 §11.5-34）；② **也不能假设"一定有未实现的"**（v6.26 32 种全部做完后就真没有了）。
+_todo = [e["kind"] for e in annotation_catalog.ENTRIES if not e["implemented"]]
+if _todo:
+    mkt.select_tool(_todo[0])
+    check("★ 点到未实现的类型 ⇒ 明确告知「还没实现」（连同它归在哪一类 / 编号几）",
+          "还没实现" in mkt.lbl_annotation_status.text()
+          and mkt.current_tool == KIND_TREND          # 工具没被切走
+          and not mkt.anno_tiles[_todo[0]].is_selected())
+else:
+    mkt.select_tool("__no_such_kind__")               # 目录外的假类型：同样不许静默
+    check("★ 目录里没有待实现项时（32 种全通），点目录外的类型也要有话说",
+          "不能用" in mkt.lbl_annotation_status.text()
+          and mkt.current_tool == KIND_TREND)
 mkt.select_tool(KIND_TREND)
+
+# ---- v6.26：32 种**逐个**走一遍"选类型 → 在图上点出来 → 删掉"（目录不许骗人）----
+from ui.widgets.annotation_shapes import DRAWABLE_KINDS, spec_of  # noqa: E402
+
+
+def draw_by_clicks(kind, prices=None):
+    """等价用户"选类型 → 在图上依次点锚点"（§7-B9 STEP 1 的主路径）。
+
+    :return: `(落库的标注, 首个锚点的期望值)`；`prices` 缺省按**当前可视区间**取几个位置。
+    ⚠ 锚点必须落在**可视区**内（页面上的真实用户只会点看得见的地方），且彼此**拉开距离**
+    （回归通道这种"框选区间"的类型，点挤在同一根 bar 上是退化情形 ⇒ 画不出来）。
+    """
+    spec = spec_of(kind)
+    size = max(mkt._annotations._axis.size, 1)
+    (vx0, vx1), (vy0, vy1) = mkt.host.main_pane.view_box.viewRange()
+    span_x = max(float(vx1) - float(vx0), 1e-9)
+    span_y = max(float(vy1) - float(vy0), 1e-9)
+    prices = list(prices or []) or [float(vy0) + span_y * fraction
+                                    for fraction in (0.45, 0.62, 0.30, 0.75, 0.20)]
+    mkt.select_tool(kind)
+    item, first = None, None
+    for index in range(spec.points):
+        position = float(vx0) + span_x * (0.05 + 0.13 * index)
+        date_label = mkt._annotations._axis.index_to_date(round(position))
+        if first is None:
+            first = (date_label, prices[index])
+        item = mkt._annotations._session.on_click(date_label, prices[index])
+    return item, first
+
+
+# 主图元**价格由算出来**的类型：回归通道的中线 = 对收盘价回归的结果（不是点击时的价）
+_DERIVED_Y = {"reg_channel"}
+
+_drawn_ok, _composite_ok, _failed = True, True, []
+for _kind in DRAWABLE_KINDS:
+    mkt._annotations.clear_all()
+    # 需要用户填文字的类型（文字 / 评论气泡）走打桩的输入框，**别让断言真去弹窗**
+    if requires_text(_kind):
+        ANSWERS.append("测试输入")
+    _item, _first = draw_by_clicks(_kind)
+    _graphic = mkt._annotations._items.get(_item["id"]) if _item else None
+    if _item is None or _graphic is None:
+        _drawn_ok, _failed = False, _failed + [_kind]
+        continue
+    # 落库坐标必须就是**点击处**的日期 + 价（不是什么"默认落点"）
+    _date_ok = _item["points"][0][0] == _first[0]
+    if _kind in _DERIVED_Y:
+        _xs = sorted([mkt._annotations._axis.date_to_index(p[0])
+                      for p in _item["points"][:2]])
+        _fit = regression_channel(mkt._annotations._closes, _xs[0], _xs[1])
+        _price_ok = _fit is not None and abs(_item["points"][0][1] - _fit["start"]) < 1e-6
+    else:
+        _price_ok = abs(_item["points"][0][1] - _first[1]) < 1e-6
+    if not (_date_ok and _price_ok):
+        _drawn_ok = False
+        _failed = _failed + [f"{_kind}(落点={_item['points'][0]} 期望={_first})"]
+    _extras = mkt._annotations._extras.get(_item["id"]) or []
+    # 复合类型（档位/标签/箭头）必须真的有附属图元，且**都在窗格容器里**（§11.5-15）
+    if _extras and len(mkt.host.main_pane.annotation_items) != 1 + len(_extras):
+        _composite_ok = False
+    mkt.delete_selected_annotation()
+    if mkt._annotations.count() != 0 or mkt.host.main_pane.annotation_items:
+        _drawn_ok, _failed = False, _failed + [_kind + "(删不掉)"]
+check(f"★ 目录里 {len(DRAWABLE_KINDS)} 种**每一种**都能点出来并落库"
+      f"（说能画就必须画得出）{_failed}",
+      _drawn_ok and len(DRAWABLE_KINDS) == 32)
+
+# ★ STEP 1 拍板语义：① 点一半不落库 ② Esc 取消不留东西 ③ 画完回浏览模式 ④ 允许重合
+mkt._annotations.clear_all()
+mkt.select_tool(KIND_TREND)
+mkt._annotations._session.on_click(mkt._annotations._axis.index_to_date(3.0), 101.0)
+check("★ 只点了 1 个锚点 ⇒ **不落库**（没点够就不该出现半截线；图上只有预览）",
+      mkt._annotations.count() == 0 and not mkt._annotations._items
+      and mkt._annotations.drawing)
+mkt.select_tool("")                      # 浏览模式 == 取消绘制
+check("★ 切回浏览模式 ⇒ 半截绘制被丢掉，图上不留预览",
+      mkt._annotations.count() == 0 and not mkt.host.main_pane.annotation_items
+      and not mkt._annotations.drawing)
+mkt.select_tool(KIND_HLINE)
+mkt._annotations._session.on_click(mkt._annotations._axis.index_to_date(4.0), 102.0)
+check("★ 画完一条 ⇒ **自动回到浏览模式**（用户拍板：必须防手残）",
+      mkt._annotations.count() == 1 and mkt.current_tool == ""
+      and not mkt._annotations.drawing)
+mkt.select_tool(KIND_TREND)
+mkt._annotations._session.on_click(mkt._annotations._axis.index_to_date(5.0), 103.0)
+mkt._annotations._session.on_click(mkt._annotations._axis.index_to_date(5.0), 103.0)
+check("★ 允许点位重合（两次点同一个地方也照落，**不做**自以为是的去重）",
+      mkt._annotations.count() == 2)
+mkt._annotations.clear_all()
+check("★ 复合类型（档位/标签）的附属图元全部挂进窗格容器（不会留下没人管的线）",
+      _composite_ok)
+mkt._annotations.clear_all()
+mkt.select_tool(KIND_TREND)
+
+# 价格标签：**文字就是价位**，拖到新价位后标签跟着变（不是写死的一串字）
+mkt.select_tool("price_tag")
+_tag = mkt._annotations.create_default()
+check("价格标签新建时文字 = 当时的价位",
+      _tag is not None and _tag["text"] == price_text(_tag["points"][0][1]))
+mkt._annotations._items[_tag["id"]].setPos(20.0, 88.8)      # 模拟用户拖到这里
+mkt._annotations._persist_from_view(_tag["id"])
+check("★ 拖到新价位后标签文字跟着变（价位标签不是说一次就死的字）",
+      p8_store.get("sh600000", "monthly", _tag["id"])["text"] == price_text(88.8))
+mkt._annotations.clear_all()
+
+# 区间类（价格带 / 时间区间）：读回来的是"两条价位 / 两个日期"，不是序号
+mkt.select_tool("hband")
+_band = mkt._annotations.create_default()
+_band_y = [p[1] for p in _band["points"]]
+check("价格带 = 两条价位（横向贯穿，日期只是锚点）",
+      len(_band_y) == 2 and abs(_band_y[0] - _band_y[1]) > 0)
+mkt._annotations.clear_all()
 
 # 吸顶分类标题（R11 第 4 条）：滚下去之后顶部一直显示"当前是类"
 mkt.anno_scroll.set_sections([
@@ -1035,24 +1157,28 @@ fib_item = mkt._annotations.create_default()
 check("斐波那契：主图元 + 7 档水平位 + 7 标签",
       fib_item is not None and len(mkt._annotations._extras[fib_item['id']]) == 14
       and len(mkt.host.main_pane.annotation_items) == 15)
-check("面板回执说明了当前工具与周期", '斐波那契' in mkt.lbl_annotation_status.text()
-      and '月线' in mkt.lbl_annotation_status.text())
+# ★v6.26：绘制中的回执是**分步提示**（"第 1/2 步 —— 点起点"），比"已存几条"重要
+check("★ 绘制中回执给分步提示（用户此刻唯一要知道的是「下一步点哪」）",
+      "第 1/2 步" in mkt.lbl_annotation_status.text()
+      and "起点" in mkt.lbl_annotation_status.text())
+mkt.select_tool("")
+check("面板回执说明了周期与条数", '月线' in mkt.lbl_annotation_status.text())
 mkt.delete_selected_annotation()
 check("删除斐波那契：附属水平位一并消失（不留无主图元）",
       len(mkt.host.main_pane.annotation_items) == 0 and p8_store.count('sh600000', 'monthly') == 0)
 
 ANSWERS.append("这里是压力位")              # 文字标注要填内容 → 交给打桩的输入框
 mkt.select_tool(KIND_TEXT)
-mkt.add_annotation()
-check("文字标注：经页面入口创建并落库",
-      mkt._annotations.count() == 1 and len(mkt.host.main_pane.annotation_items) == 1)
-
-before_modals = len(MODALS)
-mkt.select_tool("")                        # 回到浏览模式：不应再新建
-mkt.add_annotation()
-check("浏览模式下点「添加」不会新建（改为提示用户先选类型）",
-      mkt._annotations.count() == 1
-      and any(kind == 'information' for kind, _text in MODALS[before_modals:]))
+mkt._annotations._session.on_click(mkt._annotations._axis.index_to_date(6.0), 104.0)
+check("★ 文字标注：点一下 ⇒ 弹输入框要内容 ⇒ 落库（新流程，按钮已删）",
+      mkt._annotations.count() == 1 and len(mkt.host.main_pane.annotation_items) == 1
+      and mkt._annotations.selected_id)
+ANSWERS.append("")                          # 空内容 ⇒ 应当被拒（不落库）
+mkt._annotations.clear_all()
+mkt.select_tool(KIND_TEXT)
+mkt._annotations._session.on_click(mkt._annotations._axis.index_to_date(7.0), 105.0)
+check("★ 内容为空 ⇒ 不落库（绝不存一条画不出东西的记录）",
+      mkt._annotations.count() == 0)
 mkt._annotations.clear_all()
 
 # ---- 复权切换（v6.13 · P8 收尾）：换分区取数，两份互不覆盖 ----
@@ -1711,7 +1837,7 @@ _MOVED = [("lst_watch", "watch"), ("btn_watch_add", "watch"), ("btn_watch_up", "
           ("btn_watch_rename", "watch"), ("btn_watch_delete_group", "watch"),
           ("btn_edit_formula", "formula"), ("lbl_formula_status", "formula"),
           ("anno_scroll", "anno"), ("btn_anno_browse", "anno"),
-          ("btn_add_annotation", "anno"),
+          # ⚠ v6.26（§7-B9 拍板①）：`btn_add_annotation` 已随"添加标注"按钮删除 ⇒ 从护栏里摘掉
           ("btn_delete_annotation", "anno"), ("btn_clear_lines", "anno"),
           ("lbl_annotation_status", "anno"), ("lbl_adjust_hint", "data"),
           # ★v6.24 §7-B8 第 4/5 批：拖拽排序 + 内容区可滚（新增控件同样不许换页/换名）
@@ -1745,9 +1871,9 @@ check("三个页面都有各自的内容区（ScrollRegion，放不下就滚而�
 check("★ 配方页：卡片在**内容区里**（贴顶堆叠、不贪心拉伸），主操作在外层**钉底**",
       mkt.scroll_formula.widget().isAncestorOf(mkt.card_formula_lib)
       and not mkt.scroll_formula.widget().isAncestorOf(mkt.btn_edit_formula))
-check("★ 画线页：目录卡在内容区里、底部三键在外层钉底",
+check("★ 画线页：目录卡在内容区里、操作键在外层钉底（不跟着内容一起滚）",
       mkt.scroll_anno.widget().isAncestorOf(mkt.card_anno_tools)
-      and not mkt.scroll_anno.widget().isAncestorOf(mkt.btn_add_annotation))
+      and not mkt.scroll_anno.widget().isAncestorOf(mkt.btn_delete_annotation))
 check("★ 卡头**钉成固定高**（父布局把卡片拉高时，多出来的高度全给内容区、不给卡头）",
       mkt.card_formula_lib._head.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
       and mkt.card_anno_tools._head.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed)
@@ -1867,7 +1993,8 @@ for _handle, _impl_name, _page_name, _module in (
         ("_data", "_refresh_adjust_hint", "_refresh_adjust_hint", "desk_data.py"),
         ("_formula", "edit_formula", "edit_formula", "desk_formula.py"),
         ("_formula", "receive_formula", "receive_formula", "desk_formula.py"),
-        ("_annos", "add_annotation", "add_annotation", "desk_annotations.py"),
+        # ⚠ v6.26：`add_annotation` 薄壳已删（按钮也没了）⇒ 换成新流程的 `ask_annotation_text`
+        ("_annos", "ask_annotation_text", "ask_annotation_text", "desk_annotations.py"),
         ("_annos", "_refresh_annotation_status", "_refresh_annotation_status",
          "desk_annotations.py"),
         ("_chips", "toggle_chip", "toggle_chip", "desk_chips.py"),
@@ -1898,7 +2025,8 @@ DESK_PUBLIC_ATTRS = (
     # ★v6.24（§7-B8 R13）：5 个 QCheckBox 已退休 ⇒ 公共面换成**图层真源**（模型 + 唯一落点）
     "layer_model", "_persist_layer_state",
     "btn_edit_formula", "lbl_formula_status", "lbl_annotation_status", "lbl_adjust_hint",
-    "btn_add_annotation", "btn_delete_annotation", "btn_clear_lines",
+    # ⚠ v6.26：`btn_add_annotation` 已删除（§7-B9 拍板①），公共面同步摘掉
+    "btn_delete_annotation", "btn_clear_lines",
     # ★STEP 3b/3c/4：顶栏第 2 行 + 左栏（迁移期新增的公共面，同样不许改名）
     "seg_period", "seg_minute", "seg_adjust",
     # ★v6.24（§7-B8 R10/R11）：`seg_tool` 已退休（换成 32 种类型目录）⇒ 公共面换成这一组
@@ -1924,7 +2052,7 @@ DESK_PUBLIC_ATTRS = (
     "load_symbol", "sync_cloud", "render_charts", "prepared_df",
     "edit_formula", "save_formula_as", "open_formula_library",
     "send_formula_to_backtest", "receive_formula",
-    "add_annotation", "delete_selected_annotation", "clear_annotations",
+    "delete_selected_annotation", "clear_annotations",
     "select_period_group", "select_minute", "select_adjust",
     "select_tool", "toggle_chip", "chips_for",
     "show_rail_page", "set_panel_collapsed", "is_panel_collapsed",

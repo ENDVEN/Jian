@@ -552,15 +552,17 @@ class DeskLayout:
         p.anno_scroll.setWidget(build_catalog_widget(p.anno_tiles, p.anno_headers,
                                                     p.select_tool))
         p.card_anno_tools.body.addWidget(p.anno_scroll)
-        p.card_anno_tools.set_state(f"{len(p.anno_tiles)} 种 · 6 类")
+        # ★v6.25：**诚实标注"能画几种 / 共几种"**（灰色的那几种是登记了还没做的，
+        #   不写清楚用户会以为是自己点不动 —— §10-4 不虚构的另一面：也不许含糊）
+        p.card_anno_tools.set_state(
+            f"{sum(1 for t in p.anno_tiles.values() if t.implemented)} 种可画"
+            f" · 共 {len(p.anno_tiles)} 种")
         # 目录卡**给拉伸**：工具是"越长越好"的列表，让它把内容区填满
         content.addWidget(p.card_anno_tools, 1)
 
-        p.btn_add_annotation = QPushButton("➕ 添加标注")
-        p.btn_add_annotation.setStyleSheet(_BTN_QSS)
-        p.btn_add_annotation.clicked.connect(p.add_annotation)
-        lay.addWidget(p.btn_add_annotation)
-
+        # ★v6.26（§7-B9 拍板①）：**「➕ 添加标注」按钮已删除** —— 用户原话"添加标注直接删除"。
+        #   现在的流程 = 选类型 ⇒ 在图上依次点锚点 ⇒ 点够就成（"先生成默认线再拖"被实测否掉）。
+        #   ⚠ 连带：`TradingDeskView.add_annotation` 薄壳与「迁移护栏」里的同名断言已同批改掉。
         p.btn_delete_annotation = QPushButton("🧽 删除选中")
         p.btn_delete_annotation.setStyleSheet(
             "QPushButton { background:#FFF8E1; border:1px solid #FFE082; border-radius:4px; "
@@ -620,7 +622,11 @@ class DeskLayout:
         # 用户标注（管线 B）：宿主要建好才能挂；`on_changed` 让面板随时报"N 条标注"
         p._annotations = AnnotationLayer(
             p.host, p._annotation_store, period=PERIOD_DAILY,
-            on_changed=p._refresh_annotation_status)
+            on_changed=p._refresh_annotation_status,
+            # ★v6.26（§7-B9 STEP 1/3）：需要文字的类型（文字/评论气泡）由**页面**弹输入框
+            #   （本层不持 QWidget）；画完一条 ⇒ 页面回到浏览模式（防手残，用户拍板）
+            ask_text=p._annos.ask_annotation_text,
+            on_finished=lambda: p.select_tool(""))
         p._refresh_annotation_status()
 
         # 键盘交互：Delete 删掉选中标注；Esc 回到浏览模式（免得手一抖在图上画出线）

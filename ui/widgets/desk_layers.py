@@ -155,7 +155,10 @@ class DeskLayers:
         p.host.align_axis_widths()
 
         # 【P6】K 线 + 可视窗口就位后再恢复标注；**按 (标的, 周期) 取**，日线画线不串到周线
-        p._annotations.bind(p.current_symbol, df['date'], period=p.current_period)
+        # ★v6.26（§7-B9 STEP 4）：收盘价一并喂进去 —— **只有回归通道要用**，
+        #   与 STEP 5 读数条"只认本次渲染的那份 df"同一条纪律，不另开一条数据链路
+        p._annotations.bind(p.current_symbol, df['date'], period=p.current_period,
+                            closes=df['close'] if 'close' in df.columns else None)
         p._refresh_annotation_status()
         p._refresh_adjust_hint()
         # ★STEP 3c：渲染完顺手把工具行 chips 对齐（"公式副图 N"的候选取决于本次有哪些段）

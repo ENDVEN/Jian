@@ -15,8 +15,8 @@
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from core.utils import period_label
-from data.annotations import KIND_TEXT
-from ui.widgets import annotation_catalog
+from data.annotations import KIND_LABELS, requires_text
+from ui.widgets import annotation_catalog, annotation_shapes
 from ui.widgets.annotation_layer import DRAWABLE_KINDS
 
 
@@ -74,31 +74,25 @@ class DeskAnnotations:
     # ==========================================
     # 增 / 删 / 清空
     # ==========================================
-    def add_annotation(self):
-        """按当前工具在可视窗口放一条标注；拖好后**松手自动保存**。"""
+    def ask_annotation_text(self, kind: str):
+        """需要文字的类型（文字标注 / 评论气泡）在**落库前**问一句要写什么。
+
+        ★v6.26（§7-B9 STEP 3）：「➕ 添加标注」按钮已删除 ⇒ 输入框改由**绘制会话点完最后
+        一个锚点**触发（layer 的 `ask_text` 口子回调到这里）。
+
+        :return: 文字内容；**None = 用户放弃**（⇒ 不落库、图上不留东西）
+        ⚠ 符号类（▲ / ●）与价格标签**不问** —— 它们的字是"画出来的"，让用户填是添乱
+           （§10-10）。
+        """
         p = self.page
-        if p._annotations is None:
-            return
-        tool = p._annotations.tool
-        if not tool:
-            QMessageBox.information(
-                p, "先选择类型",
-                "请在左侧「🛠 标注工具」里选择要画的类型"
-                "（趋势线 / 水平线 / 垂直线 / 斐波那契 / 文字），再点「➕ 添加标注」。")
-            return
-        text = ""
-        if tool == KIND_TEXT:
-            text, ok = QInputDialog.getText(p, "文字标注", "要显示的文字：")
-            if not ok:
-                return
-            if not str(text or "").strip():
-                QMessageBox.information(p, "内容为空", "文字标注需要填写内容。")
-                return
-        if p._annotations.create_default(tool, text=text) is None:
-            QMessageBox.information(p, "无法添加",
-                                    "请先查阅一个标的并加载出 K 线，再添加标注。")
-            return
-        self._refresh_annotation_status()
+        label = KIND_LABELS.get(str(kind or ""), "标注")
+        text, ok = QInputDialog.getText(p, label, "要显示的文字：")
+        if not ok:
+            return None
+        if not str(text or "").strip():
+            QMessageBox.information(p, "内容为空", f"{label}需要填写内容。")
+            return None
+        return str(text).strip()
 
     def delete_selected_annotation(self):
         """删除**当前选中**的那一条（逐个独立删除是管线 B 的硬要求）。"""
@@ -143,8 +137,20 @@ class DeskAnnotations:
         tool = p._annotations.tool_label()
         period = period_label(p.current_period)
         # ★STEP 5：**一行摘要**（选项 + 条数），操作说明与存储位置进 tooltip
+        # ★v6.25：每种类型的"怎么用"由规格表提供（例：价格标签 = 文字就是价位）
+        spec = annotation_shapes.spec_of(p._annotations.tool)
+        usage = spec.label if spec else ""
+        # ★v6.26（§7-B9 STEP 1）：绘制中给**分步提示**（"第 1/2 步 —— 点起点"），
+        #   这比"已存 N 条"重要得多 —— 用户此刻唯一要知道的是"下一步点哪"（§10-10）
+        drawing = p._annotations.session_hint()
+        # 需要填文字的类型（文字 / 评论气泡）**提前说一句**"点完会让你填字"，
+        # 别等落点之后才弹框吓人一跳（§10-10：说明要行内常显，不能只靠弹出才知道）
+        if drawing and requires_text(p._annotations.tool):
+            drawing = f"{drawing}（点完会让你填文字）"
         if hint:
             text = hint
+        elif drawing:
+            text = drawing
         elif tool:
             text = f"工具：{tool} · {period} 已存 {total} 条"
         elif total:
@@ -153,7 +159,7 @@ class DeskAnnotations:
             text = f"{period} 暂无标注"
         p.lbl_annotation_status.setText(text)
         p.lbl_annotation_status.setToolTip(
-            f"{text}\n"
+            f"{text}\n" + (f"怎么用：{usage}\n" if usage else "") +
             "—— 拖线 / 拖端点调整，**松手自动保存**；点线条选中（变橙）后按 Delete 删除。\n"
             "标注按「标的 + 周期」保存在 ~/.jian_data/annotations.json，每条独立可删；\n"
             "坐标按日期锚定 ⇒ 重渲染 / 增量更新 / 前复权修正都不会让它跑偏。")

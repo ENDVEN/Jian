@@ -695,7 +695,10 @@ try:
           bool(item["id"]) and bool(item["created_at"]) and bool(item["updated_at"]))
     check("默认周期 = 日线", item["period"] == PERIOD_DAILY)
 
-    expect_error("未知标注类型报错", lambda: make_annotation("s", "arrow", [[1, 2]]), "不支持")
+    # ⚠ v6.25：`arrow` 已经是**真实类型**了（目录里 27 种已实现）⇒ 这里换一个
+    #   永远不会被实现的假名字，**别拿目录里的真类型当"未知类型"的样本**（会被扩容打脸）。
+    expect_error("未知标注类型报错",
+                 lambda: make_annotation("s", "__no_such_kind__", [[1, 2]]), "不支持")
     expect_error("趋势线锚点数不符报错",
                  lambda: make_annotation("s", KIND_TREND, [["2024-01-01", 1.0]]), "需要 2 个")
     expect_error("价格非法（NaN）被丢弃后报错",
@@ -725,6 +728,42 @@ try:
                  lambda: make_annotation("s", KIND_TEXT, [["2024-01-01", 5.0]], text="   "),
                  "需要填写内容")
     check("文字标注只需 1 个锚点", len(text_item["points"]) == 1)
+
+    # ---- 1c) v6.25（§7-B8 R11）：27 种画线类型的**模型侧**口径 ----
+    from data.annotations import (FIB_ARC_RATIOS, FIB_EXT_RATIOS, FIB_FAN_RATIOS,
+                                  FIB_TIME_RATIOS, GANN_FACTORS, KIND_LABELS, PERCENT_RATIOS,
+                                  REG_SIGMA, REQUIRED_POINTS, SUPPORTED_KINDS, WAVE_POINTS,
+                                  fib_ext_levels, glyph_of, initial_text, percent_levels,
+                                  price_text, regression_channel, requires_text)
+    from ui.widgets.annotation_shapes import DRAWABLE_KINDS, SHAPES, spec_of
+
+    check("★ 模型支持的类型 == 画得出来的类型（目录不许说谎，也不许有画不出的孤儿）",
+          set(SUPPORTED_KINDS) == set(DRAWABLE_KINDS) == set(SHAPES) and len(SHAPES) == 32)
+    check("★ 依赖视图的只剩**斐波弧**（甘氏扇形已改为「用户两点定比例」，不再依赖视图）",
+          {kind for kind, spec in SHAPES.items() if spec.view_dependent} == {"fib_arc"}
+          and len(GANN_FACTORS) == 9 and len(FIB_ARC_RATIOS) == 3
+          and REG_SIGMA == 2.0 and WAVE_POINTS == 5)
+    check("★ 每一种类型四件套齐全（锚点数 / 中文名 / 画法 / 回读 / 默认落点）",
+          all(kind in REQUIRED_POINTS and KIND_LABELS.get(kind)
+              and spec_of(kind).make and spec_of(kind).read and spec_of(kind).place
+              for kind in DRAWABLE_KINDS))
+    check("★ 锚点数与模型**逐位一致**（规格表说要 3 个点，模型就必须收 3 个点）",
+          all(spec_of(kind).points == REQUIRED_POINTS[kind] for kind in DRAWABLE_KINDS))
+    check("★ 档位是**语义常量**：百分比线八等分 / 斐波扩展 5 档 / 斐波扇形 4 条 / 时间 4 条",
+          len(percent_levels(fib["points"])) == len(PERCENT_RATIOS) == 9
+          and len(fib_ext_levels(fib["points"])) == len(FIB_EXT_RATIOS) == 5
+          and len(FIB_FAN_RATIOS) == 4 and len(FIB_TIME_RATIOS) == 4)
+    check("★ 斐波扇形含用户点名要的 **1×8 那条**（= 1/8 = 0.125，最缓的那条）",
+          FIB_FAN_RATIOS[0] == 0.125 and min(FIB_FAN_RATIOS) == 0.125)
+    check("★ 斐波扩展真的外推到 100% 之外（不然它跟回撤是同一个东西）",
+          fib_ext_levels(fib["points"])[-1][1] > 200.0)
+    check("文字口径：只有文字标注 / 评论气泡要用户填，价格标签的字由价位派生",
+          requires_text(KIND_TEXT) and requires_text("comment")
+          and not requires_text(KIND_HLINE) and not requires_text("price_tag"))
+    check("符号类自带字形（箭头标记 ▲ / 标记点 ●），价格标签的字就是价位",
+          glyph_of("marker") == "▲" and glyph_of("dots") == "●"
+          and initial_text("price_tag", 12.345) == "12.35" == price_text(12.345)
+          and initial_text(KIND_HLINE, 1.0) == "")
 
     # ---- 2) 仓库 CRUD（走临时文件，**绝不碰用户真实标注库**）----
     tmp = Path(tempfile.mkdtemp(prefix="jian_annot_smoke_"))
@@ -1418,6 +1457,7 @@ try:
 
     # ---- 斐波那契 / 文字：绘制 + **附属图元随主图元一起删**（§11.5-15 同类风险）----
     from data.annotations import KIND_FIB, KIND_TEXT, KIND_TREND
+    from ui.widgets import chart_style as _chart_style
     from ui.widgets.annotation_layer import AnnotationLayer
     from ui.widgets.chart_host import ChartHost
 
@@ -1456,7 +1496,568 @@ try:
     check("文字内容为空 → 不落库也不画（返回 None）",
           layer.create_default(text="   ") is None and annot_store.count('sh600000') == 1)
 
+    # ---- v6.25：新类型的**回读坐标**（拖完存的是"日期 + 价"，不是图元内部状态）----
+    layer.clear_all()
+    layer.set_tool("rect")
+    rect_item = layer.create_default()
+    rect_graphic = layer._items[rect_item["id"]]
+    rect_graphic.setPos((10.0, 95.0))
+    rect_graphic.setSize((12.0, 10.0))
+    layer._persist_from_view(rect_item["id"])
+    _rect_pts = annot_store.get('sh600000', 'daily', rect_item["id"])["points"]
+    check("★ 矩形回读 = 外接矩形两角点（存的是日期 + 价，不是 ROI 内部状态）",
+          abs(_rect_pts[0][1] - 95.0) < 1e-6 and abs(_rect_pts[1][1] - 105.0) < 1e-6
+          and _rect_pts[0][0] != _rect_pts[1][0])
+
+    layer.clear_all()
+    layer.set_tool("hband")
+    band_item = layer.create_default()
+    layer._items[band_item["id"]].setRegion((96.0, 106.0))
+    layer._persist_from_view(band_item["id"])
+    _band_pts = annot_store.get('sh600000', 'daily', band_item["id"])["points"]
+    check("★ 价格带回读 = 两条价位（横向贯穿全图，日期只是锚点不被改写）",
+          abs(_band_pts[0][1] - 96.0) < 1e-6 and abs(_band_pts[1][1] - 106.0) < 1e-6)
+
+    layer.clear_all()
+    layer.set_tool("cross")
+    cross_item = layer.create_default()
+    check("交叉线 = 水平线（主）+ 垂直线（附属），两条都能拖",
+          len(layer._extras[cross_item["id"]]) == 1
+          and layer._items[cross_item["id"]].__class__.__name__ == 'InfiniteLine')
+    _cross_date = cross_item["points"][0][0]
+    layer._items[cross_item["id"]].setValue(101.0)
+    layer._persist_from_view(cross_item["id"])
+    _cross_pts = annot_store.get('sh600000', 'daily', cross_item["id"])["points"]
+    check("★ 交叉线回读 = 新价位 + 原日期（拖横线不该把日期也带走）",
+          abs(_cross_pts[0][1] - 101.0) < 1e-6 and _cross_pts[0][0] == _cross_date)
+
+    layer.clear_all()
+    layer.set_tool("hray")
+    hray_item = layer.create_default()
+    _hx0 = layer._axis.date_to_index(hray_item["points"][0][0])
+    _hx1 = layer._axis.date_to_index(hray_item["points"][1][0])
+    _hy = hray_item["points"][0][1]
+    layer._items[hray_item["id"]].setPoints([(_hx0, _hy), (_hx1, _hy + 7.0)])   # 故意拖歪
+    layer._persist_from_view(hray_item["id"])
+    _hray_pts = annot_store.get('sh600000', 'daily', hray_item["id"])["points"]
+    _hray_view = [layer._host.main_pane.view_box.mapSceneToView(p)
+                  for _h, p in layer._items[hray_item["id"]].getSceneHandlePositions()]
+    check("★ 水平射线被拖歪：存的是水平的、**图上也回正成水平**（斜着就是骗人）",
+          _hray_pts[0][1] == _hray_pts[1][1] == _hy
+          and abs(_hray_view[0].y() - _hray_view[1].y()) < 1e-6)
+    # 水平射线：把"延伸起点"拖回中途 ⇒ 附属射线必须**继续延伸到数据末尾**（代表"未来"）
+    layer._items[hray_item["id"]].setPoints([(_hx0, _hy), (_hx0 + 12, _hy)])
+    layer._rebuild(hray_item["id"])
+    _hray_xs, _ = layer._extras[hray_item["id"]][0].getData()
+    check("★ 水平射线**延伸到数据末尾**（它代表「未来」，第二点只是「从哪开始延伸」）",
+          abs(_hray_xs[-1] - (layer._axis.size - 1)) < 1e-6
+          and abs(_hray_xs[0] - (_hx0 + 12)) < 1e-6)
+
+    layer.clear_all()
+    layer.set_tool("channel")
+    channel_item = layer.create_default()
+    _channel_primary = layer._items[channel_item["id"]]
+    check("★ 平行通道 = 基线（2 个可拖手柄）+ 宽度点（**不是**四角自由变形的多边形）",
+          len(channel_item["points"]) == 3
+          and len(_channel_primary.getSceneHandlePositions()) == 2)
+
+    def _channel_geometry():
+        """基线斜率 + 两条线的竖直间距（用来验证"平行"和"宽度"各自独立）。"""
+        stored = annot_store.get('sh600000', 'daily', channel_item["id"])
+        pts = stored["points"]
+        xs = [layer._axis.date_to_index(p[0]) for p in pts]     # 存的是日期 ⇒ 先换回序号
+        ys = [float(p[1]) for p in pts]
+        return ((ys[1] - ys[0]) / (xs[1] - xs[0]) if xs[1] != xs[0] else 0.0,
+                ys[2] - ys[0])
+
+    _slope0, _width0 = _channel_geometry()
+    _channel_primary.movePoint(_channel_primary.getHandles()[0],
+                               (_channel_primary.getHandles()[0].pos().x(),
+                                _channel_primary.getHandles()[0].pos().y() + 6.0),
+                               finish=False)
+    layer._rebuild(channel_item["id"])
+    _slope1, _width1 = _channel_geometry()
+    check("★ 拖基线端点 ⇒ **间距不变**（通道整体跟着走，这才是平行通道）",
+          abs(_width1 - _width0) < 1e-6)
+    _width_handle = next(e for e in layer._extras[channel_item["id"]]
+                         if getattr(e, "_role", "") == "width")
+    _width_handle.setPos(_width_handle.pos().x(), _width_handle.pos().y() + 4.0)
+    layer._rebuild(channel_item["id"])
+    _slope2, _width2 = _channel_geometry()
+    check("★ 拖 ⇕ 宽度手柄 ⇒ **只改间距**（基线不动、斜率不变）",
+          abs(_width2 - _width1 - 4.0) < 1e-6 and abs(_slope2 - _slope1) < 1e-9)
+    check("★ 通道带填充（用户拍板：跟普通线要有区别、视觉上粗一档）",
+          any(g.__class__.__name__ == '_FillBand'
+              for g in layer._extras[channel_item["id"]]))
+    # ---- v6.26 H-7 护栏（用户截图抓包：下线画成了水平线）----
+    _par_xs, _par_ys = layer._extras[channel_item["id"]][2].getData()
+    _par_slope = (_par_ys[-1] - _par_ys[0]) / (_par_xs[-1] - _par_xs[0])
+    check("★ 平行通道的**下线与上线平行**（第一版把下线画成 `y1+dy` 的水平线 —— 基线越陡越明显）",
+          abs(_par_slope - _slope2) < 1e-9)
+    check("★ 填充画在两条线**底下**（顺序错 = 线被半透明色块罩住发灰）",
+          layer._extras[channel_item["id"]][0].__class__.__name__ == '_FillBand'
+          and layer._extras[channel_item["id"]][1].__class__.__name__ == 'PlotDataItem')
+    check("★ 填充透明度**封顶**（用户实测高饱和填充盖住 K 线 ⇒ 唯一口径在 chart_style）",
+          _chart_style.FILL_ALPHA <= 25 and _chart_style.FILL_ALPHA_ON <= 45
+          and layer._extras[channel_item["id"]][0].brush().color().alpha() <= 45)
+
+    # ---- v6.26 STEP 4：最后 5 种（回归通道 / 甘氏扇形 / 斐波弧 / 波浪 / 头肩）----
+    # 回归通道需要收盘价 ⇒ 重新 bind 一次（与页面 `render_charts` 的喂法一致）
+    _closes = [100.0 + 0.2 * i for i in range(60)]          # 一条干净的直线（斜率 0.2）
+    layer.bind('sh600000', pd.bdate_range('2024-01-01', periods=60), closes=_closes)
+    layer.set_tool("reg_channel")
+    reg_item = layer.create_default()
+    check("★ 回归通道：中线（主图元）+ 上下轨 + 填充带（±2σ 由**收盘价回归**算出来）",
+          reg_item is not None and len(layer._extras[reg_item["id"]]) >= 4
+          and any(g.__class__.__name__ == '_FillBand'
+                  for g in layer._extras[reg_item["id"]]))
+
+    # ★v6.29（用户拍板："正常通道线应该分为三端：起点、终点、还有通道区间"）：
+    #   带噪声的收盘价才看得出"带宽"，用干净直线会把 σ 算成 0（通道退化成一条线）。
+    _noisy = [100.0 + 0.2 * i + (2.0 if i % 3 == 0 else -1.0) for i in range(60)]
+    layer.bind('sh600000', pd.bdate_range('2024-01-01', periods=60), closes=_noisy)
+    vb = host.main_pane.view_box
+    layer.set_tool("reg_channel")
+    reg_item = layer.create_default()
+    reg_id = reg_item["id"]
+    reg_graphic = layer._items[reg_id]
+
+    def _reg_rails():
+        """两条轨（虚线）—— 附属图元里只有它俩带数据曲线。"""
+        return [g for g in layer._extras[reg_id] if hasattr(g, "getData")]
+
+    def _reg_band():
+        """图上真实的带宽（两条轨在中线两侧的间距 / 2），**不看存储**。"""
+        rails = _reg_rails()
+        return None if len(rails) < 2 else abs(
+            rails[0].getData()[1][0] - rails[1].getData()[1][0]) / 2.0
+
+    check("★ 回归通道 = **三端**（起点 / 终点定拟合区间 + 第三点=通道区间）",
+          len(reg_item["points"]) == 3)
+    _default_xs = sorted([layer._axis.date_to_index(p[0]) for p in reg_item["points"][:2]])
+    _sigma_band = regression_channel(_noisy, _default_xs[0], _default_xs[1])["band"]
+    _visible_floor = (vb.viewRange()[1][1] - vb.viewRange()[1][0]) * 0.05
+    check("★ 通道区间点默认落在**自动 ±2σ** 上（σ 小到看不见时兜一个 5% 屏高，"
+          "否则通道退化成一条线）",
+          abs(_reg_band() - max(_sigma_band, _visible_floor)) < 1e-6)
+
+    # （a）拖宽度手柄 ⇒ 整个通道按新带宽重画
+    _reg_handle = next(g for g in layer._extras[reg_id]
+                       if getattr(g, "_role", "") == "width")
+    _reg_handle.setPos(_reg_handle.pos().x(), _reg_handle.pos().y() + 4.0)
+    _dragged_y = float(_reg_handle.pos().y())
+    layer._rebuild(reg_id)
+    _reg_pts_band = annot_store.get('sh600000', 'daily', reg_id)["points"]
+    _band_xs = sorted([layer._axis.date_to_index(p[0]) for p in _reg_pts_band[:2]])
+    _band_fit = regression_channel(_noisy, _band_xs[0], _band_xs[1])
+    _x3 = layer._axis.date_to_index(str(_reg_pts_band[2][0]))
+    _mid3 = _band_fit["start"] + _band_fit["slope"] * (_x3 - _band_xs[0])
+    check("★ 拖「通道区间」（第三端 / ⇕）⇒ 带宽点落库 + 上下轨按新带宽重画",
+          abs(float(_reg_pts_band[2][1]) - _dragged_y) < 1e-6
+          and abs(_reg_band() - abs(_dragged_y - _mid3)) < 1e-6)
+
+    # （b）拖起点/终点 ⇒ 区间变了，**中线必须重新贴回回归结果**
+    #     （用户原话："一旦调整回归通道线后整个通道也并不会进行相对应的调整"）
+    _h0 = reg_graphic.getHandles()[0]
+    reg_graphic.movePoint(_h0, (_h0.pos().x() - 8.0, _h0.pos().y() + 3.0), finish=False)
+    layer._rebuild(reg_id)
+    _reg_pts = annot_store.get('sh600000', 'daily', reg_id)["points"]
+    _new_xs = sorted([layer._axis.date_to_index(p[0]) for p in _reg_pts[:2]])
+    _fit = regression_channel(_noisy, _new_xs[0], _new_xs[1])
+    _handle_views = [vb.mapSceneToView(p) for _h, p in
+                     reg_graphic.getSceneHandlePositions()]
+    check("★ 拖起点/终点后：中线**重新贴回回归结果**（否则出现「中线在 A、上下轨在 B」的分裂）",
+          abs(float(_reg_pts[0][1]) - _fit["start"]) < 1e-6
+          and abs(float(_reg_pts[1][1]) - _fit["end"]) < 1e-6
+          and sorted(round(view.y(), 6) for view in _handle_views)
+          == sorted([round(_fit["start"], 6), round(_fit["end"], 6)]))
+    check("★ 拖起点/终点后：上下轨跟着**新区间**走（整个通道一起动，不是只有中线动）",
+          abs(_reg_rails()[0].getData()[0][0] - _new_xs[0]) < 1e-6)
+    check("回归通道没数据/区间退化时**画不出来**（不编造数据，§10-4）",
+          regression_channel(None, 0, 10) is None
+          and regression_channel([1.0, 2.0], 0, 0) is None
+          and regression_channel([1.0, 2.0], 0, 1)["band"] == 0.0)  # 2 根 ⇒ 退化成连线
+    check("回归通道：最小二乘对直线**精确**（斜率/截距无偏）",
+          abs(regression_channel([10.0, 11.0, 12.0, 13.0], 0, 3)["slope"] - 1.0) < 1e-9
+          and abs(regression_channel([10.0, 11.0, 12.0, 13.0], 0, 3)["band"]) < 1e-9)
+
+    # ---- 甘氏扇形（★v6.28 重做：两点可拖，参考线 = 1×1，方向/比例全由用户定）----
+    from data.annotations import GANN_FACTORS as _GANN_FACTORS
+    from data.annotations import gann_label as _gann_label
+
+    layer.clear_all()
+    vb = host.main_pane.view_box
+    vb.setXRange(0, 59, padding=0)
+    vb.setYRange(60.0, 160.0, padding=0)
+    app.processEvents()
+    layer.set_tool("fan")
+    fan_item = layer.create_default()
+    fan_graphic = layer._items[fan_item["id"]]
+
+    def _rays():
+        return [g for g in layer._extras[fan_item["id"]] if hasattr(g, "getData")]
+
+    def _slopes():
+        return sorted((g.getData()[1][-1] - g.getData()[1][0])
+                      / (g.getData()[0][-1] - g.getData()[0][0]) for g in _rays())
+
+    def _ref_slope():
+        """用户画的那条参考线（= 1×1）的数据斜率。"""
+        stored = annot_store.get('sh600000', 'daily', fan_item["id"])["points"]
+        xs = [layer._axis.date_to_index(p[0]) for p in stored]
+        ys = [float(p[1]) for p in stored]
+        return (ys[1] - ys[0]) / (xs[1] - xs[0])
+
+    check("★ 扇形 = **两点可拖**（起点 + 参考点）⇒ 用户能调整（不是只读的自动图形）",
+          len(fan_graphic.getSceneHandlePositions()) == 2)
+    check("★ 扇形 = 9 条经典倍率射线，方向**完全跟着用户拖的参考线**（不再自动上下对称）",
+          len(_rays()) == 9 and all(s > 0 for s in _slopes()))
+    check("★ 1×1 那条 = 用户画的参考线本身（拖第二点 = 直接改比例）",
+          any(abs(s - _ref_slope()) < 1e-9 for s in _slopes())
+          and len(_GANN_FACTORS) == 9 and _gann_label(1.0) == "1×1"
+          and _gann_label(2.0) == "2×1" and _gann_label(0.125) == "1×8")
+    _gann_xs, _ = _rays()[0].getData()
+    check("★ 扇形的射线**延伸到数据末尾**（画的就是未来支撑/压力位）",
+          abs(_gann_xs[-1] - (layer._axis.size - 1)) < 1e-6)
+
+    _pivot_price = float(annot_store.get('sh600000', 'daily', fan_item["id"])["points"][0][1])
+    _ref_handle = fan_graphic.getHandles()[1]
+    fan_graphic.movePoint(_ref_handle, (_ref_handle.pos().x(), _pivot_price - 8.0), finish=False)
+    layer._rebuild(fan_item["id"])
+    check("★ 把参考点往**下**拖（低于起点）⇒ 整个扇形翻到下方（未来支撑；不自动上下对称）",
+          len(_rays()) == 9 and all(s < 0 for s in _slopes()))
+
+    layer.clear_all()
+    layer.set_tool("fib_fan")
+    ffan_item = layer.create_default()
+    _ffan_xs, _ = layer._extras[ffan_item["id"]][0].getData()
+    check("★ 斐波扇形同样是**射线**（用户：扇形的线段代表未来可能的支撑位，必须延伸）",
+          abs(_ffan_xs[-1] - (layer._axis.size - 1)) < 1e-6)
+
+    # ★v6.27 真事故（用户报"扇形线无法在图片中画出"）：**预览图元压在光标下时，点图必须仍能落点**
+    #   根因：`_ClickableText` 家族"按下就 accept"，场景**根本不会发 `sigMouseClicked`**
+    #   （实测：压在文字图元上 = 收不到；压在 ROI 手柄上 = 收得到）⇒ 预览标记正好画在光标处
+    #   ⇒ 用户"怎么点都落不了地"。修法 = 预览图元一律 `setAcceptedMouseButtons(NoButton)`。
+    #   ⚠ 这条必须用**真实鼠标事件**测：`session.on_click()` 是绕开事件系统的，测不出这个坑。
+    from PyQt6.QtTest import QTest
+
+    layer.clear_all()
+    layer.set_tool("marker")     # 单点 + 文字类主图元（预览同样画在光标下，同一种坑）
+    _vb = host.main_pane.view_box
+    _target = _vb.mapViewToScene(pg.QtCore.QPointF(20.0, 100.0))
+    _center = pg.QtCore.QPoint(int(_target.x()), int(_target.y()))
+    # 等价"鼠标移到这里"：让预览真的出现在光标下（离屏环境 QTest.mouseMove 不产生 mousemove）
+    layer._session.on_move(layer._axis.index_to_date(20.0), 100.0)
+    app.processEvents()
+    _preview_before = len(layer._session._preview)
+    QTest.mouseClick(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                     pg.QtCore.Qt.KeyboardModifier.NoModifier, _center)
+    app.processEvents()
+    check("★ 预览压在光标下，点图**仍能落点**（修前：预览把点击吃掉 ⇒ 怎么点都画不出来）",
+          _preview_before > 0 and layer.count() == 1 and not layer.drawing)
+
+    # ★v6.28：**文字类图元的"拖动 + 点选"必须用真实鼠标事件验**（旧断言手搓假事件 ⇒
+    #   两条路径其实一次都没跑过，用户实测"写上去后无法移动"——§11.5-49/50）。
+    from PyQt6.QtTest import QTest as _QTest
+
+    layer.clear_all()
+    layer.set_tool("marker")
+    _drag_item = layer.create_default()
+    layer.set_tool("")          # 画完回浏览模式（页面就是这么做的）⇒ 图元恢复响应鼠标
+    _drag_graphic = layer._items[_drag_item["id"]]
+    _before_xy = (_drag_graphic.pos().x(), _drag_graphic.pos().y())
+    _scene_pt = _drag_graphic.mapToScene(_drag_graphic.boundingRect().center())
+    _start = pg.QtCore.QPoint(int(_scene_pt.x()), int(_scene_pt.y()))
+    _QTest.mousePress(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                      pg.QtCore.Qt.KeyboardModifier.NoModifier, _start)
+    for _step in (30, 60, 90):
+        _QTest.mouseMove(host._glw.viewport(),
+                         pg.QtCore.QPoint(_start.x() + _step, _start.y() - _step // 2))
+    _QTest.mouseRelease(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                        pg.QtCore.Qt.KeyboardModifier.NoModifier,
+                        pg.QtCore.QPoint(_start.x() + 90, _start.y() - 45))
+    app.processEvents()
+    _after_xy = (_drag_graphic.pos().x(), _drag_graphic.pos().y())
+    _stored_after = annot_store.get('sh600000', 'daily', _drag_item["id"])["points"][0]
+    check("★ 文字类标注（标记/文字/价格标签）**用真实鼠标能拖动**，且松手后坐标落库",
+          abs(_after_xy[0] - _before_xy[0]) > 1e-6 and abs(_after_xy[1] - _before_xy[1]) > 1e-6
+          and abs(float(_stored_after[1]) - _after_xy[1]) < 1e-6)
+
+    # ★v6.28：**32 种逐个**用真实鼠标验"拖得动 + 选得中"。
+    #   为什么要有这条：扇形线的"拖不动/选不中"就是因为"只断言了能画出来、没断言能操作"。
+    layer.clear_all()
+    vb.setXRange(0, 59, padding=0)
+    vb.setYRange(60.0, 160.0, padding=0)
+    app.processEvents()
+
+    def _grab_point(graphic):
+        """从哪儿下爪：区间带取边线、ROI 取第一个手柄、无限直线取"窗口中线处"、其余取中心。
+
+        ⚠ 坐标一律用**图元自己的映射**（`mapToScene`），不要自己拿 `view_box` 反算 ——
+        后者在"布局还没落定/视图被别处改过"时会差几像素，1px 宽的线就点不中了（实测踩过）。
+        ⚠ 无限直线的包围盒中心**可能在窗口外**（实测 vline 因此时灵时不灵）：
+        竖线取"窗口中线那一行"、横线取"窗口中线那一列"（整条线都在这两个方向上贯穿）。
+        """
+        if graphic.__class__.__name__ == "_RegionBand":
+            graphic = graphic.lines[0]
+        handles = getattr(graphic, "getSceneHandlePositions", None)
+        if handles:
+            positions = [p for _h, p in handles()]
+            if positions:
+                return pg.QtCore.QPoint(int(positions[0].x()), int(positions[0].y()))
+        rect = host._glw.viewport().rect()
+        if hasattr(graphic, "value"):                    # InfiniteLine
+            vertical = abs(getattr(graphic, "angle", 0)) == 90
+            (vx0, vx1), (vy0, vy1) = vb.viewRange()
+            probe = (pg.QtCore.QPointF(graphic.value(), (vy0 + vy1) / 2.0) if vertical
+                     else pg.QtCore.QPointF((vx0 + vx1) / 2.0, graphic.value()))
+            pt = graphic.mapToScene(probe)
+            point = (pg.QtCore.QPoint(int(pt.x()), rect.center().y()) if vertical
+                     else pg.QtCore.QPoint(rect.center().x(), int(pt.y())))
+            if rect.contains(point):
+                return point
+        pt = graphic.mapToScene(graphic.boundingRect().center())
+        return pg.QtCore.QPoint(int(pt.x()), int(pt.y()))
+
+    from ui.widgets.annotation_shapes import DRAWABLE_KINDS as _SWEEP_KINDS
+    from ui.widgets.annotation_shapes import spec_of as _spec_of
+
+    layer._ask_text = lambda _kind: "扫描测试"      # 文字/评论气泡要内容，别让它弹窗
+    _drag_bad, _select_bad = [], []
+    for _kind in _SWEEP_KINDS:
+        layer.clear_all()
+        layer.set_tool(_kind)
+        _spec = _spec_of(_kind)
+        _spots = [(20.0, 100.0), (40.0, 120.0), (30.0, 80.0), (50.0, 130.0), (55.0, 70.0)]
+        _item = None
+        for _index in range(_spec.points):
+            _x, _y = _spots[_index % len(_spots)]
+            _item = layer._session.on_click(layer._axis.index_to_date(_x), _y)
+        if _item is None:
+            _drag_bad.append(_kind + "(建不出来)")
+            continue
+        layer.set_tool("")                       # 画完回浏览模式
+        _before = annot_store.get('sh600000', 'daily', _item["id"])["points"]
+        _start = _grab_point(layer._items[_item["id"]])
+        _QTest.mousePress(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                          pg.QtCore.Qt.KeyboardModifier.NoModifier, _start)
+        app.processEvents()
+        _end = pg.QtCore.QPoint(_start.x() + 50, _start.y() + 25)
+        for _ratio in (0.5, 1.0):
+            _QTest.mouseMove(host._glw.viewport(),
+                             pg.QtCore.QPoint(int(_start.x() + 50 * _ratio),
+                                              int(_start.y() + 25 * _ratio)))
+            app.processEvents()
+        _QTest.mouseRelease(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                            pg.QtCore.Qt.KeyboardModifier.NoModifier, _end)
+        app.processEvents()
+        if annot_store.get('sh600000', 'daily', _item["id"])["points"] == _before:
+            _drag_bad.append(_kind)
+        layer.select("")
+        _QTest.mouseClick(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                          pg.QtCore.Qt.KeyboardModifier.NoModifier,
+                          _grab_point(layer._items[_item["id"]]))
+        app.processEvents()
+        if layer.selected_id != _item["id"]:
+            _select_bad.append(_kind)
+
+    check(f"★ {len(_SWEEP_KINDS)} 种**逐个**用真实鼠标验：拖得动（{_drag_bad or '全通过'}）",
+          not _drag_bad)
+    check(f"★ {len(_SWEEP_KINDS)} 种**逐个**用真实鼠标验：点得中、能单独删"
+          f"（{_select_bad or '全通过'}）", not _select_bad)
+    layer.clear_all()
+
+    # 单独再放一个标记验证"点一下就选中"（上面的扫描把图元都清掉了）
+    layer.clear_all()
+    layer.set_tool("marker")
+    _drag_item = layer.create_default()
+    layer.set_tool("")
+    _drag_graphic = layer._items[_drag_item["id"]]
+    app.processEvents()
+    layer.select("")
+    _now_pt = _drag_graphic.mapToScene(_drag_graphic.boundingRect().center())
+    _QTest.mouseClick(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                      pg.QtCore.Qt.KeyboardModifier.NoModifier,
+                      pg.QtCore.QPoint(int(_now_pt.x()), int(_now_pt.y())))
+    app.processEvents()
+    check("★ 文字类标注**点一下就选中**（原地点击 = 选中，不是拖动）",
+          layer.selected_id == _drag_item["id"])
+    layer.clear_all()
+    layer.clear_all()
+
+    layer.set_tool("fib_arc")
+    arc_item = layer.create_default()
+    check("★ 斐波弧：按**屏幕半径**画同心弧（数据坐标里画圆会被拉扁 ⇒ 采样成折线）",
+          arc_item is not None and len(layer._extras[arc_item["id"]]) >= 2
+          and len(layer._extras[arc_item["id"]][0].getData()[0]) > 10)
+    # ★v6.29 自查：斐波弧是**最后一个**"依赖视图"的类型 ⇒ 缩放必须真的重算
+    #   （否则"屏幕半径"这个换算就是画一次算死，缩放后弧就变形了）
+    _arc_id = arc_item["id"]
+
+    def _arc_shape():
+        """把每条弧的 x/y 都抓下来（⚠ 只有 y 会随纵向缩放变 —— 只抓 x 会"看着没变"）。"""
+        return [(list(seg.getData()[0]), list(seg.getData()[1]))
+                for seg in layer._extras[_arc_id] if hasattr(seg, "getData")]
+
+    _arc_before = _arc_shape()
+    vb.setYRange(90.0, 110.0, padding=0)     # 纵向放大 ⇒ 每 1 元的像素数变了
+    app.processEvents()
+    layer._view_scale = (0.0, 0.0)           # 绕开 2% 节流（不然断言测的是节流不是重算）
+    layer._on_view_changed(_arc_id)
+    _arc_after = _arc_shape()
+    check("★ 斐波弧：缩放后**真的重算**（「屏幕半径」的换算变了，弧就必须跟着变）",
+          _arc_before != _arc_after)
+
+    # ★v6.29 自查（用户："画线工具还有没有其他问题…自查自改"）①
+    #   通道的 ⇕ 宽度手柄**用真实鼠标能拖** —— 这是"三端可调"唯一入口，
+    #   拖不动的话"通道区间"就是画给人看的（v6.28 修 `_ClickableText` 之前它一直是死的）。
+    layer.clear_all()
+    # ⚠ ① 先把可视区间摆正：**画在屏幕外的图元，真实鼠标永远点不到**（这条咬过我两次）；
+    #   ② 第三点要**离开前两个手柄**（宽度手柄若压在中线端点上，真实鼠标会先抓到 ROI 手柄，
+    #      测的就不是"带宽可调"了）
+    vb.setXRange(0, 59, padding=0)
+    vb.setYRange(60.0, 160.0, padding=0)
+    app.processEvents()
+    for _kind, _spots in (("channel", ((20.0, 100.0), (40.0, 120.0), (20.0, 110.0))),
+                          ("reg_channel", ((20.0, 100.0), (40.0, 120.0), (55.0, 145.0)))):
+        layer.set_tool(_kind)
+        _conf = None
+        for _x, _y in _spots:
+            _conf = layer._session.on_click(layer._axis.index_to_date(_x), _y)
+        layer.set_tool("")
+        _handle = next((g for g in layer._extras[_conf["id"]]
+                        if getattr(g, "_role", "") == "width"), None)
+        _p0 = annot_store.get('sh600000', 'daily', _conf["id"])["points"][2][1]
+        if _handle is None:
+            check(f"★ {_kind}：有 ⇕ 宽度手柄（通道区间可调）", False)
+            continue
+        _pt = _handle.mapToScene(_handle.boundingRect().center())
+        _down = pg.QtCore.QPoint(int(_pt.x()), int(_pt.y()))
+        _QTest.mousePress(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                          pg.QtCore.Qt.KeyboardModifier.NoModifier, _down)
+        app.processEvents()
+        _QTest.mouseMove(host._glw.viewport(),
+                         pg.QtCore.QPoint(_down.x(), _down.y() + 30))
+        app.processEvents()
+        _QTest.mouseRelease(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                            pg.QtCore.Qt.KeyboardModifier.NoModifier,
+                            pg.QtCore.QPoint(_down.x(), _down.y() + 30))
+        app.processEvents()
+        _p1 = annot_store.get('sh600000', 'daily', _conf["id"])["points"][2][1]
+        check(f"★ {_kind}：⇕ 宽度手柄**用真实鼠标拖得动**、松手后通道区间落库"
+              f"（{round(float(_p0), 3)} → {round(float(_p1), 3)}）",
+              abs(float(_p1) - float(_p0)) > 1e-6)
+        layer.clear_all()
+
+    # ★v6.29 自查 ②：点选容差必须按**像素**算。
+    #   旧实现把 6 当"数据单位"用 ⇒ 在 y 量程只有几元（甚至 0~1）的图上，
+    #   6 个数据单位等于半屏，"点哪儿都算命中"（两条远处的线会互相抢选中）。
+    vb.setXRange(0, 59, padding=0)
+    vb.setYRange(60.0, 160.0, padding=0)
+    app.processEvents()
+    layer.set_tool("hline")          # ⚠ 每放一条都要重新选工具（画完自动回浏览模式，拍板①）
+    _low = layer._session.on_click(layer._axis.index_to_date(20.0), 90.0)
+    layer.set_tool("hline")
+    _high = layer._session.on_click(layer._axis.index_to_date(20.0), 140.0)
+    layer.set_tool("")
+
+    def _click_price(price):
+        _scene = vb.mapViewToScene(pg.QtCore.QPointF(20.0, float(price)))
+        _QTest.mouseClick(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                          pg.QtCore.Qt.KeyboardModifier.NoModifier,
+                          pg.QtCore.QPoint(int(_scene.x()), int(_scene.y())))
+        app.processEvents()
+        return layer.selected_id
+
+    _pixel_y = vb.viewPixelSize()[1]
+    check("★ 点上面那条就选上面那条、点下面那条就选下面那条（不是「谁先建谁被选中」）",
+          _click_price(140.0) == _high["id"] and _click_price(90.0) == _low["id"])
+    layer.select("")
+    check("★ 离两条线都很远的地方点一下 ⇒ **谁都不该被选中**（容差是像素，不是数据单位）",
+          _click_price(115.0) == "")
+    layer.select("")
+    check("★ 线**旁边 4 像素**内仍点得中（1px 的线肉眼根本点不准）",
+          _click_price(140.0 + _pixel_y * 4.0) == _high["id"])
+    layer.clear_all()
+
+    layer.clear_all()
+    layer.set_tool("wave")
+    wave_item = layer.create_default()
+    check("★ 波浪（降级版）：5 个拐点连成折线 + 浪序标签（**不做**自动识别）",
+          wave_item is not None and len(wave_item["points"]) == WAVE_POINTS == 5
+          and len(layer._items[wave_item["id"]].getSceneHandlePositions()) == 5)
+
+    layer.clear_all()
+    layer.set_tool("head_shoulder")
+    hs_item = layer.create_default()
+    check("★ 头肩形态（降级版）：左肩/头/右肩 三点 + 颈线（**写明「近似」，不假装精确**）",
+          hs_item is not None and len(hs_item["points"]) == 3
+          and len(layer._extras[hs_item["id"]]) >= 2)
+
+    # ---- v6.26 H-7 护栏（用户实测：改了点位，文字标注停在原地不动）----
+    # 波浪 / 头肩这类"带文字的类型"在 v6.26 第一版没有接"拖动 ⇒ 重建附属图元"，
+    # 根因 = `rebuild` 靠每种类型自觉声明 ⇒ 现已删掉该字段，改成"有 deco 就重建"。
+    def _hs_label_ys():
+        return [round(g.pos().y(), 6) for g in layer._extras[hs_item["id"]]
+                if isinstance(g, pg.TextItem)]
+
+    _hs_graphic = layer._items[hs_item["id"]]
+    _hs_handle = _hs_graphic.getHandles()[1]                  # "头"那个顶点
+    _before = _hs_label_ys()
+    _hs_graphic.movePoint(_hs_handle, (_hs_handle.pos().x(), _hs_handle.pos().y() + 8.0),
+                          finish=False)
+    layer._rebuild(hs_item["id"])
+    _after = _hs_label_ys()
+    check("★ 拖动顶点后，**文字标注跟着动**（左肩/头/右肩/颈线不能停在原地）",
+          _after != _before and abs(_after[2] - _before[2]) > 1)
+
+    layer.clear_all()
+    layer.set_tool("wave")
+    wave_item2 = layer.create_default()
+    _w = layer._items[wave_item2["id"]]
+    _w.movePoint(_w.getHandles()[2], (_w.getHandles()[2].pos().x(),
+                                      _w.getHandles()[2].pos().y() + 5.0), finish=False)
+    layer._rebuild(wave_item2["id"])
+    _wave_label_ys = [g.pos().y() for g in layer._extras[wave_item2["id"]]
+                      if isinstance(g, pg.TextItem)]
+    check("★ 波浪的浪序标签同样**跟着拐点走**", len(_wave_label_ys) == WAVE_POINTS
+          and abs(_wave_label_ys[2] - (float(wave_item2["points"][2][1]))) < 1e-6)
+    layer.clear_all()
+
+    layer.clear_all()
+    layer.set_tool("arrow")
+    arrow_item = layer.create_default()
+    check("★ 箭头 = 线段 + 一个箭头头（附属图元，随主图元一起删）",
+          len(layer._extras[arrow_item["id"]]) == 1
+          and layer._extras[arrow_item["id"]][0].__class__.__name__ == 'ArrowItem')
+    layer.delete(arrow_item["id"])
+    check("删箭头：箭头头跟着一起消失（不留没人管的小三角）",
+          len(host.main_pane.annotation_items) == 0)
+
+    # ★ 每种类型都要能"拖完写回存储"（读法不齐全 = 用户拖半天白拖，还不报错 ⇒ 最阴的 bug）
+    from data.annotations import requires_text as _requires_text
+    from ui.widgets.annotation_shapes import DRAWABLE_KINDS as _KINDS
+
+    layer.clear_all()
+    _read_fail = []
+    for _kind in _KINDS:
+        layer.set_tool(_kind)
+        _it = layer.create_default(text="回读测试" if _requires_text(_kind) else "")
+        if _it is None:
+            _read_fail.append(f"{_kind}(建不出来)")
+            continue
+        layer._persist_from_view(_it["id"])
+        _stored = annot_store.get('sh600000', 'daily', _it["id"])
+        if _stored is None or len(_stored["points"]) != len(_it["points"]):
+            _read_fail.append(_kind)
+        layer.delete(_it["id"])
+    check(f"★ {len(_KINDS)} 种**每一种**拖完都能把坐标写回存储（读法齐全）{_read_fail}",
+          not _read_fail)
+
+    layer.clear_all()
     layer.set_tool(KIND_TREND)
+    layer.create_default()
+    layer.set_tool("rect")
     layer.create_default()
     check("不同类型可共存", annot_store.count('sh600000') == 2)
     check("clear_all 把图元与存储一起清干净",
@@ -1512,45 +2113,13 @@ try:
     from ui.widgets.annotation_layer import _ClickableText
 
     class _PressEvent:
-        def button(self):
-            return pg.QtCore.Qt.MouseButton.LeftButton
-
-        def accept(self):
-            pass
-
-    class _DragEvent:
-        def __init__(self, scene_pos, down_pos, finish=False):
-            self._scene, self._down, self._finish = scene_pos, down_pos, finish
-            self.accepted = False
-
-        def button(self):
-            return pg.QtCore.Qt.MouseButton.LeftButton
-
-        def scenePos(self):
-            return self._scene
-
-        def buttonDownScenePos(self):
-            return self._down
-
-        def isFinish(self):
-            return self._finish
-
-        def accept(self):
-            self.accepted = True
-
-    moved = []
-    text_graphic = _ClickableText("压力位", on_moved=lambda: moved.append(1))
-    text_graphic.setPos(10.0, 100.0)
-    text_graphic.mousePressEvent(_PressEvent())
-    text_graphic.mouseDragEvent(_DragEvent(QPointF(13.0, 105.0), QPointF(10.0, 100.0)))
-    check("拖动中：文字跟随鼠标位移（不是只记录不移动）",
-          text_graphic.pos().x() == 13.0 and text_graphic.pos().y() == 105.0)
-    check("拖动过程中不回调（避免拖动途中疯狂写盘）", moved == [])
-    text_graphic.mouseDragEvent(_DragEvent(QPointF(13.0, 105.0), QPointF(10.0, 100.0),
-                                           finish=True))
-    check("松手才回调一次（触发落盘）", moved == [1])
-
+        """⚠ v6.28：`_ClickableText` 现在走 **Qt 三件套**（press/move/release），
+        不再需要手搓 pyqtgraph 假事件 —— 那段假事件测试正是因为"绕开真实事件系统"
+        而让"拖不动"活了三个版本（§11.5-49）。这两个桩类保留只为兼容旧引用，不再使用。
+        """
     # ---- 4) 拖完存到哪：x 映射回日期、y 存真实价（回读一致）----
+    #   ★v6.28：**改用真实鼠标事件**。旧版是"手搓假事件直接调 mouseDragEvent"，
+    #   于是"拖动"这条路径其实一次都没跑过（真机上根本收不到 drag），用户实测"无法移动"。
     from data.annotations import KIND_TEXT as _KIND_TEXT
     from pathlib import Path as _Path
 
@@ -1569,17 +2138,39 @@ try:
     drag_layer.bind('sh600000', drag_dates)
     drag_layer.set_tool(_KIND_TEXT)
     drag_item = drag_layer.create_default(text="箱体上沿")
-    drag_layer._items[drag_item["id"]].setPos(25.5, 88.8)     # 模拟用户拖到这里
-    drag_layer._persist_from_view(drag_item["id"])
+    drag_layer.set_tool("")          # 画完回浏览模式（页面就是这么做的）⇒ 图元恢复响应鼠标
+    drag_graphic = drag_layer._items[drag_item["id"]]
+    # ⚠ 起点必须落在**可视区内**（这张图没画数据 ⇒ y 量程就是 [0,1]）：
+    #   真实鼠标事件打不到屏幕外的图元（旧版用 `setPos(25.5, 88.8)` 是"程序性摆放"，看不出这点）
+    drag_layer._host.main_pane.view_box.setXRange(0, 59, padding=0)
+    drag_layer._host.main_pane.view_box.setYRange(0.0, 1.0, padding=0)
+    drag_graphic.setPos(25.5, 0.5)
+    drag_layer._persist_from_view(drag_item["id"])   # 让"基线"就是 0.5（下面要验拖动前后）
+    app.processEvents()
+
+    _vp = drag_host._glw.viewport()
+    _pt = drag_graphic.mapToScene(drag_graphic.boundingRect().center())
+    _down = pg.QtCore.QPoint(int(_pt.x()), int(_pt.y()))
+    _QTest.mousePress(_vp, pg.QtCore.Qt.MouseButton.LeftButton,
+                      pg.QtCore.Qt.KeyboardModifier.NoModifier, _down)
+    _QTest.mouseMove(_vp, pg.QtCore.QPoint(_down.x() + 10, _down.y() + 6))
+    app.processEvents()
+    _mid = drag_store.get('sh600000', 'daily', drag_item["id"])["points"][0][1]
+    check("拖动过程中**不落盘**（拖动途中疯狂写文件是另一种坏）", _mid == 0.5)
+    _QTest.mouseRelease(_vp, pg.QtCore.Qt.MouseButton.LeftButton,
+                        pg.QtCore.Qt.KeyboardModifier.NoModifier,
+                        pg.QtCore.QPoint(_down.x() + 40, _down.y() + 24))
+    app.processEvents()
     stored = drag_store.get('sh600000', 'daily', drag_item["id"])
-    check("文字拖到哪就存哪（x 按日期存、y 按真实价存）",
-          stored["points"][0][1] == 88.8
-          and stored["points"][0][0] == drag_layer._axis.index_to_date(25.5))
+    check("★ 文字拖到哪就存哪（真实鼠标拖动 → x 按日期存、y 按真实价存）",
+          stored["points"][0][1] != 0.5
+          and abs(float(stored["points"][0][1]) - drag_graphic.pos().y()) < 1e-6
+          and stored["points"][0][0] == drag_layer._axis.index_to_date(drag_graphic.pos().x()))
     reopened = AnnotationStore(str(tmp_drag / "annotations.json"))
     reloaded = reopened.get('sh600000', 'daily', drag_item["id"])
     check("重启后文字与位置都在（文字内容丢失会被模型层直接拒收，能读回=没丢）",
           reloaded is not None and reloaded["text"] == "箱体上沿"
-          and reloaded["points"][0][1] == 88.8)
+          and reloaded["points"][0][1] == stored["points"][0][1])
     drag_host.close()
 except Exception as e:  # noqa: BLE001
     import traceback
