@@ -49,6 +49,11 @@ DEFAULTS = {
     #    "rail_collapsed": False,          # 左栏是否折起
     #    "panel_page": "watch"}            # 上次停留的工具页
     "desk_ui": None,
+    # 1.25（§9-U 收口）：**复盘页**界面状态 —— 宏观(日历+图表)/微观(清单+编辑)的
+    # 竖向分栏高度。旧版是写死的 5:4 拉伸比，短屏上回放图被挤且无法让位；
+    # 现在分栏可拖，并"记住上次"（与 backtest_ui / desk_ui 同源做法）。
+    #   {"v_sizes": [560, 340]}
+    "review_ui": None,
 }
 
 

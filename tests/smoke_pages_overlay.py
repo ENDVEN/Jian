@@ -2079,6 +2079,110 @@ check("取而代之：周期 / 复权仍是分段控件（**画线类型已不�
       and not hasattr(mkt, "seg_tool"))
 
 # ==========================================
+# 复盘页迁移护栏（1.25 · §9-U 收口 + §9-L 拆分）
+#   与行情工作台同一套判据：**只许换容器与排布，不许换控件名 / 方法名 / 私有状态名**
+#   （别处断言与 `main_window` 都按这些名字读），并把"实现确实搬走了 + 分栏不变量"
+#   写成可执行断言 ⇒ 谁改名 / 把薄壳写成空函数 / 分栏退化都会立刻红。
+# ==========================================
+print("\n== 复盘页迁移护栏（1.25 · §9-U + §9-L）：公共面不许改名 + 分栏不变量 ==")
+import ui.widgets.review_charts  # noqa: E402,F401
+import ui.widgets.review_editor  # noqa: E402,F401
+import ui.widgets.review_flow  # noqa: E402,F401
+import ui.widgets.review_layout  # noqa: E402,F401
+import ui.widgets.review_playback  # noqa: E402,F401
+from ui.views import review as _review_module  # noqa: E402
+
+_rev = win.page_review
+_review_lines = [line for line in Path(_review_module.__file__).read_text(
+    encoding="utf-8").splitlines() if line.strip()]
+check(f"review.py 已降到 ≤500 行（实测 {len(_review_lines)}）", len(_review_lines) <= 500)
+check("5 个 review_* 模块都能独立导入（新能力落 ui/widgets/*，§10-12）", True)
+
+# 判据 = 拆分前后同一套断言零改动 ⇒ 只额外钉"实现确实搬走了"（不是把壳写成空函数）
+for _handle, _impl_name, _page_name, _module in (
+        ("_layout", "build", "_setup_ui", "review_layout.py"),
+        ("_layout", "_build_monthly_mode", "_build_monthly_mode", "review_layout.py"),
+        ("_playback", "_render_trade_playback", "_render_trade_playback", "review_playback.py"),
+        ("_playback", "_nearest_bar_index", "_nearest_bar_index", "review_playback.py"),
+        ("_charts", "_render_monthly_charts", "_render_monthly_charts", "review_charts.py"),
+        ("_charts", "_render_duration_analysis", "_render_duration_analysis", "review_charts.py"),
+        ("_editor", "on_review_trade_selected", "on_review_trade_selected", "review_editor.py"),
+        ("_editor", "save_review_text", "save_review_text", "review_editor.py"),
+        ("_editor", "stitch_current_orphan", "stitch_current_orphan", "review_editor.py"),
+        ("_flow", "update_review_view", "update_review_view", "review_flow.py"),
+        ("_flow", "refresh_review_filters", "refresh_review_filters", "review_flow.py"),
+        ("_flow", "refresh_time_picker", "refresh_time_picker", "review_flow.py")):
+    _impl = getattr(getattr(_rev, _handle), _impl_name)     # 实现（模块里）
+    _src = Path(inspect.getsourcefile(_impl)).name
+    check(f"{_impl_name} 的实现已搬进 {_module}，页面保留同名薄壳 {_page_name}",
+          _src == _module and hasattr(_rev, _page_name))
+
+# 公共面白名单：控件名 / 状态名 / 行为入口一个都不许动（§11.7 迁移红线）
+REVIEW_PUBLIC_ATTRS = (
+    # 状态
+    "current_review_date", "is_yearly_view", "current_view_df", "current_editing_idx",
+    "data_lake", "_trading_cal", "_review_ui",
+    # 版式骨架 / 操作轴
+    "review_stack", "review_monthly_widget", "yearly_panel", "macro_micro_splitter",
+    "btn_mode_toggle", "btn_prev_time", "btn_next_time", "cb_time_picker", "btn_latest_time",
+    "cb_rev_account", "cb_rev_strategy", "cb_rev_symbol", "cb_rev_direction", "cb_rev_result",
+    "btn_manage_str",
+    # 日历 / 图表
+    "review_calendar", "lbl_cal_month_title", "review_chart_tabs", "review_pnl_chart",
+    "review_kline_chart", "playback_chart", "review_duration_chart",
+    # 清单 / 编辑卡
+    "day_trades_list", "lbl_selected_date", "editor_header_card", "lbl_trade_detail",
+    "cb_edit_strategy", "txt_reason", "txt_reflection", "orphan_bar", "gallery",
+    "btn_del_trade", "btn_save_review",
+    # 行为模块句柄 + 页面级入口
+    "_layout", "_charts", "_playback", "_editor", "_flow",
+    "update_review_view", "refresh_review_filters", "toggle_review_mode", "change_review_time",
+    "jump_to_latest", "quick_jump_time", "on_calendar_day_clicked", "on_review_trade_selected",
+    "save_review_text", "delete_current_trade", "silent_update_strategy",
+    "guess_orphan_entry_price", "stitch_current_orphan",
+)
+_review_missing = [name for name in REVIEW_PUBLIC_ATTRS if not hasattr(_rev, name)]
+check(f"复盘页公共面完整（{len(REVIEW_PUBLIC_ATTRS)} 项 · 缺：{_review_missing or '无'}）",
+      not _review_missing)
+check("导航第 3 页仍指向复盘工作台（main_window.page_review）", win.page_review is _rev)
+
+# ★§9-U 收口不变量 --------------------------------------------------------
+_split = _rev.macro_micro_splitter
+check("★§9-U：宏观/微观之间是**竖向可拖分栏**（不是写死的 5:4 比例平铺）",
+      _split.orientation() == Qt.Orientation.Vertical and _split.count() == 2)
+check("★§9-U：分栏两块都不许拖到 0（整块塌掉会像控件丢了）",
+      _split.childrenCollapsible() is False)
+
+# 默认回落：没有偏好时用 560/340（短屏不再被写死比例挤死）
+_saved_rui = dict(_rev._review_ui)
+_rev._review_ui = {}
+check("★§9-U：无偏好时回落默认分栏 560/340",
+      _rev._layout._restored_v_sizes() == [560, 340])
+_rev._review_ui = _saved_rui
+
+# 记住上次：拖动 → 防抖落偏好（直接调落盘点，避开 300ms 等待）
+from core.preferences import preferences as _prefs  # noqa: E402
+_split.setSizes([620, 280])
+app.processEvents()
+_current_sizes = list(_split.sizes())
+_rev._on_review_splitter_moved()          # 拖动信号 → 启动防抖计时器
+check("★§9-U：拖动分栏会启动落盘（防抖计时器在跑）", _rev._review_save_timer.isActive())
+_rev._persist_review_ui()                 # 直接落盘（等价计时器到点）
+check("★§9-U：分栏高度**记住上次**（写入 review_ui.v_sizes，与 backtest_ui/desk_ui 同源）",
+      len(_current_sizes) == 2
+      and _prefs.get("review_ui", {}).get("v_sizes") == _current_sizes)
+check("★§9-U：偏好可被重新读出（下次打开还原分栏高度）",
+      _rev._load_review_ui().get("v_sizes") == _current_sizes)
+
+# 坏偏好一律回落默认（0 / 负数 / 长度不对都不落）
+_prefs.set("review_ui", {"v_sizes": [0, -5]})
+check("★§9-U：坏偏好一律回落默认（0/负数不落）", _rev._load_review_ui() == {})
+_prefs.set("review_ui", {"v_sizes": _current_sizes})
+
+check("复盘页仍在导航挂载（content_area 里能找到它）",
+      any(_rev is win.content_area.widget(i) for i in range(win.content_area.count())))
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402
