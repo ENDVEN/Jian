@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>1.27 · M2 全市场筛选 / M3 广度统计 · 方案与原型</title>
+<style>
+:root{
+  --bg:#F4F6FA; --card:#fff; --line:#E4E9F0; --ink:#1F2430; --ink2:#3C4552;
+  --muted:#8A94A6; --faint:#B4BECB; --accent:#1976D2; --accent-soft:#E8F2FE;
+  --up:#2E7D32; --down:#C62828; --orange:#E65100;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13.5px/1.65 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;padding:26px 30px 70px}
+h1{font-size:22px;margin:0 0 6px}
+h2{font-size:16px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--accent)}
+h3{font-size:13.5px;margin:16px 0 8px;color:var(--ink2)}
+.lead{color:var(--muted);margin:0 0 22px;max-width:1080px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;
+      box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.05)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.sample{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+        box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.06);display:flex;flex-direction:column}
+.shead{padding:13px 16px 10px;display:flex;align-items:flex-start;gap:10px}
+.shead .k{width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;
+          font-weight:800;font-size:13px;flex:0 0 auto}
+.shead .t{font-weight:800;font-size:14.5px}
+.shead .d{color:var(--muted);font-size:12.3px;margin-top:2px}
+.shot{position:relative;width:100%;height:372px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+      background:#EDF1F6;overflow:hidden}
+.shot iframe{position:absolute;top:0;left:0;width:1440px;height:886px;border:0;transform:scale(.42);transform-origin:top left}
+@media (max-width:1500px){ .grid{grid-template-columns:1fr} }
+.sfoot{display:flex;align-items:center;gap:10px;padding:11px 16px;font-size:12.3px;color:var(--ink2);flex-wrap:wrap}
+.sfoot a{color:var(--accent);font-weight:700;text-decoration:none}
+.sfoot a:hover{text-decoration:underline}
+.pill{font-size:11.5px;border-radius:999px;padding:3px 9px;font-weight:700;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.pill.g{background:#EAF7EE;color:var(--up)}
+.pill.o{background:#FFF3E0;color:var(--orange)}
+.pill.r{background:#FDECEA;color:var(--down)}
+.pill.gray{background:#F1F4F9;color:var(--muted)}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:12.8px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #EEF1F6;vertical-align:top}
+th{background:#F7F9FC;font-weight:700;color:var(--ink2);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td.c{text-align:center;white-space:nowrap}
+code{background:#F4F6FA;border:1px solid #E7EAF0;border-radius:5px;padding:1px 5px;font-family:Consolas,monospace;font-size:12.2px}
+.note{background:#FFFBF0;border:1px solid #F3E2B8;border-radius:10px;padding:12px 14px;font-size:12.8px;color:#6B5A22}
+.note b{color:#8A6D1F}
+.ask{background:#F7FBFF;border:1px solid #CFE4FA;border-radius:10px;padding:14px 16px;font-size:13px}
+.ask ol{margin:8px 0 0 18px;padding:0}
+.ask li{margin-bottom:8px}
+ul.tight{margin:6px 0 0 18px;padding:0}
+ul.tight li{margin-bottom:5px}
+.kv{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.metric{background:#FBFCFE;border:1px solid #E7EAF0;border-radius:10px;padding:10px 14px;min-width:186px}
+.metric .l{color:var(--muted);font-size:12px}
+.metric .v{font-size:18px;font-weight:800}
+.metric .v.bad{color:var(--down)}
+.swatch{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
+.swatch i{width:16px;height:16px;border-radius:4px;display:inline-block;border:1px solid rgba(0,0,0,.08)}
+</style>
+</head>
+<body>
+
+<h1>1.27 · §7-B1/B2 —— M2 全市场筛选 / M3 广度统计 · 方案与原型</h1>
+<p class="lead">
+  目标：<b>「选某一天，让整段函数跑遍全市场」，以及「逐日统计有多少只满足条件」</b>。<br>
+  这一页是<b>讨论稿</b>：先看结论与原型，拍板后再写进 <code>JIAN_RULES.md</code> 成为 §7-B1/B2 主案，
+  最后才做 Qt 实现。完整文字版见 <a href="README.md"><code>README.md</code></a>。
+</p>
+
+<h2>一、先把"为什么难"量出来（数字来自代码，不是感觉）</h2>
+<div class="card">
+  <div class="kv">
+    <div class="metric"><div class="l">全市场标的（<code>list_stock_symbols</code>）</div><div class="v">约 5400 只</div></div>
+    <div class="metric"><div class="l">数据湖形态</div><div class="v bad">按标的存 parquet</div></div>
+    <div class="metric"><div class="l">看一列（横截面）的代价</div><div class="v bad">5000+ 次文件打开</div></div>
+    <div class="metric"><div class="l"><code>scan_cache</code> 分区</div><div class="v bad">不存在</div></div>
+    <div class="metric"><div class="l">估值 / 财务数据源</div><div class="v bad">未接入</div></div>
+  </div>
+  <ul class="tight">
+    <li><b>① 湖的形态是为"看一只"优化的</b>（行情工作台），对"看一列"最差 —— IO 会成为主要成本，而不是计算。</li>
+    <li><b>② 逐只 pandas 求值</b>：5400 次 Series 构造 + 循环，比向量化慢一个数量级。</li>
+    <li><b>③ 最容易骗人的地方是"数据不足"</b>：某股只有 120 根但函数要 MA250 —— 它<b>既不是命中也不是未命中</b>。
+      若按 <code>False</code> 计入，<b>广度会系统性偏低</b>、横截面会漏股。</li>
+    <li><b>④ 缓存失效若只看公式哈希</b>：新下载的数据不会触发重算 ⇒ <b>静默陈旧</b>（违反 §5 / §10 铁律）。</li>
+  </ul>
+</div>
+
+<h2>二、主轴：一个引擎，两种视图（＋三条效率杠杆）</h2>
+<div class="card">
+  <div class="note" style="margin-bottom:12px">
+    <b>M2 和 M3 是同一个计算的两面：</b>对每只股票，把「函数段 + 条件 Gate」在它自己的日线序列上跑一遍，
+    得到<b>逐日布尔信号</b> ⇒ <b>M2 = 某一天纵向取一列</b>（命中清单），<b>M3 = 跨标的按日横向求和</b>（家数）。
+    ⇒ <b>不做两个引擎</b>，缓存也只有一份。
+  </div>
+  <table>
+    <tr><th style="width:130px">杠杆</th><th>做法</th><th style="width:330px">为什么有效</th></tr>
+    <tr><td><b>1 · 干掉 IO</b></td>
+        <td>派生 <code>kline_panel</code>（<b>日期 × 标的</b> 宽表，按日期分区，float32，只放 OHLCV），一次建、多轮复用，增量追加</td>
+        <td>把 5000+ 次小文件读，变成<b>一次列式扫描</b>；NaN 对齐天然承载"数据不足"三态；派生数据可从日线重建</td></tr>
+    <tr><td><b>2 · 干掉逐只 Python</b></td>
+        <td>面板是二维数组后，指标<b>沿时间轴滚动、一次算完全部标的</b></td>
+        <td>去掉 pandas 构造开销，计算量从"5400 次"变成"一次"（需探针验证口径一致）</td></tr>
+    <tr><td><b>3 · 两段式漏斗</b></td>
+        <td>先用便宜列粗筛（成交额 / 非停牌 / 剔 ST / 上市 &gt; N 日）砍到几百，再跑完整公式</td>
+        <td>真实策略命中率通常 &lt; 5% ⇒ 精算量降一个数量级</td></tr>
+  </table>
+</div>
+
+<h2>三、两个页面的原型（可点、可切状态 · 点标题全屏打开）</h2>
+<div class="grid">
+
+  <div class="sample">
+    <div class="shead"><div class="k">M2</div>
+      <div><div class="t">全市场筛选 —— 某一天的全市场筛选</div>
+        <div class="d">L1 统计范围/交易日/复权 · L2 配置 chips + <b>数据就绪回执</b> + 开始扫描 · L0 三态结果表 · L3 覆盖层抽屉</div></div>
+      <span style="flex:1"></span><span class="pill g">命中 / 未命中 / 数据不足 三态</span>
+    </div>
+    <div class="shot"><iframe src="a-scan.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot">
+      <span class="swatch"><i style="background:#fff"></i><i style="background:#E4E9F0"></i><i style="background:#1976D2"></i>现状配色</span>
+      <span>·</span><span>状态演示：默认 / 配置抽屉 / 扫描中 / 数据未就绪</span>
+      <span style="flex:1"></span><a href="a-scan.html" target="_blank">全屏打开 →</a>
+    </div>
+  </div>
+
+  <div class="sample">
+    <div class="shead"><div class="k" style="background:#FB8C00">M3</div>
+      <div><div class="t">广度统计 —— 每天有多少只满足条件</div>
+        <div class="d">家数折线 + MA5 平滑 · 下方指数副图（同 x 联动）· 口径印在标题上 · ⚡增量到最新 / ⟳全量重算（隔离）</div></div>
+      <span style="flex:1"></span><span class="pill o">口径必须印在标题上</span>
+    </div>
+    <div class="shot"><iframe src="b-breadth.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="sfoot">
+      <span class="swatch"><i style="background:#fff"></i><i style="background:#E4E9F0"></i><i style="background:#1976D2"></i>现状配色</span>
+      <span>·</span><span>状态演示：默认 / 配置抽屉 / 数据未就绪</span>
+      <span style="flex:1"></span><a href="b-breadth.html" target="_blank">全屏打开 →</a>
+    </div>
+  </div>
+
+</div>
+
+<h2>四、设计规范（速查）</h2>
+<div class="card">
+  <h3>4.1 版式分层（§10-14 落地）</h3>
+  <table>
+    <tr><th style="width:120px">层</th><th>内容</th><th style="width:120px">常驻？</th></tr>
+    <tr><td><b>页签</b></td><td>单股回测 / 全市场筛选 / 广度统计（沿用现有 <code>backtest_module</code> 壳，只换占位页）</td><td class="c">✅</td></tr>
+    <tr><td><b>L1 操作轴</b></td><td>统计范围 · 日期/区间 · 复权 —— <b>1 行</b></td><td class="c">✅</td></tr>
+    <tr><td><b>L2 摘要条</b></td><td>配置 chips（ƒ函数 / ⇄条件 / 🎚粗筛 / 🌐范围 / 📅日期）+ <b>数据就绪回执</b> + 主按钮 —— <b>1 行</b></td><td class="c">✅</td></tr>
+    <tr><td><b>L0 结果区</b></td><td>M2 = KPI + 结果表；M3 = 双窗格折线 —— <b>吃满剩余高度</b></td><td class="c">✅</td></tr>
+    <tr><td><b>L3 配置抽屉</b></td><td>函数段 / 条件 Gate / 统计范围 / 粗筛 —— <b>覆盖层，不动主区高度</b>（§11.5-26）</td><td class="c">❌ 点击才出</td></tr>
+  </table>
+
+  <h3>4.2 色彩与形态（沿用现状配色，深色主题仍推迟）</h3>
+  <p style="margin:0 0 10px">
+    <span class="swatch" style="margin-right:14px"><i style="background:#1976D2"></i>主色 #1976D2</span>
+    <span class="swatch" style="margin-right:14px"><i style="background:#2E7D32"></i>涨 #2E7D32</span>
+    <span class="swatch" style="margin-right:14px"><i style="background:#C62828"></i>跌 #C62828</span>
+    <span class="swatch" style="margin-right:14px"><i style="background:#E65100"></i>警示 #E65100</span>
+    <span class="swatch" style="margin-right:14px"><i style="background:#F4F6FA"></i>页底 #F4F6FA</span>
+    <span class="swatch"><i style="background:#E4E9F0"></i>描边 #E4E9F0</span>
+  </p>
+  <p style="margin:0;color:var(--muted);font-size:12.6px">卡片白 + radius 8/14 · 字号 12.5–13.5 · 表行高 28 · 数字用等宽（tabular-nums）</p>
+
+  <h3>4.3 ★ 三态语义（本项目最容易骗人的地方）</h3>
+  <table>
+    <tr><th style="width:120px">态</th><th>含义</th><th style="width:210px">视觉</th><th style="width:330px">纪律</th></tr>
+    <tr><td><span class="pill">命中</span></td><td>满足条件</td><td>主色实心 pill</td><td>—</td></tr>
+    <tr><td><span class="pill gray">未命中</span></td><td>明确不满足</td><td>灰 pill（行文字同步变浅）</td><td>—</td></tr>
+    <tr><td><span class="pill o">数据不足</span></td><td><b>既非命中亦非未命中</b>（历史不够 / 停牌 / 上市不足 N 日）</td><td><b>橙色 pill + 计数显式</b></td><td><b>绝不用 0 / False 冒充</b>；广度分母必须同时显示"有效样本数"</td></tr>
+  </table>
+
+  <h3>4.4 其它硬规范</h3>
+  <ul class="tight">
+    <li><b>口径必须印在标题上</b>：<code>📊 广度（全 A · 剔除 ST · 上市 &gt; 250 日 · 有效 4821/5390 · 不复权）</code> —— 否则"家数"没有可解释性。</li>
+    <li><b>术语人话化（§10-10）</b>："横截面"→<b>"某一天的全市场筛选"</b>；"广度"→<b>"每天有多少只满足条件"</b>；"样本口径"→<b>"统计范围"</b>。</li>
+    <li><b>回执一行化</b>：进度/结果写成一行（<code>扫描 2317/5390 · 命中 96 · 失败 2 · 用时 1.8s</code>），详解进 tooltip（§7-B6 STEP 5 同款）。</li>
+    <li><b>危险动作隔离</b>：「⟳ 全量重算」「删除面板」= 放底部/抽屉底 + 二次确认（§10-10）。</li>
+    <li><b>三种空态都要给下一步动作</b>：未就绪 → 「补齐缺失」；无数据 → 「去数据管理」；失败 → 「重试 / 查看原因」。禁止静默。</li>
+    <li><b>双击结果行 → 行情工作台</b>（复用 <code>load_symbol</code>），<b>不另做看图器</b>。</li>
+  </ul>
+</div>
+
+<h2>五、步骤拆分（每步独立可验收 · 一 commit 一步）</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:70px">STEP</th><th>内容</th><th style="width:420px">验收判据</th></tr>
+    <tr><td class="c"><b>0</b></td><td>4 个探针实测（IO / 面板构建 / 向量化 / 端到端）+ 主案定稿</td><td>探针跑完即删，数字写进主案；<b>零业务代码</b></td></tr>
+    <tr><td class="c"><b>1</b></td><td><code>core/cross_section.py</code> 纯计算 + 单测</td><td>合成数据：三态正确 · 粗筛生效 · 命中矩阵逐位可验</td></tr>
+    <tr><td class="c"><b>2</b></td><td><code>kline_panel</code> 分区 + 重建/增量 + 三处登记（§11.7）</td><td>数据管理页可见可删可重建；重建耗时/体积实测</td></tr>
+    <tr><td class="c"><b>3</b></td><td><code>data/scan_store.py</code>（L1 面板 + 可选 L2 结果缓存）</td><td><b>数据版本变化 ⇒ 缓存作废</b>（含负向断言）</td></tr>
+    <tr><td class="c"><b>4</b></td><td><code>ui/workers.py</code> + <code>CrossSectionWorker</code></td><td>进度 / 取消 / 竞态守卫（§9-O5）；UI 不卡</td></tr>
+    <tr><td class="c"><b>5</b></td><td><b>M2 页</b>（先自选/指数成分 → 放开全 A）</td><td>三态表 + 排序 + 导出 + 双击跳行情页；冒烟断言</td></tr>
+    <tr><td class="c"><b>6</b></td><td><b>M3 页</b>（复用 L1/L2 + 指数叠加）</td><td>双窗格 x 联动 + 增量到最新 + 全量重算闸门</td></tr>
+    <tr><td class="c"><b>7</b></td><td>联动收尾（就绪度 / 缺口补齐 / 问题清单回流 / 防污染自检）</td><td>两页口径一致（同一份就绪度模型）</td></tr>
+    <tr><td class="c"><b>8</b></td><td>文档回写（§4/§6/§8/§11.4/§11.6/§11.7）+ 发版</td><td>三处版本号同批同步（§9-A）；冒烟失败 0 且断言只增不减</td></tr>
+  </table>
+</div>
+
+<h2>六、与「🗄 数据管理」的联动（互利共赢 · 6 条）</h2>
+<div class="card">
+  <div class="note" style="margin-bottom:10px">
+    <b>核心思想：</b>"扫描需要什么"变成数据管理的一个<b>预设</b>；"数据管理的下载 / 体检"变成扫描的一行<b>回执</b>。
+    两边<b>只有一份实现</b>（下载一律走 <code>MarketSyncService</code>）。
+  </div>
+  <ul class="tight">
+    <li><b>① 就绪度体检（双向唯一口径）</b>：开跑前算 <code>已就绪 N/总 M</code>、缺口清单、区间是否够
+      （含公式最小历史长度）、数据健康（复用 §9-V 非正价 / 量纲接缝判据）+ <b>「补齐缺失（增量）」</b>按钮。</li>
+    <li><b>② 反向</b>：<code>bulk_download</code> 新增 <b>「全市场扫描就绪」预设</b>（全 A + 起点 + 复权），一键备齐底座。</li>
+    <li><b>③ 面板作为可见分区</b>：<code>ZONE_ORDER / ZONE_LABELS</code> 新增一项，显示 行数/日期范围/体积/更新时间，
+      支持删除 + <b>「从日线重建」</b>（隔离 + 键入确认，与"清空分区"同款闸门）。</li>
+    <li><b>④ 增量语义共用</b>：两页同用 <code>fresh_within_days = 0</code>（末日 == 今天才算最新）、
+      "空增量 = 已最新不是失败" ⇒ <b>杜绝"管理页说最新、扫描页说缺数据"</b>。</li>
+    <li><b>⑤ 下载顺序由"扫描损失"驱动</b>：缺口清单带优先级（按成交额降序）⇒ 广度先接近真实。</li>
+    <li><b>⑥ 问题清单回流</b>：读不出 / 校验不过的标的回写数据管理的问题清单 + 「重新全量下载该只」入口，
+      <b>不在扫描页静默跳过</b>。</li>
+  </ul>
+</div>
+
+<h2>七、待你拍板（5 点）</h2>
+<div class="ask">
+  <ol>
+    <li><b>主轴</b>：认不认同 "建扫描面板（<code>kline_panel</code>）+ 两段式漏斗"，而不是逐只读文件直接算？</li>
+    <li><b>复权</b>：MVP <b>只用不复权</b>（界面明示），还是<b>一次到位</b>（面板存不复权 + 复权因子，指标按需复权）？</li>
+    <li><b>面板可见性</b>：<code>kline_panel</code> 作为数据管理里<b>可见分区</b>（可看/可删/可重建），还是内部缓存 + 一个重建按钮？</li>
+    <li><b>L2 结果缓存</b>：本轮做，还是先只做 L1 面板缓存（更简单，先看实测收益）？</li>
+    <li><b>粗筛默认阈值</b>：成交额下限 / 上市天数下限，给什么默认值（都可调）？</li>
+  </ol>
+</div>
+
+</body>
+</html>

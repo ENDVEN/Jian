@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>M3 · 广度统计（每天有多少只满足条件）</title>
+<style>
+:root{
+  --bg:#F4F6FA; --card:#fff; --line:#E4E9F0; --ink:#1F2430; --ink2:#3C4552;
+  --muted:#8A94A6; --faint:#B4BECB; --accent:#1976D2; --accent-soft:#E8F2FE;
+  --up:#2E7D32; --down:#C62828; --orange:#E65100; --warn-soft:#FFF3E0;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{width:1440px;min-height:886px;background:var(--bg);color:var(--ink);
+     font:13.5px/1.6 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+     padding:10px 14px 14px;overflow:hidden}
+.shell{display:flex;flex-direction:column;gap:10px;height:866px;position:relative}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}
+.tab{font-size:14px;font-weight:700;color:#8A94A6;padding:8px 22px;border-bottom:2px solid transparent;cursor:default}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.tab:hover{color:var(--accent)}
+
+/* L1 */
+.l1{display:flex;align-items:center;gap:8px}
+.l1 .lb{color:var(--muted);font-size:12.3px}
+.sel{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;
+     border-radius:7px;padding:5px 10px;font-size:12.6px;color:var(--ink2);min-width:92px}
+.sel:after{content:"▾";color:var(--muted);margin-left:auto}
+.sel.wide{min-width:150px}
+.spacer{flex:1}
+.hint{width:17px;height:17px;border-radius:50%;background:#EDF1F6;color:var(--muted);
+      display:grid;place-items:center;font-size:11px;font-weight:700}
+.sep{width:1px;height:18px;background:#E9EDF3}
+
+/* L2 */
+.l2{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);
+    border-radius:10px;padding:8px 10px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.chip{border:1px solid #D7E6F7;background:var(--accent-soft);color:var(--accent);
+      border-radius:999px;padding:3px 11px;font-size:12.2px;font-weight:700;white-space:nowrap;cursor:default}
+.chip.gray{border-color:#E4E9F0;background:#F6F8FB;color:#5B6472}
+.chip .k{color:#5B6472;font-weight:600;margin-right:4px}
+.ready{font-size:12.2px;color:var(--ink2)}
+.ready .ok{color:var(--up);font-weight:700}
+.btn{border:none;border-radius:7px;padding:7px 16px;font-size:13px;font-weight:700;background:var(--accent);color:#fff}
+.btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink2);font-weight:600}
+.btn.muted{background:#F4F6FA;border:1px solid var(--line);color:var(--muted);font-weight:600}
+
+/* L0 */
+.l0{flex:1;background:#fff;border:1px solid var(--line);border-radius:12px;
+    display:flex;flex-direction:column;min-height:0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.l0head{display:flex;align-items:center;gap:10px;padding:10px 14px 6px}
+.l0head .t{font-weight:800;font-size:14px}
+.cal{font-size:12.1px;color:var(--muted)}
+.cal b{color:var(--ink2)}
+.charts{flex:1;min-height:0;display:flex;flex-direction:column;gap:2px;padding:0 8px}
+.pane{position:relative;min-height:0}
+.pane.main{flex:3} .pane.sub{flex:1.5}
+.pane .cap{position:absolute;left:12px;top:6px;font-size:11.8px;color:var(--muted)}
+.legend{position:absolute;right:12px;top:6px;font-size:11.8px;color:var(--muted);display:flex;gap:10px}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:4px}
+svg{display:block;width:100%;height:100%}
+.readout{position:absolute;right:12px;top:24px;background:rgba(31,36,48,.9);color:#fff;
+         border-radius:7px;padding:5px 9px;font-size:11.8px;line-height:1.5}
+.foot{display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line);font-size:12.1px;color:var(--muted)}
+.mini{display:flex;gap:6px}
+.mini div{border:1px solid #E7EAF0;background:#FBFCFE;border-radius:8px;padding:4px 10px;font-size:11.8px;color:var(--ink2)}
+.mini b{color:var(--ink)}
+
+/* 抽屉（同 M2） */
+.scrim{position:absolute;inset:0;background:rgba(16,24,40,.26);border-radius:10px;display:none}
+.drawer{position:absolute;top:0;right:0;width:520px;height:100%;background:#fff;
+        border-left:1px solid var(--line);border-radius:0 10px 10px 0;display:none;flex-direction:column;
+        box-shadow:-18px 0 40px rgba(16,24,40,.14)}
+body.open .scrim,body.open .drawer{display:flex}
+.dhead{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line)}
+.dhead .t{font-weight:800;font-size:14px}
+.dtabs{display:flex;gap:6px}
+.dtab{font-size:12.2px;font-weight:700;color:#6B7686;background:#F4F6FA;border:1px solid var(--line);
+      border-radius:999px;padding:3px 11px;cursor:default}
+.dtab.on{background:var(--accent-soft);border-color:#CFE4FA;color:var(--accent)}
+.dbody{flex:1;overflow:auto;padding:12px 14px}
+.dcard{border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin-bottom:10px;background:#FDFEFF}
+.dcard h4{margin:0 0 8px;font-size:13px;color:var(--ink2)}
+.dcard .sub{color:var(--muted);font-size:11.8px;margin:-4px 0 8px}
+textarea{width:100%;height:70px;border:1px solid #E7EAF0;border-radius:8px;background:#FAFBFD;
+         padding:8px;font:12.4px/1.6 Consolas,monospace;color:var(--ink2);resize:none}
+.sw{display:inline-flex;align-items:center;gap:7px;font-size:12.3px;color:var(--ink2);margin:3px 12px 3px 0}
+.sw i{width:30px;height:17px;border-radius:999px;background:#DCE2EA;position:relative;display:inline-block;flex:0 0 auto}
+.sw i:after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+.sw.on i{background:#9CC7F0} .sw.on i:after{left:15px;background:var(--accent)}
+.sw .v{border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-size:11.8px}
+.dfoot{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.danger{border:1px dashed #F0C6A8;background:#FFF8F3;border-radius:10px;padding:10px 12px;font-size:12.2px;color:#8A4B12}
+.banner{display:none;align-items:center;gap:10px;background:var(--warn-soft);
+        border:1px solid #F3D9A6;border-radius:10px;padding:9px 12px;font-size:12.6px;color:#8A5B00}
+body.na .banner{display:flex}
+.demo{position:fixed;right:16px;bottom:14px;background:#1F2430;color:#fff;border-radius:10px;
+      padding:9px 11px;font-size:12px;display:flex;gap:7px;align-items:center;z-index:9;opacity:.94}
+.demo button{background:#3C4552;color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:11.6px;cursor:pointer}
+.demo button.on{background:var(--accent)}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <div class="tabs">
+    <div class="tab">📈 单股回测</div>
+    <div class="tab">🌐 全市场筛选</div>
+    <div class="tab on">📊 广度统计</div>
+  </div>
+
+  <!-- L1 -->
+  <div class="l1">
+    <span class="lb">条件方向</span>
+    <span class="sel wide">买入条件家数</span>
+    <span class="sep"></span>
+    <span class="lb">区间</span>
+    <span class="sel">近 1 年</span>
+    <span class="sel wide">2025-09-18 → 2026-09-18</span>
+    <span class="sep"></span>
+    <span class="lb">复权</span>
+    <span class="sel">不复权</span>
+    <span class="hint" title="广度是逐日指标；长周期指标会受除权影响，所以口径必须明示。">?</span>
+    <span class="spacer"></span>
+    <span class="btn ghost" onclick="document.body.classList.toggle('open')">⚙ 配置</span>
+  </div>
+
+  <!-- L2 -->
+  <div class="l2">
+    <span class="chip" onclick="document.body.classList.add('open')"><span class="k">ƒ</span>函数段 1</span>
+    <span class="chip" onclick="document.body.classList.add('open')"><span class="k">⇄</span>条件 至少 1/2</span>
+    <span class="chip gray" onclick="document.body.classList.add('open')"><span class="k">📈</span>MA5 平滑</span>
+    <span class="chip gray"><span class="k">🌐</span>全 A · 剔ST · 上市&gt;250日</span>
+    <span class="sep"></span>
+    <span class="ready">就绪 <b>4821</b>/5390 · 已算到 <b class="ok">09-18</b></span>
+    <span class="spacer"></span>
+    <button class="btn">⚡ 增量到最新</button>
+    <button class="btn muted" title="数据被修订 / 换了复权口径时才需要：全部重算（会二次确认）">⟳ 全量重算</button>
+  </div>
+
+  <!-- 未就绪 -->
+  <div class="banner">
+    <b>⚠ 数据尚未备齐</b>
+    <span>有效样本 4821/5390。缺数据的标的记为「数据不足」，<b>不计入家数</b> —— 曲线会偏低，请先补齐。</span>
+    <span class="spacer" style="flex:1"></span>
+    <span class="btn ghost">补齐缺失</span>
+  </div>
+
+  <!-- L0 -->
+  <div class="l0">
+    <div class="l0head">
+      <span class="t">📊 广度：每天有多少只满足条件</span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="cal">口径：<b>全 A · 剔除 ST · 上市 &gt; 250 日 · 有效 4821/5390 · 不复权</b></span>
+    </div>
+    <div class="charts">
+      <div class="pane main">
+        <span class="cap">满足条件的家数（只）</span>
+        <span class="legend">
+          <span><i style="background:#1976D2"></i>家数</span>
+          <span><i style="background:#FB8C00"></i>MA5</span>
+          <span><i style="background:#B4BECB"></i>零轴</span>
+        </span>
+        <svg id="main" viewBox="0 0 1240 300" preserveAspectRatio="none"></svg>
+        <div class="readout" id="ro"></div>
+      </div>
+      <div class="pane sub">
+        <span class="cap">sh000001 上证指数（同 x 轴联动）</span>
+        <svg id="sub" viewBox="0 0 1240 130" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+    <div class="foot">
+      <div class="mini" id="mini"></div>
+      <span class="spacer" style="flex:1"></span>
+      <span>读法：家数抬升 = 越来越多标的满足条件（普涨/趋势扩散）；家数骤降 = 条件大面积失效</span>
+    </div>
+  </div>
+
+  <!-- 抽屉 -->
+  <div class="scrim" onclick="document.body.classList.remove('open')"></div>
+  <div class="drawer">
+    <div class="dhead">
+      <span class="t">广度配置</span>
+      <span class="dtabs"><span class="dtab on">ƒ 函数段</span><span class="dtab">⇄ 条件组</span><span class="dtab">🌐 范围</span><span class="dtab">📈 平滑</span></span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="btn ghost" onclick="document.body.classList.remove('open')">✕</span>
+    </div>
+    <div class="dbody">
+      <div class="dcard">
+        <h4>ƒ 函数段</h4>
+        <div class="sub">与单股回测 / 全市场筛选共用同一份函数段与配方库</div>
+        <textarea>MA20 := MA(C,20);
+CROSS(C, MA20) AND V &gt; MA(V,5) * 1.2;</textarea>
+      </div>
+      <div class="dcard">
+        <h4>⇄ 条件组</h4>
+        <div class="sub">「至少 N 个满足」统一翻译成单行 COUNT_TRUE，不展开表达式</div>
+        <div style="font-size:12.3px;color:var(--ink2)">条件1 <b>CROSS(C, MA20)</b> · 条件2 <b>V &gt; MA(V,5)*1.2</b> —— 至少 <b>1</b> 个</div>
+      </div>
+      <div class="dcard">
+        <h4>📈 平滑与展示</h4>
+        <label class="sw on"><i></i>叠加 MA5 平滑</label>
+        <label class="sw"><i></i>改用「占比 %」（家数 ÷ 有效样本）</label>
+        <label class="sw"><i></i>叠加指数涨跌幅（副图）</label>
+      </div>
+      <div class="dcard">
+        <h4>🌐 统计范围</h4>
+        <label class="sw on"><i></i>全 A</label>
+        <label class="sw on"><i></i>剔除 ST / 退市</label>
+        <label class="sw on"><i></i>上市 &gt; <span class="v">250</span> 日</label>
+      </div>
+      <div class="danger">
+        <b>⟳ 全量重算</b>（危险动作，放在抽屉底部并二次确认）<br>
+        只在「数据被修订」或「换了复权口径」时才需要 —— 日常用「⚡ 增量到最新」即可，
+        它只算最后一天，秒级完成。
+      </div>
+    </div>
+    <div class="dfoot">
+      <span class="btn">✓ 应用并重算</span>
+      <span class="btn ghost">仅保存配置</span>
+    </div>
+  </div>
+</div>
+
+<div class="demo">
+  <b>原型演示</b>
+  <button onclick="document.body.className=''" class="on" id="b0">默认</button>
+  <button onclick="document.body.className='open'" id="b1">配置抽屉</button>
+  <button onclick="document.body.className='na'" id="b2">数据未就绪</button>
+</div>
+
+<script>
+/* ---------- 造一段像样的广度序列（原型用，非真实数据） ---------- */
+const N=240, W=1240, H=300, HL=44, HR=16, HT=26, HBm=26;
+let seed=20260918;
+const rnd=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff;};
+const breadth=[]; let b=90;
+for(let i=0;i<N;i++){ b += (rnd()-0.5)*22 + Math.sin(i/26)*2.2; b=Math.max(4,Math.min(330,b)); breadth.push(b); }
+const ma5=breadth.map((_,i)=>{const s=breadth.slice(Math.max(0,i-4),i+1);return s.reduce((a,c)=>a+c,0)/s.length;});
+const index=[]; let ix=3050;
+for(let i=0;i<N;i++){ ix += (rnd()-0.49)*26; index.push(ix); }
+
+const yMin=0, yMax=Math.max(...breadth)*1.14;
+const X=i=>HL+(W-HL-HR)*i/(N-1);
+const Y=v=>H-HBm-(H-HT-HBm)*(v-yMin)/(yMax-yMin);
+const path=arr=>arr.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+","+Y(v).toFixed(1)).join(" ");
+const grid=(n,lab)=>{let s=`<line x1="${HL}" y1="${Y(0)}" x2="${W-HR}" y2="${Y(0)}" stroke="#B4BECB" stroke-width="1"/>`;
+  for(let k=1;k<=n;k++){const v=yMax*k/(n+0.0001); if(v>yMax)continue;
+    s+=`<line x1="${HL}" y1="${Y(v)}" x2="${W-HR}" y2="${Y(v)}" stroke="#EEF1F6" stroke-width="1"/>`;
+    s+=`<text x="${HL-8}" y="${Y(v)+4}" font-size="11" fill="#8A94A6" text-anchor="end">${lab(v)}</text>`;}
+  return s;};
+const area=`M ${X(0)},${Y(0)} `+breadth.map((v,i)=>`L ${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ")+` L ${X(N-1)},${Y(0)} Z`;
+document.getElementById("main").innerHTML=
+  `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+     <stop offset="0" stop-color="#1976D2" stop-opacity=".17"/><stop offset="1" stop-color="#1976D2" stop-opacity="0"/>
+   </linearGradient></defs>`
+  + grid(4,v=>Math.round(v))
+  + `<path d="${area}" fill="url(#g)"/>`
+  + `<path d="${path(breadth)}" fill="none" stroke="#1976D2" stroke-width="1.7"/>`
+  + `<path d="${path(ma5)}" fill="none" stroke="#FB8C00" stroke-width="1.3" stroke-dasharray="5 3"/>`
+  + `<circle cx="${X(N-1)}" cy="${Y(breadth[N-1])}" r="3.4" fill="#1976D2"/>`;
+
+const iMin=Math.min(...index)*0.995, iMax=Math.max(...index)*1.005;
+const IY=v=>130-14-(130-26-14)*(v-iMin)/(iMax-iMin);
+document.getElementById("sub").innerHTML=
+  `<line x1="${HL}" y1="130-14" x2="${W-HR}" y2="130-14" stroke="#EEF1F6"/>`
+  + `<path d="${index.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+","+IY(v).toFixed(1)).join(" ")}"`
+  + ` fill="none" stroke="#5B6472" stroke-width="1.3"/>`;
+
+/* 读数 + 近 5 日 */
+const last=breadth[N-1], pct=(last/4821*100).toFixed(1);
+document.getElementById("ro").innerHTML=
+  `最新 2026-09-18<br><b style="font-size:13.5px">${Math.round(last)} 只</b>（占比 ${pct}%）<br>MA5 ${Math.round(ma5[N-1])} 只`;
+document.getElementById("mini").innerHTML=[4,3,2,1,0].map(k=>{
+  const i=N-1-k, d=new Date(2026,8,18-k);
+  const p=(breadth[i]/4821*100).toFixed(1);
+  return `<div>${d.getMonth()+1}-${String(d.getDate()).padStart(2,"0")} · <b>${Math.round(breadth[i])}</b> 只 / ${p}%</div>`;
+}).join("");
+
+for(const [i,cls] of [[0,""],[1,"open"],[2,"na"]]){
+  document.getElementById("b"+i).onclick=()=>{
+    document.body.className=cls;
+    document.querySelectorAll(".demo button").forEach(x=>x.classList.remove("on"));
+    document.getElementById("b"+i).classList.add("on");
+  };
+}
+</script>
+</body>
+</html>

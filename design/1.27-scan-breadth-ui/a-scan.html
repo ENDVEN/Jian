@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>M2 · 全市场筛选（某一天的全市场筛选）</title>
+<style>
+:root{
+  --bg:#F4F6FA; --card:#fff; --line:#E4E9F0; --ink:#1F2430; --ink2:#3C4552;
+  --muted:#8A94A6; --faint:#B4BECB; --accent:#1976D2; --accent-soft:#E8F2FE;
+  --up:#2E7D32; --down:#C62828; --orange:#E65100; --warn-soft:#FFF3E0;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{width:1440px;min-height:886px;background:var(--bg);color:var(--ink);
+     font:13.5px/1.6 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+     padding:10px 14px 14px;overflow:hidden}
+.shell{display:flex;flex-direction:column;gap:10px;height:866px;position:relative}
+
+/* ---------- 页签（沿用 backtest_module 现有壳） ---------- */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);padding-bottom:0}
+.tab{font-size:14px;font-weight:700;color:#8A94A6;padding:8px 22px;border-bottom:2px solid transparent;cursor:default}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.tab:hover{color:var(--accent)}
+
+/* ---------- L1 操作轴（常驻第 1 行） ---------- */
+.l1{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
+.l1 .lb{color:var(--muted);font-size:12.3px}
+.sel{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;
+     border-radius:7px;padding:5px 10px;font-size:12.6px;color:var(--ink2);min-width:92px}
+.sel:after{content:"▾";color:var(--muted);margin-left:auto}
+.sel.wide{min-width:132px}
+.iconbtn{border:1px solid var(--line);background:#fff;border-radius:7px;width:30px;height:29px;
+     display:grid;place-items:center;color:var(--muted);font-size:14px}
+.spacer{flex:1}
+.hint{width:17px;height:17px;border-radius:50%;background:#EDF1F6;color:var(--muted);
+      display:grid;place-items:center;font-size:11px;font-weight:700}
+
+/* ---------- L2 摘要条（常驻第 2 行） ---------- */
+.l2{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);
+    border-radius:10px;padding:8px 10px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.chip{border:1px solid #D7E6F7;background:var(--accent-soft);color:var(--accent);
+      border-radius:999px;padding:3px 11px;font-size:12.2px;font-weight:700;white-space:nowrap;cursor:default}
+.chip.gray{border-color:#E4E9F0;background:#F6F8FB;color:#5B6472}
+.chip .k{color:#5B6472;font-weight:600;margin-right:4px}
+.sep{width:1px;height:18px;background:#E9EDF3}
+.ready{font-size:12.2px;color:var(--ink2)}
+.ready .warn{color:var(--orange);font-weight:700}
+.ready .ok{color:var(--up);font-weight:700}
+.btn{border:none;border-radius:7px;padding:7px 16px;font-size:13px;font-weight:700;background:var(--accent);color:#fff}
+.btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink2);font-weight:600}
+.btn.warn{background:#FB8C00}
+
+/* ---------- L0 结果区（吃满剩余高度） ---------- */
+.l0{flex:1;background:#fff;border:1px solid var(--line);border-radius:12px;
+    display:flex;flex-direction:column;min-height:0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.kpis{display:flex;gap:8px;padding:10px 12px 8px;flex-wrap:wrap}
+.kpi{border:1px solid #E7EAF0;background:#FBFCFE;border-radius:9px;padding:6px 14px;min-width:132px}
+.kpi .l{color:var(--muted);font-size:11.6px}
+.kpi .v{font-size:17px;font-weight:800;margin-top:1px}
+.kpi .v.a{color:var(--accent)} .kpi .v.o{color:var(--orange)} .kpi .v.m{color:var(--muted)}
+.tblwrap{flex:1;min-height:0;overflow:auto;margin:0 12px}
+table{width:100%;border-collapse:collapse;font-size:12.7px}
+th,td{padding:0 10px;height:28px;text-align:left;border-bottom:1px solid #EEF1F6;white-space:nowrap}
+th{background:#F7F9FC;color:var(--ink2);font-weight:700;position:sticky;top:0;z-index:1}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.c{text-align:center}
+tr:hover td{background:#FAFCFE}
+.sym{font-weight:700;color:var(--ink)}
+.pill{font-size:11.4px;border-radius:999px;padding:2px 9px;font-weight:700;white-space:nowrap}
+.pill.hit{background:var(--accent-soft);color:var(--accent)}
+.pill.miss{background:#F1F4F9;color:var(--muted)}
+.pill.na{background:var(--warn-soft);color:var(--orange)}
+td.miss{color:#A9B3C1}
+.foot{display:flex;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid var(--line);
+      font-size:12.2px;color:var(--muted)}
+
+/* ---------- 进度条（扫描中） ---------- */
+.progress{height:4px;border-radius:2px;background:#E7EAF0;overflow:hidden;margin:0 10px}
+.progress i{display:block;height:100%;width:43%;background:var(--accent)}
+
+/* ---------- 未就绪提示条 ---------- */
+.banner{display:flex;align-items:center;gap:10px;background:var(--warn-soft);
+        border:1px solid #F3D9A6;border-radius:10px;padding:9px 12px;font-size:12.6px;color:#8A5B00}
+.banner b{color:#7A4B00}
+
+/* ---------- L3 配置抽屉（覆盖层，盖住右侧，不挤主区高度） ---------- */
+.scrim{position:absolute;inset:0;background:rgba(16,24,40,.26);border-radius:10px;display:none}
+.drawer{position:absolute;top:0;right:0;width:520px;height:100%;background:#fff;
+        border-left:1px solid var(--line);border-radius:0 10px 10px 0;display:none;flex-direction:column;
+        box-shadow:-18px 0 40px rgba(16,24,40,.14)}
+body.open .scrim,body.open .drawer{display:flex}
+.dhead{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line)}
+.dhead .t{font-weight:800;font-size:14px}
+.dtabs{display:flex;gap:6px}
+.dtab{font-size:12.2px;font-weight:700;color:#6B7686;background:#F4F6FA;border:1px solid var(--line);
+      border-radius:999px;padding:3px 11px;cursor:default}
+.dtab.on{background:var(--accent-soft);border-color:#CFE4FA;color:var(--accent)}
+.dbody{flex:1;overflow:auto;padding:12px 14px}
+.dcard{border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin-bottom:10px;background:#FDFEFF}
+.dcard h4{margin:0 0 8px;font-size:13px;color:var(--ink2)}
+.dcard .sub{color:var(--muted);font-size:11.8px;margin:-4px 0 8px}
+textarea{width:100%;height:78px;border:1px solid #E7EAF0;border-radius:8px;background:#FAFBFD;
+         padding:8px;font:12.4px/1.6 Consolas,monospace;color:var(--ink2);resize:none}
+.rowline{display:flex;align-items:center;gap:6px;margin:6px 0}
+.rowline .tag{font-size:11.6px;color:#6B7686;background:#F1F4F9;border-radius:5px;padding:2px 7px}
+.rowline .fx{border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12.2px;color:var(--ink2)}
+.rowline .op{color:var(--accent);font-weight:800}
+.rowline .no{border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12.2px;min-width:56px}
+.sw{display:inline-flex;align-items:center;gap:7px;font-size:12.3px;color:var(--ink2);margin:3px 12px 3px 0}
+.sw i{width:30px;height:17px;border-radius:999px;background:#DCE2EA;position:relative;display:inline-block;flex:0 0 auto}
+.sw i:after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+.sw.on i{background:#9CC7F0} .sw.on i:after{left:15px;background:var(--accent)}
+.sw .v{border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-size:11.8px;color:var(--ink2)}
+.dfoot{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center}
+
+/* ---------- 原型演示开关（不进实现） ---------- */
+.demo{position:fixed;right:16px;bottom:14px;background:#1F2430;color:#fff;border-radius:10px;
+      padding:9px 11px;font-size:12px;display:flex;gap:7px;align-items:center;z-index:9;opacity:.94}
+.demo b{font-weight:700}
+.demo button{background:#3C4552;color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:11.6px;cursor:pointer}
+.demo button.on{background:var(--accent)}
+.progress{display:none}
+body.busy .progress{display:block}
+.banner{display:none}
+body.na .banner{display:flex}
+.emptystate{display:none;flex:1;place-items:center;text-align:center;color:var(--muted);padding:46px 20px}
+body.na .emptystate{display:grid}
+body.na .kpis,body.na .tblwrap,body.na .foot{display:none}
+body.busy .kpis{opacity:.45}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- 页签（现有 backtest_module 壳，只换占位页） -->
+  <div class="tabs">
+    <div class="tab">📈 单股回测</div>
+    <div class="tab on">🌐 全市场筛选</div>
+    <div class="tab">📊 广度统计</div>
+  </div>
+
+  <!-- L1 操作轴 -->
+  <div class="l1">
+    <span class="lb">统计范围</span>
+    <span class="sel wide">全 A（5390）</span>
+    <span class="sep"></span>
+    <span class="lb">交易日</span>
+    <span class="iconbtn">◀</span>
+    <span class="sel wide">2026-09-18</span>
+    <span class="iconbtn">▶</span>
+    <span class="sep"></span>
+    <span class="lb">复权</span>
+    <span class="sel">不复权</span>
+    <span class="hint" title="前复权只把除权日之前的价格改掉；横截面筛选只看当天，两个口径当日值相同。本页默认用不复权，缓存不会被除权重写。">?</span>
+    <span class="spacer"></span>
+    <span class="btn ghost" onclick="document.body.classList.toggle('open')">⚙ 配置</span>
+  </div>
+
+  <!-- L2 摘要条 -->
+  <div class="l2">
+    <span class="chip" onclick="document.body.classList.add('open')"><span class="k">ƒ</span>函数段 2</span>
+    <span class="chip" onclick="document.body.classList.add('open')"><span class="k">⇄</span>条件 至少 2/3</span>
+    <span class="chip gray" onclick="document.body.classList.add('open')"><span class="k">🎚</span>粗筛 4 项</span>
+    <span class="chip gray"><span class="k">🌐</span>全 A 5390</span>
+    <span class="chip gray"><span class="k">📅</span>2026-09-18</span>
+    <span class="sep"></span>
+    <span class="ready" id="ready">就绪 <b>4123</b>/5390 · 最新 09-18 · <span class="warn">⚠ 缺 1267</span>
+      <span class="btn ghost" style="padding:3px 9px;font-size:11.8px;margin-left:6px">补齐缺失</span></span>
+    <span class="spacer"></span>
+    <span class="ready" id="runmsg"></span>
+    <button class="btn" id="runbtn">▶ 开始扫描</button>
+  </div>
+  <div class="progress"><i></i></div>
+
+  <!-- 未就绪提示条（数据不足时） -->
+  <div class="banner">
+    <b>⚠ 数据尚未备齐</b>
+    <span>全市场日线只覆盖 <b>76%</b>（4123/5390）。现在扫描会把缺数据的股票记为「数据不足」而不是「未命中」——
+      广度与命中率都会偏低。</span>
+    <span class="spacer" style="flex:1"></span>
+    <span class="btn warn">补齐后扫描</span>
+    <span class="btn ghost">先按现有数据扫</span>
+  </div>
+
+  <!-- L0 结果区 -->
+  <div class="l0">
+    <div class="kpis">
+      <div class="kpi"><div class="l">命中（满足条件）</div><div class="v a">143</div></div>
+      <div class="kpi"><div class="l">未命中</div><div class="v m">3980</div></div>
+      <div class="kpi"><div class="l">数据不足（未知）</div><div class="v o">42</div></div>
+      <div class="kpi"><div class="l">有效样本</div><div class="v">4123 / 5390</div></div>
+      <div class="kpi"><div class="l">用时</div><div class="v">3.8 s</div></div>
+    </div>
+    <div class="emptystate">
+      <div>
+        <div style="font-size:34px;margin-bottom:8px">🗄</div>
+        <div style="font-size:14px;font-weight:700;color:var(--ink2);margin-bottom:6px">还没有可扫描的数据</div>
+        <div>先点上方「补齐缺失」，或到 <b>🗄 数据管理 → 批量预下载</b> 选「全市场扫描就绪」预设。<br>
+          只备齐一部分也能扫，缺的会如实记为「数据不足」。</div>
+      </div>
+    </div>
+    <div class="tblwrap">
+      <table>
+        <thead><tr>
+          <th>代码</th><th>名称</th><th class="num">收盘</th><th class="num">涨跌幅</th>
+          <th class="num">成交额(亿)</th><th class="num">MA20 偏离</th><th class="num">数据天数</th>
+          <th>状态</th><th>命中条件</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="sym">sh600519</td><td>贵州茅台</td><td class="num">1682.30</td><td class="num" style="color:var(--up)">+3.21%</td><td class="num">48.6</td><td class="num" style="color:var(--up)">+2.8%</td><td class="num">4821</td><td><span class="pill hit">命中</span></td><td>量价齐升 / MACD金叉</td></tr>
+          <tr><td class="sym">sz300750</td><td>宁德时代</td><td class="num">246.10</td><td class="num" style="color:var(--up)">+2.04%</td><td class="num">61.2</td><td class="num" style="color:var(--up)">+1.4%</td><td class="num">2103</td><td><span class="pill hit">命中</span></td><td>量价齐升 / KDJ&lt;20</td></tr>
+          <tr><td class="sym">sh601318</td><td>中国平安</td><td class="num">58.42</td><td class="num" style="color:var(--up)">+1.12%</td><td class="num">27.9</td><td class="num" style="color:var(--up)">+0.6%</td><td class="num">4821</td><td><span class="pill hit">命中</span></td><td>MACD金叉 / KDJ&lt;20</td></tr>
+          <tr class="miss"><td class="sym">sz000001</td><td>平安银行</td><td class="num">12.06</td><td class="num" style="color:var(--down)">-1.05%</td><td class="num">9.4</td><td class="num">-1.9%</td><td class="num">4821</td><td><span class="pill miss">未命中</span></td><td>—</td></tr>
+          <tr class="miss"><td class="sym">sh600036</td><td>招商银行</td><td class="num">41.77</td><td class="num" style="color:var(--down)">-0.42%</td><td class="num">14.1</td><td class="num">-0.8%</td><td class="num">4821</td><td><span class="pill miss">未命中</span></td><td>—</td></tr>
+          <tr><td class="sym">bj899050</td><td>北证50样本股</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">318</td><td><span class="pill na">数据不足</span></td><td style="color:var(--orange)">上市不足 250 日</td></tr>
+          <tr class="miss"><td class="sym">sz002415</td><td>海康威视</td><td class="num">32.18</td><td class="num" style="color:var(--up)">+0.55%</td><td class="num">6.2</td><td class="num">+0.2%</td><td class="num">4821</td><td><span class="pill miss">未命中</span></td><td>—</td></tr>
+          <tr><td class="sym">sh688111</td><td>金山办公</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">0</td><td><span class="pill na">数据不足</span></td><td style="color:var(--orange)">本地无行情</td></tr>
+          <tr class="miss"><td class="sym">sh601899</td><td>紫金矿业</td><td class="num">18.93</td><td class="num" style="color:var(--down)">-2.31%</td><td class="num">35.7</td><td class="num">-3.1%</td><td class="num">4821</td><td><span class="pill miss">未命中</span></td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="foot">
+      <span class="btn ghost">⬇ 导出 CSV</span>
+      <span class="btn ghost">＋ 加入自选</span>
+      <span class="sep"></span>
+      <span>双击任意一行 → 在「行情工作台」打开该股 K 线（复用现有能力，不另做看图器）</span>
+      <span class="spacer" style="flex:1"></span>
+      <span>口径：全 A · 不复权 · 粗筛后精算 · 数据不足不计入命中</span>
+    </div>
+  </div>
+
+  <!-- L3 配置抽屉（覆盖层） -->
+  <div class="scrim" onclick="document.body.classList.remove('open')"></div>
+  <div class="drawer">
+    <div class="dhead">
+      <span class="t">扫描配置</span>
+      <span class="dtabs"><span class="dtab on">ƒ 函数段</span><span class="dtab">⇄ 条件组</span><span class="dtab">🎚 粗筛</span><span class="dtab">🌐 范围</span></span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="btn ghost" onclick="document.body.classList.remove('open')">✕</span>
+    </div>
+    <div class="dbody">
+      <div class="dcard">
+        <h4>ƒ 函数段（与单股回测共用同一套编辑器）</h4>
+        <div class="sub">多段共享变量池 · 后续段可引用前面段的变量 · 只求值不画图</div>
+        <textarea>DIFF := EMA(C,12) - EMA(C,26);
+DEA  := EMA(DIFF,9);
+MACD := (DIFF-DEA)*2;</textarea>
+        <textarea style="margin-top:8px">K := SMA(RSV,3,1);   { 自研 KDJ }</textarea>
+      </div>
+      <div class="dcard">
+        <h4>⇄ 条件组（满足逻辑 → 单行 COUNT_TRUE）</h4>
+        <div class="rowline"><span class="tag">条件1</span><span class="fx">MACD &gt; 0</span></div>
+        <div class="rowline"><span class="tag">条件2</span><span class="fx">C &gt; MA(C,20)</span></div>
+        <div class="rowline"><span class="tag">条件3</span><span class="fx">K &lt; 20</span></div>
+        <div class="rowline"><span class="op">至少</span><span class="no">2</span><span style="color:var(--muted);font-size:12px">个满足（全部满足 = 3 · 任一满足 = 1）</span></div>
+      </div>
+      <div class="dcard">
+        <h4>🎚 粗筛漏斗（先砍掉明显不可能的，再跑完整公式）</h4>
+        <div class="sub">这些条件只用日线已有列，几乎零成本；命中率通常 &lt;5%，能省一个数量级</div>
+        <label class="sw on"><i></i>成交额 ≥ <span class="v">0.5 亿</span></label>
+        <label class="sw on"><i></i>非停牌（量 &gt; 0）</label>
+        <label class="sw on"><i></i>剔除 ST / 退市</label>
+        <label class="sw on"><i></i>上市 &gt; <span class="v">250</span> 日</label>
+      </div>
+    </div>
+    <div class="dfoot">
+      <span class="btn">✓ 应用并重新扫描</span>
+      <span class="btn ghost">仅保存配置</span>
+      <span class="spacer" style="flex:1"></span>
+      <span style="color:var(--muted);font-size:12px">配置改动会写进摘要条</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- 原型演示开关（仅本 HTML，不进实现） -->
+<div class="demo">
+  <b>原型演示</b>
+  <button onclick="document.body.className=''" class="on" id="b0">默认（已扫描）</button>
+  <button onclick="document.body.className='open'" id="b1">配置抽屉</button>
+  <button onclick="document.body.className='busy'" id="b2">扫描中</button>
+  <button onclick="document.body.className='na'" id="b3">数据未就绪</button>
+</div>
+<script>
+const RUNMSG={busy:"扫描 2317/5390 · 命中 96 · 失败 2 · 用时 1.8s"};
+for(const [i,cls] of [[0,""],[1,"open"],[2,"busy"],[3,"na"]]){
+  document.getElementById("b"+i).onclick=()=>{
+    document.body.className=cls;
+    document.querySelectorAll(".demo button").forEach(b=>b.classList.remove("on"));
+    document.getElementById("b"+i).classList.add("on");
+    document.getElementById("runmsg").textContent = cls==="busy" ? RUNMSG.busy : "";
+    document.getElementById("ready").style.display = cls==="na" ? "none" : "";
+    document.getElementById("runmsg").style.display = cls==="na" ? "block" : "";
+    document.getElementById("runbtn").textContent = cls==="busy" ? "✕ 取消扫描" : "▶ 开始扫描";
+  };
+}
+</script>
+</body>
+</html>
