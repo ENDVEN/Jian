@@ -82,6 +82,24 @@ class BulkDownloadDialog(QDialog):
                            "border: 1px solid #FFE082; border-radius: 6px; padding: 8px 10px;")
         root.addWidget(warn)
 
+        # ---------- ⚡ 预设（§7-B1/B2 D6-2）：一键填好"全市场扫描就绪"底座 ----------
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(8)
+        self.btn_preset_scan = QPushButton("⚡ 预设：全市场扫描就绪（全A · 2016起）")
+        self.btn_preset_scan.setStyleSheet(_FLAT_BTN)
+        self.btn_preset_scan.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_preset_scan.setToolTip(
+            "为「🌐 全市场筛选 / 📊 广度统计」一次备齐全 A 日线底座：\n"
+            "来源 = 全市场 A 股 · 起点 2016-01-01 · 勾「跳过已最新」（断点续传）。\n"
+            "已下载过的会自动跳过，可分多次补齐。")
+        self.btn_preset_scan.clicked.connect(self._apply_scan_ready_preset)
+        preset_row.addWidget(self.btn_preset_scan)
+        self.lbl_preset = QLabel("为全市场筛选 / 广度统计备底座（已下载的自动跳过）")
+        self.lbl_preset.setStyleSheet("font-size: 11.5px; color: #8A94A6;")
+        preset_row.addWidget(self.lbl_preset)
+        preset_row.addStretch()
+        root.addLayout(preset_row)
+
         # ---------- 来源 ----------
         box = QFrame()
         box.setStyleSheet("QFrame { background:#FAFBFD; border:1px solid #E7EAF0; border-radius:10px; }")
@@ -267,6 +285,15 @@ class BulkDownloadDialog(QDialog):
         self.btn_resolve.setEnabled(key == "constituent")
         self.lbl_cons.setVisible(key == "constituent")
         self.txt_paste.setVisible(key == "paste")
+        self._refresh_estimate()
+
+    def _apply_scan_ready_preset(self):
+        """「全市场扫描就绪」预设（D6-2）：只**填控件**，不替用户点开始 —— 下载永远手动发起。"""
+        self._radios["all"].setChecked(True)
+        self.date_start.setDate(QDate(2016, 1, 1))
+        self.chk_skip_fresh.setChecked(True)
+        self.chk_force.setChecked(False)
+        self.lbl_status.setText("已按「全市场扫描就绪」填好参数 —— 确认后点「▶ 开始下载」")
         self._refresh_estimate()
 
     def _current_source(self) -> str:

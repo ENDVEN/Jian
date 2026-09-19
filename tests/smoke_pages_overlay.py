@@ -2183,6 +2183,531 @@ check("复盘页仍在导航挂载（content_area 里能找到它）",
       any(_rev is win.content_area.widget(i) for i in range(win.content_area.count())))
 
 # ==========================================
+# §7-B1/B2 STEP 4 · M2「全市场筛选」页（v6.37 · ScanView）
+#   与行情工作台 / 复盘页同一套判据：**公共面不许改名 + 版式与口径不变量写成可执行断言**。
+# ==========================================
+print("\n== §7-B1/B2 STEP 4 · M2 全市场筛选页：公共面 / 版式不变量 / 端到端 ==")
+try:
+    from time import perf_counter as _now4
+    from time import sleep as _sleep4
+
+    from core.cross_section import ScanThresholds  # noqa: E402
+    from core.preferences import preferences  # noqa: E402
+    from data.scan_store import get_scan_store, kline_zone_dir  # noqa: E402
+    from ui.views.scan_view import ScanView  # noqa: E402
+    from ui.workers import JobGuard  # noqa: E402
+
+    _scan = win.page_backtest.page_scan
+
+    # ---- ① 挂载与公共面（迁移护栏：改名 / 删除 / 把薄壳写成空函数 ⇒ 立刻红）----
+    check("M2 已换掉 `_ComingSoonPage` 占位（`page_scan` = ScanView）", isinstance(_scan, ScanView))
+    check("M2 仍挂在回测模块的页签上（`backtest_module` 的壳一字未动，F-2）",
+          win.page_backtest.tabs.widget(1) is _scan
+          and win.page_backtest.tabs.tabText(1) == '🌐 全市场筛选')
+    SCAN_PUBLIC = (
+        # 状态（全部留在页面）
+        'main_win', '_thresholds', '_symbols', '_names', '_asof', '_outcome', '_guard',
+        '_worker', '_store', '_open_key', '_last_pane', '_layout',
+        # 行为模块句柄
+        '_flow', '_result', '_formula_pane', '_filter_pane', '_panes', '_drawer', '_scrim',
+        # L1 操作轴
+        'cb_scope', 'cb_index', 'lbl_scope', 'lbl_adjust', 'btn_config',
+        'btn_prev_day', 'lbl_day', 'btn_next_day', 'btn_latest_day',
+        # L2 摘要条
+        'chip_formula', 'chip_filter', 'chip_scope', 'lbl_receipt', 'bar_progress', 'btn_run',
+        # L0 结果区
+        'lbl_title', 'lbl_cached', 'kpi', 'table', 'lbl_empty', 'btn_empty_action', 'lbl_foot',
+        # 行为入口（同名薄壳）
+        'build_top_bar', 'build_summary_bar', 'build_result_area', 'build_overlays',
+        'open_pane', 'close_pane', 'start_scan', 'cancel_scan', 'resolve_scope', 'refresh',
+        'shift_date', 'jump_latest', 'reset_thresholds', 'current_counts',
+        '_load_scan_ui', 'save_scan_ui',
+    )
+    _scan_missing = [name for name in SCAN_PUBLIC if not hasattr(_scan, name)]
+    check(f"M2 公共面完整（{len(SCAN_PUBLIC)} 项 · 缺：{_scan_missing or '无'}）", not _scan_missing)
+    check("竞态守卫就位（§9-O5：页面用的是公共件 `JobGuard`，不是各写一个 `_token`）",
+          isinstance(_scan._guard, JobGuard))
+
+    # ---- ② 版式与口径不变量 ----
+    check("★ 常驻行 ≤3（§10-14：L1 操作轴 + L2 摘要条 + L0 结果区；抽屉是**覆盖层**不占布局）",
+          _scan.layout().count() == 3)
+    check("结果表 7 列 = 代码/名称/收盘/成交额(万)/换手率%/状态/说明（**用户量纲**，§10-10）",
+          _scan.table.columnCount() == 7
+          and _scan.table.horizontalHeaderItem(3).text() == '成交额(万)'
+          and _scan.table.horizontalHeaderItem(4).text() == '换手率%')
+    check("抽屉两张卡：ƒ 筛选条件 + 🎚 粗筛（含「↺ 恢复默认」）；出厂示例已填好（不是空框）",
+          [pane.key for pane in _scan._panes] == ['fn', 'filter']
+          and hasattr(_scan._filter_pane, 'btn_reset')
+          and bool(_scan._formula_pane.txt_formula.toPlainText().strip()))
+    check("复权口径**印在界面上**且只有这一种（D8：raw 未备齐前不假装支持）",
+          _scan.lbl_adjust.text() == '前复权')
+
+    # ---- ③ 粗筛阈值「内核 → 界面 → 内核」往返零漂移（唯一换算处：亿元 / %）----
+    _defaults = ScanThresholds()
+    _scan._filter_pane.from_thresholds(_defaults)
+    _roundtrip = _scan._filter_pane.to_thresholds()
+    check("★ 阈值往返**零漂移**（换手率/市值默认关闭时必须仍是 None，不许变成 0 误杀一片）",
+          abs(_roundtrip.min_amount - _defaults.min_amount) < 1.0
+          and abs(_roundtrip.min_price - _defaults.min_price) < 1e-9
+          and _roundtrip.min_bars == _defaults.min_bars
+          and _roundtrip.min_turnover is None and _roundtrip.min_float_mktcap is None
+          and _roundtrip.exclude_st == _defaults.exclude_st
+          and _roundtrip.exclude_suspended == _defaults.exclude_suspended
+          and _roundtrip.exclude_limit == _defaults.exclude_limit)
+    _scan.reset_thresholds()
+    check("「↺ 恢复默认」= 出厂值（D5）",
+          _scan._filter_pane.to_thresholds().to_dict() == _defaults.to_dict())
+
+    # ---- ④ 门面：代码 → 名称（§9-H：UI 不许直接碰 DatabaseManager）----
+    _roster_names = win.engine.roster_names()
+    _roster_syms = win.engine.list_stock_symbols()
+    check("engine.roster_names() 门面可用（dict；且覆盖全部全 A 代码）",
+          isinstance(_roster_names, dict)
+          and (not _roster_syms or set(_roster_syms) <= set(_roster_names)))
+
+    # ---- ⑤ 端到端（真数据 · 小范围）：点「▶ 开始扫描」→ 线程 → 回包 → 渲染 ----
+    _scan_zone = kline_zone_dir('kline_daily')
+    _lake_syms = sorted(name[:-8] for name in os.listdir(_scan_zone)
+                        if name.endswith('.parquet'))
+    check("本地日线分区有数据可扫（否则本段只验版式）", len(_lake_syms) > 0)
+    if _lake_syms:
+        _probe = _lake_syms[:5]                       # 小范围：端到端要的是"管线通"，不是规模
+        _scan.cb_scope.setCurrentIndex(2)             # 先切范围（会触发一次 resolve_scope）
+        _scan._symbols = list(_probe)                 # 再收小范围（不受花名册规模影响）
+        _scan._names = {sym: _roster_names.get(sym, '') for sym in _probe}
+        get_scan_store().clear()                      # 从零开始（不受其它断言影响）
+        _t04 = _now4()
+        _scan.start_scan()
+
+        def _wait_scan(page, timeout_s=120.0):
+            """等后台线程跑完并把队列里的回包派发给页面（离屏环境没有事件循环在转）。"""
+            deadline = _now4() + timeout_s
+            while _now4() < deadline:
+                app.processEvents()
+                if page._worker is not None and page._worker.isFinished():
+                    app.processEvents()
+                    app.processEvents()
+                    return page._outcome
+                _sleep4(0.05)
+            return page._outcome
+
+        _outcome4 = _wait_scan(_scan)
+        check(f"端到端：{len(_probe)} 只扫完并回包（{_now4() - _t04:.2f}s，含线程来回；非缓存命中）",
+              _outcome4 is not None and _outcome4.result.counts['total'] == len(_probe)
+              and _outcome4.cached is False)
+        check("表格真的渲染出来了（行数 = 四态总数；不是只有 KPI 变了）",
+              _scan.table.rowCount() == len(_probe) and not _scan.table.isHidden()
+              and _scan.empty_box.isHidden())
+        _counts4 = _scan.current_counts()
+        check("★ KPI 三态齐全，**数据不足单独成桶**，分母 = 有效样本（口径铁律，E 节）",
+              all(key in _counts4 for key in ('hit', 'miss', 'insufficient', 'filtered', 'valid'))
+              and _counts4['valid'] == _counts4['hit'] + _counts4['miss']
+              and _counts4['total'] == len(_probe))
+        check("扫描基准日有**数值快照**（收盘列不是全 '—'）",
+              any(_scan.table.item(r, 2) is not None and _scan.table.item(r, 2).text() not in ('', '—')
+                  for r in range(_scan.table.rowCount())))
+
+        # ---- ⑥ 切日期**零成本** + 不冒充 ----
+        _dates4 = _outcome4.result.dates
+        check("交易日轴来自缓存矩阵（≥1 天）", _dates4 is not None and len(_dates4) >= 1)
+        if len(_dates4) >= 1:
+            _other_day = str(pd.Timestamp(_dates4[0]).date())
+            _scan._asof = pd.Timestamp(_dates4[0])
+            _scan.refresh()
+            check("★ 切到另一天：日期变了、表格重渲染了 —— **没进线程、没读盘**（纯切片，D3）",
+                  _scan.lbl_day.text() == _other_day and _scan._worker.isFinished()
+                  and get_scan_store().entries() == 1)
+            check("★★ 非**扫描基准日** ⇒ 数值列是 '—'（**绝不拿旧日期的快照冒充当日**，D3 纪律）",
+                  all(_scan.table.item(r, 2) is not None and _scan.table.item(r, 2).text() == '—'
+                      for r in range(_scan.table.rowCount()))
+                  and '只显示状态' in _scan.lbl_foot.text())
+            _scan.jump_latest()
+            check("「最新」回跳 = 扫描基准日（数值快照随之回来）",
+                  _scan.lbl_day.text() == str(pd.Timestamp(_outcome4.result.asof).date())
+                  and any(_scan.table.item(r, 2) is not None
+                          and _scan.table.item(r, 2).text() != '—'
+                          for r in range(_scan.table.rowCount())))
+
+    # ---- ⑦ 抽屉开合（覆盖层：不动主区高度）----
+    win.switch_to('backtest')                     # 真实用户动作：切到回测模块
+    win.page_backtest.tabs.setCurrentIndex(1)     # 再切到 M2 页签（否则页面不在前台，isVisible 恒 False）
+    app.processEvents()
+    _scan.open_pane('filter')
+    check("抽屉可开：抽屉 + 遮罩可见，几何在页面矩形内（§11.5-26）",
+          _scan._drawer.isVisible() and _scan._scrim.isVisible()
+          and 0 < _scan._drawer.geometry().width() <= _scan.width())
+    _scan.open_pane('filter')
+    check("再点同一个胶囊 = 关闭（backtest 页同款交互）",
+          not _scan._drawer.isVisible() and _scan._open_key is None)
+
+    # ---- ⑧ 偏好「记住上次」：只存轻量配置，**绝不存扫描结果** ----
+    _scan.save_scan_ui()
+    _scan_ui = preferences.get('scan_ui')
+    check("scan_ui 偏好只含 scope / 指数 / 条件 / 参数 / 阈值（结果只进会话缓存，D3）",
+          isinstance(_scan_ui, dict)
+          and set(_scan_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds'}
+          and str(_scan_ui.get('formula') or '').strip() != ''
+          and isinstance(_scan_ui.get('thresholds'), dict))
+except Exception as _e:  # noqa: BLE001
+    check(f"M2 全市场筛选页断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
+# §7-B1/B2 STEP 5 · M3「广度统计」页（1.29 · BreadthView）
+#   与 M2 同一套判据：**公共面不许改名 + 版式与口径不变量写成可执行断言** + 端到端真数据。
+#   M3 特有：双窗格 x 联动（B2）/ 区间切片零成本（D3）/ ⚡增量（D7）/ ⟳全量重算闸门（§10-10）。
+# ==========================================
+print("\n== §7-B1/B2 STEP 5 · M3 广度统计页：公共面 / 版式不变量 / 端到端 ==")
+try:
+    from PyQt6.QtCore import QObject as _QObject, pyqtSignal as _pyqtSignal  # noqa: E402
+
+    from ui.views.breadth_view import BreadthView  # noqa: E402
+    from ui.widgets import breadth_flow as _bflow  # noqa: E402
+
+    _brd = win.page_backtest.page_breadth
+
+    # ---- ① 挂载与公共面（迁移护栏：改名 / 删除 / 把薄壳写成空函数 ⇒ 立刻红）----
+    check("M3 已换掉 `_ComingSoonPage` 占位（`page_breadth` = BreadthView，占位类退役）",
+          isinstance(_brd, BreadthView))
+    check("M3 仍挂在回测模块的第 3 页签上（`backtest_module` 的壳一字未动，F-2）",
+          win.page_backtest.tabs.widget(2) is _brd
+          and win.page_backtest.tabs.tabText(2) == '📊 广度统计')
+    BRD_PUBLIC = (
+        # 状态（全部留在页面）
+        'main_win', '_thresholds', '_symbols', '_names', '_outcome', '_guard', '_index_guard',
+        '_worker', '_cons_worker', '_index_worker', '_index_fetching', '_store', '_lake',
+        '_range_key', '_index_df', '_index_code', '_open_key', '_last_pane', '_layout',
+        # 行为模块句柄
+        '_flow', '_result', '_formula_pane', '_filter_pane', '_display_pane',
+        '_panes', '_drawer', '_scrim',
+        # L1 操作轴
+        'cb_scope', 'cb_index', 'lbl_scope', 'cb_range', 'lbl_adjust', 'btn_config',
+        # L2 摘要条
+        'chip_formula', 'chip_filter', 'chip_scope', 'chip_display', 'lbl_receipt',
+        'bar_progress', 'btn_incr', 'btn_full', 'btn_run',
+        # L0 结果区
+        'chart', 'lbl_title', 'lbl_cal', 'lbl_cached', 'lbl_mini', 'lbl_empty',
+        'btn_empty_action', 'lbl_foot',
+        # 行为入口（同名薄壳）
+        'build_top_bar', 'build_summary_bar', 'build_result_area', 'build_overlays',
+        'open_pane', 'close_pane', 'start_scan', 'incremental_scan', 'full_recompute',
+        'cancel_scan', 'resolve_scope', 'refresh', 'set_range', 'reset_thresholds',
+        'current_breadth', '_load_breadth_ui', 'save_breadth_ui',
+    )
+    _brd_missing = [name for name in BRD_PUBLIC if not hasattr(_brd, name)]
+    check(f"M3 公共面完整（{len(BRD_PUBLIC)} 项 · 缺：{_brd_missing or '无'}）", not _brd_missing)
+    check("竞态守卫就位（§9-O5：扫描与指数补拉各一把公共件 JobGuard，不是手写 token）",
+          isinstance(_brd._guard, JobGuard) and isinstance(_brd._index_guard, JobGuard))
+
+    # ---- ② 版式与口径不变量 ----
+    check("★ 常驻行 ≤3（§10-14：L1 操作轴 + L2 摘要条 + L0 结果区；抽屉是**覆盖层**不占布局）",
+          _brd.layout().count() == 3)
+    check("抽屉三张卡：ƒ 筛选条件 + 🎚 粗筛 + 📈 展示（ƒ/🎚 **直接复用 M2 的同款 EditPane**）",
+          [pane.key for pane in _brd._panes] == ['fn', 'filter', 'display']
+          and hasattr(_brd._filter_pane, 'btn_reset')
+          and bool(_brd._formula_pane.txt_formula.toPlainText().strip()))
+    check("复权口径**印在界面上**且只有这一种（D8：raw 未备齐前不假装支持）",
+          _brd.lbl_adjust.text() == '前复权')
+    check("区间快捷档 6 档（近3月/近6月/近1年/近3年/近5年/全部历史，顺序即下拉顺序）",
+          _brd.cb_range.count() == 6
+          and [_brd.cb_range.itemText(i) for i in range(6)]
+          == ['近3个月', '近6个月', '近1年', '近3年', '近5年', '全部历史'])
+    _defaults3 = ScanThresholds()
+    _brd._filter_pane.from_thresholds(_defaults3)
+    _roundtrip3 = _brd._filter_pane.to_thresholds()
+    check("★ 阈值往返**零漂移**（M3 复用 M2 的唯一换算处：关掉项必须还是 None）",
+          abs(_roundtrip3.min_amount - _defaults3.min_amount) < 1.0
+          and _roundtrip3.min_turnover is None and _roundtrip3.min_float_mktcap is None)
+
+    # ---- ③ 端到端（真数据 · 小范围）：扫描 → 回包 → 双窗格渲染 ----
+    _brd_zone = kline_zone_dir('kline_daily')
+    _brd_syms = sorted(name[:-8] for name in os.listdir(_brd_zone)
+                       if name.endswith('.parquet'))
+    check("本地日线分区有数据可扫（否则本段只验版式）", len(_brd_syms) > 0)
+    if _brd_syms:
+        _probe3 = _brd_syms[:5]
+        _brd.cb_scope.setCurrentIndex(2)
+        _brd._symbols = list(_probe3)
+        _brd._names = {sym: _roster_names.get(sym, '') for sym in _probe3}
+        # 指数副图先喂**合成数据**：端到端必须离线确定，不许在测试里联网补拉（§11.5-20）
+        _overlay_code = str(_brd._display_pane.cb_overlay_code.currentData() or 'sh000001')
+        _brd._index_code = _overlay_code
+        _brd._index_df = pd.DataFrame({
+            'date': pd.bdate_range('2025-09-01', periods=300),
+            'close': np.linspace(3000.0, 3300.0, 300)})
+        get_scan_store().clear()
+        _brd._formula_pane.txt_formula.setPlainText('COND := C > MA(C, 20);')  # 与 M2 的键错开
+        _t05 = _now4()
+        _brd.start_scan()
+        _outcome5 = _wait_scan(_brd)
+        check(f"端到端：{len(_probe3)} 只广度扫完并回包（{_now4() - _t05:.2f}s，含线程来回）",
+              _outcome5 is not None and _outcome5.cached is False
+              and _outcome5.result.counts['total'] == len(_probe3))
+        check("★ 双窗格结构 = 广度（主）+ 指数（副），**x 轴联动**（B2：不做真·双 y 轴）",
+              _brd.chart._host.pane_names == ['breadth', 'index']
+              and _brd.chart._host.x_linked('index'))
+        check("广度线真的画出来了（主窗格有曲线图元）",
+              _brd.chart._host.pane('breadth').plot_item.items and not _brd.chart.isHidden()
+              and _brd.empty_box.isHidden())
+        check("指数副图也画出来了（喂了合成指数 ⇒ 副窗格有曲线）",
+              any(getattr(item, 'curve', None) is not None
+                  for item in _brd.chart._host.pane('index').plot_item.items))
+        check("读数条常显且是**业务文案**（日期 + 命中家数，不是内置的 X/Y）",
+              '命中' in _brd.chart._host.readout_text and '只' in _brd.chart._host.readout_text)
+        check("★ 口径印在标题行上（E 节）：范围 · 前复权 · 有效 N/M · 区间",
+              '前复权' in _brd.lbl_cal.text() and '有效' in _brd.lbl_cal.text()
+              and str(_brd.cb_scope.currentText()).replace('…', '') in _brd.lbl_cal.text())
+        check("近5日迷你读数就位（`MM-DD · N 只 / x%`）",
+              _brd.lbl_mini.text().startswith('近5日') and '只' in _brd.lbl_mini.text())
+        check("「⚡ 增量到最新」在结果就绪后可用（此前禁用，防空按）",
+              _brd.btn_incr.isEnabled())
+        _entries_after_scan = get_scan_store().entries()
+
+        # ---- ④ 区间切换 = 纯切片，零成本（不进线程、不读盘）----
+        _brd.set_range('3m')
+        app.processEvents()
+        check("★ 切区间：`_range_key` 生效、重画完成 —— **没进线程、缓存条数不变**（D3）",
+              _brd._range_key == '3m' and _brd._worker.isFinished()
+              and get_scan_store().entries() == _entries_after_scan
+              and not _brd.chart.isHidden())
+        _brd._display_pane.chk_ratio.setChecked(True)
+        app.processEvents()
+        check("切换「占比 %」口径：纵轴单位跟着换（家数（只）→ 占比（%））",
+              '占比' in _brd.chart._host.pane('breadth').plot_item.getAxis('left').labelText)
+        _brd._display_pane.chk_ratio.setChecked(False)
+        app.processEvents()
+
+        # ---- ⑤ ⚡ 增量到最新：数据没变 ⇒ 命中 + 明确说"已算到最新"（D7 / Worker 通道）----
+        _brd.incremental_scan()
+        _wait_scan(_brd)
+        check("★ 增量到最新（数据没变）：**缓存命中**且回执明说「已算到最新」（不静默）",
+              _brd._outcome.cached is True and '已算到最新' in _brd.lbl_receipt.text())
+
+        # ---- ⑥ ⟳ 全量重算：危险动作 = 隔离呈现 + **二次确认**（§10-10）----
+        _orig_question = _bflow.QMessageBox.question
+        _bflow.QMessageBox.question = staticmethod(
+            lambda *a, **k: _bflow.QMessageBox.StandardButton.No)
+        _brd.full_recompute()
+        check("全量重算：确认框选「否」⇒ **什么都不动**（原结果保留，回执说明）",
+              '已取消全量重算' in _brd.lbl_receipt.text() and _brd._outcome is not None)
+        _bflow.QMessageBox.question = staticmethod(
+            lambda *a, **k: _bflow.QMessageBox.StandardButton.Yes)
+        _brd.full_recompute()
+        _wait_scan(_brd)
+        _bflow.QMessageBox.question = _orig_question
+        check("全量重算：确认框选「是」⇒ 走 `force=True` **真重扫**并重新渲染",
+              _brd._outcome is not None and _brd._outcome.cached is False
+              and not _brd.chart.isHidden())
+
+        # ---- ⑦ 指数副图数据链：缺数据 ⇒ 后台补拉一次（走 MarketSyncService，§9-H）----
+        _started_idx = []
+
+        class _StubIndexWorker(_QObject):
+            finished = _pyqtSignal(dict)
+
+            def __init__(self, code, zone=None, parent=None):
+                super().__init__(parent)
+                self._code = str(code)
+
+            def start(self):
+                _started_idx.append(self._code)
+
+        class _EmptyLake:
+            """只模拟"湖里没有这只指数"（load_data 恒 None；绝不碰用户真实分区）。"""
+
+            @staticmethod
+            def load_data(zone, key):
+                return None
+
+            @staticmethod
+            def exists(zone, key):
+                return False
+
+        _orig_idx_worker = _bflow.SingleSyncWorker
+        _bflow.SingleSyncWorker = _StubIndexWorker
+        _real_lake3 = _brd._lake
+        _brd._lake = _EmptyLake()
+        _brd._index_df = None
+        _brd._index_code = ''
+        _brd._flow._ensure_index()
+        check("★ 指数副图缺数据：**后台补拉一次**且回执说明「失败不影响主图」（不静默、不卡 UI）",
+              _started_idx == [_overlay_code]
+              and '后台拉取' in _brd.lbl_receipt.text()
+              and '不影响主图' in _brd.lbl_receipt.text())
+        _brd._flow._ensure_index()
+        check("指数补拉**不重复发车**（同一只还在拉 ⇒ 再调也不发第二枪）",
+              _started_idx == [_overlay_code])
+        _bflow.SingleSyncWorker = _orig_idx_worker
+        _brd._lake = _real_lake3
+
+    # ---- ⑧ 抽屉开合（覆盖层：不动主区高度）----
+    win.switch_to('backtest')
+    win.page_backtest.tabs.setCurrentIndex(2)         # 切到 M3 页签（离屏下 isVisible 需要）
+    app.processEvents()
+    _brd.open_pane('display')
+    check("抽屉可开（📈 展示卡）：抽屉 + 遮罩可见，几何在页面矩形内（§11.5-26）",
+          _brd._drawer.isVisible() and _brd._scrim.isVisible()
+          and 0 < _brd._drawer.geometry().width() <= _brd.width())
+    _brd.open_pane('display')
+    check("再点同一个胶囊 = 关闭（backtest 页同款交互）",
+          not _brd._drawer.isVisible() and _brd._open_key is None)
+
+    # ---- ⑨ 偏好「记住上次」：只存轻量配置，**绝不存扫描结果** ----
+    _brd.save_breadth_ui()
+    _brd_ui = preferences.get('breadth_ui')
+    check("breadth_ui 偏好只含配置九样（结果只进会话缓存，D3）",
+          isinstance(_brd_ui, dict)
+          and set(_brd_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds',
+                               'range', 'smooth', 'ratio', 'overlay', 'overlay_code'}
+          and str(_brd_ui.get('formula') or '').strip() != ''
+          and isinstance(_brd_ui.get('thresholds'), dict)
+          and _brd_ui.get('range') in ('3m', '6m', '1y', '3y', '5y', 'all'))
+except Exception as _e:  # noqa: BLE001
+    check(f"M3 广度统计页断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
+# §7-B1/B2 STEP 6 · 就绪度体检 + ⬇补齐缺失 + 成分股人话诊断（M2/M3 共用 `ReadinessFlow`）
+#   用户拍板（2026-09-19）：必须保证用户能**真正获取**所选范围的股票；
+#   出问题必须说清是哪一环 —— 名单（成分股）/ 本地数据（体检）/ 缺口（补齐）三段各有诊断。
+# ==========================================
+print("\n== §7-B1/B2 STEP 6 · 就绪度体检 / 补齐缺失 / 成分股诊断 ==")
+try:
+    from PyQt6.QtCore import QDate as _QDate6  # noqa: E402
+
+    from data.readiness import ReadinessReport as _RReport6  # noqa: E402
+    from data.scan_store import kline_zone_dir as _kzd6  # noqa: E402
+    from ui.dialogs.bulk_download import BulkDownloadDialog as _BDD6  # noqa: E402
+    from ui.widgets import readiness_flow as _rf6  # noqa: E402
+
+    _brd6 = win.page_backtest.page_breadth      # 用 M3 页验证接线（M2 共用同一控制器类）
+
+    def _wait_probe6(flow, timeout_s=60.0):
+        # 以「报告入库」为准（线程 isFinished 先于跨线程信号派发，光等线程会偶发漏接）
+        deadline = _now4() + timeout_s
+        while _now4() < deadline:
+            app.processEvents()
+            if flow.report is not None:
+                return flow.report
+            _sleep4(0.02)
+        return flow.report
+
+    # ---- ① 范围就绪 ⇒ 自动体检（真湖 5 只 + 2 只不存在的 ⇒ 缺口可见可动作）----
+    _zone9 = _kzd6('kline_daily')
+    _real9 = sorted(name[:-8] for name in os.listdir(_zone9)
+                    if name.endswith('.parquet'))[:5]
+    check("本地日线分区有数据（体检接线段的前置）", len(_real9) == 5)
+    _syms9 = _real9 + ['ZZZ001', 'ZZZ002']
+    _brd6._outcome = None
+    _brd6._symbols = list(_syms9)
+    _brd6._readiness.start(_syms9, min_bars=250)
+    _rep9 = _wait_probe6(_brd6._readiness)
+    check(f"★ 体检接线（后台 footer 探测）：回执一行说清「就绪 5/7 · 未下载 2 · 本地最新…」"
+          f"（实测 report={_rep9!r} · 回执={_brd6.lbl_receipt.text()!r}）",
+          _rep9 is not None and len(_rep9.ready) == 5 and _rep9.gap_count == 2
+          and '就绪 5/7' in _brd6.lbl_receipt.text()
+          and '未下载 2' in _brd6.lbl_receipt.text())
+    check("★ 缺口**看得见名字** + 空态给「⬇ 补齐缺失（2 只）」动作（禁止静默，D6-1/E 节）",
+          'ZZZ001' in _brd6.lbl_empty.text()
+          and '补齐缺失（2 只）' in _brd6.btn_empty_action.text())
+
+    # ---- ② 补齐缺失：打桩 SyncWorker —— **绝不联网**（§11.5-20 离屏打桩铁律）----
+    _fill_started = []
+
+    class _StubSyncWorker6(_QObject):
+        progress = _pyqtSignal(int, int, str)
+        failed = _pyqtSignal(str, str)
+        finished = _pyqtSignal(dict)
+
+        def __init__(self, symbols, zone=None, force_full=False, min_date=None,
+                     policy=None, parent=None):
+            super().__init__(parent)
+            self._symbols = [str(s) for s in (symbols or [])]
+            self.cancelled = False
+            _fill_started.append(self._symbols)
+
+        def start(self):
+            pass                              # 打桩：不起线程
+
+        def cancel(self):
+            self.cancelled = True
+
+    _orig_sync9 = _rf6.SyncWorker
+    _rf6.SyncWorker = _StubSyncWorker6
+    _brd6._readiness.fill_missing()
+    check("★ 补齐缺失：只把**未下载的 2 只**交给同步门面（已就绪/历史不足的不折腾）",
+          _fill_started == [['ZZZ001', 'ZZZ002']] and _brd6._readiness._syncing
+          and '补齐中' in _brd6.lbl_empty.text())
+    check("补齐进行中按钮 = 「⏹ 停止补齐」（温柔抓取可中断）",
+          _brd6.btn_empty_action.text() == '⏹ 停止补齐')
+    _brd6._readiness.stop_fill()
+    check("停止补齐：cancel 置位 + 回执说明「已下载的保留」（断点续传）",
+          _brd6._readiness._sync.cancelled and '保留' in _brd6.lbl_receipt.text())
+    _rf6.SyncWorker = _orig_sync9
+    _brd6._readiness._syncing = False          # 恢复现场
+
+    # ---- ③ 范围切换后，旧体检回包**不得覆盖**新范围的提示（防串台）----
+    _stale_job = _brd6._readiness._guard.next()
+    _brd6._readiness._last_symbols = ['OLD999']
+    _brd6._symbols = ['ONLY999']               # 用户已切走
+    _brd6._readiness._on_probed(_stale_job, _RReport6(total=1, ready=['OLD999']),
+                                ['OLD999'])    # 回调绑定"体检时自己的范围"（防穿透，v6.39）
+    check("★ 迟到的旧范围体检被丢弃（回执不被覆盖，且不污染已有报告 —— §9-O5 精神同样成立）",
+          '保留' in _brd6.lbl_receipt.text()
+          and _brd6._readiness.report is not None
+          and _brd6._readiness.report.gap_count == 2)
+
+    # ---- ④ 成分股解析失败 = **人话诊断**（用户点名的痛点：不许裸甩"接口未返回成分股"）----
+    _scan6 = win.page_backtest.page_scan
+    _scan6._flow._on_constituents(
+        {'ok': False, 'symbols': [], 'index_code': '000300',
+         'reason': 'no_data', 'message': '接口未返回成分股'}, _scan6._guard.next())
+    check("★ M2 成分股失败：分类说清「行情源未返回名单」+ 可能原因 + 替代路径 + 重试动作",
+          '行情源未返回名单' in _scan6.lbl_empty.text()
+          and '建议' in _scan6.lbl_empty.text()
+          and _scan6.btn_empty_action.text() == '重试'
+          and '接口未返回成分股' in _scan6.lbl_receipt.text())
+    _brd6._flow._on_constituents(
+        {'ok': False, 'symbols': [], 'index_code': '000905',
+         'reason': 'network', 'message': 'timeout'}, _brd6._guard.next())
+    check("★ M3 同款诊断（两页共用同一份实现，§11.5-11）：网络类失败安抚 + 建议重试",
+          '网络请求失败' in _brd6.lbl_empty.text() and '稍后重试' in _brd6.lbl_empty.text())
+
+    # ---- ④b 成分股**成功**回包 ⇒ 名称映射补齐 + 内核警告出口（用户 2026-09-20 实测两连）----
+    from data.scan_store import scan_cached as _sc10  # noqa: E402
+
+    _syms10 = list(_real9[:3])
+    _scan6._flow._on_constituents(
+        {'ok': True, 'symbols': _syms10, 'index_code': '000300',
+         'reason': 'ok', 'message': 'OK'}, _scan6._guard.next())
+    _roster10 = win.engine.roster_names()
+    check("★ 成分股解析成功 ⇒ **名称映射从花名册补齐**（名称列不再全空、剔ST 生效；此前漏装配）",
+          set(_scan6._names) == set(_syms10)
+          and all(bool(_scan6._names.get(s)) for s in _syms10 if _roster10.get(s))
+          and _scan6.lbl_scope.text() == '3 只')
+    _out10 = _sc10(kline_zone_dir('kline_daily'), 'COND := C > MA(C,20);', symbols=_syms10,
+                   names={}, thresholds=ScanThresholds())
+    check("前置：空花名册 ⇒ 内核确实对「剔ST 未生效」出过警告（这条此前被 UI 整个吞掉）",
+          any('ST' in w for w in (_out10.result.warnings or [])))
+    _scan6._flow._on_finished(_scan6._guard.next(), _out10)
+    check("★ 内核警告有出口：回执 ⚠ 摘要 + tooltip 全文（禁止静默，§10-10）",
+          '⚠' in _scan6.lbl_receipt.text() and '剔除' in _scan6.lbl_receipt.toolTip())
+    _brd6._flow._on_constituents(
+        {'ok': True, 'symbols': _syms10, 'index_code': '000300',
+         'reason': 'ok', 'message': 'OK'}, _brd6._guard.next())
+    check("M3 同款名称映射（两页共用同一份实现口径，§11.5-11）",
+          set(_brd6._names) == set(_syms10))
+
+    # ---- ⑤ bulk_download「全市场扫描就绪」预设（D6-2）----
+    _dlg9 = _BDD6(win)
+    _dlg9._apply_scan_ready_preset()
+    check("★「全市场扫描就绪」一键预设：来源=全A · 起点 2016-01-01 · 跳过已最新 · 不全量重下",
+          _dlg9._radios['all'].isChecked()
+          and _dlg9.date_start.date() == _QDate6(2016, 1, 1)
+          and _dlg9.chk_skip_fresh.isChecked() and not _dlg9.chk_force.isChecked())
+    _dlg9.deleteLater()
+except Exception as _e:  # noqa: BLE001
+    check(f"就绪度体检/补齐断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402

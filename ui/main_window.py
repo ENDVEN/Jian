@@ -110,7 +110,7 @@ class JianMainWindow(QMainWindow):
     # 主窗口本来就是"组件装配与事件分发"的地方（§3），由它当唯一的传话筒最干净：
     #   行情页 ──send_formula_to_backtest──▶ 主窗口 ──▶ 回测页.load_formula_from_external()
     #   回测页 ──send_formula_to_market────▶ 主窗口 ──▶ 行情页.receive_formula()
-    _PAGE_INDEX = {"market": 3, "backtest": 4}
+    _PAGE_INDEX = {"market": 3, "backtest": 4, "data": 5}
 
     def switch_to(self, key: str) -> None:
         """按名字切页（互送后直接把用户带到目标页，省得他自己找）。"""

@@ -136,6 +136,23 @@ def is_stock_code(symbol: str) -> bool:
     return str(symbol).strip().isdigit()
 
 
+def normalize_cons_code(code: str) -> str:
+    """成分股接口的代码规范化：`sh000300` / `SZ399006` / `000300` → **6 位纯数字**。
+
+    【为什么必须有这一步】本项目并存**两套指数代码约定**：指数**日线**接口要
+    带市场前缀（`sh000300`，见 `fetch_index_daily` / `INDEX_PRESETS`），而成分股
+    三个候选接口（`index_stock_cons*`）只要 **6 位纯数字** —— M2/M3 的指数下拉
+    复用了 `INDEX_PRESETS` 的带前缀键，直接透传会让三个接口**全部失败**
+    （2026-09-20 用户实测抓到：选沪深300 每次都"接口未返回成分股"，而裸码正常）。
+    规范化收在**行情源边界**这一处（§11.5-19：跨模块共享的键必须有规范化函数），
+    调用方（M2 / M3 / 批量预下载）零改动。
+    """
+    text = str(code or "").strip().lower()
+    if is_index_symbol(text):
+        return text[2:]
+    return text
+
+
 class AkShareFeed:
     """
     数据源接入层 (Data Fetcher)。
@@ -375,12 +392,19 @@ class AkShareFeed:
         """
         拉取指数成分股代码列表（如 000300 沪深300 / 000905 中证500）。
 
+        【代码规范】入参**兼容两种形态**（`sh000300` / `000300`），内部先经
+        `normalize_cons_code` 归一成 akshare 要的 6 位纯数字 —— M2/M3 的指数下拉
+        用的是 `INDEX_PRESETS` 的带前缀键（2026-09-20 用户实测：不规范化时三个
+        候选接口全部失败，表现为"接口未返回成分股"）。
+
         【容错】akshare 的成分股接口历史上换过多次名字，这里按优先级逐个试，
         任一成功即返回；全部失败返回空 DF，由上层提示用户改用其它来源，
         绝不抛异常打断批量任务。
         """
-        code = str(code or "").strip()
-        if not code:
+        code = normalize_cons_code(code)
+        if not (len(code) == 6 and code.isdigit()):
+            logging.error(f"指数成分股代码格式不对: {code!r}"
+                          f"（应为 6 位数字，如 000300；兼容 sh000300 形态）")
             return pd.DataFrame()
 
         candidates = (

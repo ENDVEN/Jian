@@ -54,6 +54,22 @@ DEFAULTS = {
     # 现在分栏可拖，并"记住上次"（与 backtest_ui / desk_ui 同源做法）。
     #   {"v_sizes": [560, 340]}
     "review_ui": None,
+    # v6.37（§7-B1/B2 STEP 4）：**全市场筛选页**界面状态 —— 与 backtest_ui / desk_ui 同源做法。
+    #   {"scope": 0|1|2,            # 统计范围：0=我的自选 1=指数成分 2=全 A 花名册
+    #    "index_code": "000300",    # 上次用的指数（scope=1 时）
+    #    "formula": "...",          # 上次的筛选条件（多段）
+    #    "params": "N=20",          # 上次的公式参数
+    #    "thresholds": {...}}       # 粗筛阈值（core.cross_section.ScanThresholds.to_dict()）
+    #   ⚠ 只存轻量配置，**绝不存扫描结果**（结果只进会话缓存 data/scan_store，D3）。
+    "scan_ui": None,
+    # 1.29（§7-B1/B2 STEP 5）：**广度统计页（M3）**界面状态 —— 与 scan_ui 同源做法，多四样：
+    #   {"range": "1y",             # 显示区间：3m/6m/1y/3y/5y/all（切区间 = 纯切片，零成本）
+    #    "smooth": true,            # MA5 平滑
+    #    "ratio": false,            # 占比口径（家数 ÷ 有效样本）
+    #    "overlay": true,           # 指数副图
+    #    "overlay_code": "sh000001"}# 副图指数（index_daily 分区；缺了自动补拉一次）
+    #   ⚠ 同上：只存轻量配置，绝不存扫描结果。
+    "breadth_ui": None,
 }
 
 

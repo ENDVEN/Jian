@@ -1,0 +1,322 @@
+# ui/widgets/scan_flow.py
+"""🌐 M2「全市场筛选」—— 运行流程（范围解析 / 后台线程 / 进度回执 / 切日期 / 跳行情）。
+
+【为什么这里只有"调度"】读盘、掩码、求值在 `core/cross_section`（纯计算），
+缓存在 `data/scan_store`（纯内存），线程在 `ui/workers.py`（§9-O2）——
+本模块只做"把用户的动作接到那条管线上"，并负责**回执的一行人话化**（§10-10）。
+
+【竞态守卫】所有异步回包（扫描 / 成分股解析）一律过 `JobGuard.accept(job_id)`，
+迟到的旧回包**直接丢弃**（§9-O5）—— 否则"快速连续操作"会出现旧结果覆盖新结果。
+
+【切日期为什么零成本】一次扫描的矩阵本来就是**全日期**的（`asof` 不参与求值，D2/D3），
+所以切日期只调 `outcome.status_on(date)` / `counts_on(date)`（纯切片），
+**不进线程、不读盘、不求值**。⚠ 代价（D3 的使用纪律）：
+切日期后**只显示状态**，数值快照与"为什么"明细只在扫描基准日有效 —— 不许拿旧的冒充新的。
+"""
+from __future__ import annotations
+
+import logging
+
+import pandas as pd
+
+from core.cross_section import ScanThresholds
+from core.utils import parse_params_text
+from data.scan_store import kline_zone_dir
+from data.sync_service import MarketSyncService
+from data.watchlist_store import WatchlistStore
+from ui.widgets.readiness_flow import constituent_failure_text
+from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard
+
+__all__ = ['ScanFlow', 'SCAN_UI_KEY']
+
+logger = logging.getLogger(__name__)
+
+SCAN_UI_KEY = 'scan_ui'          # 页面偏好键（core/preferences.DEFAULTS 里登记）
+
+
+class ScanFlow:
+    """M2 页的运行流程（只读写 `p.X`，不存状态）。"""
+
+    def __init__(self, page):
+        self.page = page
+        p = self.page
+        p.cb_scope.currentIndexChanged.connect(self.on_scope_changed)
+        p.cb_index.currentIndexChanged.connect(self.on_index_changed)
+        p.btn_config.clicked.connect(self.open_config)
+        p.btn_run.clicked.connect(self.on_run_clicked)
+        p.btn_prev_day.clicked.connect(lambda: self.shift_date(-1))
+        p.btn_next_day.clicked.connect(lambda: self.shift_date(1))
+        p.btn_latest_day.clicked.connect(self.jump_latest)
+        p.table.itemDoubleClicked.connect(self.on_row_double_clicked)
+        p._filter_pane.btn_reset.clicked.connect(self.reset_thresholds)
+
+    # ==========================================
+    # 范围（自选 / 指数成分 / 全 A）
+    # ==========================================
+    def on_scope_changed(self) -> None:
+        p = self.page
+        p.cb_index.setVisible(p.cb_scope.currentIndex() == 1)
+        self.resolve_scope()
+
+    def on_index_changed(self) -> None:
+        if self.page.cb_scope.currentIndex() == 1:
+            self.resolve_scope()
+
+    def resolve_scope(self) -> None:
+        """把"统计范围"落成 `{标的: 名称}`。自选 / 全A 同步；指数成分**异步**（§9-H：联网走门面）。
+
+        名单落定后**自动触发一次就绪度体检**（D6-1：告诉用户"本地能真正拿到多少只"，
+        缺口给「⬇ 补齐缺失」动作）—— 实现只在 `ReadinessFlow`，两页共用一份。
+        """
+        p = self.page
+        p._names = {}
+        choice = p.cb_scope.currentIndex()
+        if choice == 0:                                   # 我的自选
+            p._symbols = list(WatchlistStore().symbols())
+            p._names = dict(WatchlistStore().names_map())
+            if not p._symbols:
+                p._result.set_empty('自选清单是空的 —— 先去「行情工作台」加几只自选，再来扫描。',
+                                    '去行情工作台', lambda: p.main_win.switch_to('market'))
+            p.lbl_scope.setText(f'{len(p._symbols)} 只')
+        elif choice == 1:                                 # 指数成分（异步）
+            code = str(p.cb_index.currentData() or '')
+            if not code:
+                return
+            p._symbols = []
+            p.lbl_scope.setText('解析成分股中…')
+            p._result.set_empty(
+                f'正在解析 {p.cb_index.currentText()} 的成分股…\n'
+                f'（名单接口较慢，实测约 8~15 秒；解析完会自动体检本地数据就绪度）')
+            job = p._guard.next()
+            p._cons_worker = ConstituentsWorker(code, p)
+            p._cons_worker.finished_signal.connect(
+                lambda result, token=job: self._on_constituents(result, token))
+            p._cons_worker.start()
+            return
+        else:                                             # 全 A 花名册
+            p._symbols = list(p.main_win.engine.list_stock_symbols())
+            p._names = dict(p.main_win.engine.roster_names())
+            if not p._symbols:
+                p._result.set_empty(
+                    '花名册是空的 —— 请先跑 `py scripts/sync_roster.py` 同步全市场代码。',
+                    '重试', self.resolve_scope)
+            p.lbl_scope.setText(f'{len(p._symbols)} 只')
+        self._refresh_chips()
+        if p._symbols:
+            p._result.set_empty(f'范围就绪（{len(p._symbols)} 只）—— 正在体检本地数据就绪度…')
+            p._readiness.start(p._symbols,
+                               min_bars=p._filter_pane.to_thresholds().min_bars)
+
+    def _on_constituents(self, result, token: int) -> None:
+        p = self.page
+        if not p._guard.accept(token):                    # 迟到的旧解析直接丢
+            return
+        payload = result or {}
+        if not payload.get('ok'):
+            # ★ 人话诊断（D6/§10-10）：不再裸甩"接口未返回成分股"—— 分类说清
+            #   网络挂了 / 源未收录该指数 / 代码有误，并给出替代路径（两页同款）。
+            friendly = constituent_failure_text(str(payload.get('index_code') or ''),
+                                                payload)
+            p._result.set_empty(friendly, '重试', self.resolve_scope)
+            p.lbl_scope.setText('解析失败')
+            p.lbl_receipt.setText('成分股解析失败 —— '
+                                  + str(payload.get('message') or payload.get('reason') or '未知原因')[:80])
+            p.lbl_receipt.setToolTip(friendly)
+            return
+        p._symbols = [str(s) for s in (payload.get('symbols') or [])]
+        # ★ 名称映射必须在这里补齐（v6.41 修复）：成分股回包只给**代码**，而自选/全A 两个
+        #   分支都各自装配了 `_names` —— 漏了它 ⇒ ①结果表名称列全空；②**更隐蔽**：
+        #   花名册为空 ⇒ 内核的「剔除 ST / 退市」整轮失效（内核会出警告，UI 此前把警告吞了）。
+        #   名称来源与全A 同源 = `DataEngine.roster_names()`（§9-H：UI 不碰 DatabaseManager）。
+        _roster = p.main_win.engine.roster_names()
+        p._names = {sym: str(_roster.get(sym) or '') for sym in p._symbols}
+        p.lbl_scope.setText(f'{len(p._symbols)} 只')
+        self._refresh_chips()
+        p._result.set_empty(
+            f'名单就绪（{len(p._symbols)} 只，{p.cb_index.currentText()}）'
+            f'—— 正在体检本地数据就绪度…')
+        p._readiness.start(p._symbols,
+                           min_bars=p._filter_pane.to_thresholds().min_bars)
+
+    def _refresh_chips(self) -> None:
+        p = self.page
+        scope = p.cb_scope.currentText().replace('…', '')
+        p.chip_scope.setText(f'🌐 {scope} {len(p._symbols)} 只')
+
+    # ==========================================
+    # 扫描（后台线程 + 竞态守卫 + 进度回执）
+    # ==========================================
+    def on_run_clicked(self) -> None:
+        p = self.page
+        if p._worker is not None and p._worker.isRunning():
+            p._worker.cancel()                            # 再点一次 = 取消（E 节：按钮态互换）
+            p.lbl_receipt.setText('取消中…')
+            return
+        if not p._symbols:
+            p.lbl_receipt.setText('范围是空的 —— 先选好统计范围。')
+            return
+        formula = p._formula_pane.txt_formula.toPlainText().strip()
+        if not formula:
+            p.lbl_receipt.setText('筛选条件是空的 —— 点「⚙ 配置」写一段条件。')
+            return
+        p._thresholds = p._filter_pane.to_thresholds()
+        problems = p._thresholds.problems()
+        if problems:
+            p.lbl_receipt.setText('配置有笔误：' + '；'.join(problems))
+            return
+        try:
+            params = parse_params_text(p._formula_pane.txt_params.text())
+        except Exception as e:  # noqa: BLE001
+            p.lbl_receipt.setText(f'参数写法不对：{e}')
+            return
+
+        p._asof = None                                    # None = 最新交易日（结果出来后回填）
+        p._result.set_busy('扫描中…（读盘 → 粗筛 → 逐标的求值）')
+        p.btn_run.setText('✕ 取消扫描')
+        p.bar_progress.show()
+        p.bar_progress.setRange(0, 1)
+        p.bar_progress.setValue(0)
+        p.lbl_cached.setText('')
+        p.lbl_receipt.setText('准备扫描…')
+        p.save_scan_ui()
+
+        job = p._guard.next()                             # 取号：迟到的旧回包会被丢弃（§9-O5）
+        p._worker = CrossSectionWorker(
+            job, kline_zone_dir('kline_daily'), formula, symbols=list(p._symbols),
+            params=params, thresholds=p._thresholds, asof=None,
+            names=dict(p._names), snapshot_columns=('close', 'amount', 'turnover'),
+            store=p._store)
+        p._worker.progress.connect(self._on_progress)
+        p._worker.finished.connect(self._on_finished)
+        p._worker.failed.connect(self._on_failed)
+        p._worker.start()
+
+    def _on_progress(self, done: int, total: int, note: str) -> None:
+        p = self.page
+        if total > 0:
+            p.bar_progress.setRange(0, total)
+            p.bar_progress.setValue(done)
+            p.lbl_receipt.setText(f'扫描 {done}/{total} · {note}')
+        else:
+            p.lbl_receipt.setText(str(note))
+
+    def _restore_buttons(self) -> None:
+        p = self.page
+        p.btn_run.setText('▶ 开始扫描')
+        p.bar_progress.hide()
+
+    def _on_finished(self, job_id: int, outcome) -> None:
+        p = self.page
+        if not p._guard.accept(job_id):                   # 竞态守卫：迟到回包丢弃
+            return
+        self._restore_buttons()
+        if outcome is None:                               # 用户取消（内核明确不回半成品）
+            p.lbl_receipt.setText('已取消 —— 没有留下任何半成品结果。')
+            if p._outcome is not None:
+                self.refresh()                            # 回到上一次的有效结果
+            else:
+                p._result.set_empty('已取消。')
+            return
+        p._outcome = outcome
+        p._asof = outcome.asof
+        seconds = outcome.elapsed_ms / 1000.0
+        counts = outcome.counts_on(p._asof)
+        text = (f"扫描 {counts.get('total', 0)} 只 · 命中 {counts.get('hit', 0)}"
+                f" · 有效样本 {counts.get('valid', 0)} · 用时 {seconds:.2f} s"
+                + ('（缓存命中，未重算）' if outcome.cached else ''))
+        # ★ 内核警告必须有出口（v6.41）：内核对"剔除 ST 未生效"这类口径残缺**出过声**，
+        #   但 UI 此前把 warnings 整个吞掉 —— 静默 ≠ 没发生（§10-10：禁止静默）。
+        warns = list(getattr(outcome.result, 'warnings', None) or [])
+        if warns and not outcome.cached:
+            text += ' · ⚠ ' + warns[0] + ('' if len(warns) == 1 else f'（等 {len(warns)} 条）')
+        tip = ('⚠ ' + '\n⚠ '.join(warns)) if warns else ''
+        p.lbl_receipt.setText(text)
+        p.lbl_receipt.setToolTip(tip)
+        self._refresh_chips()
+        self.refresh()
+
+    def _on_failed(self, job_id: int, reason: str) -> None:
+        p = self.page
+        if not p._guard.accept(job_id):
+            return
+        self._restore_buttons()
+        p.lbl_receipt.setText('扫描失败 —— ' + reason[:120])
+        p.lbl_receipt.setToolTip(reason)
+        p._result.set_empty('扫描失败。常见原因：公式语法 / 函数名写错；分区读不出来。',
+                            '查看原因', lambda: p.lbl_receipt.setToolTip(reason))
+
+    # ==========================================
+    # 结果刷新（含**切日期零成本**）
+    # ==========================================
+    def refresh(self) -> None:
+        p = self.page
+        outcome = p._outcome
+        if outcome is None:
+            return
+        date = p._asof or outcome.asof
+        stamp = pd.Timestamp(date)
+        same_day = (stamp == outcome.result.asof)         # 只有扫描基准日才有"数值/明细"
+        counts = outcome.counts_on(stamp)
+        status = outcome.status_on(stamp)
+        p._result.render(
+            counts, status,
+            detail=outcome.result.detail if same_day else None,
+            snapshot=outcome.result.snapshot if same_day else None,
+            names=p._names, elapsed_ms=outcome.elapsed_ms, cached=outcome.cached,
+            date_label=str(stamp.date()), scope_label=p.cb_scope.currentText().replace('…', ''))
+        p.lbl_day.setText(str(stamp.date()))
+        p.lbl_cached.setText('缓存命中（未重算）' if outcome.cached else '')
+        p.lbl_day.setToolTip('在交易日轴上 ◀ ▶ 移动是**零成本**的（读缓存矩阵，D3）。\n'
+                             '⚠ 只有扫描基准日才有当日数值与"为什么"明细。')
+
+    def shift_date(self, delta: int) -> None:
+        p = self.page
+        if p._outcome is None or p._outcome.result.dates is None:
+            p.lbl_receipt.setText('还没有结果 —— 先扫描一次，才能在交易日轴上移动。')
+            return
+        dates = p._outcome.result.dates
+        current = p._asof or p._outcome.result.asof
+        stamp = pd.Timestamp(current)
+        idx = int(dates.searchsorted(stamp))
+        if idx >= len(dates) or dates[idx] != stamp:
+            idx = max(0, min(idx, len(dates) - 1))        # 轴上没有的那天 ⇒ 就近落位
+        target = int(min(max(idx + delta, 0), len(dates) - 1))
+        if dates[target] == stamp:
+            return
+        p._asof = pd.Timestamp(dates[target])
+        self.refresh()                                    # 纯切片，零成本
+
+    def jump_latest(self) -> None:
+        p = self.page
+        if p._outcome is None:
+            return
+        p._asof = pd.Timestamp(p._outcome.result.dates[-1])
+        self.refresh()
+
+    # ==========================================
+    # 配置 / 跳转
+    # ==========================================
+    def open_config(self) -> None:
+        p = self.page
+        p.open_pane(p._last_pane or 'fn')
+
+    def reset_thresholds(self) -> None:
+        p = self.page
+        p._filter_pane.from_thresholds(ScanThresholds())   # 「↺ 恢复默认」（D5）
+        p._thresholds = ScanThresholds()
+        p.save_scan_ui()
+        p.lbl_receipt.setText('已恢复默认粗筛 —— 点「▶ 开始扫描」生效。')
+
+    def on_row_double_clicked(self, item) -> None:
+        """双击结果行 → 行情工作台打开该股（E 节：**不另做看图器**）。"""
+        p = self.page
+        row = item.row()
+        sym_item = p.table.item(row, 0)
+        if sym_item is None:
+            return
+        symbol = str(sym_item.text())
+        name = str(p.table.item(row, 1).text()) if p.table.item(row, 1) else ''
+        if not symbol:
+            return
+        p.main_win.page_market.load_symbol(symbol, name)
+        p.main_win.switch_to('market')

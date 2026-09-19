@@ -2711,6 +2711,715 @@ check("★ set_pane_order 少给一个 ⇒ 拒绝且**顺序原样不动**（绝
 check("set_pane_order 给一模一样的顺序 ⇒ False（不做无意义改动）",
       _host.set_pane_order(['macd', 'vol', 'rsi']) is False)
 
+# ==========================================
+# §7-B1/B2 STEP 1 · 横截面内核 `core/cross_section.py`（M2 横截面 / M3 广度）
+#   判据来自主案 D2 / D5 + 「三态铁律」+ §9.1 读数纪律：
+#     ① 与 M1 **同口径**：prepare_frame 的准备块与 BacktestEngine.run **逐字相同**（源码级断言）
+#     ② 三态：**数据不足 ≠ 未命中**（新上市 / 停牌 / 缺列 / 当日无行，一律不许算成未命中）
+#     ③ 粗筛：能生效、能关掉、能恢复默认、坏偏好逐字段回落
+#     ④ M2 逐位可验 + M3 分母 = **有效样本**（不是全市场只数）
+#     ⑤ 缓存矩阵 status_on(d) 与 scan(asof=d) 逐位一致（这是「改日期秒回」的前提）
+# ==========================================
+print("\n== §7-B1/B2 STEP 1 · 横截面内核：三态 / 粗筛 / 广度 / 缓存 ==")
+try:
+    import pathlib as _pathlib  # noqa: E402
+    from time import perf_counter as _now  # noqa: E402
+
+    from config import settings as _settings  # noqa: E402
+    from core import backtest as _bt_mod  # noqa: E402
+    from core import cross_section as _cs  # noqa: E402
+    from core.formula.program import execute_programs, parse_program  # noqa: E402
+
+    # ---------- ① 与 M1 同口径（源码级：任一侧改动都会红）----------
+    def _prep_block(module):
+        """取模块源码里「数据准备」那一小段（标准化文本）"""
+        lines = _pathlib.Path(module.__file__).read_text(encoding='utf-8').splitlines()
+        head = next(i for i, line in enumerate(lines) if line.strip() == 'data = df.copy()')
+        return [line.strip() for line in lines[head:head + 7]]
+
+    check("★ 与 M1 同口径：`cross_section.prepare_frame` 的准备块与 `core/backtest.py` **逐字相同**"
+          "（谁改一处漏另一处 ⇒ 立刻红）",
+          _prep_block(_cs) == _prep_block(_bt_mod))
+
+    # ---------- 合成数据（不依赖本地行情，任何机器都能跑）----------
+    _days = pd.bdate_range('2024-01-01', periods=300)
+    _FORMULA = 'COND := C > REF(C, 1);'          # 上行=真 / 下行=假（无热身期歧义）
+
+    def _mk(closes, *, i0=0, amount=1e8, scale=1.0, with_amount=True,
+            turnover=None, share=None):
+        values = np.asarray(closes, dtype=float) * scale
+        frame = pd.DataFrame({
+            'date': list(_days[i0:i0 + len(values)]), 'open': values,
+            'high': values * 1.02, 'low': values * 0.98, 'close': values, 'volume': 1e6,
+        })
+        if with_amount:
+            frame['amount'] = amount
+        if turnover is not None:
+            frame['turnover'] = turnover
+        if share is not None:
+            frame['outstanding_share'] = share
+        return frame
+
+    _up = np.linspace(10.0, 20.0, 300)           # 单调上行 ⇒ 公式恒真
+    _down = np.linspace(20.0, 10.0, 300)         # 单调下行 ⇒ 公式恒假
+    _groups = {
+        'UP': _mk(_up),                          # 命中
+        'DOWN': _mk(_down),                      # 未命中
+        'NEW': _mk(_up[-100:], i0=200),          # 只有 100 个交易日 ⇒ 数据不足
+        'NOAMT': _mk(_up, with_amount=False),    # 缺 amount 列 ⇒ 数据不足（§9.1）
+        'PENNY': _mk(_up, scale=0.05),           # 0.5 ~ 1.0 元的低价股 ⇒ 被粗筛剔除
+        'GAP': _mk(_up[:-1]),                    # 基准日**没有行** ⇒ 数据不足
+    }
+    _asof = _days[-1]
+    _res = _cs.scan(_groups, _FORMULA, asof=_asof, snapshot_columns=('close', 'amount'))
+
+    check("③ 命中：数据够 + 公式为真", _res.status['UP'] == _cs.HIT)
+    check("③ 未命中：数据够 + 公式为假", _res.status['DOWN'] == _cs.MISS)
+    check("★ 新上市（只有 100 个交易日）⇒ **数据不足**，不是「未命中」"
+          "（算成未命中会把广度系统性压低估）",
+          _res.status['NEW'] == _cs.INSUFFICIENT and '100' in _res.detail['NEW'])
+    check("★ 这只票**没有 amount 列** ⇒ **数据不足**，绝不能变成「成交额不符」"
+          f"（现状 {_res.status['NOAMT']} / {_res.detail['NOAMT']}）",
+          _res.status['NOAMT'] == _cs.INSUFFICIENT and 'amount' in _res.detail['NOAMT'])
+    check("★ 低价股（0.1 元）⇒ **被粗筛剔除**（数据是好的，只是不满足阈值）",
+          _res.status['PENNY'] == _cs.FILTERED and '价格' in _res.detail['PENNY'])
+    check("★ 基准日**无行**（停牌 / 未下载 / 已退市）⇒ 数据不足",
+          _res.status['GAP'] == _cs.INSUFFICIENT and _res.detail['GAP'].startswith('当日无数据'))
+    check("★ 有效样本 = 命中 + 未命中 = 2（数据不足与被剔除**不进分母**）",
+          _res.valid_count == 2 and _res.counts['valid'] == 2)
+    check("★ 四态**分类完备**：命中 + 未命中 + 数据不足 + 被剔除 == 总数（一个新桶都不许漏）",
+          _res.counts['hit'] + _res.counts['miss'] + _res.counts['insufficient']
+          + _res.counts['filtered'] == _res.counts['total'] == len(_groups))
+    check("④ M2 命中名单逐位可验", _res.hits == ['UP'])
+    check("④ 快照只给**基准日真有行**的标的（不许拿上一交易日的值冒充当日）",
+          set(_res.snapshot) == {'UP', 'DOWN', 'NEW', 'NOAMT', 'PENNY'}
+          and abs(_res.snapshot['UP']['close'] - 20.0) < 1e-9)
+    check("④ asof 缺省 = **全市场最新交易日**（不是每个标的自己的最后一天）",
+          _cs.scan(_groups, _FORMULA).asof == _asof)
+
+    # ---------- ③ 粗筛：关掉 / 恢复默认 / 坏偏好 ----------
+    _off = _cs.scan(_groups, _FORMULA, asof=_asof, thresholds=_cs.ScanThresholds(min_price=None))
+    check("③ 关掉「价格 ≥ 2 元」⇒ 那只 0.1 元的票**重新进样本**（关掉 = 不参与漏斗）",
+          _off.status['PENNY'] == _cs.HIT and _off.valid_count == 3)
+
+    _default = _cs.ScanThresholds()
+    check("③ 「↺ 恢复默认」= 出厂值（成交额 5000 万 / 价格 2 元 / 250 天 / 非停牌 / 剔 ST / 剔一字板）",
+          _default.min_amount == 5e7 and _default.min_price == 2.0 and _default.min_bars == 250
+          and _default.exclude_suspended and _default.exclude_st and _default.exclude_limit
+          and _default.min_turnover is None
+          and _default.reset().to_dict() == _default.to_dict())
+    check("③ 阈值单位走**用户量纲**（文案里出现「5 千万元」这类，不出现 50000000）",
+          '万元' in _cs.human_amount(5e7) and '亿元' in _cs.human_amount(3.2e8))
+
+    _bad = _cs.ScanThresholds.from_dict({'min_price': '3.5', 'min_bars': None, 'exclude_st': 0,
+                                         'nonsense': 1, 'min_amount': 'abc'})
+    check("③ 坏偏好**逐字段回落**（'3.5' 转得动 / None 保留 / 假布尔 / 未知键与坏数字忽略）",
+          _bad.min_price == 3.5 and _bad.min_bars is None and _bad.exclude_st is False
+          and _bad.min_amount == 5e7)
+    check("③ 偏好不是 dict ⇒ 整份回默认（一条坏偏好不能拖垮整页，§9-D）",
+          _cs.ScanThresholds.from_dict('nope').to_dict() == _cs.ScanThresholds().to_dict())
+    check("③ problems() 抓「下限 > 上限」这类笔误（**非阻断**，只提示）",
+          bool(_cs.ScanThresholds(min_change_pct=0.1, max_change_pct=-0.1).problems())
+          and not _cs.ScanThresholds().problems())
+
+    # ---------- §9.1：换手率 / 流通市值「有就用、没有就数据不足」 ----------
+    _turn = _cs.scan({'UP': _mk(_up, turnover=0.02), 'DOWN': _mk(_down)},
+                     _FORMULA, asof=_asof, thresholds=_cs.ScanThresholds(min_turnover=0.01))
+    check("★ 换手率可用（D5 修正）：有该列且达标 ⇒ 正常命中", _turn.status['UP'] == _cs.HIT)
+    check("★ 同一轮里**没有 turnover 列**的票 ⇒ 数据不足（**绝不当 0 误杀**，§9.1）",
+          _turn.status['DOWN'] == _cs.INSUFFICIENT and 'turnover' in _turn.detail['DOWN'])
+
+    _mkt = _cs.scan({'UP': _mk(_up, share=1e9), 'DOWN': _mk(_down)}, _FORMULA, asof=_asof,
+                    thresholds=_cs.ScanThresholds(min_float_mktcap=1e11))
+    check("★ 流通市值 = close × outstanding_share：算出来不达标 ⇒ 被剔除；缺列 ⇒ 数据不足",
+          _mkt.status['UP'] == _cs.FILTERED and _mkt.status['DOWN'] == _cs.INSUFFICIENT)
+
+    # ---------- 花名册（ST / 退市）----------
+    check("★ 启用「剔除 ST」却没给花名册 ⇒ **明确出声**（不静默跳过，§9-V 精神）",
+          any('花名册' in _w for _w in _res.warnings))
+    check("★ 给了花名册且名称含 ST / 退 ⇒ 被剔除",
+          _cs.scan({'UP': _mk(_up)}, _FORMULA, asof=_asof,
+                   names={'UP': 'ST某某'}).status['UP'] == _cs.FILTERED
+          and _cs.scan({'UP': _mk(_up)}, _FORMULA, asof=_asof,
+                       names={'UP': '某某退'}).status['UP'] == _cs.FILTERED)
+
+    # ---------- ④ M3 广度：分母是**有效样本** ----------
+    _breadth = _res.breadth_frame()
+    _last_day = _breadth.iloc[-1]
+    check("④ M3 广度：最后一天命中家数 == M2 命中数（同一个引擎，两种视图）",
+          int(_last_day['hits']) == len(_res.hits) == 1)
+    # ★ 注意这条语义：M3 的逐日分桶**只覆盖"那天真的有行"的标的** ——
+    #   "当日无行"的票在 M2 里记「数据不足」，但在 M3 那天**根本不存在**，不进任何桶
+    #   （这正是"新上市 / 停牌不该压低广度占比"的落实；它比"和 == 全市场只数"更难，也更是对的）
+    _no_row_on_asof = [sym for sym, st in _res.status.items()
+                       if st == _cs.INSUFFICIENT and _res.detail[sym].startswith('当日无数据')]
+    check("④ M3 分母 = **有效样本**（当天 2 只），不是全市场只数（6 只）；"
+          "且「当日无行」的票那天不进任何桶"
+          "（四个桶 = 有效样本 + 被剔除 + 数据不足，`miss` 已含在有效样本里）",
+          int(_last_day['valid']) == 2 and len(_no_row_on_asof) == 1
+          and int(_last_day['valid'] + _last_day['filtered'] + _last_day['insufficient'])
+          == len(_groups) - len(_no_row_on_asof))
+    check("④ ratio = hits / valid", abs(float(_last_day['ratio']) - 0.5) < 1e-9)
+    check("④ 热身期（前 249 个交易日）全市场一律「数据不足」⇒ 命中家数必为 0",
+          bool((_breadth['hits'].iloc[:249] == 0).all())
+          and bool((_breadth['insufficient'].iloc[:249] > 0).all()))
+
+    # ---------- ⑤ 缓存矩阵（"改日期秒回"的前提）----------
+    _cache = _cs.scan(_groups, _FORMULA, asof=_asof, keep_matrix=True)
+    check("⑤ 缓存矩阵是 uint8 四态（内存 = 交易日 × 标的 × 1B ≈ 22 MB/全市场，D3）",
+          _cache.status_matrix is not None and _cache.status_matrix.dtype == np.uint8
+          and _cache.status_matrix.shape == (len(_cache.symbols), len(_cache.dates)))
+    check("⑤ status_on(基准日) 与 scan(asof=基准日) **逐位一致**",
+          _cache.status_on(_asof) == _res.status)
+    check("⑤ 换一天：缓存切片 == 重新扫（**这就是「改日期秒回」的前提**）",
+          _cache.status_on(_days[279]) == _cs.scan(_groups, _FORMULA, asof=_days[279]).status)
+    check("⑤ 不在交易日轴上的日期 ⇒ 返回空（不许糊一个「最接近」的结果给用户）",
+          _cache.status_on('2001-01-01') == {})
+
+    # ---------- ④ 逐位对齐（不只看最后一天）：矩阵 vs 直接跑引擎 ----------
+    _direct = (pd.to_numeric(pd.Series(execute_programs(
+        [parse_program(_FORMULA)], _cs.prepare_frame(_groups['UP']), {})['COND']),
+        errors='coerce').to_numpy() != 0)
+    _mismatch = [str(_days[k].date()) for k in range(250, 300)
+                 if _cache.status_on(_days[k]).get('UP')
+                 != (_cs.HIT if _direct[k] else _cs.MISS)]
+    check(f"④ 逐位对齐：热身期后 50 个交易日，矩阵状态 == 直接跑引擎（不符 {_mismatch[:3] or '无'}）",
+          not _mismatch)
+    check("★ 热身期（第 1/100/249 个交易日）一律「数据不足」—— 即便公式那天已算得出真值",
+          all(_cache.status_on(_days[k]).get('UP') == _cs.INSUFFICIENT for k in (0, 100, 248)))
+
+    # ---------- 公式约定与报错 ----------
+    check("④ 多语句：**最后一条变量**就是判定变量；`signal_names()` 供界面下拉",
+          _cs.scan({'UP': _mk(_up)}, 'A := MA(C, 5); B := C > A;',
+                   asof=_asof).signal_name == 'B' and _cs.signal_names(_FORMULA) == ['COND'])
+
+    def _raises(formula, **kwargs):
+        try:
+            _cs.scan({'UP': _mk(_up)}, formula, asof=_asof, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            return type(exc).__name__, str(exc)
+        return '', ''
+
+    _name, _ = _raises('C > 1;')
+    check("④ 公式没有可判定变量 ⇒ **立刻报错给用户**（不是默默扫出 0 命中）", bool(_name))
+    _name2, _msg2 = _raises(_FORMULA, signal_name='NOPE')
+    check("④ signal_name 不存在 ⇒ 报错并列出可选项", bool(_name2) and 'COND' in _msg2)
+
+    # ---------- 真实行情（有就验一遍；没有就明说跳过，不假装通过）----------
+    _lake = os.path.join(_settings.USER_DATA_DIR, 'data_lake', 'kline', 'daily')
+    _has_lake = os.path.isdir(_lake) and any(
+        name.endswith('.parquet') for name in os.listdir(_lake))
+    if not _has_lake:
+        print("  [--] 本地暂无日线分区，跳过「真实行情」部分"
+              "（合成数据部分已覆盖全部口径与三态）")
+    else:
+        _real_formula = 'COND := CROSS(EMA(C,12), EMA(C,26)) AND C > MA(C,20);'
+        _t0 = _now()
+        _real = _cs.scan_lake(_lake, _real_formula, snapshot_columns=('close', 'amount'))
+        _cost = _now() - _t0
+        check(f"真实行情：分区 {_real.counts['total']} 只扫得完"
+              f"（{_cost:.2f}s · {_cost / max(1, _real.counts['total']) * 1000:.2f} ms/只；"
+              f"标杆见 §7-B1/B2 主案 B3）", _real.counts['total'] > 0)
+        check("真实行情：四态**分类完备**（和 == 总数）",
+              _real.counts['hit'] + _real.counts['miss'] + _real.counts['insufficient']
+              + _real.counts['filtered'] == _real.counts['total'])
+        check("真实行情：缺列的票（东财兜底透传的中文列 / 期货列）落「数据不足」而不是「不达标」"
+              "（§9.1）",
+              all(_real.status[s] == _cs.INSUFFICIENT for s, d in _real.detail.items()
+                  if d.startswith('缺少所需列')))
+        _real_breadth = _real.breadth_frame()
+        _ratio = _real_breadth['ratio'].dropna()
+        check("真实行情：广度 ratio 全在 [0,1]，且 valid ≤ total（分母口径没串）",
+              bool(((_ratio >= 0) & (_ratio <= 1)).all())
+              and int(_real_breadth['valid'].max()) <= _real.counts['total'])
+        check("★ 真实行情：M2 / M3 **同源自洽** —— 广度表最后一天的 hits / valid 与 M2 逐一相等"
+              "（两个视图共用同一份状态码）",
+              int(_real_breadth.iloc[-1]['hits']) == _real.counts['hit']
+              and int(_real_breadth.iloc[-1]['valid']) == _real.counts['valid'])
+        check("★ 「当日无行」的标的**不进广度分母**（M3 那天根本没有它，M2 里记「数据不足」）"
+              "—— 这正是「新上市 / 停牌不该压低占比」的落实",
+              int(_real_breadth.iloc[-1]['filtered'] + _real_breadth.iloc[-1]['insufficient'])
+              <= _real.counts['filtered'] + _real.counts['insufficient'])
+        check("★ 真实行情：缓存矩阵切片 == 重扫（**逐位一致**）",
+              _cs.scan_lake(_lake, _real_formula, keep_matrix=True).status_on(_real.asof)
+              == _real.status)
+except Exception as _e:  # noqa: BLE001
+    check(f"横截面内核断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
+# §7-B1/B2 STEP 2 · 会话内存缓存 `data/scan_store.py`（主案 D3 · v6.35）
+#   判据：① 同键命中 = **一次求值都不跑**；`asof` 不进键 ⇒ **切日期零成本**
+#         ② 键的六样少一样都不行（公式 / 粗筛 / 标的域 / 复权 / **数据版本** / 快照列）
+#         ③ **数据一变 ⇒ 键就变 ⇒ 必然不命中**（负向断言：静默陈旧在结构上不可能）
+#         ④ 配额双闸（条数 + 字节），占用**看得见、能清**
+#         ⑤ **只碰内存**：不写任何文件（源码级断言）
+# ==========================================
+print("\n== §7-B1/B2 STEP 2 · 会话缓存：键 / 失效 / 切日期 / 配额 ==")
+try:
+    import shutil as _shutil
+    import tempfile as _tempfile
+
+    from data import scan_store as _ss
+    from data.market_db import DataLakeManager as _DLM
+
+    # ---- 造一个"假数据湖"（临时目录；**绝不碰用户真实分区**）----
+    _zone = _tempfile.mkdtemp(prefix='jian_scan_zone_')
+    for _sym, _closes, _opt in (('UP', _up, {}), ('DOWN', _down, {}),
+                                ('PENNY', _up, {'scale': 0.05})):
+        _mk(_closes, **_opt).to_parquet(os.path.join(_zone, f'{_sym}.parquet'), index=False)
+    _fake_symbols = ['UP', 'DOWN', 'PENNY']
+    _fake_th = _cs.ScanThresholds()
+    _store = _ss.ScanStore()
+
+    _first = _ss.scan_cached(_zone, _FORMULA, symbols=_fake_symbols, thresholds=_fake_th,
+                             asof=_asof, store=_store)
+    check("STEP 2：首次扫描 = **未命中**（cached=False），且矩阵已落缓存",
+          _first.cached is False and _first.result.status_matrix is not None
+          and _store.entries() == 1)
+    _second = _ss.scan_cached(_zone, _FORMULA, symbols=_fake_symbols, thresholds=_fake_th,
+                              asof=_asof, store=_store)
+    check("STEP 2：再扫一次 = **命中**，拿到的还是**同一份矩阵**（一次求值都没跑）",
+          _second.cached is True and _second.result is _first.result)
+    check("★ STEP 2：命中后**切日期零成本**（`asof` 不进键）—— 缓存切片与矩阵逐位一致",
+          _second.status_on(_days[279]) == _second.result.status_on(_days[279])
+          and _second.status_on(_days[279]) != {})
+    check("STEP 2：`counts_on(asof)` 与重扫的 `counts` **同一实现**（不会两处各算一遍）",
+          _second.counts_on(_asof) == _first.result.counts)
+    check("单例：`get_scan_store()` 两次拿到同一个对象（别自己 new —— 会各存各的）",
+          _ss.get_scan_store() is _ss.get_scan_store())
+
+    # ---- 键的六样：少一样都不行 ----
+    _key_a = _ss.scan_key(_FORMULA, _fake_th, _fake_symbols, zone_dir=_zone)
+    check("★ 键①公式：只改**注释 / 空白 / 大小写** ⇒ 键不变（否则「看着没改却重算几十秒」）",
+          _ss.scan_key('cond:=c>ref(c,1); // 只是改了个注释', _fake_th, _fake_symbols,
+                       zone_dir=_zone) == _key_a)
+    check("★ 键①公式：真改了表达式 ⇒ 键变",
+          _ss.scan_key('COND := C > REF(C, 2);', _fake_th, _fake_symbols,
+                       zone_dir=_zone) != _key_a)
+    check("★ 键②**粗筛阈值进键**（v6.35 修订）：阈值决定「被剔除」桶，不进键 = 静默陈旧",
+          _ss.scan_key(_FORMULA, _cs.ScanThresholds(min_price=None), _fake_symbols,
+                       zone_dir=_zone) != _key_a)
+    check("★ 键③标的域：换域必须失效（否则「自选」的结果会被当成「全市场」）",
+          _ss.scan_key(_FORMULA, _fake_th, ['UP', 'DOWN'], zone_dir=_zone) != _key_a)
+    check("★ 键④复权口径：前复权 / 不复权是两份数据集，绝不共用缓存",
+          _ss.scan_key(_FORMULA, _fake_th, _fake_symbols, adjust='none',
+                       zone_dir=_zone) != _key_a)
+    check("★ 键⑥快照列：快照是按列取的 ⇒ 列不同即内容不同，不能共用",
+          _ss.scan_key(_FORMULA, _fake_th, _fake_symbols, zone_dir=_zone,
+                       snapshot_columns=('close',)) != _key_a)
+
+    # ---- 键⑤数据版本：**静默陈旧的唯一堵口** ----
+    _v1 = _ss.data_version(_zone)
+    check("★ 键⑤数据版本：同目录两次调用**必须相同**（否则永远不命中 = 缓存形同虚设）",
+          _ss.data_version(_zone) == _v1 and _v1.startswith('3-'))
+    _mk(_up, scale=0.05).to_parquet(os.path.join(_zone, 'EXTRA.parquet'), index=False)
+    _v2 = _ss.data_version(_zone)
+    check("★ 键⑤数据版本：**新增文件**必须改变版本"
+          "（「下了新数据却不重算」= 静默陈旧，§5 / §10 铁律）",
+          _v2 != _v1 and _v2.startswith('4-'))
+    _after = _ss.scan_cached(_zone, _FORMULA, symbols=_fake_symbols, thresholds=_fake_th,
+                             asof=_asof, store=_store)
+    check("★★ 数据一变 ⇒ 键就变 ⇒ **必然不命中**（负向断言：静默陈旧在结构上不可能）",
+          _after.cached is False and _after.key != _first.key)
+    _v3 = _ss.data_version(_zone)
+    _mk(_down, amount=2e8).to_parquet(os.path.join(_zone, 'DOWN.parquet'), index=False)
+    check("★ 键⑤数据版本：**重写内容**也要察觉（增量补齐 / 重新下载属这一类）",
+          _ss.data_version(_zone) != _v3)
+
+    # ---- 配额：会话内存不许无限涨；占用要看得见、能清 ----
+    _small = _ss.ScanStore(max_entries=1)
+    _small.put(_key_a, _first.result)
+    _small.put(_after.key, _first.result)
+    check("配额：`max_entries=1` ⇒ 最久未用的被淘汰",
+          _small.entries() == 1 and _small.get(_key_a) is None
+          and _small.get(_after.key) is not None)
+    _stats = _small.stats()
+    check("`stats()` 报占用与命中数（§10-10：占用要**看得见、能清**）",
+          _stats['entries'] == 1 and _stats['bytes'] > 0 and _stats['hits'] == 1
+          and _stats['misses'] == 1)
+    check('`clear()` 一键释放（"⟳ 全量重算" / 内存体检按钮的后端）',
+          _small.clear() == 1 and _small.bytes_used() == 0)
+
+    # ---- 两条"结构性"护栏 ----
+    check("分区目录映射与 `data/market_db.py` **同源**（本模块刻意不实例化它，靠断言钉住一致）",
+          _ss.kline_zone_dir('kline_daily') == _DLM().zones['kline_daily']
+          and _ss.kline_zone_dir('kline_daily_raw') == _DLM().zones['kline_daily_raw'])
+    _ss_src = _pathlib.Path(_ss.__file__).read_text(encoding='utf-8')
+    check("★ 本模块**只碰内存**：源码里没有 `open(` / `to_parquet` / `os.replace` / `os.remove`"
+          "（缓存不落盘 ⇒ 无需进防污染自检名单）",
+          all(token not in _ss_src
+              for token in ('open(', 'to_parquet', 'os.replace', 'os.remove')))
+
+    # ---- 真实分区：缓存不许改变结果 ----
+    _lake_dir2 = os.path.join(_settings.USER_DATA_DIR, 'data_lake', 'kline', 'daily')
+    if not os.path.isdir(_lake_dir2):
+        print("  [--] 本地暂无日线分区，跳过「真实分区缓存 == 强制重扫」一条")
+    else:
+        _live_f = 'COND := CROSS(EMA(C,12), EMA(C,26)) AND C > MA(C,20);'
+        _live1 = _ss.scan_cached(_lake_dir2, _live_f, snapshot_columns=('close',))
+        _live2 = _ss.scan_cached(_lake_dir2, _live_f, snapshot_columns=('close',))
+        check("真实分区：第二次调用**命中**（同键同数据版本）⇒ 切日期 / 换窗口零成本",
+              _live2.cached is True and _live2.result is _live1.result)
+        _live_day = _live2.result.dates[-1]
+        _by_force = _ss.scan_cached(_lake_dir2, _live_f, snapshot_columns=('close',),
+                                    asof=_live_day, force=True).result.status
+        check("★★ 真实分区：**缓存切片 == 强制重扫**（逐位一致）—— 缓存不许悄悄改变结果",
+              _live2.status_on(_live_day) == _by_force)
+
+    _shutil.rmtree(_zone, ignore_errors=True)
+    check("假数据湖已删除（临时探针用完即删，§10-13）", not os.path.isdir(_zone))
+except Exception as _e:  # noqa: BLE001
+    check(f"会话缓存断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
+# §7-B1/B2 STEP 3 · 后台扫描线程 `CrossSectionWorker` + 竞态守卫（主案 D4 · §9-O5）
+#   判据：① `job_id` **原样回包**（页面判"是不是我要的那次"就靠它）
+#         ② 进度**两段**（读数 0/0 → 计算 done/total）且单调不减、收尾到底
+#         ③ **取消 ⇒ 回包 None + 缓存一条都不落**（半成品矩阵绝不外流）
+#         ④ 竞态：发起新任务后，旧任务的回包**必须被丢弃**（真并发验证）
+#         ⑤ 缓存命中 ⇒ **一次计算都不跑**（连进度信号都没有）
+#         ⑥ 公式错 ⇒ 走 `failed`（异常绝不穿透 QThread，也不会静默无回包）
+# ==========================================
+print("\n== §7-B1/B2 STEP 3 · CrossSectionWorker：进度 / 取消 / 竞态守卫 ==")
+try:
+    from ui.workers import CrossSectionWorker, JobGuard
+
+    _zone3 = _tempfile.mkdtemp(prefix='jian_worker_zone_')
+    _syms3 = [f'Y{i:02d}' for i in range(6)]        # 6 只 ⇒ chunk=2 正好报 3 次，能看清单调性
+    for _sym3 in _syms3:
+        _mk(_up).to_parquet(os.path.join(_zone3, f'{_sym3}.parquet'), index=False)
+
+    # ---- ① 竞态守卫（先把判据钉死）----
+    _guard = JobGuard()
+    _job_a = _guard.next()
+    check("竞态守卫：当前任务的回包被接受", _guard.accept(_job_a) is True)
+    _job_b = _guard.next()
+    check("★ 竞态守卫（§9-O5）：**发起新任务后，旧任务的回包一律丢弃**"
+          "（否则「旧结果覆盖新结果」，而且界面看着完全正常）",
+          _guard.accept(_job_a) is False and _guard.accept(_job_b) is True)
+    check("竞态守卫：类型容错（「1」与 1 同一次），乱值直接拒",
+          _guard.accept(str(_job_b)) is True and _guard.accept(None) is False)
+
+    # ---- ② Worker 跑通：job_id 原样回包 + 两段进度 ----
+    _seen = {'progress': [], 'finished': []}
+    _w1 = CrossSectionWorker(7, _zone3, _FORMULA, symbols=_syms3, chunk=2,
+                             store=_ss.ScanStore())
+    _w1.progress.connect(lambda d, t, n: _seen['progress'].append((d, t, n)))
+    _w1.finished.connect(lambda j, o: _seen['finished'].append((j, o)))
+    _w1.start()
+    _w1.wait(30000)
+    app.processEvents()
+    check("STEP 3：回包**原样带回 `job_id`**，且真的带回了结果",
+          len(_seen['finished']) == 1 and _seen['finished'][0][0] == 7
+          and _seen['finished'][0][1] is not None
+          and _seen['finished'][0][1].result.counts['total'] == len(_syms3))
+    _calc_steps = [d for d, t, _n in _seen['progress'] if t == len(_syms3)]
+    _dump = [(d, t) for d, t, _n in _seen['progress']
+             if t == len(_syms3)] + [('read', _seen['progress'][0][1])]
+    check(f"STEP 3：进度**两段** —— 先读数（total=0）、再逐块计算；单调不减、收尾到底（实测 {_dump}）",
+          _seen['progress'][0][1] == 0 and '读取' in _seen['progress'][0][2]
+          and _calc_steps == sorted(_calc_steps) and _calc_steps[-1] == len(_syms3))
+
+    # ---- ③ 取消：绝不落半成品 ----
+    _store3 = _ss.ScanStore()
+    _w2 = CrossSectionWorker(8, _zone3, _FORMULA, symbols=_syms3, chunk=1, store=_store3)
+    _w2.cancel()                                    # 还没起跑就取消 ⇒ 第一个块边界就该停
+    _out2 = []
+    _w2.finished.connect(lambda j, o: _out2.append((j, o)))
+    _w2.start()
+    _w2.wait(30000)
+    app.processEvents()
+    check('★★ 取消：回包是 **None**（明确"没有结果"，而不是半个矩阵）+ `cancelled` 置位',
+          _out2 == [(8, None)] and _w2.cancelled is True)
+    check("★★ 取消：**会话缓存里一条都没落**"
+          "（半个矩阵的命中家数 / 广度占比全是错的，而且界面上看不出来）",
+          _store3.entries() == 0)
+
+    # ---- ⑤ 缓存命中：一次计算都不跑 ----
+    _store3b = _ss.ScanStore()
+    _w3 = CrossSectionWorker(9, _zone3, _FORMULA, symbols=_syms3, chunk=2, store=_store3b)
+    _w3.start()
+    _w3.wait(30000)
+    app.processEvents()
+    _seen4, _out4 = [], []
+    _w4 = CrossSectionWorker(10, _zone3, _FORMULA, symbols=_syms3, chunk=2, store=_store3b)
+    _w4.progress.connect(lambda d, t, n: _seen4.append((d, t, n)))
+    _w4.finished.connect(lambda j, o: _out4.append((j, o)))
+    _w4.start()
+    _w4.wait(30000)
+    app.processEvents()
+    check("★ 会话缓存命中 ⇒ **一次计算都不跑**（连进度信号都没有），直接回上次的矩阵",
+          len(_out4) == 1 and _out4[0][1] is not None and _out4[0][1].cached is True
+          and _seen4 == [])
+
+    # ---- ④ 竞态实战：旧任务回包被丢弃 ----
+    _guard2 = JobGuard()
+    _accepted = []
+    _job_old = _guard2.next()
+    _w5 = CrossSectionWorker(_job_old, _zone3, _FORMULA, symbols=_syms3, chunk=2,
+                             store=_ss.ScanStore())
+    _w5.finished.connect(lambda j, o: _accepted.append(j) if _guard2.accept(j) else None)
+    _w5.start()
+    _job_new = _guard2.next()          # 旧任务还在跑，用户又发起一次 ⇒ 旧回包应作废
+    _w5.wait(30000)
+    app.processEvents()
+    check("★★ 竞态实战：旧任务跑完后回包到来 ⇒ **被守卫丢弃**（不会覆盖新任务的状态）",
+          _accepted == [] and _guard2.latest == _job_new)
+
+    # ---- ⑥ 失败路径 ----
+    _store3c = _ss.ScanStore()
+    _fail = []
+    _w6 = CrossSectionWorker(11, _zone3, 'C > 1;', symbols=_syms3, store=_store3c)
+    _w6.failed.connect(lambda j, m: _fail.append((j, m)))
+    _w6.start()
+    _w6.wait(30000)
+    app.processEvents()
+    check("STEP 3：公式错误 ⇒ 走 `failed`（**异常绝不穿透 QThread**，也不会静默无回包）",
+          len(_fail) == 1 and _fail[0][0] == 11 and bool(_fail[0][1]))
+    check("STEP 3：失败也不污染会话缓存（**只落成功的结果**）", _store3c.entries() == 0)
+
+    _shutil.rmtree(_zone3, ignore_errors=True)
+    check("假数据湖已删除（临时探针用完即删）", not os.path.isdir(_zone3))
+except Exception as _e:  # noqa: BLE001
+    check(f"后台扫描线程断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
+# §7-B1/B2 STEP 5 · ⚡ 增量到最新（主案 D7）：尾段续接 / 历史不动 / 诚实退化
+#   判据：① 数据追加 ⇒ 数据版本变 ⇒ 键变，但 `find_base` 能找到**同配置旧条目**做基座
+#         ② 合并后的矩阵 == 全量重扫（**逐位一致** —— 增量不许悄悄改变结果）
+#         ③ **历史一天都不动**：旧日期的状态与广度 = 首轮结果逐位相同（D7 的用户契约）
+#         ④ 重写但无新交易日（touch）⇒ 沿用原矩阵 + 明确回执（绝不静默）
+#         ⑤ 标的集合变了 ⇒ 诚实退化全量（行序不同的矩阵不许硬接）
+#         ⑥ Worker 通道：`incremental=True` 经 CrossSectionWorker 跑通（含诚实回执）
+# ==========================================
+print("\n== §7-B1/B2 STEP 5 · ⚡ 增量到最新：尾段续接 / 历史不动 / 诚实退化 ==")
+try:
+    import dataclasses as _dataclasses
+
+    _zone5 = _tempfile.mkdtemp(prefix='jian_incr_zone_')
+    _extra5 = pd.bdate_range(_days[-1] + pd.Timedelta(days=1), periods=10)
+    _all_days5 = _days.append(_extra5)
+    _syms5 = ['UP', 'DOWN']
+    _th5 = _cs.ScanThresholds(min_bars=None)      # 关掉 min_bars：信号全程可判，广度非平凡
+    _store5 = _ss.ScanStore()
+
+    def _mk5(closes, index):
+        """STEP 5 专用帧构造：日期轴可以**长于** `_days`（增量要追加新交易日）。"""
+        values = np.asarray(closes, dtype=float)
+        return pd.DataFrame({'date': list(index), 'open': values,
+                             'high': values * 1.02, 'low': values * 0.98,
+                             'close': values, 'volume': 1e6, 'amount': 1e8})
+
+    _mk5(_up, _days).to_parquet(os.path.join(_zone5, 'UP.parquet'), index=False)
+    _mk5(_down, _days).to_parquet(os.path.join(_zone5, 'DOWN.parquet'), index=False)
+    _first5 = _ss.scan_cached(_zone5, _FORMULA, symbols=_syms5, thresholds=_th5,
+                              asof=_days[-1], store=_store5)
+    check("STEP 5：首轮扫描落缓存（增量路径的基座）",
+          _first5.cached is False and _first5.result.status_matrix is not None
+          and len(_first5.result.dates) == 300)
+
+    # ---- ① 追加 10 个新交易日（UP 上行 ⇒ 全真；DOWN 下行 ⇒ 全假）----
+    _mk5(np.concatenate([_up, np.linspace(20.0, 25.0, 10)]),
+         _all_days5).to_parquet(os.path.join(_zone5, 'UP.parquet'), index=False)
+    _mk5(np.concatenate([_down, np.linspace(10.0, 5.0, 10)]),
+         _all_days5).to_parquet(os.path.join(_zone5, 'DOWN.parquet'), index=False)
+    _incr5 = _ss.scan_cached(_zone5, _FORMULA, symbols=_syms5, thresholds=_th5,
+                             asof=None, store=_store5, incremental=True)
+    check("★ STEP 5：增量回执说清**续了几天 + 历史沿用原矩阵**（§10-10：绝不静默）",
+          _incr5.cached is False and '+10' in _incr5.note and '历史沿用原矩阵' in _incr5.note
+          and len(_incr5.result.dates) == 310)
+    check("STEP 5：增量回包的 M2 语义正确（新基准日：UP 命中 / DOWN 未命中）",
+          _incr5.result.counts['hit'] == 1 and _incr5.result.counts['miss'] == 1
+          and _incr5.status_on(_all_days5[-1]) == {'UP': _cs.HIT, 'DOWN': _cs.MISS})
+
+    # ---- ② 逐位一致：增量结果 == 全量重扫 ----
+    _full_store5 = _ss.ScanStore()
+    _full5 = _ss.scan_cached(_zone5, _FORMULA, symbols=_syms5, thresholds=_th5,
+                             asof=None, store=_full_store5)
+    check("★★ STEP 5：**增量合并 == 全量重扫**（矩阵/家数/日期轴逐位一致）"
+          " —— 增量不许悄悄改变结果",
+          np.array_equal(_incr5.result.status_matrix, _full5.result.status_matrix)
+          and np.array_equal(_incr5.result.counters, _full5.result.counters)
+          and _incr5.result.dates.equals(_full5.result.dates))
+
+    # ---- ③ 历史一天都不动（D7 的用户契约）----
+    check("★ STEP 5：**历史一天都没动** —— 旧 300 天的广度与首轮结果逐位相同",
+          np.array_equal(_incr5.result.counters[:300], _first5.result.counters)
+          and _incr5.status_on(_days[-1]) == _first5.status_on(_days[-1]))
+
+    # ---- ④ touch（重写但无新交易日）⇒ 沿用原矩阵 + 明确回执 ----
+    _mk5(np.concatenate([_up, np.linspace(20.0, 25.0, 10)]),
+         _all_days5).to_parquet(os.path.join(_zone5, 'UP.parquet'), index=False)
+    _touch5 = _ss.scan_cached(_zone5, _FORMULA, symbols=_syms5, thresholds=_th5,
+                              asof=None, store=_store5, incremental=True)
+    check("★ STEP 5：数据版本变了但**没有新增交易日** ⇒ 沿用原矩阵 + 回执点明"
+          "「怀疑历史被修订请用全量重算」（不静默、不假装增量）",
+          _touch5.cached is True and '没有新增交易日' in _touch5.note
+          and _touch5.result is _incr5.result)
+
+    # ---- ⑤ 标的集合变了 ⇒ 诚实退化全量 ----
+    os.remove(os.path.join(_zone5, 'DOWN.parquet'))
+    _shift5 = _ss.scan_cached(_zone5, _FORMULA, symbols=_syms5, thresholds=_th5,
+                              asof=None, store=_store5, incremental=True)
+    check("★ STEP 5：参与计算的**标的集合变了** ⇒ 不许硬接矩阵，诚实退化全量并出声",
+          _shift5.cached is False and '全量' in _shift5.note
+          and _shift5.result.counts['total'] == 1)
+
+    # ---- ⑤b find_base 直测：同配置旧版本能找到；同版本不归它管 ----
+    _k5 = _ss.scan_key(_FORMULA, _th5, _syms5, zone_dir=_zone5)
+    _k5_fake = _dataclasses.replace(_k5, data_version='f4k3-v3rs10n')
+    _probe_store5 = _ss.ScanStore()
+    _probe_store5.put(_k5, _first5.result)
+    check("STEP 5：`find_base` 认「同配置、**不同数据版本**」的条目（增量基座的唯一判据）",
+          _probe_store5.find_base(_k5_fake) is _first5.result
+          and _probe_store5.find_base(_k5) is None)
+
+    # ---- ⑥ Worker 通道 ----
+    _mk5(_up, _days).to_parquet(os.path.join(_zone5, 'DOWN.parquet'), index=False)  # 恢复两只
+    _store5w = _ss.ScanStore()
+    _wout5 = []
+    _w7 = CrossSectionWorker(12, _zone5, _FORMULA, symbols=_syms5, chunk=2,
+                             store=_store5w, incremental=True)
+    _w7.finished.connect(lambda j, o: _wout5.append((j, o)))
+    _w7.start()
+    _w7.wait(30000)
+    app.processEvents()
+    check("STEP 5：Worker 通道（incremental=True）—— 无基座时**诚实退化全量**，job_id 原样回包",
+          len(_wout5) == 1 and _wout5[0][0] == 12 and _wout5[0][1] is not None
+          and '全量' in _wout5[0][1].note)
+    _wout6 = []
+    _w8 = CrossSectionWorker(13, _zone5, _FORMULA, symbols=_syms5, chunk=2,
+                             store=_store5w, incremental=True)
+    _w8.finished.connect(lambda j, o: _wout6.append((j, o)))
+    _w8.start()
+    _w8.wait(30000)
+    app.processEvents()
+    check("STEP 5：Worker 通道 —— 数据没变时增量 = **命中 + 明确说「已算到最新」**",
+          len(_wout6) == 1 and _wout6[0][1] is not None and _wout6[0][1].cached is True
+          and '已算到最新' in _wout6[0][1].note)
+
+    _shutil.rmtree(_zone5, ignore_errors=True)
+    check("假数据湖已删除（临时探针用完即删）", not os.path.isdir(_zone5))
+except Exception as _e:  # noqa: BLE001
+    check(f"增量断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
+# §7-B1/B2 STEP 6 · 就绪度体检（主案 D6-1 · `data/readiness.py`）
+#   判据：① 四分类各就各位（就绪 / 历史不足 / 未下载 / 文件损坏 —— **不许并桶、不许静默跳过**）
+#         ② **只读 footer**：行数 + date 统计（实测 0.66 ms/只）；坏文件进问题清单不废整轮
+#         ③ min_bars 关掉 ⇒ "历史不足"回到就绪（与粗筛阈值同源）
+#         ④ 缺口 / 问题清单 / 一行人话摘要 / 缺口预览各有一份实现
+#         ⑤ 取消 = 抛 ReadinessCancelled（绝不回半截报告）；进度每 chunk 一次
+#         ⑥ 成分股失败文案 = friendly_constituent_message（分类安抚，§10-10）
+# ==========================================
+print("\n== §7-B1/B2 STEP 6 · 就绪度体检：只读 footer / 四分类 / 问题清单 ==")
+try:
+    from data.readiness import (ReadinessCancelled, ReadinessReport,  # noqa: E402
+                                probe_readiness)
+    from data.sync_service import friendly_constituent_message  # noqa: E402
+
+    _zone6 = _tempfile.mkdtemp(prefix='jian_ready_zone_')
+    _mk5(_up, _days).to_parquet(os.path.join(_zone6, 'READY.parquet'), index=False)
+    _mk5(_up[:50], _days[:50]).to_parquet(os.path.join(_zone6, 'SHORT.parquet'), index=False)
+    with open(os.path.join(_zone6, 'BROKEN.parquet'), 'wb') as _f6:
+        _f6.write(b'not a parquet file')
+
+    def _probe6(**kw):
+        return probe_readiness(_zone6, ['READY', 'SHORT', 'MISSING', 'BROKEN'], **kw)
+
+    _rep6 = _probe6(min_bars=250)
+    check("STEP 6：四分类各就各位 —— 就绪 / 历史不足(50行) / 未下载 / 文件损坏",
+          _rep6.ready == ['READY'] and _rep6.partial.get('SHORT') == 50
+          and _rep6.missing == ['MISSING'] and list(_rep6.unreadable) == ['BROKEN']
+          and _rep6.total == 4)
+    check("★ STEP 6：坏文件**进问题清单、不废整轮**（其余 3 只照常出结果，绝不静默跳过）",
+          len(_rep6.unreadable) == 1 and len(_rep6.ready) + len(_rep6.partial) == 2)
+    check("STEP 6：`latest` 来自 footer 统计（本地日线最新到几号，D6-1）",
+          _rep6.latest is not None and pd.Timestamp(_rep6.latest) == _days[-1])
+    check("STEP 6：一行摘要说清全局（就绪 N/M · 未下载 · 历史不足 · 文件损坏 · 本地最新）",
+          '就绪 1/4' in _rep6.summary_line() and '未下载 1' in _rep6.summary_line()
+          and '历史不足 1' in _rep6.summary_line() and '文件损坏 1' in _rep6.summary_line()
+          and '本地最新' in _rep6.summary_line())
+    check("STEP 6：缺口 = 未下载（partial 补不齐不算缺口）；问题清单 = 损坏文件",
+          _rep6.gap_symbols() == ['MISSING'] and _rep6.problem_symbols() == ['BROKEN']
+          and _rep6.gap_count == 1)
+    check("STEP 6：缺口预览**看得见名字**（不许只给一个数字）",
+          'MISSING' in _rep6.gap_preview() and '1 只' in _rep6.gap_preview())
+    check("STEP 6：详情文本把「每类问题怎么办」说清（未下载→补齐 / 损坏→重新全量下载）",
+          '补齐' in _rep6.detail_text() and '重新全量下载' in _rep6.detail_text()
+          and '补不齐' in _rep6.detail_text())
+
+    _rep_off = _probe6(min_bars=None)
+    check("STEP 6：min_bars 关掉 ⇒ 「历史不足」回到就绪（阈值与粗筛同源，关掉 = 不设门槛）",
+          len(_rep_off.ready) == 2 and not _rep_off.partial)
+
+    _seen6 = []
+    probe_readiness(_zone6, ['READY', 'SHORT', 'MISSING', 'BROKEN'],
+                    progress=lambda d, t, n: _seen6.append((d, t)))
+    check("STEP 6：进度收尾必报（4 只 → 1 次收尾回调，done==total）",
+          len(_seen6) == 1 and _seen6[0] == (4, 4))
+    try:
+        probe_readiness(_zone6, ['READY'], should_stop=lambda: True)
+        check("★ STEP 6：取消 ⇒ 抛 ReadinessCancelled（绝不回半截报告）", False)
+    except ReadinessCancelled:
+        check("★ STEP 6：取消 ⇒ 抛 ReadinessCancelled（绝不回半截报告）", True)
+
+    _rep_empty = probe_readiness(_zone6, [])
+    check("STEP 6：空范围 ⇒ 摘要直说「范围是空的」（不假装体检过）",
+          _rep_empty.total == 0 and '范围是空的' in _rep_empty.summary_line())
+    _rep_none = probe_readiness(os.path.join(_zone6, '__nope__'), ['READY'])
+    check("STEP 6：分区目录不存在 ⇒ 全部按「未下载」处理（不崩、不出假就绪）",
+          _rep_none.missing == ['READY'] and not _rep_none.ready)
+
+    check("STEP 6：成分股失败文案 = **分类安抚**（no_data 说清「源未收录/代码有误」+ 替代路径，§10-10）",
+          '行情源未返回名单' in friendly_constituent_message('000300', {'reason': 'no_data'})
+          and '全市场' in friendly_constituent_message('000300', {'reason': 'no_data'})
+          and '网络请求失败' in friendly_constituent_message('000300', {'reason': 'network'})
+          and '不是用户的错' not in friendly_constituent_message('000300', {'reason': 'no_data'}))
+
+    # ---- 成分股代码规范化（2026-09-20 用户实测：选沪深300 每次都"接口未返回成分股"）----
+    #   根因 = 两套指数代码约定并存：日线要带前缀（sh000300，INDEX_PRESETS 键），
+    #   成分股三接口只要 6 位裸码 —— 带前缀直接透传 = 三个接口全失败。
+    #   修复 = normalize_cons_code 收在行情源边界（§11.5-19 / §11.5-62）。
+    import data.akshare_feed as _af  # noqa: E402
+
+    check("★ STEP 6：成分股代码规范化（sh000300/SZ399006 → 6 位裸码；纯数字原样；坏码不脑补）",
+          _af.normalize_cons_code('sh000300') == '000300'
+          and _af.normalize_cons_code('SZ399006') == '399006'
+          and _af.normalize_cons_code(' 000016 ') == '000016'
+          and _af.normalize_cons_code('bj899050') == '899050'
+          and _af.normalize_cons_code('000300') == '000300'
+          and _af.normalize_cons_code('abc') == 'abc')
+
+    class _FakeConsAK:
+        """打桩 akshare：记录成分股接口收到的 symbol（验证规范化发生在调用前）。"""
+
+        def __init__(self):
+            self.calls = []
+
+        def index_stock_cons(self, symbol):
+            self.calls.append(str(symbol))
+            return pd.DataFrame({'成分券代码': ['000001', '000002']})
+
+    _fake_ak = _FakeConsAK()
+    _real_ak = _af.ak
+    _af.ak = _fake_ak
+    try:
+        _cons_df = _af.AkShareFeed.fetch_index_constituents('sh000300')
+        _bad_df = _af.AkShareFeed.fetch_index_constituents('不是代码')
+    finally:
+        _af.ak = _real_ak
+    check("★ STEP 6：带前缀代码**进接口前被规范化**（sh000300 → 以 000300 调 akshare）",
+          _fake_ak.calls == ['000300']
+          and list(_cons_df['symbol']) == ['000001', '000002'])
+    check("STEP 6：乱码**快速失败**（不发任何网络请求、回空 DF 让上层给人话提示）",
+          len(_fake_ak.calls) == 1 and _bad_df.empty)
+
+    _shutil.rmtree(_zone6, ignore_errors=True)
+    check("假数据湖已删除（临时探针用完即删）", not os.path.isdir(_zone6))
+except Exception as _e:  # noqa: BLE001
+    check(f"就绪度体检断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

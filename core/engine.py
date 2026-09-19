@@ -117,6 +117,25 @@ class DataEngine:
             if str(s).strip().isdigit() and len(str(s).strip()) == 6
         })
 
+    def roster_names(self) -> dict:
+        """全量 `代码 → 名称` 映射（供扫描 / 批量展示结果行用）。
+
+        ⚠ UI 不许直接碰 DatabaseManager（§9-H）—— 要名字就走这个门面。
+        花名册为空 / 读不出来 ⇒ 返回空 dict（上层按"没名字"展示，**绝不抛**）。
+        """
+        try:
+            df = self.db.load_roster()
+        except Exception:  # noqa: BLE001
+            return {}
+        if df is None or df.empty or 'symbol' not in df.columns:
+            return {}
+        out = {}
+        for _, row in df.iterrows():
+            symbol = str(row.get('symbol') or '').strip()
+            if symbol:
+                out[symbol] = str(row.get('name') or '').strip()
+        return out
+
     def confirm_coverage_gap(self, account: str, month: str):
         """用户确认某月为"有意跳过"，此后不再重复提醒"""
         self.db.add_gap(account, month)

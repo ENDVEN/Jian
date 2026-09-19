@@ -20,6 +20,8 @@
     · BacktestRunWorker   回测计算
     · ConstituentsWorker  解析指数成分股
     · FuturesImportWorker 解析期货交割单
+    · CrossSectionWorker  M2/M3 横截面扫描（§7-B1/B2 D4：分块 + 进度 + 取消 + 竞态守卫）
+    · ReadinessWorker     就绪度体检（§7-B1/B2 D6-1：只读 parquet footer，不联网不写盘）
   ⚠ 唯一的例外是 `core/updater.py` 的 UpdateCheckerThread —— 它属于 core 层
     （版本检测不是 UI 职责），不搬进 ui/。
 """
@@ -28,7 +30,10 @@ import logging
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.backtest import BacktestEngine
+from core.cross_section import ScanCancelled
 from data.market_db import DataLakeManager
+from data.readiness import ReadinessCancelled, probe_readiness
+from data.scan_store import scan_cached
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
                                short_fetch_reason)
 
@@ -231,3 +236,154 @@ class FuturesImportWorker(QThread):
             self.finished.emit(self.engine.parse_cfmmc(self.file_paths))
         except Exception as e:  # noqa: BLE001
             self.error.emit(str(e))
+
+
+class JobGuard:
+    """竞态守卫（§9-O5）：**只接受最新一次任务的结果**，迟到的旧回包一律丢弃。
+
+    页面侧两行就够：
+        self._guard = JobGuard()
+        job = self._guard.next()                     # 发起任务时取号
+        worker.finished.connect(self._on_done)
+    def _on_done(self, job_id, outcome):
+        if not self._guard.accept(job_id):           # 迟到 ⇒ 直接丢
+            return
+
+    【为什么做成公共件】"发起新任务 ⇒ 旧回包作废"在本项目至少三处需要（数据管理页的分区扫描、
+    批量下载弹窗的成分股解析、扫描页的多个动作）。各写一遍 `_token` 计数器，迟早有一处忘了比
+    ⇒ **旧结果覆盖新结果**，而且界面看起来完全正常（§11.5-11「同类防护只改一处」的正解）。
+    ⚠ 现状：`ui/dialogs/bulk_download.py` 的 `_cons_token` 是同一套判据的**手写版**，
+      **择机改用本类**（本轮不动已验证的页面，§7-G 纪律）。
+    """
+
+    def __init__(self):
+        self._latest = 0
+
+    def next(self) -> int:
+        """发起一次新任务：作废此前所有任务的回包，返回本次的 `job_id`"""
+        self._latest += 1
+        return self._latest
+
+    def accept(self, job_id) -> bool:
+        """这个回包是不是**当前最新**那次任务的？（类型容错：`"3"` 与 `3` 同等看待）"""
+        try:
+            return int(job_id) == self._latest
+        except (TypeError, ValueError):
+            return False
+
+    @property
+    def latest(self) -> int:
+        return self._latest
+
+
+class CrossSectionWorker(QThread):
+    """M2 / M3 横截面扫描（§7-B1/B2 STEP 3 · 主案 D4）—— 分块 + 进度 + 取消 + 竞态守卫。
+
+    信号：
+        progress(done, total, note)   # `total=0` 表示"还不知道总数"（读数阶段）
+        finished(job_id, outcome)     # `ScanOutcome`；**取消时为 `None`**
+        failed(job_id, reason)        # 一句话原因（异常绝不穿透线程）
+
+    · **竞态守卫（§9-O5）**：`job_id` **原样回包**，页面用 `JobGuard.accept()` 判定；
+    · **取消**：`cancel()` ⇒ 内核在**块边界**抛 `ScanCancelled` ⇒
+      **绝不落半成品矩阵**（半个矩阵的命中家数 / 广度占比全是错的，且界面上看不出来）；
+      事后可读 `worker.cancelled`；
+    · **增量路径**（`incremental=True`，M3 的「⚡ 增量到最新」，主案 D7）：
+      `scan_cached` 先找同配置旧条目做**尾段续接**（历史矩阵逐位不动）；
+      找不到 / 结构变了 ⇒ 诚实退化全量，过程说明在 `outcome.note`；
+    · **会话缓存命中时不进计算循环** —— `scan_cached` 直接返回上次的矩阵
+      （切日期 / 换统计窗口走这条 ⇒ 连进度信号都不会有）。
+
+    本线程**只做调度**：读盘、掩码、求值全在 `core/cross_section` + `data/scan_store` 里
+    （零 Qt 依赖，可被冒烟脚本直接验证）。
+    """
+
+    progress = pyqtSignal(int, int, str)
+    finished = pyqtSignal(int, object)
+    failed = pyqtSignal(int, str)
+
+    def __init__(self, job_id: int, zone_dir: str, formula: str, symbols=None, params=None,
+                 thresholds=None, asof=None, names=None, adjust: str = 'qfq',
+                 snapshot_columns=(), force: bool = False, incremental: bool = False,
+                 store=None, chunk: int = 200, parent=None):
+        super().__init__(parent)
+        self._job_id = int(job_id)
+        self._kwargs = dict(zone_dir=zone_dir, formula=formula, symbols=symbols,
+                            params=params, thresholds=thresholds, asof=asof, names=names,
+                            adjust=adjust, snapshot_columns=snapshot_columns,
+                            force=force, incremental=incremental, store=store)
+        self._chunk = max(1, int(chunk or 1))
+        self._cancel = False
+        self.cancelled = False          # 事后判读：这次是不是被用户取消掉的
+
+    def cancel(self):
+        """供 UI 的「取消」按钮调用（只置一个 bool，跨线程安全）"""
+        self._cancel = True
+
+    def _on_progress(self, done: int, total: int, note: str):
+        self.progress.emit(int(done), int(total), str(note))
+
+    def run(self):
+        try:
+            outcome = scan_cached(progress=self._on_progress,
+                                  should_stop=lambda: self._cancel,
+                                  chunk=self._chunk, **self._kwargs)
+        except ScanCancelled as e:
+            self.cancelled = True
+            logger.info(f"横截面扫描已取消 [job {self._job_id}]: {e}")
+            self.finished.emit(self._job_id, None)       # 明确"没有结果"，而不是半个矩阵
+            return
+        except Exception as e:  # noqa: BLE001 —— 异常绝不穿透 QThread
+            logger.error(f"横截面扫描异常 [job {self._job_id}]: {e}")
+            self.failed.emit(self._job_id, str(e))
+            return
+        self.finished.emit(self._job_id, outcome)
+
+
+class ReadinessWorker(QThread):
+    """就绪度体检（§7-B1/B2 D6-1 · 主案 D6）—— 扫描前回答"本地能真正拿到多少只"。
+
+    · **只读 parquet footer**（行数 + date 统计），不读数据行、不联网、不写盘
+      （实测 0.66 ms/只 ⇒ 全市场 ≈3.6 s，后台跑 + 进度）；
+    · 信号与 `CrossSectionWorker` 同款：`progress(done,total,note)` /
+      `finished(job_id, report)`（**取消 ⇒ report=None**）/ `failed(job_id, reason)`；
+    · `job_id` 原样回包，页面用 `JobGuard.accept()` 丢弃迟到回包（§9-O5）。
+    """
+
+    progress = pyqtSignal(int, int, str)
+    finished = pyqtSignal(int, object)
+    failed = pyqtSignal(int, str)
+
+    def __init__(self, job_id: int, zone_dir: str, symbols, min_bars: int = None,
+                 chunk: int = 200, parent=None):
+        super().__init__(parent)
+        self._job_id = int(job_id)
+        self._zone_dir = zone_dir
+        self._symbols = list(symbols or [])
+        self._min_bars = min_bars
+        self._chunk = max(1, int(chunk or 1))
+        self._cancel = False
+        self.cancelled = False
+
+    def cancel(self):
+        """供 UI 调用（只置一个 bool，跨线程安全）"""
+        self._cancel = True
+
+    def _on_progress(self, done: int, total: int, note: str):
+        self.progress.emit(int(done), int(total), str(note))
+
+    def run(self):
+        try:
+            report = probe_readiness(self._zone_dir, self._symbols, min_bars=self._min_bars,
+                                     progress=self._on_progress,
+                                     should_stop=lambda: self._cancel, chunk=self._chunk)
+        except ReadinessCancelled as e:
+            self.cancelled = True
+            logger.info(f"就绪度体检已取消 [job {self._job_id}]: {e}")
+            self.finished.emit(self._job_id, None)
+            return
+        except Exception as e:  # noqa: BLE001 —— 异常绝不穿透 QThread
+            logger.error(f"就绪度体检异常 [job {self._job_id}]: {e}")
+            self.failed.emit(self._job_id, str(e))
+            return
+        self.finished.emit(self._job_id, report)
