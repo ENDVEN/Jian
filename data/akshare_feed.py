@@ -397,6 +397,16 @@ class AkShareFeed:
         用的是 `INDEX_PRESETS` 的带前缀键（2026-09-20 用户实测：不规范化时三个
         候选接口全部失败，表现为"接口未返回成分股"）。
 
+        【候选顺序 = 可信度排序（v6.42，用户实测驱动）】
+        ① `index_stock_cons_csindex`（**中证指数官网**）：权威名单、给满 300/500 只，
+           带「日期」快照列 ⇒ 诚实上报"名单是哪天的"；
+        ② `index_stock_cons`（同花顺快照）：实测**缺斤短两**（沪深300→288 / 中证500→429），
+           降为兜底；③ 新浪再兜底。旧顺序把同花顺排第 1 ⇒ "有效只数比指数名义少一截"
+           的谜团根因就在这。
+
+        【返回】`symbol` 列 + `snapshot_date` 列（官网「日期」/同花顺「纳入日期」的
+        最大值；拿不到就留空串 —— 诚实，不猜）。
+
         【容错】akshare 的成分股接口历史上换过多次名字，这里按优先级逐个试，
         任一成功即返回；全部失败返回空 DF，由上层提示用户改用其它来源，
         绝不抛异常打断批量任务。
@@ -408,8 +418,8 @@ class AkShareFeed:
             return pd.DataFrame()
 
         candidates = (
-            ("index_stock_cons", {"symbol": code}),
             ("index_stock_cons_csindex", {"symbol": code}),
+            ("index_stock_cons", {"symbol": code}),
             ("index_stock_cons_sina", {"symbol": code}),
         )
         for func_name, kwargs in candidates:
@@ -420,13 +430,37 @@ class AkShareFeed:
                 df = func(**kwargs)
                 if df is None or df.empty:
                     continue
-                col = next((c for c in df.columns if "代码" in str(c)), None)
+                # ★ 选列必须精确（v6.42 回归教训）：官网 csindex 的 df 里也有「指数代码」列，
+                #   旧逻辑"第一个含'代码'的列"会命中它 ⇒ 把指数自己当成唯一成分
+                #   （用户实测：选沪深300 ⇒ "名单 1 只 · 缺 000300"）。
+                #   先按权威列名精确找，再退"含代码但不含指数"的列 —— 绝不拿指数码当名单。
+                col = next((c for c in df.columns
+                            if str(c).strip() in ("成分券代码", "品种代码", "构成代码", "代码")),
+                           None)
+                if col is None:
+                    col = next((c for c in df.columns
+                                if "代码" in str(c) and "指数" not in str(c)), None)
                 if col is None:
                     continue
                 symbols = (df[col].astype(str).str.strip()
                            .str.extract(r"(\d{6})", expand=False).dropna().unique().tolist())
                 if symbols:
-                    return pd.DataFrame({"symbol": sorted(set(symbols))})
+                    symbols = sorted(set(symbols))
+                    # 快照日期：官网「日期」/ 同花顺「纳入日期」—— 哪个列名在就用哪个
+                    snap = ""
+                    date_col = next((c for c in df.columns
+                                     if str(c).strip() in ("日期", "纳入日期")), None)
+                    if date_col is not None:
+                        try:
+                            vals = pd.to_datetime(df[date_col], errors="coerce").dropna()
+                            if len(vals):
+                                snap = str(vals.max().date())
+                        except (TypeError, ValueError):  # noqa: BLE001 —— 日期列坏不连累名单
+                            snap = ""
+                    logging.info(f"指数成分股 [{code}] 来自 {func_name}: "
+                                 f"{len(symbols)} 只，快照 {snap or '未知'}")
+                    return pd.DataFrame({"symbol": symbols,
+                                         "snapshot_date": [snap] * len(symbols)})
             except Exception as e:  # noqa: BLE001
                 logging.warning(f"指数成分股接口 {func_name} 失败 [{code}]: {e}")
         logging.error(f"指数成分股拉取失败: {code} (所有候选接口均不可用)")

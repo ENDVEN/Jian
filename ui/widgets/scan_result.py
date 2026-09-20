@@ -14,11 +14,15 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
+from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from core.cross_section import FILTERED, HIT, INSUFFICIENT, MISS, STATUS_LABELS
 
-__all__ = ['ScanResult', 'STATUS_BG', 'STATUS_FG']
+__all__ = ['ScanResult', 'STATUS_BG', 'STATUS_FG', 'MAX_TABLE_ROWS']
+
+# 表格只画前 N 行（v6.42）：全 A 四态清单 5000+ 行逐格建 item 会拖住 UI 线程；
+# 截断必须**说实话**（脚注写明共多少行），绝不静默丢行。
+MAX_TABLE_ROWS = 2000
 
 # 三态 + 被剔除 的配色（E 节：命中主色实心 / 未命中灰 / 数据不足橙；跌与警示沿用现状色板）
 STATUS_BG = {HIT: '#E8F5E9', MISS: '#F5F6F8', INSUFFICIENT: '#FFF3E0', FILTERED: '#F0F3F8'}
@@ -107,42 +111,65 @@ class ScanResult:
                 f'background:{bg}; border-radius:8px; padding:5px 10px;')
 
     # ---------- 表格 ----------
-    def _render_table(self, status: dict, detail, snapshot, names: dict) -> None:
+    def _render_table(self, status: dict, detail, snapshot, names: dict) -> int:
+        """填表并返回**总行数**（可能大于实际上屏行数 —— 截断由调用方说清）。
+
+        ⚠ 性能铁律（v6.42，用户实测"点 ◀▶ 软件卡死"的根因）：
+        列宽模式绝不许用 ResizeToContents —— 那是**动态**测宽，每 setItem 一格
+        都触发全表重新测量，5000 行 × 7 列 = 平方级复杂度直接冻死 UI 线程。
+        正确姿势：关更新 → 逐格填 → **一次性** resizeColumnsToContents → 开更新；
+        tooltip 只给"说明"列（3.8 万个 tooltip 对象是另一笔白付的开销）。"""
         p = self.page
         table: QTableWidget = p.table
         order = (HIT, MISS, INSUFFICIENT, FILTERED)
         rows = [sym for key in order for sym in sorted(status) if status[sym] == key]
-        table.setRowCount(len(rows))
-        for row, sym in enumerate(rows):
-            state = status[sym]
-            values = (snapshot or {}).get(sym) or {}
-            cells = (
-                sym,
-                str(names.get(sym) or ''),
-                _num(values.get('close')),
-                _num((values.get('amount') / 1e4) if values.get('amount') is not None else None),
-                _num((values.get('turnover') * 100.0)
-                     if values.get('turnover') is not None else None),
-                STATUS_LABELS.get(state, state),
-                (detail or {}).get(sym, ''),
-            )
-            for col, text in enumerate(cells):
-                item = QTableWidgetItem(str(text))
-                if col == 5:                      # 状态 pill
-                    item.setForeground(QColor(STATUS_FG.get(state, '#1F2430')))
-                    item.setBackground(QColor(STATUS_BG.get(state, '#FFFFFF')))
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                elif col == 6 and text:
-                    item.setForeground(QColor('#8A94A6'))
-                item.setToolTip(str(text) if text else '')
-                table.setItem(row, col, item)
+        total = len(rows)
+        shown = rows[:MAX_TABLE_ROWS]
+        header = table.horizontalHeader()
+        was_dynamic = any(
+            header.sectionResizeMode(i) == QHeaderView.ResizeMode.ResizeToContents
+            for i in range(table.columnCount()))
+        if was_dynamic:                                   # 护栏：万一有人改回去，这里兜住
+            for i in range(table.columnCount()):
+                if header.sectionResizeMode(i) == QHeaderView.ResizeMode.ResizeToContents:
+                    header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+        table.setUpdatesEnabled(False)
+        try:
+            table.setRowCount(len(shown))
+            for row, sym in enumerate(shown):
+                state = status[sym]
+                values = (snapshot or {}).get(sym) or {}
+                cells = (
+                    sym,
+                    str(names.get(sym) or ''),
+                    _num(values.get('close')),
+                    _num((values.get('amount') / 1e4) if values.get('amount') is not None else None),
+                    _num((values.get('turnover') * 100.0)
+                         if values.get('turnover') is not None else None),
+                    STATUS_LABELS.get(state, state),
+                    (detail or {}).get(sym, ''),
+                )
+                for col, text in enumerate(cells):
+                    item = QTableWidgetItem(str(text))
+                    if col == 5:                          # 状态 pill
+                        item.setForeground(QColor(STATUS_FG.get(state, '#1F2430')))
+                        item.setBackground(QColor(STATUS_BG.get(state, '#FFFFFF')))
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    elif col == 6 and text:               # 说明列才有 tooltip
+                        item.setForeground(QColor('#8A94A6'))
+                        item.setToolTip(str(text))
+                    table.setItem(row, col, item)
+            table.resizeColumnsToContents()               # 整表只测这一次
+        finally:
+            table.setUpdatesEnabled(True)
+        return total
 
     # ---------- 主入口 ----------
     def render(self, counts: dict, status: dict, detail, snapshot, names: dict,
                elapsed_ms: float, cached: bool, date_label: str, scope_label: str) -> None:
         p = self.page
         self._render_kpis(counts, elapsed_ms, cached)
-        self._render_table(status, detail, snapshot, names)
+        total = self._render_table(status, detail, snapshot, names)
         p.empty_box.hide()
         p.table.show()
         # 口径印在标题上（E 节）
@@ -151,4 +178,6 @@ class ScanResult:
             f'口径：{scope_label} · 前复权 · 粗筛后精算 · 数据不足不计入命中'
             + ('' if snapshot is not None
                else ' · 本日**只显示状态**（数值/明细以扫描基准日为准，见 D3 的缓存口径）')
+            + (f' · 仅显示前 {MAX_TABLE_ROWS} 行（共 {total} 行，缩小范围可看更多）'
+               if total > MAX_TABLE_ROWS else '')
             + ' · 双击任意一行 → 行情工作台打开该股')

@@ -14,17 +14,18 @@
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout,
-                             QHeaderView, QLabel, QLineEdit, QPushButton, QProgressBar,
-                             QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFrame,
+                             QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
+                             QProgressBar, QTableWidget, QTableWidgetItem, QTextEdit,
+                             QVBoxLayout, QWidget)
 
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, EditDrawer, EditPane,
                                        FLAT_QSS, number_spin)
 from ui.widgets.custom_widgets import (CHIP_QSS_OFF, CHIP_QSS_ON, COMBO_QSS,
-                                       NoWheelComboBox, TAB_QSS_OFF, TAB_QSS_ON,
+                                       NoWheelComboBox, NoWheelDateEdit,
+                                       TAB_QSS_OFF, TAB_QSS_ON, date_edit_qss,
                                        hint_icon, mini_label)
 from ui.widgets.scan_result import STATUS_BG, STATUS_FG
 
@@ -42,6 +43,10 @@ TABLE_COLUMNS = ('代码', '名称', '收盘', '成交额(万)', '换手率%', '
 KPI_KEYS = ('hit', 'miss', 'insufficient', 'filtered', 'valid', 'elapsed')
 
 DAY_HINT = '◀ ▷ 在扫描结果的交易日轴上移动；切日期**零成本**（读的是缓存矩阵，不重算）'
+
+# 基准日可选的硬下限（再早的日期本地也没有日线，给了也扫不出东西；
+# 上限由就绪度体检回传的「本地最新交易日」动态收紧，见 readiness_flow）
+ASOF_MIN_YEAR = 2010
 
 
 def _chip(text: str, tooltip: str = '') -> QPushButton:
@@ -208,6 +213,21 @@ class ScanLayout:
         lay.addStretch()
 
         lay.addWidget(mini_label('基准日'))
+        # —— 先选后扫（用户 2026-09-21 拍板）：日期必须**扫描前就能自由选**
+        #   （日历弹窗 + 直接键入），不能只靠 ◀▶ 在结果轴上挪；默认落在本地最新
+        #   交易日（就绪度体检回包后自动校准，见 readiness_flow）。
+        p.date_asof = NoWheelDateEdit()
+        p.date_asof.setCalendarPopup(True)
+        p.date_asof.setDisplayFormat('yyyy-MM-dd')
+        p.date_asof.setMinimumDate(QDate(ASOF_MIN_YEAR, 1, 1))
+        p.date_asof.setMaximumDate(QDate.currentDate())
+        p.date_asof.setDate(QDate.currentDate())
+        p.date_asof.setStyleSheet(date_edit_qss())
+        p.date_asof.setToolTip('先选日期再点「▶ 开始扫描」——扫描就按这一天取截面；\n'
+                               '选到周末/节假日会**就近落到最近的交易日**（回执会说明）。\n'
+                               '扫完后也可以改：切日期读的是缓存矩阵，零成本不重算。')
+        lay.addWidget(p.date_asof)
+
         p.btn_prev_day = QPushButton('◀')
         p.btn_next_day = QPushButton('▶')
         p.btn_latest_day = QPushButton('最新')
@@ -319,10 +339,13 @@ class ScanLayout:
         p.table.setAlternatingRowColors(True)
         p.table.verticalHeader().setVisible(False)
         header = p.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        # ⚠ 列宽模式用 Interactive（可手动拖）而**不是 ResizeToContents**：后者是动态测宽，
+        #   每插一格都全表重测 —— 全 A 5000+ 行直接把 UI 线程冻死（v6.42 卡死根因）。
+        #   宽度由 `scan_result._render_table` 填完数据后**一次性** resizeColumnsToContents 算出。
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for col in range(2, len(TABLE_COLUMNS)):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         p.table.setStyleSheet(
             "QTableWidget { gridline-color:#EEF1F5; font-size:12px; }"
             "QHeaderView::section { background:#F7F9FC; border:none;"

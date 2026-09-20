@@ -20,7 +20,9 @@ from PyQt6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
 
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import CARD_QSS, ClickCatcher, EditDrawer, EditPane, FLAT_QSS
-from ui.widgets.breadth_chart import BreadthChart
+from ui.widgets.breadth_chart import (CHART_TYPES, DEFAULT_CHART_TYPE,
+                                      DEFAULT_INDEX_STYLE, INDEX_STYLES,
+                                      BreadthChart)
 from ui.widgets.custom_widgets import (CHIP_QSS_ON, COMBO_QSS,
                                        NoWheelComboBox, hint_icon, mini_label)
 from ui.widgets.scan_layout import ScanFilterPane, ScanFormulaPane
@@ -65,7 +67,24 @@ class BreadthDisplayPane(EditPane):
     def __init__(self, parent=None):
         super().__init__('display', '📈 平滑与展示（这条线怎么画）', '#2E7D32', '📈 展示', parent)
 
-        self.chk_smooth = QCheckBox('叠加 MA5 平滑（橙色虚线）')
+        # —— 视觉方案（用户 2026-09-21 拍板：柱状/折线都要有，默认柱状+趋势线）——
+        style_row = QHBoxLayout()
+        style_row.setSpacing(6)
+        style_row.addWidget(mini_label('图形'))
+        self.cb_chart = NoWheelComboBox()
+        for key, label in CHART_TYPES:
+            self.cb_chart.addItem(label, key)
+        idx = [k for k, _ in CHART_TYPES].index(DEFAULT_CHART_TYPE)
+        self.cb_chart.setCurrentIndex(idx)
+        self.cb_chart.setStyleSheet(COMBO_QSS)
+        self.cb_chart.setToolTip('柱状 = 每日家数一根柱（整数计数天然该用柱子读），叠 MA5 实线看趋势；\n'
+                                 '折线 = 原始折线 + 浅面积填充，MA5 橙色虚线。\n'
+                                 '只换画法，数据一个字节都不动。')
+        style_row.addWidget(self.cb_chart, 1)
+        style_row.addStretch()
+        self.body_lay.addLayout(style_row)
+
+        self.chk_smooth = QCheckBox('叠加 MA5 平滑（柱状态为主线 / 折线态为橙虚线）')
         self.chk_smooth.setToolTip('对广度序列做 5 日滚动平均，看趋势不看单日抖动')
         self.chk_ratio = QCheckBox('改用「占比 %」（家数 ÷ 有效样本）')
         self.chk_ratio.setToolTip('占比的分母 = **有效样本**（命中 + 未命中），不是全市场只数'
@@ -91,6 +110,23 @@ class BreadthDisplayPane(EditPane):
         row.addWidget(hint_icon('指数日线来自数据湖 index_daily 分区；缺数据会自动补拉一次，'
                                 '失败时副图留空并出声，主图广度不受影响。'))
         self.body_lay.addLayout(row)
+
+        # —— 指数图形（用户 2026-09-21 拍板：不止折线，K线/美国线都要有）——
+        istyle_row = QHBoxLayout()
+        istyle_row.setSpacing(6)
+        istyle_row.addWidget(mini_label('指数图形'))
+        self.cb_index_style = NoWheelComboBox()
+        for key, label in INDEX_STYLES:
+            self.cb_index_style.addItem(label, key)
+        self.cb_index_style.setCurrentIndex(
+            [k for k, _ in INDEX_STYLES].index(DEFAULT_INDEX_STYLE))
+        self.cb_index_style.setStyleSheet(COMBO_QSS)
+        self.cb_index_style.setToolTip('只换副图的画法，数据不动。\n'
+                                       'K 线 / 美国线需要本地指数有开高低列；缺列自动退回折线（不画假四价）。\n'
+                                       '想看大一点的指数图：按住两图之间的分界线往下拖，双击分界线恢复默认。')
+        istyle_row.addWidget(self.cb_index_style, 1)
+        istyle_row.addStretch()
+        self.body_lay.addLayout(istyle_row)
 
 
 # ==========================================

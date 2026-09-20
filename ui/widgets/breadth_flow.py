@@ -30,8 +30,10 @@ from data.market_db import DataLakeManager
 from data.scan_store import kline_zone_dir
 from data.sync_service import ZONE_INDEX
 from data.watchlist_store import WatchlistStore
+from ui.widgets.breadth_chart import DEFAULT_CHART_TYPE, DEFAULT_INDEX_STYLE
 from ui.widgets.breadth_layout import DEFAULT_INDEX_CODE, DEFAULT_RANGE, RANGE_PRESETS
-from ui.widgets.readiness_flow import constituent_failure_text
+from ui.widgets.readiness_flow import (constituent_failure_text,
+                                       constituent_snapshot_text)
 from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard, SingleSyncWorker
 
 __all__ = ['BreadthFlow', 'BREADTH_UI_KEY']
@@ -67,6 +69,8 @@ class BreadthFlow:
         p._display_pane.chk_ratio.toggled.connect(self.on_display_changed)
         p._display_pane.chk_overlay.toggled.connect(self.on_display_changed)
         p._display_pane.cb_overlay_code.currentIndexChanged.connect(self.on_overlay_code_changed)
+        p._display_pane.cb_chart.currentIndexChanged.connect(self.on_display_changed)
+        p._display_pane.cb_index_style.currentIndexChanged.connect(self.on_display_changed)
 
     # ==========================================
     # 范围（自选 / 指数成分 / 全 A）—— 与 M2 同一套语义
@@ -86,6 +90,7 @@ class BreadthFlow:
         p._names = {}
         choice = p.cb_scope.currentIndex()
         if choice == 0:                                   # 我的自选
+            p._cons_meta = None                           # 非成分股范围 ⇒ 无快照语义
             p._symbols = list(WatchlistStore().symbols())
             p._names = dict(WatchlistStore().names_map())
             if not p._symbols:
@@ -108,6 +113,7 @@ class BreadthFlow:
             p._cons_worker.start()
             return
         else:                                             # 全 A 花名册
+            p._cons_meta = None
             p._symbols = list(p.main_win.engine.list_stock_symbols())
             p._names = dict(p.main_win.engine.roster_names())
             if not p._symbols:
@@ -137,14 +143,20 @@ class BreadthFlow:
             p.lbl_receipt.setToolTip(friendly)
             return
         p._symbols = [str(s) for s in (payload.get('symbols') or [])]
+        # ★ 快照元信息（v6.42，与 M2 同款）：记住"名单是哪天的"，区间更早时出声
+        p._cons_meta = {'name': str(p.cb_index.currentText()),
+                        'count': len(p._symbols),
+                        'snapshot_date': str(payload.get('snapshot_date') or '')}
+        snap_line = constituent_snapshot_text(p.cb_index.currentText(), payload)
         # ★ 名称映射必须在这里补齐（v6.41 修复，与 scan_flow 同款）：漏了它 ⇒ 「剔除 ST」
         #   在广度统计里整轮失效（ST 股会被算进家数）。
         _roster = p.main_win.engine.roster_names()
         p._names = {sym: str(_roster.get(sym) or '') for sym in p._symbols}
         p.lbl_scope.setText(f'{len(p._symbols)} 只')
+        p.lbl_scope.setToolTip(snap_line)
         self._refresh_chips()
         p._result.set_empty(
-            f'名单就绪（{len(p._symbols)} 只，{p.cb_index.currentText()}）'
+            f'名单就绪（{p.cb_index.currentText()} · {snap_line}）'
             f'—— 正在体检本地数据就绪度…')
         p._readiness.start(p._symbols,
                            min_bars=p._filter_pane.to_thresholds().min_bars)
@@ -166,13 +178,18 @@ class BreadthFlow:
 
         pane = p._display_pane
         parts = []
+        chart_label = str(pane.cb_chart.currentText()).split('（')[0].strip()
+        parts.append(chart_label or '柱状')
         if pane.chk_smooth.isChecked():
             parts.append('MA5')
         if pane.chk_ratio.isChecked():
             parts.append('占比%')
         if pane.chk_overlay.isChecked():
             parts.append(str(pane.cb_overlay_code.currentText()).split(' ')[0])
-        p.chip_display.setText('📈 展示 ' + ('·'.join(parts) if parts else '家数'))
+            style_text = str(pane.cb_index_style.currentText() or '')
+            if style_text and str(pane.cb_index_style.currentData()) != 'line':
+                parts[-1] = parts[-1] + style_text   # 如「中证500K线」（默认折线不占字）
+        p.chip_display.setText('📈 展示 ' + '·'.join(parts))
 
     # ==========================================
     # 扫描（后台线程 + 竞态守卫 + 进度回执）
@@ -290,6 +307,14 @@ class BreadthFlow:
         warns = list(getattr(outcome.result, 'warnings', None) or [])
         if warns and not outcome.cached:
             text += ' · ⚠ ' + warns[0] + ('' if len(warns) == 1 else f'（等 {len(warns)} 条）')
+        # ★ 幸存者偏差提示（v6.42，与 M2 同款）：区间起点早于成分快照 ⇒ 名单不是那时的
+        meta = getattr(p, '_cons_meta', None)
+        if (meta and p.cb_scope.currentIndex() == 1 and meta.get('snapshot_date')
+                and outcome.result.dates is not None and len(outcome.result.dates)
+                and pd.Timestamp(outcome.result.dates[0])
+                < pd.Timestamp(meta['snapshot_date'])):
+            text += (f' · ⚠ 成分是 {meta["snapshot_date"]} 的当前名单，'
+                     f'区间更早 ⇒ 幸存者偏差（非时点名单）')
         p.lbl_receipt.setText(text)
         p.lbl_receipt.setToolTip(
             ('\n'.join(filter(None, [outcome.note or '',
@@ -344,8 +369,10 @@ class BreadthFlow:
             return
         full = outcome.breadth_frame()
         if full.empty:
-            p._result.set_empty('这次扫描没有产出任何广度数据 —— 检查统计范围内是否有可用日线。',
-                                '重新扫描', self.on_run_clicked)
+            p._result.set_empty(
+                '这次扫描没有产出任何广度数据 —— 范围内标的本地没有日线文件是首要原因'
+                '（看上方回执的 ⚠ 提示），先「⬇ 补齐缺失」再扫。',
+                '重新扫描', self.on_run_clicked)
             return
         offset = _RANGE_OFFSET.get(p._range_key)
         frame = full if offset is None else full[full.index >= full.index[-1] - offset]
@@ -364,7 +391,10 @@ class BreadthFlow:
         painted = p.chart.render(
             frame, index_df, index_label=index_label,
             smooth=p._display_pane.chk_smooth.isChecked(),
-            ratio=p._display_pane.chk_ratio.isChecked())
+            ratio=p._display_pane.chk_ratio.isChecked(),
+            chart_type=str(p._display_pane.cb_chart.currentData() or DEFAULT_CHART_TYPE),
+            index_style=str(p._display_pane.cb_index_style.currentData()
+                            or DEFAULT_INDEX_STYLE))
         if painted:
             p.chart.show()
             p.empty_box.hide()

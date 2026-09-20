@@ -451,6 +451,45 @@ class CandlestickItem(pg.GraphicsObject):
         return QtCore.QRectF(self.picture.boundingRect())
 
 
+class OhlcBarItem(pg.GraphicsObject):
+    """美国线（OHLC bar）：竖线 = 高低，左横 tick = 开，右横 tick = 收。
+
+    ★ 与 `CandlestickItem` **同一数据格式** `(t, open, close, min, max)`、同一套涨绿跌红
+    色板（settings.COLOR_PROFIT/LOSS）—— 两者只是"实体柱 vs 四价横线"的画法差异，
+    调用方可直接互换（M3 指数副图的可选视觉之一）。同样遵守 Pokorny 三原则：
+    抗锯齿、无额外描边、单色高对比；画笔循环外一次创建（同 K 线的性能教训）。
+    """
+
+    def __init__(self, data):
+        pg.GraphicsObject.__init__(self)
+        self.data = data
+        self.generatePicture()
+
+    def generatePicture(self):
+        self.picture = QtGui.QPicture()
+        p = QtGui.QPainter(self.picture)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        w = 0.3
+        if len(self.data) > 1:
+            w = (self.data[1][0] - self.data[0][0]) * 0.3
+        pens = {True: pg.mkPen(settings.COLOR_PROFIT, width=1.2),
+                False: pg.mkPen(settings.COLOR_LOSS, width=1.2)}
+        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        for (t, open_p, close_p, min_p, max_p) in self.data:
+            pen = pens[close_p >= open_p]
+            p.setPen(pen)
+            p.drawLine(QtCore.QPointF(t, min_p), QtCore.QPointF(t, max_p))     # 高低竖线
+            p.drawLine(QtCore.QPointF(t - w, open_p), QtCore.QPointF(t, open_p))   # 左=开
+            p.drawLine(QtCore.QPointF(t, close_p), QtCore.QPointF(t + w, close_p))  # 右=收
+        p.end()
+
+    def paint(self, p, *args):
+        p.drawPicture(0, 0, self.picture)
+
+    def boundingRect(self):
+        return QtCore.QRectF(self.picture.boundingRect())
+
+
 # ==========================================
 # 自动换行布局（§7-B8 · 分组胶囊数量不定，必须能换行）
 # ==========================================

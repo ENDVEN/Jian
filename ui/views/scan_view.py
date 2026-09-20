@@ -41,7 +41,9 @@ class ScanView(QWidget):
         self._thresholds = ScanThresholds()          # 粗筛阈值（唯一真源 = 抽屉里的控件）
         self._symbols: list = []
         self._names: dict = {}
+        self._cons_meta = None                         # 成分股快照元信息 {name,count,snapshot_date}（非成分范围 = None）
         self._asof = None                            # 当前查看的基准日（None = 最新）
+        self._date_touched = False                   # 用户动过基准日控件 ⇒ 体检回包不再改默认值
         self._outcome = None                         # ScanOutcome（含缓存矩阵）
         self._guard = JobGuard()                     # 竞态守卫（§9-O5）
         self._worker = None                          # CrossSectionWorker

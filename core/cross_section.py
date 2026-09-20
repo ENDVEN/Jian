@@ -474,6 +474,7 @@ class CrossSectionResult:
     dates: pd.DatetimeIndex | None = None           # 交易日轴（广度 / 矩阵用）
     counters: np.ndarray | None = None              # (交易日, 4) 逐日四态家数
     symbols: list = field(default_factory=list)     # 矩阵行序（= keep_matrix 时的行标）
+    missing_files: list = field(default_factory=list)   # 请求了但**本地没有日线文件**的标的
     status_matrix: np.ndarray | None = None         # (标的, 交易日) uint8 状态码
     warnings: list = field(default_factory=list)
     elapsed_ms: float = 0.0
@@ -500,7 +501,12 @@ class CrossSectionResult:
         if idx >= len(self.dates) or self.dates[idx] != stamp:
             return {}
         column = self.status_matrix[:, idx]
-        return {sym: _CODE_STATUS[int(code)] for sym, code in zip(self.symbols, column)}
+        out = {sym: _CODE_STATUS[int(code)] for sym, code in zip(self.symbols, column)}
+        # 本地没文件的标的：每一天都是「数据不足」（与 scan() 当日口径同源，
+        # 否则"扫描时 429 只、切日期后变 27 只"这种数字跳变会让用户以为软件坏了）
+        for sym in self.missing_files:
+            out[sym] = INSUFFICIENT
+        return out
 
     def counts_on(self, date) -> dict:
         """某一天的横截面四态计数 —— **缓存命中时用它**（不必重扫），口径与 `scan` 同源。"""
@@ -532,13 +538,17 @@ class CrossSectionResult:
 def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresholds = None,
          asof=None, names: dict = None, signal_name: str = None, snapshot_columns=(),
          breadth: bool = True, keep_matrix: bool = False,
-         progress=None, should_stop=None, chunk: int = DEFAULT_CHUNK) -> CrossSectionResult:
+         progress=None, should_stop=None, chunk: int = DEFAULT_CHUNK,
+         missing=None) -> CrossSectionResult:
     """跑一次扫描：**一个引擎，两种视图**（§7-B1/B2 C 节）。
 
     :param groups: `{标的: 日线 df}`（`read_daily` 的产出）
     :param formula: 筛选条件（**最后一条变量语句**就是判定变量；也可用 `signal_name` 指定）
     :param names: `{标的: 名称}`，供"剔除 ST/退市"用；**不传则该项不生效并给出 warning**（不静默）
-    :param asof: 横截面基准日（None ⇒ 全体最新交易日）
+    :param asof: 横截面基准日（None ⇒ 全体最新交易日；轴外的日子**就近落位**并出声）
+    :param missing: 请求了但**本地没有日线文件**的标的名单（v6.42）—— 绝不静默丢弃：
+        每一天都记「数据不足」并进 `counts.total` 与 warnings（用户实测：名单 429 只
+        却只扫出 27 只，界面上完全看不出为什么 —— 这就是静默丢标的的罪）
     :param breadth: 是否累计逐日家数（M3）；`keep_matrix` 也会点亮它
     :param progress: `f(done, total, note)` —— **每 `chunk` 只**报一次（供后台线程发进度信号）
     :param should_stop: `f() -> bool` —— **块边界**轮询；为真则抛 `ScanCancelled`
@@ -572,10 +582,27 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
         clean = prepare_frame(frame)
         if not clean.empty:
             prepared[str(sym)] = clean
+    # 本地没文件的标的（v6.42）：不静默丢弃 —— 每一天都记「数据不足」，
+    # 并进总数与 warnings（矩阵里没有它们的行 ⇒ 广度/切片时由 missing_files 兼容层补上）
+    missing_syms = [str(s) for s in (missing or []) if str(s) not in prepared]
     if not prepared:
-        return CrossSectionResult(formula=formula, signal_name=sig_key, thresholds=th,
-                                  warnings=warnings + ['没有任何可用标的（读数为空）'],
-                                  elapsed_ms=(time.perf_counter() - t0) * 1000)
+        # ★ 整份名单都没有本地文件时也不能回"空结果"（v6.42 用户实测：扫描返回全空白，
+        #   什么解释都没有）—— 逐只记「数据不足」+ 出声，让界面永远有东西可看。
+        no_file = {s: INSUFFICIENT for s in missing_syms}
+        det = {s: '本地没有日线文件（未下载）—— 用结果区的「⬇ 补齐缺失」可一键下载'
+                  for s in missing_syms}
+        w = list(warnings)
+        if missing_syms:
+            w.append(f'{len(missing_syms)} 只标的本地没有日线文件（已记「数据不足」，'
+                     f'可「⬇ 补齐缺失」后再扫）')
+        else:
+            w.append('没有任何可用标的（读数为空）')
+        return CrossSectionResult(
+            formula=formula, signal_name=sig_key, thresholds=th,
+            status=no_file, detail=det,
+            counts=tally_status(no_file, total=len(missing_syms)),
+            missing_files=missing_syms, warnings=w,
+            elapsed_ms=(time.perf_counter() - t0) * 1000)
 
     # ---- 基准日 ----
     if asof is None:
@@ -594,6 +621,17 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
         axis_np = dates.to_numpy()
         n_axis = len(dates)
         counters = np.zeros((n_axis, 4), dtype=np.int64)
+
+        # ---- 基准日**就近落位**（v6.42）：用户选到周末/节假日/本地没有数据的一天，
+        #      不该让整轮扫描"全市场数据不足"地空跑 —— 用最近的交易日并**出声**
+        #      （warnings 已有 UI 出口）。轴上的日子（含 asof=None 取的最新日）原样不动。
+        idx = int(dates.searchsorted(asof))
+        if idx >= len(dates) or dates[idx] != asof:
+            cand = [c for c in (idx - 1, idx) if 0 <= c < len(dates)]
+            near = min(cand, key=lambda c: abs((dates[c] - asof).days))   # 平手取前一日
+            warnings.append(f'基准日 {asof.date()} 不在交易日轴上，已就近落到 '
+                            f'{dates[near].date()}（周末/节假日/本地无数据）')
+            asof = dates[near]
 
     symbols = sorted(prepared)
     total = len(symbols)
@@ -674,12 +712,20 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
     if failed:
         warnings.append(f'{len(failed)} 只标的求值失败（已记「数据不足」）：'
                         + '；'.join(failed[:3]) + ('…' if len(failed) > 3 else ''))
+    for sym in missing_syms:
+        status[sym] = INSUFFICIENT
+        detail[sym] = '本地没有日线文件（未下载）—— 用结果区的「⬇ 补齐缺失」可一键下载'
+    if missing_syms:
+        warnings.append(f'{len(missing_syms)} 只标的本地没有日线文件（已记「数据不足」，'
+                        f'有效样本只来自有文件的 {total} 只；可「⬇ 补齐缺失」后再扫）')
 
-    counts = tally_status(status, total=len(symbols))
+    counts = tally_status(status, total=total + len(missing_syms))
     return CrossSectionResult(
         asof=asof, formula=formula, signal_name=sig_key, thresholds=th,
         status=status, detail=detail, snapshot=snapshot, counts=counts,
-        dates=dates, counters=counters, symbols=symbols, status_matrix=status_matrix,
+        dates=dates, counters=counters, symbols=symbols,
+        missing_files=missing_syms,
+        status_matrix=status_matrix,
         warnings=warnings, elapsed_ms=(time.perf_counter() - t0) * 1000,
     )
 
@@ -705,6 +751,11 @@ def scan_lake(lake_dir: str, formula: str, symbols=None, params: dict = None,
     groups = read_daily(lake_dir, symbols=symbols, columns=columns)
     if should_stop is not None and should_stop():
         raise ScanCancelled('已取消（读数阶段）')
+    # 按文件读时，本地没文件的标的会被 `read_daily` 静默跳过 ——
+    # 这里把差集算出来交给 `scan()` 记「数据不足」（v6.42：绝不静默丢标的）
+    missing = ([str(s) for s in symbols if str(s) not in groups]
+               if symbols is not None else [])
     return scan(groups, formula, params=params, thresholds=th, asof=asof, names=names,
                 signal_name=signal_name, snapshot_columns=snapshot_columns,
+                missing=missing,
                 progress=progress, should_stop=should_stop, chunk=chunk, **kwargs)

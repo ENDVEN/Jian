@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import logging
 
+import pandas as pd
+from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import QMessageBox
 
 from data.readiness import ReadinessReport
@@ -30,7 +32,7 @@ from data.scan_store import kline_zone_dir
 from data.sync_service import ZONE_KLINE, friendly_constituent_message
 from ui.workers import JobGuard, ReadinessWorker, SyncWorker
 
-__all__ = ['ReadinessFlow', 'constituent_failure_text']
+__all__ = ['ReadinessFlow', 'constituent_failure_text', 'constituent_snapshot_text']
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,28 @@ CONFIRM_FILL_COUNT = 50
 def constituent_failure_text(index_code: str, payload: dict) -> str:
     """成分股解析失败的**人话诊断**（唯一出口，两页共用 —— 别再裸甩接口原始 message）。"""
     return friendly_constituent_message(index_code, payload)
+
+
+def constituent_snapshot_text(index_name: str, payload: dict) -> str:
+    """成分股名单解析成功的**诚实一行**（v6.42，两页共用）：
+
+    ① 快照日期 —— 成分股每个季度调换，用户必须知道名单是哪天的；
+    ② 名义只数核对 —— 指数名里的数字（沪深300→300）就是名义数；来源回少了
+       （旧接口实测 288/429）必须当场说出来，不能让用户拿"缺了 12 只的 300"当全的用。
+    名字里没有数字（如"上证180"之外的"创业板指"）⇒ 不做猜测，只报快照。"""
+    import re
+
+    count = int((payload or {}).get('count') or len((payload or {}).get('symbols') or []))
+    snap = str((payload or {}).get('snapshot_date') or '')
+    parts = [f'{count} 只']
+    parts.append(f'名单快照 {snap}' if snap else '名单快照日期未知')
+    m = re.search(r'(\d{2,5})', str(index_name or ''))
+    if m and count:
+        expected = int(m.group(1))
+        if expected > count:
+            parts.append(f'⚠ 来源只给了 {count}/{expected} 只'
+                         f'（缺的 {expected - count} 只在数据源名单里就没有，不是软件丢的）')
+    return ' · '.join(parts)
 
 
 class ReadinessFlow:
@@ -95,7 +119,11 @@ class ReadinessFlow:
         if self._current_scope_changed(scope):
             return          # 旧范围的体检进度 —— 范围已切换，闭嘴
         if p._outcome is not None:
-            return          # 已有扫描结果 ⇒ 回执区属于扫描（体检进度不得覆盖扫描回执）
+            # 已有扫描结果 ⇒ 回执区属于扫描；但占位文案里的"正在体检"要跟着动，
+            # 否则用户盯着一句永远不完成的"正在体检…"以为软件卡死（v6.42）
+            if '正在体检' in p.lbl_empty.text():
+                p.lbl_empty.setText(f'正在体检本地数据就绪度… {done}/{total}')
+            return
         p.lbl_receipt.setText(f'体检 {done}/{total} · {note}')
 
     def _on_probed(self, job_id: int, report, scope: list) -> None:
@@ -109,13 +137,14 @@ class ReadinessFlow:
         if self._current_scope_changed(scope):
             return
         self.report = report
-        if self._busy_elsewhere() or p._outcome is not None:
-            return          # 扫描进行中 / 已有扫描结果 ⇒ 回执区属于扫描，体检不得覆盖
+        self._calibrate_asof_date(report)               # 基准日默认值 = 本地最新交易日（v6.42）
+        if self._busy_elsewhere():
+            return          # 扫描/补齐进行中 ⇒ 回执区属于它们，体检不许打扰
         line = report.summary_line()
-        p.lbl_receipt.setText(line)
-        p.lbl_receipt.setToolTip(report.detail_text())
-        if p._outcome is None:                # 还没有扫描结果 ⇒ 空态给下一步动作
-            if report.gap_count or report.unreadable:
+        if p._outcome is None:
+            p.lbl_receipt.setText(line)
+            p.lbl_receipt.setToolTip(report.detail_text())
+            if report.gap_count or report.unreadable:   # 空态给下一步动作
                 action = (f'⬇ 补齐缺失（{report.gap_count} 只）' if report.gap_count else '')
                 p._result.set_empty(line + '\n' + report.gap_preview()
                                     + ('' if report.gap_count
@@ -123,6 +152,35 @@ class ReadinessFlow:
                                     action, self.fill_missing if action else None)
             else:
                 p._result.set_empty(line + ' —— 点「▶ 开始扫描」。')
+        elif '正在体检' in p.lbl_empty.text():
+            # ★ v6.42：已有扫描结果 ⇒ 回执不动，但"正在体检"的占位必须换掉 ——
+            #   旧版在这里直接 return，占位文案永远停在那里，用户以为体检了 3 分钟没完成
+            #   （实际早就完了，只是没人把真话挂上去）。表格在场时这段不可见，但下次露出
+            #   （切范围/清空结果）时它必须说实话。
+            p.lbl_empty.setText(f'就绪度体检：{line}')
+            p.lbl_empty.setToolTip(report.detail_text())
+
+    def _calibrate_asof_date(self, report) -> None:
+        """把 M2 的基准日控件校准到**本地最新交易日**（先选后扫的"默认值"环节）。
+
+        只在用户**没动过控件**时生效（不覆盖用户意图）；M3 页没有 date_asof，自然跳过。
+        上限也一起收紧：本地没有的 future 日子选了就扫不出东西，不如不给选。"""
+        p = self.page
+        edit = getattr(p, 'date_asof', None)
+        if edit is None or getattr(p, '_date_touched', False):
+            return
+        latest = getattr(report, 'latest', None)
+        if latest is None:
+            return
+        qd = QDate.fromString(str(pd.Timestamp(latest).date()), 'yyyy-MM-dd')
+        if not qd.isValid():
+            return
+        edit.blockSignals(True)
+        try:
+            edit.setMaximumDate(qd)
+            edit.setDate(qd)
+        finally:
+            edit.blockSignals(False)
 
     def _on_probe_failed(self, job_id: int, reason: str, scope: list) -> None:
         if not self._guard.accept(job_id) or self._current_scope_changed(scope):

@@ -1463,6 +1463,8 @@ try:
 
     host = ChartHost(bottom_axis_mode='no_values', crosshair=True)
     host.resize(640, 420)
+    host.move(200, 200)          # 钉死窗口位置：offscreen 下 viewport 尺寸会随窗口落点 ±1px 漂移，
+                                 # 而 vline 的鼠标命中容差就是 1px 级（"时灵时不灵"的根源，v6.42 实锤）
     host.show()
     app.processEvents()
     annot_store = AnnotationStore(str(tmp / "annotations.json"))
@@ -1795,8 +1797,9 @@ try:
 
         ⚠ 坐标一律用**图元自己的映射**（`mapToScene`），不要自己拿 `view_box` 反算 ——
         后者在"布局还没落定/视图被别处改过"时会差几像素，1px 宽的线就点不中了（实测踩过）。
-        ⚠ 无限直线的包围盒中心**可能在窗口外**（实测 vline 因此时灵时不灵）：
-        竖线取"窗口中线那一行"、横线取"窗口中线那一列"（整条线都在这两个方向上贯穿）。
+        ⚠ **handle 也可能在视图上下边缘**（vline 的拖点贴顶/底，1px 舍入就飘出绘图区 ——
+        v6.42 实锤的 flaky 根源）：贯穿型图元（InfiniteLine）的垂直坐标一律拉回
+        主 viewbox 中心 —— 线上任何一点都能拖，取中线永远命中。
         """
         if graphic.__class__.__name__ == "_RegionBand":
             graphic = graphic.lines[0]
@@ -1804,7 +1807,14 @@ try:
         if handles:
             positions = [p for _h, p in handles()]
             if positions:
-                return pg.QtCore.QPoint(int(positions[0].x()), int(positions[0].y()))
+                p0 = positions[0]
+                if hasattr(graphic, "value") and getattr(graphic, "angle", None) is not None:
+                    vb_c = host._glw.mapFromScene(vb.sceneBoundingRect().center())
+                    if abs(getattr(graphic, "angle", 1)) == 90:      # 竖线：y 取中线
+                        return pg.QtCore.QPoint(round(p0.x()), round(vb_c.y()))
+                    if getattr(graphic, "angle", 1) == 0:            # 横线：x 取中线
+                        return pg.QtCore.QPoint(round(vb_c.x()), round(p0.y()))
+                return pg.QtCore.QPoint(round(p0.x()), round(p0.y()))
         rect = host._glw.viewport().rect()
         if hasattr(graphic, "value"):                    # InfiniteLine
             vertical = abs(getattr(graphic, "angle", 0)) == 90
@@ -1812,8 +1822,12 @@ try:
             probe = (pg.QtCore.QPointF(graphic.value(), (vy0 + vy1) / 2.0) if vertical
                      else pg.QtCore.QPointF((vx0 + vx1) / 2.0, graphic.value()))
             pt = graphic.mapToScene(probe)
-            point = (pg.QtCore.QPoint(int(pt.x()), rect.center().y()) if vertical
-                     else pg.QtCore.QPoint(rect.center().x(), int(pt.y())))
+            # ⚠ 垂直方向取**主 viewbox 中心的视口坐标**（必定在绘图区内、线上），
+            #   旧版用 viewport().center() —— 窗口位置一变就踩到 1px 命中容差边缘（v6.42）；
+            #   坐标用 round 而非 int 截断。
+            vb_c = host._glw.mapFromScene(vb.sceneBoundingRect().center())
+            point = (pg.QtCore.QPoint(round(pt.x()), round(vb_c.y())) if vertical
+                     else pg.QtCore.QPoint(round(vb_c.x()), round(pt.y())))
             if rect.contains(point):
                 return point
         pt = graphic.mapToScene(graphic.boundingRect().center())
@@ -2876,6 +2890,42 @@ try:
     check("⑤ 不在交易日轴上的日期 ⇒ 返回空（不许糊一个「最接近」的结果给用户）",
           _cache.status_on('2001-01-01') == {})
 
+    # ---------- 基准日**就近落位**（v6.42 · 先选后扫：轴外日子不整轮空跑）----------
+    _noon = _days[279] + pd.Timedelta(hours=12)          # 午中 ⇒ 永远不在轴上（轴是午夜）
+    _snap = _cs.scan(_groups, _FORMULA, asof=_noon)
+    check("★ 轴外基准日 ⇒ 就近落到最近交易日（平手取前一日），命中照常判（不空跑）",
+          _snap.asof == _days[279] and _snap.status['UP'] == _cs.HIT)
+    check("★ 落位必须**出声**（warnings 有 UI 出口：回执会写「已就近落到 …」，不静默换日子）",
+          any('就近' in _w for _w in _snap.warnings))
+    _future = _cs.scan(_groups, _FORMULA, asof=_days[-1] + pd.Timedelta(days=7))
+    check("★ 选到比本地数据还新的日子 ⇒ 落到**轴尾交易日**（数据没有的就是没有，但不空跑）",
+          _future.asof == _days[-1] and any('就近' in _w for _w in _future.warnings))
+
+    # ---------- 本地没文件的标的（v6.42："名单 429 → 只扫 27"静默丢标的的根治）----------
+    _missk = _cs.scan(_groups, _FORMULA, asof=_asof, keep_matrix=True,
+                      missing=['ZZZ1', 'ZZZ2'])
+    check("★ 本地无文件的标的 ⇒ 记「数据不足」并**进总数**（总数 = 有文件 + 没文件，不静默丢）",
+          _missk.counts['total'] == len(_groups) + 2
+          and _missk.status['ZZZ1'] == _cs.INSUFFICIENT
+          and '没有日线文件' in _missk.detail['ZZZ1'])
+    check("★ 缺文件必须**出声**（warnings → 回执：有效样本只来自有文件的 N 只）",
+          any('没有日线文件' in _w for _w in _missk.warnings))
+    check("★ 缓存切片与扫描同口径：status_on 也含无文件标的（切日期数字不跳变）",
+          _missk.status_on(_asof) == _missk.status
+          and _missk.counts_on(_asof)['total'] == len(_groups) + 2)
+
+    # ---------- 整份名单都无文件（v6.42 用户实测：扫描回全空白、无解释）----------
+    _miss0 = _cs.scan({}, _FORMULA, missing=['ZZA', 'ZZB'])
+    check("★ 读数为空也不回空结果：逐只记「数据不足」+ 进总数 + 出声（界面永远有东西可看）",
+          _miss0.counts['total'] == 2 and _miss0.status['ZZA'] == _cs.INSUFFICIENT
+          and any('没有日线文件' in _w for _w in _miss0.warnings))
+    from data.scan_store import ScanOutcome as _SO4  # noqa: E402
+    _out0 = _SO4(result=_miss0, key=None, asof=_miss0.asof)
+    check("★ 无矩阵时 ScanOutcome 兜底基准日（None/NaT 都回完整名单，不空表糊弄）",
+          _out0.status_on(None) == _miss0.status
+          and _out0.status_on(pd.Timestamp('NaT')) == _miss0.status
+          and _out0.counts_on(None)['total'] == 2)
+
     # ---------- ④ 逐位对齐（不只看最后一天）：矩阵 vs 直接跑引擎 ----------
     _direct = (pd.to_numeric(pd.Series(execute_programs(
         [parse_program(_FORMULA)], _cs.prepare_frame(_groups['UP']), {})['COND']),
@@ -3261,9 +3311,11 @@ try:
     os.remove(os.path.join(_zone5, 'DOWN.parquet'))
     _shift5 = _ss.scan_cached(_zone5, _FORMULA, symbols=_syms5, thresholds=_th5,
                               asof=None, store=_store5, incremental=True)
-    check("★ STEP 5：参与计算的**标的集合变了** ⇒ 不许硬接矩阵，诚实退化全量并出声",
+    check("★ STEP 5：参与计算的**标的集合变了** ⇒ 不许硬接矩阵，诚实退化全量并出声"
+          "（v6.42 新契约：文件被删的 DOWN 不再静默消失，记「数据不足」并进总数）",
           _shift5.cached is False and '全量' in _shift5.note
-          and _shift5.result.counts['total'] == 1)
+          and _shift5.result.counts['total'] == 2
+          and _shift5.result.status['DOWN'] == _cs.INSUFFICIENT)
 
     # ---- ⑤b find_base 直测：同配置旧版本能找到；同版本不归它管 ----
     _k5 = _ss.scan_key(_FORMULA, _th5, _syms5, zone_dir=_zone5)
@@ -3414,6 +3466,63 @@ try:
           and list(_cons_df['symbol']) == ['000001', '000002'])
     check("STEP 6：乱码**快速失败**（不发任何网络请求、回空 DF 让上层给人话提示）",
           len(_fake_ak.calls) == 1 and _bad_df.empty)
+
+    # ---- v6.42：成分股换权威源 + 快照日期 + 名义只数核对（用户实测 300→288 之谜）----
+    class _FakeConsAK2:
+        """打桩：官网给全名单（带「日期」+**「指数代码」列**，与线上真实列结构一致 ——
+        v6.42 回归教训：旧选列逻辑"第一个含'代码'的列"会命中「指数代码」，
+        把沪深300自己当成唯一成分；打桩必须带这列才钉得住）。同花顺只给一部分验官网优先。"""
+
+        def __init__(self):
+            self.calls = []
+
+        def index_stock_cons_csindex(self, symbol):
+            self.calls.append(('csindex', str(symbol)))
+            return pd.DataFrame({'日期': ['2026-09-18'] * 3,
+                                 '指数代码': ['000300'] * 3,
+                                 '指数名称': ['沪深300'] * 3,
+                                 '成分券代码': ['000001', '000002', '600000']})
+
+        def index_stock_cons(self, symbol):
+            self.calls.append(('ths', str(symbol)))
+            return pd.DataFrame({'品种代码': ['000001'], '纳入日期': ['2026-06-15']})
+
+    _fake_ak2 = _FakeConsAK2()
+    _real_ak2 = _af.ak
+    _af.ak = _fake_ak2
+    try:
+        _cons_df2 = _af.AkShareFeed.fetch_index_constituents('sh000300')
+        import data.sync_service as _svc  # noqa: E402
+        _feed_real2 = _svc.AkShareFeed
+
+        class _WrapFeed2:
+            @staticmethod
+            def fetch_index_constituents(code):
+                return _cons_df2
+
+        _svc.AkShareFeed = _WrapFeed2
+        _payload2 = _svc.MarketSyncService.fetch_index_constituents(
+            object.__new__(_svc.MarketSyncService), '000300',
+            policy=_svc.ThrottlePolicy(interval=0))
+        _svc.AkShareFeed = _feed_real2
+    finally:
+        _af.ak = _real_ak2
+    check("★ v6.42：成分股**优先中证指数官网**（权威名单；同花顺快照缺斤短两降为兜底）",
+          _fake_ak2.calls[0][0] == 'csindex'
+          and list(_cons_df2['symbol']) == ['000001', '000002', '600000'])
+    check("★★ v6.42 回归钉：选列绝不许命中「指数代码」（用户实测：沪深300 名单只剩 000300 自己）",
+          '000300' not in list(_cons_df2['symbol']))
+    check("★ v6.42：名单带**快照日期**（官网「日期」列 → payload.snapshot_date/count）",
+          str(_cons_df2['snapshot_date'].iloc[0]) == '2026-09-18'
+          and _payload2.get('snapshot_date') == '2026-09-18'
+          and _payload2.get('count') == 3 and _payload2.get('ok') is True)
+    from ui.widgets.readiness_flow import constituent_snapshot_text as _cst  # noqa: E402
+    check("★ v6.42：名义只数核对 —— 来源只回 288/300 时 UI **当场说出**（不静默拿缺名单当全的用）",
+          '288/300' in _cst('沪深300', {'count': 288, 'snapshot_date': '2026-09-18'})
+          and '288' not in _cst('沪深300', {'count': 300, 'snapshot_date': '2026-09-18'})
+          and '名单快照 2026-09-18' in _cst('沪深300', {'count': 300,
+                                                        'snapshot_date': '2026-09-18'})
+          and '⚠' not in _cst('创业板指', {'count': 100, 'snapshot_date': ''}))
 
     _shutil.rmtree(_zone6, ignore_errors=True)
     check("假数据湖已删除（临时探针用完即删）", not os.path.isdir(_zone6))

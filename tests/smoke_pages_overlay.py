@@ -2212,7 +2212,7 @@ try:
         '_flow', '_result', '_formula_pane', '_filter_pane', '_panes', '_drawer', '_scrim',
         # L1 操作轴
         'cb_scope', 'cb_index', 'lbl_scope', 'lbl_adjust', 'btn_config',
-        'btn_prev_day', 'lbl_day', 'btn_next_day', 'btn_latest_day',
+        'btn_prev_day', 'lbl_day', 'btn_next_day', 'btn_latest_day', 'date_asof',
         # L2 摘要条
         'chip_formula', 'chip_filter', 'chip_scope', 'lbl_receipt', 'bar_progress', 'btn_run',
         # L0 结果区
@@ -2242,6 +2242,18 @@ try:
     check("复权口径**印在界面上**且只有这一种（D8：raw 未备齐前不假装支持）",
           _scan.lbl_adjust.text() == '前复权')
 
+    # ---- ②b 基准日「先选后扫」+ 表格性能护栏（v6.42 用户实测三项）----
+    from PyQt6.QtCore import QDate as _QDate4  # noqa: E402
+    from PyQt6.QtWidgets import QHeaderView as _QHeader4  # noqa: E402
+    check("★ 基准日控件**扫描前就可用**（日历弹窗自由选，不再只能先扫后看 / ◀▶ 挪）",
+          _scan.date_asof.isEnabled() and _scan.date_asof.calendarPopup())
+    _scan.date_asof.setDate(_QDate4(2024, 5, 10))
+    check("选日期即刻有回执（告诉你将按这一天扫，而不是没反应）",
+          '2024-05-10' in _scan.lbl_receipt.text() and '开始扫描' in _scan.lbl_receipt.text())
+    check("★ 结果表列宽**不是** ResizeToContents（v6.42 卡死根因：动态测宽 × 全 A 行数 = 平方级冻死 UI）",
+          all(_scan.table.horizontalHeader().sectionResizeMode(i)
+              != _QHeader4.ResizeMode.ResizeToContents for i in range(7)))
+
     # ---- ③ 粗筛阈值「内核 → 界面 → 内核」往返零漂移（唯一换算处：亿元 / %）----
     _defaults = ScanThresholds()
     _scan._filter_pane.from_thresholds(_defaults)
@@ -2265,6 +2277,28 @@ try:
           isinstance(_roster_names, dict)
           and (not _roster_syms or set(_roster_syms) <= set(_roster_names)))
 
+    # ---- ④b 扫描前闸门（v6.42）：体检发现缺数据 ⇒ 必须二次确认，选「否」不启动 ----
+    from data.readiness import ReadinessReport as _RRep4  # noqa: E402
+    _scan._symbols = ['GATE01', 'GATE02']                # 非空即可（闸门在真扫之前拦）
+    _scan._readiness.report = _RRep4(
+        total=429, ready=['GATE01'], missing=[f'G{nn:04d}' for nn in range(428)])
+    _asked4 = []
+    _orig_q4 = QMessageBox.question
+
+    def _answer_no4(*args, **_k):
+        _asked4.append(str(args[2] if len(args) > 2 else ''))
+        return QMessageBox.StandardButton.No
+
+    QMessageBox.question = staticmethod(_answer_no4)
+    _worker_before4 = _scan._worker
+    _scan.start_scan()
+    QMessageBox.question = _orig_q4
+    check("★ 闸门：体检发现缺 428 只 ⇒ 弹二次确认把缺口说清；选「否」⇒ 根本不启动扫描",
+          bool(_asked4) and '缺 428 只' in _asked4[0] and '429' in _asked4[0]
+          and _scan._worker is _worker_before4 and '已取消' in _scan.lbl_receipt.text())
+    _scan._readiness.report = None
+    _scan._symbols = []
+
     # ---- ⑤ 端到端（真数据 · 小范围）：点「▶ 开始扫描」→ 线程 → 回包 → 渲染 ----
     _scan_zone = kline_zone_dir('kline_daily')
     _lake_syms = sorted(name[:-8] for name in os.listdir(_scan_zone)
@@ -2276,6 +2310,7 @@ try:
         _scan._symbols = list(_probe)                 # 再收小范围（不受花名册规模影响）
         _scan._names = {sym: _roster_names.get(sym, '') for sym in _probe}
         get_scan_store().clear()                      # 从零开始（不受其它断言影响）
+        _scan.date_asof.setDate(_QDate4.currentDate())   # ②b 把日期拨到过去只为验控件；端到端回到"默认=最新"语义
         _t04 = _now4()
         _scan.start_scan()
 
@@ -2327,6 +2362,20 @@ try:
                   and any(_scan.table.item(r, 2) is not None
                           and _scan.table.item(r, 2).text() != '—'
                           for r in range(_scan.table.rowCount())))
+            # —— v6.42：日期控件 = 切日期的正路（选轴外日子 ⇒ 就近、零成本、出声）
+            _axis_set = set(_dates4)
+            _gap_day = next((_d + pd.Timedelta(days=1) for _d in _dates4[:-1]
+                             if (_d + pd.Timedelta(days=1)) not in _axis_set), None)
+            if _gap_day is not None and _gap_day <= pd.Timestamp.now():
+                _scan.date_asof.setDate(_QDate4.fromString(str(_gap_day.date()), 'yyyy-MM-dd'))
+                check("★ 点日历选**非交易日** ⇒ 就近落到最近交易日（回执出声，绝不空表糊弄）",
+                      _scan._asof in _axis_set and str(_scan._asof.date()) == _scan.lbl_day.text()
+                      and '就近' in _scan.lbl_receipt.text())
+            _pick_day = pd.Timestamp(_dates4[3])
+            _scan.date_asof.setDate(_QDate4.fromString(str(_pick_day.date()), 'yyyy-MM-dd'))
+            check("★ 选轴上的交易日 ⇒ 精确落在它；切日期零成本（不进线程、缓存条数不变）",
+                  _scan._asof == _pick_day and _scan.lbl_day.text() == str(_pick_day.date())
+                  and _scan._worker.isFinished() and get_scan_store().entries() == 1)
 
     # ---- ⑦ 抽屉开合（覆盖层：不动主区高度）----
     win.switch_to('backtest')                     # 真实用户动作：切到回测模块
@@ -2429,11 +2478,19 @@ try:
         _brd._symbols = list(_probe3)
         _brd._names = {sym: _roster_names.get(sym, '') for sym in _probe3}
         # 指数副图先喂**合成数据**：端到端必须离线确定，不许在测试里联网补拉（§11.5-20）
+        # ⚠ 显式打开「叠加指数」并把指数图形拨回折线：测试自己控制前置，不依赖用户真实偏好
+        #   （v6.42 实测：用户手动测试把 overlay 关掉 / index_style 选成 K线 存进了 breadth_ui，
+        #   副图断言会隔日误报 —— 测试对环境敏感就是测试的 bug）
+        _brd._display_pane.chk_overlay.setChecked(True)
+        _brd._display_pane.cb_index_style.setCurrentIndex(0)   # 折线
         _overlay_code = str(_brd._display_pane.cb_overlay_code.currentData() or 'sh000001')
         _brd._index_code = _overlay_code
         _brd._index_df = pd.DataFrame({
             'date': pd.bdate_range('2025-09-01', periods=300),
-            'close': np.linspace(3000.0, 3300.0, 300)})
+            'close': np.linspace(3000.0, 3300.0, 300),
+            'open': np.linspace(2995.0, 3295.0, 300),
+            'high': np.linspace(3010.0, 3310.0, 300),
+            'low': np.linspace(2985.0, 3285.0, 300)})
         get_scan_store().clear()
         _brd._formula_pane.txt_formula.setPlainText('COND := C > MA(C, 20);')  # 与 M2 的键错开
         _t05 = _now4()
@@ -2453,6 +2510,121 @@ try:
                   for item in _brd.chart._host.pane('index').plot_item.items))
         check("读数条常显且是**业务文案**（日期 + 命中家数，不是内置的 X/Y）",
               '命中' in _brd.chart._host.readout_text and '只' in _brd.chart._host.readout_text)
+
+        # ---- ③b v6.42 图表可读性护栏：bar 序号轴 + y 真跟随 + 刻度可见 + 双视觉 ----
+        from ui.widgets.adaptive_axis import handle_for as _handle_for  # noqa: E402
+        from ui.widgets.breadth_chart import _BreadthTickAxis  # noqa: E402
+        _pane_b = _brd.chart._host.pane('breadth').plot_item
+        _pane_i = _brd.chart._host.pane('index').plot_item
+        check("★ 默认视觉 = 柱状 + MA5 趋势线（整数家数用柱子读；下拉可切折线）",
+              _brd._display_pane.cb_chart.currentData() == 'bars'
+              and any(isinstance(it, pg.BarGraphItem) for it in _pane_b.items))
+        check("家数纵轴刻度取整（「3.5 只」是谎话；占比模式才留小数）",
+              isinstance(_pane_b.getAxis('left'), _BreadthTickAxis)
+              and _pane_b.getAxis('left').integer)
+        _h_b = _handle_for(_pane_b)
+        _h_i = _handle_for(_pane_i)
+        check("★ 两窗格都挂上 y 跟随器（adaptive_axis 的 **bar 序号**口径 —— 旧版喂 epoch 秒，跟随器 100% 失效）",
+              _h_b is not None and _h_b.y_enabled and _h_i is not None and _h_i.y_enabled)
+        _n_bars = _brd.chart._n
+        _pane_b.vb.setXRange(_n_bars - 40, _n_bars - 20, padding=0)
+        app.processEvents()
+        _h_b.refresh()
+        _h_i.refresh()
+        _seg = _brd.chart._ys[-40:-19]
+        _exp_top = float(np.nanmax(_seg)) * 1.08 + 1.0
+        _y_lo, _y_hi = _h_b.y_range
+        check("★ 缩放后家数纵轴**真的跟随可视区**（旧 bug：provider 收到 1.7e9 当序号，切片恒空 ⇒ 永不更新）",
+              np.isfinite(_seg).any()
+              and abs(_y_hi - _exp_top * 1.06) < max(1e-6, abs(_exp_top) * 0.02))
+        _ilo4 = _brd.chart._idx_lo[-40:-19]
+        _ihi4 = _brd.chart._idx_hi[-40:-19]
+        _m4 = np.isfinite(_ilo4) & np.isfinite(_ihi4)
+        _i_lo, _i_hi = _h_i.y_range
+        _ispan = float(_ihi4[_m4].max() - _ilo4[_m4].min()) if _m4.any() else 0.0
+        _itol = max(1.0, _ispan * 0.1)                       # 跟随器自带 6% padding，容差给到 10%
+        check("★ 指数副图纵轴只框住**可视那 20 根**（旧 bug：全历史自动量程 2000~6000，4000 点跨度没人看得懂）",
+              _m4.sum() > 1 and (_i_hi - _i_lo) < float(np.nanmax(_brd.chart._idx_hi)
+                                                        - np.nanmin(_brd.chart._idx_lo))
+              and _i_lo >= float(_ilo4[_m4].min()) - _itol and _i_hi <= float(_ihi4[_m4].max()) + _itol)
+        _ticks = _h_i.ticks
+        check("★ 底部日期刻度落在**视野内**（旧 bug：刻度钉在序号位置而轴是 epoch ⇒ 整根轴没字）",
+              bool(_ticks) and all(0 <= t[0] <= _n_bars - 1 for t in _ticks)
+              and any('-' in t[1] for t in _ticks))
+        _pane_b.vb.setXRange(0, _n_bars - 1, padding=0)      # 恢复全视野，不影响后续断言
+        app.processEvents()
+        _brd._display_pane.cb_chart.setCurrentIndex(1)      # 切「折线 + 面积」
+        app.processEvents()
+        check("视觉可切换：折线态 = 有曲线图元、无柱（只换画法，数据一个字节不动）",
+              not any(isinstance(it, pg.BarGraphItem) for it in _pane_b.items)
+              and any(getattr(it, 'curve', None) is not None for it in _pane_b.items))
+        _brd._display_pane.cb_chart.setCurrentIndex(0)      # 切回默认，不影响后续断言
+        app.processEvents()
+
+        # ---- ③c v6.42：指数副图四种图形 + 两窗格轴对齐 + 分界线调高 ----
+        from ui.widgets.custom_widgets import CandlestickItem as _K4, OhlcBarItem as _O4  # noqa: E402
+        _brd._display_pane.cb_index_style.setCurrentIndex(2)     # K 线
+        app.processEvents()
+        check("★ 指数副图可切 K 线（有开高低列的日子画四价）",
+              any(isinstance(it, _K4) for it in _pane_i.items))
+        _brd._display_pane.cb_index_style.setCurrentIndex(3)     # 美国线
+        app.processEvents()
+        check("指数副图可切美国线（OHLC bar，与 K 线同数据格式同色板）",
+              any(isinstance(it, _O4) for it in _pane_i.items)
+              and not any(isinstance(it, _K4) for it in _pane_i.items))
+        _brd._display_pane.cb_index_style.setCurrentIndex(1)     # 面积
+        app.processEvents()
+        check("指数副图可切面积（回到曲线图元，无 K/OHLC 件）",
+              not any(isinstance(it, (_K4, _O4)) for it in _pane_i.items)
+              and any(getattr(it, 'curve', None) is not None for it in _pane_i.items))
+        _brd._display_pane.cb_index_style.setCurrentIndex(0)     # 回默认折线
+        app.processEvents()
+        _w_b = _pane_b.getAxis('left').style.get('tickTextWidth')
+        _w_i = _pane_i.getAxis('left').style.get('tickTextWidth')
+        check("★ 两窗格纵轴共用同一个固定左槽（R8 第二版口径：对齐且**不留大片空白**）",
+              bool(_w_b) and _w_b == _w_i and _w_b <= 60)
+        check("★ 两图分界把手已启用且**看得见**（浅灰胶囊浮在交界上；没把手的功能等于没有）",
+              _brd.chart._host._drag_pairs == ('breadth', 'index')
+              and _brd.chart._host._divider is not None
+              and not _brd.chart._host._divider.isHidden())   # 离屏非当前页：isVisible 恒假，用自身 show 态
+        # 真实鼠标事件模拟：按下交界 → 往上拖 → 松手；再往下拖；再双击复位。
+        # ⚠ 拖动模型 = 按下瞬间锁定参考系 —— 上下双向都必须跟手（v6.42 用户实测：
+        #   旧版拿实时几何反推 ⇒ 布局回流振荡，"拖一点就失控/往上拖没反应"）。
+        from PyQt6.QtCore import QPointF as _QP4, QEvent as _QE4  # noqa: E402
+        from PyQt6.QtGui import QMouseEvent as _QME4  # noqa: E402
+        _vp4 = _brd.chart._host._glw.viewport()
+        _geo4 = _brd.chart._host._divider_geometry()
+
+        def _me4(kind, y, down=True):
+            btn = Qt.MouseButton.LeftButton
+            return _QME4(kind, _QP4(80.0, y), btn,
+                         btn if down else Qt.MouseButton.NoButton,
+                         Qt.KeyboardModifier.NoModifier)
+
+        if _geo4 is not None:
+            _ly4, _tp4, _bt4 = _geo4
+            _span4 = _bt4 - _tp4
+            app.sendEvent(_vp4, _me4(_QE4.Type.MouseButtonPress, _ly4))
+            app.sendEvent(_vp4, _me4(_QE4.Type.MouseMove, _tp4 + _span4 * 0.30))
+            app.sendEvent(_vp4, _me4(_QE4.Type.MouseButtonRelease,
+                                     _tp4 + _span4 * 0.30, down=False))
+            check("★ 分界把手**往上拖也响应**（双向跟手；主图权重真变小）",
+                  _brd.chart._host.pane_stretch('breadth') <= 40)
+            app.processEvents()                     # 让布局回流落地，再按**新交界**抓把手
+            _geo4b = _brd.chart._host._divider_geometry()
+            _ly4b = _geo4b[0] if _geo4b is not None else _tp4 + _span4 * 0.30
+            app.sendEvent(_vp4, _me4(_QE4.Type.MouseButtonPress, _ly4b))
+            app.sendEvent(_vp4, _me4(_QE4.Type.MouseMove, _tp4 + _span4 * 0.85))
+            app.sendEvent(_vp4, _me4(_QE4.Type.MouseButtonRelease,
+                                     _tp4 + _span4 * 0.85, down=False))
+            check("★ 往下拖把主图调大（指数图空间收小）—— 两个方向都是直线映射，无振荡死区",
+                  _brd.chart._host.pane_stretch('breadth') >= 80)
+            _brd.chart._host.reset_divider_stretch()
+            check("双击/重置分界线恢复默认 3:1",
+                  _brd.chart._host.pane_stretch('breadth') == 3
+                  and _brd.chart._host.pane_stretch('index') == 1)
+        else:   # 离屏几何拿不到 ⇒ 直接判红（拖动功能依赖它，不许静默跳过）
+            check("分界几何可算（拖动功能的前置）", False)
         check("★ 口径印在标题行上（E 节）：范围 · 前复权 · 有效 N/M · 区间",
               '前复权' in _brd.lbl_cal.text() and '有效' in _brd.lbl_cal.text()
               and str(_brd.cb_scope.currentText()).replace('…', '') in _brd.lbl_cal.text())
@@ -2554,13 +2726,16 @@ try:
     # ---- ⑨ 偏好「记住上次」：只存轻量配置，**绝不存扫描结果** ----
     _brd.save_breadth_ui()
     _brd_ui = preferences.get('breadth_ui')
-    check("breadth_ui 偏好只含配置九样（结果只进会话缓存，D3）",
+    check("breadth_ui 偏好只含配置十一项（结果只进会话缓存，D3）",
           isinstance(_brd_ui, dict)
           and set(_brd_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds',
-                               'range', 'smooth', 'ratio', 'overlay', 'overlay_code'}
+                               'range', 'chart', 'index_style', 'smooth', 'ratio',
+                               'overlay', 'overlay_code'}
           and str(_brd_ui.get('formula') or '').strip() != ''
           and isinstance(_brd_ui.get('thresholds'), dict)
-          and _brd_ui.get('range') in ('3m', '6m', '1y', '3y', '5y', 'all'))
+          and _brd_ui.get('range') in ('3m', '6m', '1y', '3y', '5y', 'all')
+          and _brd_ui.get('chart') in ('bars', 'line')
+          and _brd_ui.get('index_style') in ('line', 'area', 'kline', 'ohlc'))
 except Exception as _e:  # noqa: BLE001
     check(f"M3 广度统计页断言整段抛异常: {type(_e).__name__}: {_e}", False)
 

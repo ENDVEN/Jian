@@ -287,7 +287,19 @@ class ScanOutcome:
     note: str = ''
 
     def status_on(self, date=None) -> dict:
-        return self.result.status_on(self.asof if date is None else date)
+        stamp = self.asof if date is None else date
+        if self.result.status_matrix is None or self.result.dates is None:
+            # 没有矩阵（如整份名单都无本地文件，v6.42）⇒ 只能回答基准日那天，
+            # 直接用 scan() 当日产出的 status（含「无文件 ⇒ 数据不足」的逐只名单）。
+            # ⚠ 早退路径的 result.asof 是 None，界面传来的 stamp 可能是 NaT ——
+            #   两者都按"问的就是基准日"处理，否则永远回空表。
+            if stamp is None or pd.isna(stamp):
+                return dict(self.result.status)
+            if (self.result.asof is not None
+                    and pd.Timestamp(stamp) == self.result.asof):
+                return dict(self.result.status)
+            return {}
+        return self.result.status_on(stamp)
 
     def counts_on(self, date=None) -> dict:
         stamp = self.asof if date is None else date

@@ -28,8 +28,8 @@ from __future__ import annotations
 import datetime as _dt
 
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from ui.widgets.chart_pane import ChartPane
 from ui.widgets.chart_style import (AXIS_TEXT_WIDTH, CROSSHAIR_COLOR, style_axis,
@@ -97,6 +97,19 @@ class ChartHost(QWidget):
         self._crosshairs: dict[str, _Crosshair] = {}
         self._stretch: dict[str, int] = {}
         self._fixed: dict[str, int] = {}     # 高度被钉死的窗格（行情页附图）
+        # 分界线拖动调高（M3：家数/指数两窗格的空间用户自己分）：未启用 = None
+        # ⚠ 拖动必须用"按下瞬间锁定的参考系"，绝不能拿实时几何反推 ——
+        #   第一版就是每帧用新边界算比例：改权重→布局回流→边界搬家→下一帧又对着
+        #   新边界算 ⇒ 正反馈振荡，用户手感就是"拖一点就失控/往上拖没反应"（v6.42 实测）。
+        self._drag_pairs: tuple | None = None
+        self._drag_tol = 10
+        self._dragging = False
+        self._drag_saved: dict | None = None
+        self._drag_cursor = None
+        self._drag_start_y = 0.0
+        self._drag_start_f = 0.5
+        self._drag_span = 1.0
+        self._divider: QFrame | None = None      # 可见的分界把手（没有它用户根本不知道能拖）
 
         self._glw = pg.GraphicsLayoutWidget()
         self._readout = QLabel("")
@@ -249,6 +262,157 @@ class ChartHost(QWidget):
     def pane_stretch(self, name: str) -> int:
         """读取窗格的相对高度权重（0 = 未登记）。"""
         return self._stretch.get(name, 0)
+
+    # ==========================================
+    # 分界线拖动调高（M3 用户拍板 2026-09-21："两个表中间加个分割线让我上下拖动"）
+    # ==========================================
+    def enable_divider_drag(self, above: str, below: str, *, tolerance: int = 10) -> bool:
+        """在两张窗格的交界线上启用**拖动调高**；双击交界 = 恢复默认 3:1。
+
+        【为什么做在宿主里】窗格行高/权重/重排都是宿主的职责（§10-12：宿主编排、
+        页面不自己 `addPlot` 拼窗格）；任何上下堆叠的 ChartHost 都能复用（§9-U）。
+        【可见性】画一条真正的"分界把手"（浅灰胶囊 + ⺀ 纹），否则功能等于没有；
+        【拖动模型】按下瞬间锁定 (start_y, span, start_f)，位移按比例平移 ——
+        不拿实时几何反推，杜绝"布局回流→边界搬家→振荡失控"（第一版的实测教训）。
+        """
+        if self.pane(above) is None or self.pane(below) is None:
+            return False
+        self._drag_pairs = (str(above), str(below))
+        self._drag_tol = max(6, int(tolerance))
+        # 给分界把手留出真实空间（默认行间距太窄，把手会盖住绘图区边缘）
+        try:
+            self._glw.ci.setSpacing(8)
+        except Exception:  # noqa: BLE001 —— 布局不支持也不拦住主功能
+            pass
+        viewport = self._glw.viewport()
+        self._divider = QFrame(viewport)
+        self._divider.setStyleSheet(
+            "QFrame { background:#D7DCE3; border:1px solid #C3CAD3; border-radius:4px; }")
+        grip = QLabel('⣿', self._divider)        # 盲文实心点阵 = "可抓握"的视觉暗示
+        grip.setStyleSheet("color:#8A94A6; font-size:11px; border:none; background:transparent;")
+        grip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        grip.setGeometry(0, 0, 40, 6)
+        grip.move(0, 0)                          # 位置在 _update_divider_position 里居中
+        self._divider.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._divider.setFixedHeight(8)
+        self._divider.hide()
+        viewport.setMouseTracking(True)          # 没有按下也要知道鼠标在哪（悬停光标/把手高亮）
+        viewport.installEventFilter(self)
+        tip = str(self._glw.toolTip() or '')
+        self._glw.setToolTip((tip + '\n' if tip else '')
+                             + '拖动两图之间的灰色分界把手可调高度（上下都跟手）；'
+                             + '双击把手恢复默认。')
+        self._update_divider_position()
+        return True
+
+    def _update_divider_position(self) -> None:
+        """把可见把手摆到当前交界（几何不可见就藏起来，绝不闪残影）。"""
+        if self._divider is None:
+            return
+        geo = self._divider_geometry()
+        if geo is None:
+            self._divider.hide()
+            return
+        line_y, _top, _bot = geo
+        width = max(40, self._divider.parent().width() - 20)
+        self._divider.setGeometry(10, int(line_y) - 4, width, 8)
+        grip = self._divider.findChild(QLabel)
+        if grip is not None:
+            grip.setGeometry(0, 0, width, 6)
+        self._divider.show()
+        self._divider.raise_()
+
+    def _divider_geometry(self):
+        """→ `(交界 y, 上窗格顶 y, 下窗格底 y)`（视口坐标）；窗格不可见返回 None。
+
+        ⚠ PyQt6 的 `mapFromScene(QRectF)` 返回 **QPolygon**（不是 QRect）—— 只能逐点映射；
+        离屏/首帧时几何可能退化（底≤顶），一律当"不可见"处理。"""
+        if self._drag_pairs is None:
+            return None
+        above, below = self._drag_pairs
+        pa, pb = self.pane(above), self.pane(below)
+        if pa is None or pb is None:
+            return None
+        ra = pa.plot_item.getViewBox().sceneBoundingRect()
+        rb = pb.plot_item.getViewBox().sceneBoundingRect()
+        a_top = self._glw.mapFromScene(ra.topLeft()).y()
+        a_bot = self._glw.mapFromScene(ra.bottomRight()).y()
+        b_top = self._glw.mapFromScene(rb.topLeft()).y()
+        b_bot = self._glw.mapFromScene(rb.bottomRight()).y()
+        if a_bot <= a_top or b_bot <= b_top:
+            return None
+        return (a_bot + b_top) / 2.0, float(a_top), float(b_bot)
+
+    def reset_divider_stretch(self) -> None:
+        """恢复默认高度配比（主图 3 : 副图 1）。"""
+        if self._drag_pairs is None:
+            return
+        above, below = self._drag_pairs
+        self._stretch[above] = DEFAULT_MAIN_STRETCH
+        self._stretch[below] = DEFAULT_SUB_STRETCH
+        self._apply_stretch()
+        self._update_divider_position()
+
+    def eventFilter(self, obj, event):        # noqa: N802 —— Qt 命名
+        """分界把手拖动/悬停光标/双击复位（只吃交界附近的鼠标事件）。
+
+        ⚠ 整段 try/except：调高只是"装饰性"交互，几何异常绝不许打断图表本身（§10-2）。"""
+        try:
+            if self._drag_pairs is not None and obj is self._glw.viewport():
+                t = event.type()
+                if t == QEvent.Type.MouseButtonPress \
+                        and event.button() == Qt.MouseButton.LeftButton:
+                    geo = self._divider_geometry()
+                    if geo is not None:
+                        line_y, top_y, bot_y = geo
+                        y = float(event.position().y())
+                        if abs(y - line_y) <= self._drag_tol:
+                            span = max(1.0, bot_y - top_y)
+                            # 按下瞬间锁定参考系：之后只叠加**相对位移**，
+                            # 布局回流再快也抖不起来（上下双向都跟手）
+                            self._drag_start_y = y
+                            self._drag_span = span
+                            self._drag_start_f = min(max((y - top_y) / span, 0.1), 0.9)
+                            self._dragging = True
+                            self._drag_saved = dict(self._stretch)
+                            return True
+                elif t == QEvent.Type.MouseMove:
+                    if self._dragging:
+                        y = float(event.position().y())
+                        f = self._drag_start_f + (y - self._drag_start_y) / self._drag_span
+                        f = min(max(f, 0.1), 0.9)
+                        above, below = self._drag_pairs
+                        self._stretch[above] = int(round(f * 100))
+                        self._stretch[below] = 100 - self._stretch[above]
+                        self._apply_stretch()
+                        self._update_divider_position()
+                        return True
+                    geo = self._divider_geometry()
+                    if geo is not None:
+                        near = abs(float(event.position().y()) - geo[0]) <= self._drag_tol
+                        cursor = (Qt.CursorShape.SizeVerCursor if near
+                                  else Qt.CursorShape.ArrowCursor)
+                        if cursor is not self._drag_cursor:
+                            self._drag_cursor = cursor
+                            self._glw.viewport().setCursor(cursor)
+                elif t == QEvent.Type.MouseButtonRelease and self._dragging:
+                    self._dragging = False
+                    self._update_divider_position()
+                    return True
+                elif t == QEvent.Type.MouseButtonDblClick \
+                        and event.button() == Qt.MouseButton.LeftButton:
+                    geo = self._divider_geometry()
+                    if geo is not None and abs(float(event.position().y()) - geo[0]) \
+                            <= self._drag_tol:
+                        self.reset_divider_stretch()
+                        return True
+        except Exception:  # noqa: BLE001 —— 调高失败不能吃掉事件流
+            self._dragging = False
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):             # noqa: N802 —— Qt 命名
+        super().resizeEvent(event)
+        self._update_divider_position()
 
     def move_pane(self, name: str, new_index: int) -> bool:
         """把某张副图挪到新的位置（★ §7-B8 R7）。

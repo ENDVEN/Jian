@@ -18,13 +18,16 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
+from PyQt6.QtCore import QDate
+from PyQt6.QtWidgets import QMessageBox
 
 from core.cross_section import ScanThresholds
 from core.utils import parse_params_text
 from data.scan_store import kline_zone_dir
 from data.sync_service import MarketSyncService
 from data.watchlist_store import WatchlistStore
-from ui.widgets.readiness_flow import constituent_failure_text
+from ui.widgets.readiness_flow import (constituent_failure_text,
+                                       constituent_snapshot_text)
 from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard
 
 __all__ = ['ScanFlow', 'SCAN_UI_KEY']
@@ -32,6 +35,28 @@ __all__ = ['ScanFlow', 'SCAN_UI_KEY']
 logger = logging.getLogger(__name__)
 
 SCAN_UI_KEY = 'scan_ui'          # 页面偏好键（core/preferences.DEFAULTS 里登记）
+
+
+def _stamp_of(qdate: QDate) -> pd.Timestamp:
+    """QDate → pd.Timestamp（午夜，与内核日期轴同口径）。"""
+    return pd.Timestamp(qdate.toString('yyyy-MM-dd'))
+
+
+def _nearest_on_axis(dates, stamp: pd.Timestamp):
+    """轴外日期就近落位（与内核 scan() 的落位规则一致：平手取前一日）。
+
+    轴上的日子原样返回；没轴返回 None（调用方自己兜底）。"""
+    if dates is None or len(dates) == 0:
+        return None
+    stamp = pd.Timestamp(stamp)
+    idx = int(dates.searchsorted(stamp))
+    if idx < len(dates) and dates[idx] == stamp:
+        return stamp
+    cand = [c for c in (idx - 1, idx) if 0 <= c < len(dates)]
+    if not cand:
+        return None
+    near = min(cand, key=lambda c: abs((dates[c] - stamp).days))
+    return pd.Timestamp(dates[near])
 
 
 class ScanFlow:
@@ -47,6 +72,7 @@ class ScanFlow:
         p.btn_prev_day.clicked.connect(lambda: self.shift_date(-1))
         p.btn_next_day.clicked.connect(lambda: self.shift_date(1))
         p.btn_latest_day.clicked.connect(self.jump_latest)
+        p.date_asof.dateChanged.connect(self._on_date_changed)
         p.table.itemDoubleClicked.connect(self.on_row_double_clicked)
         p._filter_pane.btn_reset.clicked.connect(self.reset_thresholds)
 
@@ -72,6 +98,7 @@ class ScanFlow:
         p._names = {}
         choice = p.cb_scope.currentIndex()
         if choice == 0:                                   # 我的自选
+            p._cons_meta = None                           # 非成分股范围 ⇒ 无快照语义
             p._symbols = list(WatchlistStore().symbols())
             p._names = dict(WatchlistStore().names_map())
             if not p._symbols:
@@ -94,6 +121,7 @@ class ScanFlow:
             p._cons_worker.start()
             return
         else:                                             # 全 A 花名册
+            p._cons_meta = None
             p._symbols = list(p.main_win.engine.list_stock_symbols())
             p._names = dict(p.main_win.engine.roster_names())
             if not p._symbols:
@@ -124,6 +152,12 @@ class ScanFlow:
             p.lbl_receipt.setToolTip(friendly)
             return
         p._symbols = [str(s) for s in (payload.get('symbols') or [])]
+        # ★ 快照元信息（v6.42）：成分股每季度调换 —— 必须记住"名单是哪天的"，
+        #   扫描历史基准日时才能把"幸存者偏差"说给用户，而不是默默拿今天的名单算旧日子
+        p._cons_meta = {'name': str(p.cb_index.currentText()),
+                        'count': len(p._symbols),
+                        'snapshot_date': str(payload.get('snapshot_date') or '')}
+        snap_line = constituent_snapshot_text(p.cb_index.currentText(), payload)
         # ★ 名称映射必须在这里补齐（v6.41 修复）：成分股回包只给**代码**，而自选/全A 两个
         #   分支都各自装配了 `_names` —— 漏了它 ⇒ ①结果表名称列全空；②**更隐蔽**：
         #   花名册为空 ⇒ 内核的「剔除 ST / 退市」整轮失效（内核会出警告，UI 此前把警告吞了）。
@@ -131,9 +165,10 @@ class ScanFlow:
         _roster = p.main_win.engine.roster_names()
         p._names = {sym: str(_roster.get(sym) or '') for sym in p._symbols}
         p.lbl_scope.setText(f'{len(p._symbols)} 只')
+        p.lbl_scope.setToolTip(snap_line)
         self._refresh_chips()
         p._result.set_empty(
-            f'名单就绪（{len(p._symbols)} 只，{p.cb_index.currentText()}）'
+            f'名单就绪（{p.cb_index.currentText()} · {snap_line}）'
             f'—— 正在体检本地数据就绪度…')
         p._readiness.start(p._symbols,
                            min_bars=p._filter_pane.to_thresholds().min_bars)
@@ -142,6 +177,85 @@ class ScanFlow:
         p = self.page
         scope = p.cb_scope.currentText().replace('…', '')
         p.chip_scope.setText(f'🌐 {scope} {len(p._symbols)} 只')
+
+    # ==========================================
+    # 基准日选择器（先选后扫，v6.42）
+    # ==========================================
+    def _on_date_changed(self, qdate) -> None:
+        """用户动日期控件（日历弹窗/键入/方向键）。
+
+        没结果 ⇒ 只更新展示，扫描时再真的传；有结果 ⇒ 按**就近交易日**零成本重切。
+        ⚠ 不把选择器**改回去**到落位日：键入过程中逐段发信号，强改会打断输入；
+        真正生效的日子以 lbl_day / 回执为准（程序化移动才同步控件，见 _sync_date_edit）。
+        """
+        p = self.page
+        p._date_touched = True
+        stamp = _stamp_of(qdate)
+        p.lbl_day.setText(str(stamp.date()))
+        if p._outcome is None:
+            p.lbl_receipt.setText(f'基准日 {stamp.date()} —— 点「▶ 开始扫描」按这一天取截面。')
+            return
+        dates = p._outcome.result.dates
+        eff = _nearest_on_axis(dates, stamp) or stamp
+        p._asof = eff
+        self.refresh()
+        if eff != stamp:
+            p.lbl_receipt.setText(f'{stamp.date()} 不是本地交易日，已就近显示 {eff.date()}。')
+
+    def _sync_date_edit(self, stamp) -> None:
+        """程序化把控件拨到某天（不发 dateChanged，不跟用户抢输入）。"""
+        p = self.page
+        qd = QDate.fromString(str(pd.Timestamp(stamp).date()), 'yyyy-MM-dd')
+        if not qd.isValid():
+            return
+        latest = pd.Timestamp(stamp)
+        dates = p._outcome.result.dates if p._outcome is not None else None
+        if dates is not None and len(dates):
+            latest = max(latest, pd.Timestamp(dates[-1]))
+        p.date_asof.blockSignals(True)
+        try:
+            if qd > p.date_asof.maximumDate():
+                p.date_asof.setMaximumDate(qd)
+            if latest > p.date_asof.maximumDate():
+                p.date_asof.setMaximumDate(QDate.fromString(str(latest.date()), 'yyyy-MM-dd'))
+            p.date_asof.setDate(qd)
+        finally:
+            p.date_asof.blockSignals(False)
+
+    # ==========================================
+    # 扫描前闸门：缺数据必须**告知 + 二次确认**（用户 2026-09-21 拍板：
+    # 不许"名单 429 → 有效样本 27"这种不声不响的落差）
+    # ==========================================
+    def _confirm_scan_with_gaps(self) -> bool:
+        """→ True = 可以继续扫。体检已知有缺口 / 体检还没完成 ⇒ 弹窗让用户拍板。"""
+        p = self.page
+        report = p._readiness.report if getattr(p, '_readiness', None) is not None else None
+        if report is not None and report.gap_count == 0:
+            return True                       # 本地齐了 ⇒ 不打扰（闸门只在**有问题时**出现）
+        yes = QMessageBox.StandardButton.Yes
+        if report is not None:
+            answer = QMessageBox.question(
+                p, '本地数据不完整',
+                f'统计范围 {report.total} 只里，本地缺 {report.gap_count} 只的日线文件\n'
+                f'（体检：{report.summary_line()}）\n\n'
+                '缺的会被记成「数据不足」，命中/有效样本只基于现有数据算 ——\n'
+                '这种结果只能看局部，不能当全市场结论。建议先「⬇ 补齐缺失」再扫。\n\n'
+                '仍要现在就基于现有数据扫描吗？',
+                yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != yes:
+                p.lbl_receipt.setText('已取消 —— 点结果区的「⬇ 补齐缺失」下载缺的数据，'
+                                      '或再点「▶ 开始扫描」。')
+                return False
+            return True
+        answer = QMessageBox.question(
+            p, '就绪度体检还没完成',
+            f'范围 {len(p._symbols)} 只的本地数据体检还没跑完，可能有一大半没下载。\n'
+            '现在就扫（缺的会记「数据不足」并在回执出声），还是等体检完成？',
+            yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer != yes:
+            p.lbl_receipt.setText('等就绪度体检完成后再扫 —— 体检结果会自己出现在这里。')
+            return False
+        return True
 
     # ==========================================
     # 扫描（后台线程 + 竞态守卫 + 进度回执）
@@ -169,8 +283,11 @@ class ScanFlow:
         except Exception as e:  # noqa: BLE001
             p.lbl_receipt.setText(f'参数写法不对：{e}')
             return
+        if not self._confirm_scan_with_gaps():
+            return                            # 闸门拦下：什么都没发生（不留下半截状态）
 
-        p._asof = None                                    # None = 最新交易日（结果出来后回填）
+        p._asof = None                                    # 结果出来后回填（= 控件所选日，轴外由内核就近落位）
+        asof = _stamp_of(p.date_asof.date())              # 先选后扫：把用户选的基准日真的传下去
         p._result.set_busy('扫描中…（读盘 → 粗筛 → 逐标的求值）')
         p.btn_run.setText('✕ 取消扫描')
         p.bar_progress.show()
@@ -183,7 +300,7 @@ class ScanFlow:
         job = p._guard.next()                             # 取号：迟到的旧回包会被丢弃（§9-O5）
         p._worker = CrossSectionWorker(
             job, kline_zone_dir('kline_daily'), formula, symbols=list(p._symbols),
-            params=params, thresholds=p._thresholds, asof=None,
+            params=params, thresholds=p._thresholds, asof=asof,
             names=dict(p._names), snapshot_columns=('close', 'amount', 'turnover'),
             store=p._store)
         p._worker.progress.connect(self._on_progress)
@@ -219,6 +336,7 @@ class ScanFlow:
             return
         p._outcome = outcome
         p._asof = outcome.asof
+        self._sync_date_edit(outcome.asof)                # 控件跟上真正算的那天（含就近落位）
         seconds = outcome.elapsed_ms / 1000.0
         counts = outcome.counts_on(p._asof)
         text = (f"扫描 {counts.get('total', 0)} 只 · 命中 {counts.get('hit', 0)}"
@@ -229,6 +347,14 @@ class ScanFlow:
         warns = list(getattr(outcome.result, 'warnings', None) or [])
         if warns and not outcome.cached:
             text += ' · ⚠ ' + warns[0] + ('' if len(warns) == 1 else f'（等 {len(warns)} 条）')
+        # ★ 幸存者偏差提示（v6.42）：成分股是**当前快照**，基准日更早 ⇒ 名单不是那时的
+        meta = getattr(p, '_cons_meta', None)
+        if (meta and p.cb_scope.currentIndex() == 1 and meta.get('snapshot_date')
+                and outcome.result.asof is not None
+                and pd.Timestamp(outcome.result.asof)
+                < pd.Timestamp(meta['snapshot_date'])):
+            text += (f' · ⚠ 成分是 {meta["snapshot_date"]} 的当前名单，'
+                     f'基准日更早 ⇒ 幸存者偏差（非时点名单）')
         tip = ('⚠ ' + '\n⚠ '.join(warns)) if warns else ''
         p.lbl_receipt.setText(text)
         p.lbl_receipt.setToolTip(tip)
@@ -255,7 +381,9 @@ class ScanFlow:
             return
         date = p._asof or outcome.asof
         stamp = pd.Timestamp(date)
-        same_day = (stamp == outcome.result.asof)         # 只有扫描基准日才有"数值/明细"
+        # 只有扫描基准日才有"数值/明细"；早退路径（整份名单无文件）的 asof 是 None，
+        # 它产出的 status/detail **就是那天该展示的全部内容** ⇒ 同样按基准日处理（v6.42）
+        same_day = (stamp == outcome.result.asof) or outcome.result.asof is None
         counts = outcome.counts_on(stamp)
         status = outcome.status_on(stamp)
         p._result.render(
@@ -272,7 +400,8 @@ class ScanFlow:
     def shift_date(self, delta: int) -> None:
         p = self.page
         if p._outcome is None or p._outcome.result.dates is None:
-            p.lbl_receipt.setText('还没有结果 —— 先扫描一次，才能在交易日轴上移动。')
+            p.lbl_receipt.setText('没有可切换的交易日轴 —— 范围内标的本地多半没有日线，'
+                                  '先「⬇ 补齐缺失」再扫。')
             return
         dates = p._outcome.result.dates
         current = p._asof or p._outcome.result.asof
@@ -285,6 +414,7 @@ class ScanFlow:
             return
         p._asof = pd.Timestamp(dates[target])
         self.refresh()                                    # 纯切片，零成本
+        self._sync_date_edit(p._asof)                     # 控件跟着 ◀▶ 走
 
     def jump_latest(self) -> None:
         p = self.page
@@ -292,6 +422,7 @@ class ScanFlow:
             return
         p._asof = pd.Timestamp(p._outcome.result.dates[-1])
         self.refresh()
+        self._sync_date_edit(p._asof)
 
     # ==========================================
     # 配置 / 跳转

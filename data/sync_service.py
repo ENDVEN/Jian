@@ -162,11 +162,12 @@ class MarketSyncService:
         收编之后 `ui/` 全层**不再出现 `AkShareFeed` 符号**，且有源码级断言守门。
 
         :return: {"ok": bool, "symbols": [str], "index_code": str,
-                  "reason": "ok"/"no_data"/"network"/"error", "message": str}
+                  "reason": "ok"/"no_data"/"network"/"error", "message": str,
+                  "count": int, "snapshot_date": str}   # v6.42：只数与快照日供 UI 诚实上报
         """
         index_code = str(index_code or "").strip()
         result = {"ok": False, "symbols": [], "index_code": index_code,
-                  "reason": "", "message": ""}
+                  "reason": "", "message": "", "count": 0, "snapshot_date": ""}
         if not index_code:
             result["message"] = "未指定指数代码"
             return result
@@ -183,14 +184,19 @@ class MarketSyncService:
             return result
 
         symbols = []
+        snapshot_date = ""
         if df is not None and not df.empty and "symbol" in df.columns:
             symbols = [str(s).strip() for s in df["symbol"].dropna().tolist() if str(s).strip()]
+            if "snapshot_date" in df.columns:
+                vals = [str(v).strip() for v in df["snapshot_date"].tolist() if str(v).strip()]
+                snapshot_date = max(vals) if vals else ""
         if not symbols:
             # 行情源"没有这个指数的名单"与"网络挂了"是两回事，必须区分（§10-10）
             result.update(reason="no_data", message="接口未返回成分股")
             return result
 
-        result.update(ok=True, symbols=symbols, reason="ok", message="OK")
+        result.update(ok=True, symbols=symbols, reason="ok", message="OK",
+                      count=len(symbols), snapshot_date=snapshot_date)
         return result
 
     # ==========================================

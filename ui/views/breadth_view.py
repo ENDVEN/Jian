@@ -44,6 +44,7 @@ class BreadthView(QWidget):
         self._thresholds = ScanThresholds()          # 粗筛阈值（唯一真源 = 抽屉里的控件）
         self._symbols: list = []
         self._names: dict = {}
+        self._cons_meta = None                         # 成分股快照元信息（非成分范围 = None）
         self._outcome = None                         # ScanOutcome（含缓存矩阵）
         self._guard = JobGuard()                     # 竞态守卫（§9-O5）
         self._index_guard = JobGuard()               # 指数补拉自己的守卫（不与扫描互踢）
@@ -199,6 +200,16 @@ class BreadthView(QWidget):
             self._range_key = range_key
             self.cb_range.setCurrentIndex(range_keys.index(range_key))
             display = self._display_pane
+            from ui.widgets.breadth_chart import (CHART_TYPES, DEFAULT_CHART_TYPE,
+                                                  DEFAULT_INDEX_STYLE, INDEX_STYLES)
+            chart_key = str(data.get('chart') or DEFAULT_CHART_TYPE)
+            chart_keys = [k for k, _ in CHART_TYPES]
+            display.cb_chart.setCurrentIndex(
+                chart_keys.index(chart_key) if chart_key in chart_keys else 0)
+            istyle_key = str(data.get('index_style') or DEFAULT_INDEX_STYLE)
+            istyle_keys = [k for k, _ in INDEX_STYLES]
+            display.cb_index_style.setCurrentIndex(
+                istyle_keys.index(istyle_key) if istyle_key in istyle_keys else 0)
             display.chk_smooth.setChecked(bool(data.get('smooth', True)))
             display.chk_ratio.setChecked(bool(data.get('ratio', False)))
             display.chk_overlay.setChecked(bool(data.get('overlay', True)))
@@ -223,6 +234,8 @@ class BreadthView(QWidget):
             'params': self._formula_pane.txt_params.text(),
             'thresholds': self._filter_pane.to_thresholds().to_dict(),
             'range': self._range_key,
+            'chart': str(self._display_pane.cb_chart.currentData() or 'bars'),
+            'index_style': str(self._display_pane.cb_index_style.currentData() or 'line'),
             'smooth': display.chk_smooth.isChecked(),
             'ratio': display.chk_ratio.isChecked(),
             'overlay': display.chk_overlay.isChecked(),
