@@ -108,10 +108,20 @@ _mw_module.UpdateCheckerThread = _NoopUpdateChecker
 #   收尾自检里仍保留 `preferences.json`，防止以后有人绕过这层。
 # ==========================================
 from core import preferences as _pref_module  # noqa: E402
+# 重定向 + stub 保存前，`preferences` 单例已在 import 时从真实文件把 `desk_ui` 载入内存；
+# ★v6.43（§7-B8 R7）新键 `sub_order` 会把行情页副图/draft 的**默认渲染顺序**冲掉
+#   （早期那些「窗格顺序 = main/vol/macd/sub1/sub2」的老断言假设的就是默认序）。
+# 与 §11.6「测试不许依赖用户真实偏好」同族：构造前先把这个用户态抹平，让窗口以默认序起来。
+# ⚠ 必须在下面重定向 + stub `save` **之后**再改：否则 `set()` 会真写磁盘、污染用户库。
 
 _pref_module.preferences.path = os.path.join(
     tempfile.mkdtemp(prefix="_tmp_pref_"), "preferences.json")
 _pref_module.Preferences.save = lambda self: True
+
+# 现在 set() 只改内存、save 已被 stub（写临时库）⇒ 用默认序覆盖内存里的用户 sub_order。
+_du = _pref_module.preferences.get("desk_ui")
+if isinstance(_du, dict) and _du.get("sub_order"):
+    _pref_module.preferences.set("desk_ui", {**_du, "sub_order": []})
 
 from core.formula.program import parse_program, execute_programs_with_draws  # noqa: E402
 from ui.main_window import JianMainWindow  # noqa: E402
@@ -1576,6 +1586,62 @@ check("★ 关掉后它仍留在工具行上变灰（§7-B6-D 规则 3：关掉�
 mkt.layer_model.set_enabled(_main_key, False)
 mkt.render_charts()
 
+# ---- ★ §7-B8 R7：副图换序端到端（⬆⬇ + 拖拽 → 即时重渲染 → 持久化 → 撤销；只改格位不改 target）----
+from PyQt6.QtWidgets import QAbstractItemView  # noqa: E402
+from ui.widgets.watch_sort_list import DragHandleListWidget  # noqa: E402
+_R7_keep = (mkt.layer_model, mkt._recipe_programs, mkt._formula_segments,
+            dict(mkt._sub_visible), mkt._desk_ui.get("sub_order"))   # 借状态，收尾原样还回去
+mkt.layer_model = LayerModel(formulas=_tmp_formula.all(),
+                             enabled=["volume", "macd", _sub_key], params={})
+mkt._recipe_programs = {}
+mkt.render_charts()
+check("起点：副图格位 = 内置量 → MACD → 离差指标（渲染吃模型顺序）",
+      mkt.layer_model.sub_order_keys() == ["volume", "macd", _sub_key, _sub_key2]
+      and mkt.host.pane_names == ['main', 'vol', 'macd', _sub_key])
+mkt.set_formula_sort_mode(True)
+check("进换序模式：按副图先后铺开行（含未启用仍占格），工具条/列表都显出来",
+      mkt._formula_sort_mode is True
+      and mkt.formula_sort_list.count() == 4
+      and not mkt.formula_sort_bar.isHidden() and not mkt.formula_sort_list.isHidden())
+check("★ 换序列表复用 DragHandleListWidget（三道闸+边缘自滚），进模式后开启内部拖拽",
+      isinstance(mkt.formula_sort_list, DragHandleListWidget)
+      and mkt.formula_sort_list.dragDropMode()
+      == QAbstractItemView.DragDropMode.InternalMove)
+mkt.formula_sort_list.setCurrentRow(0)          # 选中 volume
+mkt.move_formula_sort(1)                         # volume 下移一格 ⇒ macd 冒到最前
+check("★ ⬆⬇ 换序落模型：sub_order 首位变 macd",
+      mkt.layer_model.sub_order_keys()[0] == "macd")
+mkt.render_charts()
+check("★ 换序即时反映到窗格顺序（渲染吃模型顺序）",
+      mkt.host.pane_names == ['main', 'macd', 'vol', _sub_key])
+check("★ 换序**绝不改 target**：副图成员仍全是副图（R7 一致性口径）",
+      all(mkt.layer_model.target_of(k) == 'sub' for k in mkt.layer_model.sub_order_keys()))
+mkt._persist_layer_state()
+check("★ 换序结果被记住（写进 desk_ui.sub_order）",
+      (mkt._desk_ui.get('sub_order') or [''])[0] == "macd")
+# 拖拽提交：模拟"把 离差指标 拖到最顶"（InternalMove 后复现列表序 → rowsMoved 延迟回写）
+_drag_it = mkt.formula_sort_list.takeItem(2)      # 当前第 3 行 = 离差指标
+mkt.formula_sort_list.insertItem(0, _drag_it)
+mkt._formula.apply_formula_sort()                 # 等价于 rowsMoved → 延迟提交
+check("★ 拖拽提交回写模型：离差指标顶到最前",
+      mkt.layer_model.sub_order_keys()[0] == _sub_key)
+mkt.render_charts()
+check("★ 拖拽后窗格顺序 = ['main', 离差, macd, vol]",
+      mkt.host.pane_names == ['main', _sub_key, 'macd', 'vol'])
+mkt.undo_formula_sort()
+check("↺ 撤销回到进入前顺序（volume 又回到最前）",
+      mkt.layer_model.sub_order_keys()[0] == "volume")
+mkt.finish_formula_sort()
+check("✓ 完成退出换序模式（模式关、列表隐藏）",
+      mkt._formula_sort_mode is False and mkt.formula_sort_list.isHidden())
+# 还原借用的全局状态（§11.5-32：绝不把本段污染给后面的 draft/chip 断言）
+(mkt.layer_model, mkt._recipe_programs, mkt._formula_segments, mkt._sub_visible) = _R7_keep[:4]
+if _R7_keep[4] is None:
+    mkt._desk_ui.pop("sub_order", None)
+else:
+    mkt._desk_ui["sub_order"] = _R7_keep[4]
+mkt.render_charts()
+
 # ---- ★ §7-B8 R6：配方库**页版式**（分区 + 徽标 + 图例 + 管理模式）----
 def _recipe_chips(target):
     lay = mkt.formula_chip_lays[target]
@@ -2483,6 +2549,11 @@ try:
         #   副图断言会隔日误报 —— 测试对环境敏感就是测试的 bug）
         _brd._display_pane.chk_overlay.setChecked(True)
         _brd._display_pane.cb_index_style.setCurrentIndex(0)   # 折线
+        #   v6.43 同族补正：下面两条断言（读数条「命中 N 只」/ 家数纵轴取整）同样依赖
+        #   **口径=家数、视觉=柱状** —— 用户手测时勾上「占比%」/ 切到折线都会存进 breadth_ui，
+        #   不显式钉死就会隔日误报（占比模式读数天生是「%」、纵轴该留小数）。
+        _brd._display_pane.cb_chart.setCurrentIndex(0)          # 柱状（默认）
+        _brd._display_pane.chk_ratio.setChecked(False)         # 家数口径（非占比）
         _overlay_code = str(_brd._display_pane.cb_overlay_code.currentData() or 'sh000001')
         _brd._index_code = _overlay_code
         _brd._index_df = pd.DataFrame({

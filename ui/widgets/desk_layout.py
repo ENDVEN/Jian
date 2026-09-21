@@ -18,7 +18,7 @@
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit,
                              QMenu, QPushButton, QVBoxLayout, QWidget)
 
 from data.annotations import PERIOD_DAILY
@@ -518,6 +518,55 @@ class DeskLayout:
         p.lbl_formula_status.setWordWrap(True)
         p.lbl_formula_status.setStyleSheet("font-size: 11px; color: #8A94A6;")
         lay.addWidget(p.lbl_formula_status)
+
+        # ---- ★v6.24（§7-B8 R7）副图换序（附图 ≤5 ⇒ ⬆⬇ 就够，见 ROADMAP 四轮拍板）----
+        #   行为在 `desk_formula.set_formula_sort_mode/move_formula_sort/...`，本处只摆容器。
+        p.btn_formula_sort = QPushButton("⇅ 副图换序")
+        p.btn_formula_sort.setCheckable(True)
+        p.btn_formula_sort.setStyleSheet(_BTN_QSS)
+        p.btn_formula_sort.setToolTip(
+            "拖行首 ⣿ 手柄调副图从上到下的先后（也可选一行后用 ⬆⬇）。\n"
+            "⚠ **只改显示格位，不改公式段的目标**。\n"
+            "· 拖完即时生效并记住；\n· ↺ 撤销回进入前顺序，再点本按钮或 ✓ 完成退出。")
+        p.btn_formula_sort.toggled.connect(p.set_formula_sort_mode)
+        lay.addWidget(p.btn_formula_sort)
+
+        p.formula_sort_bar = QWidget()
+        sort_bar = QHBoxLayout(p.formula_sort_bar)
+        sort_bar.setContentsMargins(0, 0, 0, 0)
+        sort_bar.setSpacing(6)
+        sort_hint = QLabel("拖 ⣿ 手柄，或选行 ⬆⬇")
+        sort_hint.setStyleSheet("font-size: 11px; color: #8A94A6;")
+        sort_bar.addWidget(sort_hint, 1)
+        p.btn_formula_sort_up = QPushButton("⬆")
+        p.btn_formula_sort_up.setStyleSheet(_BTN_QSS)
+        p.btn_formula_sort_up.setToolTip("把选中副图向上移一格")
+        p.btn_formula_sort_up.clicked.connect(lambda: p.move_formula_sort(-1))
+        sort_bar.addWidget(p.btn_formula_sort_up)
+        p.btn_formula_sort_down = QPushButton("⬇")
+        p.btn_formula_sort_down.setStyleSheet(_BTN_QSS)
+        p.btn_formula_sort_down.setToolTip("把选中副图向下移一格")
+        p.btn_formula_sort_down.clicked.connect(lambda: p.move_formula_sort(1))
+        sort_bar.addWidget(p.btn_formula_sort_down)
+        p.btn_formula_sort_undo = QPushButton("↺ 撤销")
+        p.btn_formula_sort_undo.setStyleSheet(_BTN_QSS)
+        p.btn_formula_sort_undo.setToolTip("回到进入换序模式之前的顺序")
+        p.btn_formula_sort_undo.clicked.connect(p.undo_formula_sort)
+        sort_bar.addWidget(p.btn_formula_sort_undo)
+        p.btn_formula_sort_done = QPushButton("✓ 完成")
+        p.btn_formula_sort_done.setStyleSheet(_BTN_PRIMARY_QSS)
+        p.btn_formula_sort_done.clicked.connect(p.finish_formula_sort)
+        sort_bar.addWidget(p.btn_formula_sort_done)
+        p.formula_sort_bar.setVisible(False)
+        lay.addWidget(p.formula_sort_bar)
+
+        p.formula_sort_list = DragHandleListWidget()
+        p.formula_sort_list.setMinimumHeight(120)
+        p.formula_sort_list.setToolTip("副图从上到下的先后（未启用的置灰，仍占一个格位）\n拖行首 ⣿ 手柄换序（平时拖不动 = 防误触）")
+        # 拖拽**结束才落盘**：不在 dragover 里一路写；rowsMoved 只连一次（同自选股 R15）
+        p.formula_sort_list.model().rowsMoved.connect(p.on_formula_rows_moved)
+        p.formula_sort_list.setVisible(False)
+        lay.addWidget(p.formula_sort_list)
 
     def build_anno_page(self, lay: QVBoxLayout) -> None:
         """✎ 标注工具 = **画线类型目录**（§7-B8 R10/R11）。

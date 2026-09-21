@@ -110,9 +110,10 @@ class LayerModel:
     :param formulas: 用户配方（`formula_store` 的条目；本类只读它、不落库）
     :param enabled:  已启用的 key 列表（来自上次偏好；坏值会被清洗掉）
     :param params:   `{内置 key: {参数名: 值}}`（来自上次偏好；坏值回落默认）
+    :param order:    副图格位先后（来自上次偏好 `sub_order`；坏 key 忽略、缺失的排后面）
     """
 
-    def __init__(self, formulas=None, enabled=None, params=None, draft=None):
+    def __init__(self, formulas=None, enabled=None, params=None, draft=None, order=None):
         self.builtin_items = [dict(item) for item in BUILTIN_ITEMS]
         # ---- 组装条目列表：**内置在前、你的在后**（用户原话的顺序） ----
         self.items: list[dict] = list(self.builtin_items)
@@ -145,6 +146,10 @@ class LayerModel:
             key = str(key or "")
             if key in self._by_key:
                 self._enabled.add(key)
+
+        # ---- 副图格位顺序：应用上次偏好（R7）----
+        #   放在最后：此时 `items` 已含内置 / 草稿 / 配方，换序才有完整对象可排。
+        self.apply_order(order)
 
     # ==========================================
     # 草稿槽（当前编辑、未存盘的那份函数）
@@ -255,6 +260,59 @@ class LayerModel:
 
     def enabled_list(self) -> list[str]:
         return self.enabled_keys()
+
+    # ==========================================
+    # 副图格位顺序（§7-B8 R7 —— "格位由顺序决定、配方不绑定第几格"）
+    # ==========================================
+    def _reorder_group(self, target, keys) -> bool:
+        """把 `target` 类的条目按 `keys` 的先后重排（**只动同类、同类内换位**）。
+
+        ⚠ 只调整**同类**条目在 `items` 里的相对位置，**绝不改任何条目的 target**
+        —— 这正是 R7 的一致性口径：换序只改"显示在第几格"，不改段里的去处名。
+        未出现在 `keys` 里的同类条目保持原有相对顺序、排到后面（新加的配方不至于丢）。
+        返回是否真的发生变化（原地不动 ⇒ False，调用方据此决定要不要重渲染）。
+        """
+        slots = [i for i, item in enumerate(self.items) if item["target"] == target]
+        group = [self.items[i] for i in slots]
+        wanted = [str(key or "") for key in (keys or ())]
+        rank = {key: n for n, key in enumerate(wanted)}
+        # 稳定排序：在 wanted 里 ⇒ 按其位置；不在 ⇒ 排到后面且保持原相对顺序
+        decorated = [(rank.get(item["key"], len(wanted) + pos), pos, item)
+                     for pos, item in enumerate(group)]
+        ordered = [item for _r, _p, item in sorted(decorated, key=lambda t: (t[0], t[1]))]
+        if [item["key"] for item in ordered] == [item["key"] for item in group]:
+            return False
+        for slot, item in zip(slots, ordered):
+            self.items[slot] = item
+        return True
+
+    def apply_order(self, order) -> bool:
+        """按偏好 `order`（副图 key 的先后列表）重排副图；坏值 / 未知 key 被忽略。"""
+        return self._reorder_group(TARGET_SUB, order)
+
+    def set_sub_order(self, keys) -> bool:
+        """收尾用：把副图条目重排成 `keys` 指定的先后（返回是否变化）。"""
+        return self._reorder_group(TARGET_SUB, keys)
+
+    def move_sub(self, key, delta) -> bool:
+        """⬆⬇ 一步：在副图序列里把 `key` 相对移动 `delta`（-1 上移 / +1 下移）。
+
+        非副图条目 / 已在边界 ⇒ 返回 False（不做无意义重排，更不许跨类挪动）。
+        """
+        sub = self.sub_order_keys()
+        key = str(key or "")
+        if key not in sub:
+            return False
+        index = sub.index(key)
+        dest = max(0, min(len(sub) - 1, index + int(delta)))
+        if dest == index:
+            return False
+        sub.insert(dest, sub.pop(index))
+        return self._reorder_group(TARGET_SUB, sub)
+
+    def sub_order_keys(self) -> list[str]:
+        """当前副图先后（含未启用者 —— 格位是列表属性、与开关无关；给持久化用）。"""
+        return [item["key"] for item in self.items if item["target"] == TARGET_SUB]
 
     # ==========================================
     # 参数（R16 ⚙ 的唯一数据面）

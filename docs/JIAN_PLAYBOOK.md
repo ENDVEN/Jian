@@ -591,6 +591,19 @@
     脚注说实话（"仅显示前 N 行，共 M 行"）；冒烟钉住"列宽模式不是 ResizeToContents"。
     **通用判据**：QTableView 类"动态"模式（ResizeToContents / 自动排序 / 逐格插删）在 >几百行时
     都是性能陷阱；批量写入的铁律 = 关更新 → 填 → 一次性收尾。
+70. **【v6.44 · 新增“记住上次”类偏好键：构造期从真实 preferences 泄入 → 冲乱默认顺序断言，且冒烟误写真实库】**
+    给 `desk_ui` 加了 `sub_order`（副图换序持久化）后，`smoke_pages_overlay` 早期“窗格顺序 =
+    main/vol/macd/sub1/sub2”等**假设默认顺序**的断言突然变红。根因：`Preferences` 单例在脚本
+    把 `path` 重定向到临时目录**之前**、于 `import` 时已从**真实** `~/.jian_data/preferences.json`
+    把 `desk_ui` 载入内存；窗口一构造就读到用户真机存的 `sub_order` ⇒ 渲染顺序被改。更糟的一次：
+    把“抹平用户态”的 `preferences.set(...)` 误放在重定向/stub **之前** ⇒ 那次 `set` 触发真实
+    `save()` 把整份偏好写回了磁盘（污染用户库 + 顺手抹掉了用户真机换序）。
+    **修法**：冒烟脚本必须先重定向 `path` + stub `Preferences.save`，**之后**再在内存里把会影响
+    构造的用户态（`sub_order`、breadth 的 ratio/chart/overlay/index_style 等）抹平，让窗口以默认序起来；
+    顺序敏感断言不得依赖用户偏好（与 §11.6 breadth overlay/index_style 隔日误报同族）。
+    **通用判据**：凡是 app 新增“记住上次”类偏好键，都要问一句“冒烟会不会在构造期把它从真实库读进来、
+    或把它写回真实库”；防污染重定向要**早于任何 `set`**，且只给 `Preferences.save` 挨桩不足以挡住
+    “import 时已载入的真实值”——需显式在内存抹平。
 
 
 ---

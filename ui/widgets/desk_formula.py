@@ -17,7 +17,8 @@ _formula_error / _formula_store / lbl_formula_status / _sub_visible`，
 ★v6.24（§7-B8 R13）：显示开关（原 `cb_formula`）也**不再是控件** —— 它就是
 `layer_model` 里的**草稿槽**（`DRAFT_KEY`），由 `_register_draft()` 登记、chips 负责投影。
 """
-from PyQt6.QtWidgets import QDialog, QInputDialog, QMessageBox
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QDialog, QInputDialog, QListWidgetItem, QMessageBox
 
 from core.formula.program import FormulaProgramError, parse_program
 from core.utils import parse_params_text
@@ -277,16 +278,18 @@ class DeskFormula:
         self._set_formula_status(True, f"✓ 已删除配方「{name}」")
 
     def _rebuild_model(self) -> None:
-        """配方库变了（改名 / 删除 / 新存）⇒ **重建模型**，并保住开关与参数。
+        """配方库变了（改名 / 删除 / 新存）⇒ **重建模型**，并保住开关、参数与副图顺序。
 
-        ⚠ 只重建、不重设：`enabled` / `params` 从旧模型原样搬过去，
-        被删掉的那条 key 由模型**自己清洗掉**（§11.5-18：坏值不许进界面）。
+        ⚠ 只重建、不重设：`enabled` / `params` / `sub_order` 从旧模型原样搬过去，
+        被删掉的那条 key 由模型**自己清洗掉**（§11.5-18：坏值不许进界面）；
+        新增的副图配方不在旧序里 ⇒ 由 `_reorder_group` 自动排到末尾。
         """
         p = self.page
         p.layer_model = LayerModel(formulas=p._formula_store.all(),
                                    enabled=p.layer_model.enabled_list(),
                                    params=p.layer_model.params_snapshot(),
-                                   draft=p._formula_segments)
+                                   draft=p._formula_segments,
+                                   order=p.layer_model.sub_order_keys())
         p._recipe_programs = {}
         p._on_layer_switch_changed()
         self.refresh_recipe_page()
@@ -352,3 +355,108 @@ class DeskFormula:
         self._compile_formula()
         self._set_formula_status(True, f"✓ 已自动载入上次配方「{formula['name']}」"
                                        f"（{len(pairs)} 段）")
+
+    # ==========================================
+    # 副图换序（§7-B8 R7）：⬆⬇ 版（附图少 ⇒ 规格里 ⬆⬇ 就够；拖拽留后续）。
+    #   口径：换序只改**显示格位**，绝不改公式段的 target；
+    #   每次移动→落模型→走 `_on_layer_switch_changed`（即时重渲染 + 持久化 sub_order）。
+    # ==========================================
+    def set_formula_sort_mode(self, on: bool) -> None:
+        p = self.page
+        on = bool(on)
+        p._formula_sort_mode = on
+        btn = getattr(p, "btn_formula_sort", None)
+        if btn is not None:
+            btn.setText("✓ 换序中（点此退出）" if on else "⇅ 副图换序")
+        for attr in ("formula_sort_bar", "formula_sort_list"):
+            widget = getattr(p, attr, None)
+            if widget is not None:
+                widget.setVisible(on)
+        lst = getattr(p, "formula_sort_list", None)
+        if lst is not None:
+            lst.set_sort_mode(on)          # 闸 1：非排序模式时 DragHandleListWidget 根本不响应拖
+        if on:
+            p._formula_sort_backup = list(p.layer_model.sub_order_keys())
+            self._rebuild_sort_list()
+        else:
+            p._formula_sort_backup = None
+
+    def _rebuild_sort_list(self) -> None:
+        """按当前副图先后重建 ⬆⬇ 列表（一行一格；未启用置灰但仍占格位）。"""
+        p = self.page
+        lst = getattr(p, "formula_sort_list", None)
+        if lst is None:
+            return
+        current = lst.currentRow()
+        lst.clear()
+        for pos, key in enumerate(p.layer_model.sub_order_keys()):
+            name = p.layer_model.label(key) or key
+            suffix = "" if p.layer_model.enabled(key) else "（未启用）"
+            item = QListWidgetItem(f"⣿ {pos + 1}. {name}{suffix}")
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            lst.addItem(item)
+        if 0 <= current < lst.count():
+            lst.setCurrentRow(current)
+        elif lst.count():
+            lst.setCurrentRow(0)
+
+    def move_formula_sort(self, delta: int) -> None:
+        p = self.page
+        if not getattr(p, "_formula_sort_mode", False):
+            return
+        lst = getattr(p, "formula_sort_list", None)
+        if lst is None:
+            return
+        row = lst.currentRow()
+        keys = p.layer_model.sub_order_keys()
+        if row < 0 or row >= len(keys):
+            return
+        key = keys[row]
+        if p.layer_model.move_sub(key, int(delta)):
+            p._on_layer_switch_changed()      # 即时重渲染 + 持久化 sub_order
+            self._rebuild_sort_list()
+            new_keys = p.layer_model.sub_order_keys()
+            if key in new_keys:
+                lst.setCurrentRow(new_keys.index(key))
+
+    def undo_formula_sort(self) -> None:
+        p = self.page
+        backup = getattr(p, "_formula_sort_backup", None)
+        if not backup:
+            return
+        if p.layer_model.set_sub_order(backup):
+            p._on_layer_switch_changed()
+        self._rebuild_sort_list()
+
+    def on_formula_rows_moved(self, *_args) -> None:
+        """拖拽**结束**才回写：延迟到下一轮事件循环。
+
+        ⚠ 此刻列表模型正在发 `rowsMoved`，当场重建 = 边发信号边改模型
+        （Qt 会崩 / 丢行）—— 与自选股 R15 `on_watch_rows_moved` 同一条纪律。
+        """
+        p = self.page
+        if not getattr(p, "_formula_sort_mode", False):
+            return
+        QTimer.singleShot(0, self.apply_formula_sort)
+
+    def apply_formula_sort(self) -> None:
+        """把当前列表顺序写回模型 → 走统一回流（即时重渲染 + 持久化 sub_order）。"""
+        p = self.page
+        if not getattr(p, "_formula_sort_mode", False):
+            return
+        lst = getattr(p, "formula_sort_list", None)
+        if lst is None:
+            return
+        order = [str(lst.item(row).data(Qt.ItemDataRole.UserRole) or "")
+                 for row in range(lst.count())]
+        if p.layer_model.set_sub_order(order):
+            p._on_layer_switch_changed()
+        self._rebuild_sort_list()
+
+    def finish_formula_sort(self) -> None:
+        p = self.page
+        btn = getattr(p, "btn_formula_sort", None)
+        if btn is not None and btn.isChecked():
+            btn.setChecked(False)             # 触发 toggled → set_formula_sort_mode(False)
+        else:
+            self.set_formula_sort_mode(False)

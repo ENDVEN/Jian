@@ -151,6 +151,9 @@ class TradingDeskView(QWidget):
         self._recipe_programs: dict = {}
         # ★v6.24（§7-B8 R6）：配方库的「管理模式」（开启后才显示改名/删除；内置项永不显示）
         self._formula_manage = False
+        # ★v6.24（§7-B8 R7）：副图换序模式状态（备份原序供“↺ 撤销”）
+        self._formula_sort_mode = False
+        self._formula_sort_backup = None
         # ★v6.24（§7-B8 R10）：当前画线工具 —— 取代旧 `seg_tool` 的"停在哪一格"
         #   （空串 = 浏览模式；tile 只是它的投影，§11.5-11）
         self.current_tool = ""
@@ -161,7 +164,8 @@ class TradingDeskView(QWidget):
         self.layer_model = LayerModel(
             formulas=self._formula_store.all(),
             enabled=self._desk_ui.get("layer_enabled"),
-            params=self._desk_ui.get("layer_params"))
+            params=self._desk_ui.get("layer_params"),
+            order=self._desk_ui.get("sub_order"))
 
         self._annotation_store = AnnotationStore()
         self._annotations = None               # 需等 ChartHost 建好（见 _setup_ui）
@@ -280,6 +284,8 @@ class TradingDeskView(QWidget):
             #   （坏值由 `LayerModel` 清洗：未知 key / 越界参数一律回落默认）
             "layer_enabled": data.get("layer_enabled") or [],
             "layer_params": data.get("layer_params") or {},
+            # ★v6.24（§7-B8 R7）：副图格位先后（换序只改格位、不改 target；坏 key 由模型忽略）
+            "sub_order": data.get("sub_order") or [],
         }
 
     def _save_desk_ui(self, **changes) -> None:
@@ -293,7 +299,8 @@ class TradingDeskView(QWidget):
         否则"改一处漏一处"必然发生（§7-B6-D 第 6 条同族）。
         """
         self._save_desk_ui(layer_enabled=self.layer_model.enabled_list(),
-                           layer_params=self.layer_model.params_snapshot())
+                           layer_params=self.layer_model.params_snapshot(),
+                           sub_order=self.layer_model.sub_order_keys())
 
     # ==========================================
     # 图表区杂项（两处渲染共用的轴样式，§9-O7）
@@ -566,6 +573,21 @@ class TradingDeskView(QWidget):
 
     def open_params(self, key):
         return self._formula.open_params(key)
+
+    def set_formula_sort_mode(self, on):
+        return self._formula.set_formula_sort_mode(on)
+
+    def move_formula_sort(self, delta):
+        return self._formula.move_formula_sort(delta)
+
+    def on_formula_rows_moved(self, *_args):
+        return self._formula.on_formula_rows_moved(*_args)
+
+    def undo_formula_sort(self):
+        return self._formula.undo_formula_sort()
+
+    def finish_formula_sort(self):
+        return self._formula.finish_formula_sort()
 
     def send_formula_to_backtest(self) -> int:
         return self._formula.send_formula_to_backtest()

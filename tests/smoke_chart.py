@@ -1455,6 +1455,45 @@ try:
           and [target for target, _items in LayerModel(formulas=[]).items_by_target()]
           == [TARGET_MAIN, TARGET_SUB])
 
+    # ---- 副图格位顺序（v6.24 · §7-B8 R7 第 1 步：换序只改格位、绝不改 target）----
+    _om = LayerModel(formulas=_recipes)
+    check("默认副图先后 = 内置量/MACD + 三条配方（顺序可预期）",
+          _om.sub_order_keys()
+          == ["volume", "macd", "formula:r2", "formula:r3", "formula:r4"])
+    check("set_sub_order 重排副图返回 True（确有变化）",
+          _om.set_sub_order(["formula:r4", "volume", "macd", "formula:r2", "formula:r3"]) is True)
+    check("副图先后真的变了",
+          _om.sub_order_keys()
+          == ["formula:r4", "volume", "macd", "formula:r2", "formula:r3"])
+    check("★ 换序**只改格位、绝不改 target**：副图成员全部仍是副图（R7 一致性口径）",
+          all(_om.target_of(k) == TARGET_SUB for k in _om.sub_order_keys()))
+    check("★ 换序不动主图集合（成员与顺序都不受影响）",
+          [i["key"] for i in _om.items_for(TARGET_MAIN)] == ["ma", "boll", "formula:r1"])
+    _om.set_enabled("macd", True)
+    _om.set_enabled("formula:r4", True)
+    check("enabled_keys(target=SUB) **按换序后的格位**枚举已启用项（渲染就吃这个顺序）",
+          _om.enabled_keys(target=TARGET_SUB) == ["formula:r4", "volume", "macd"])
+    check("set_sub_order 原地不动返回 False（不做无意义重排）",
+          _om.set_sub_order(_om.sub_order_keys()) is False)
+    _om2 = LayerModel(formulas=_recipes)
+    check("move_sub 上移：macd 从第 2 格换到最前",
+          _om2.move_sub("macd", -1) is True and _om2.sub_order_keys()[0] == "macd")
+    check("move_sub 已在边界返回 False（上移越界不动）",
+          _om2.move_sub("macd", -1) is False)
+    check("move_sub 拒绝非副图条目（ma 在主图 ⇒ 不许跨类挪）",
+          _om2.move_sub("ma", 1) is False)
+    _om3 = LayerModel(formulas=_recipes, order=["formula:r2", "macd", "volume"])
+    check("构造期 order 生效：偏好的三条排前面",
+          _om3.sub_order_keys()[:3] == ["formula:r2", "macd", "volume"])
+    check("★ 未出现在 order 里的副图**保持原相对顺序排到末尾**（新配方不会丢）",
+          _om3.sub_order_keys()[3:] == ["formula:r3", "formula:r4"])
+    check("order 里的未知 key 被忽略（坏偏好不产生幽灵格位）",
+          LayerModel(formulas=_recipes, order=["查无此项", "volume"]).sub_order_keys()[0]
+          == "volume")
+    check("round-trip：拿快照再构造，顺序稳定不动（可安全持久化）",
+          LayerModel(formulas=_recipes,
+                     order=_om3.sub_order_keys()).sub_order_keys() == _om3.sub_order_keys())
+
     # ---- 斐波那契 / 文字：绘制 + **附属图元随主图元一起删**（§11.5-15 同类风险）----
     from data.annotations import KIND_FIB, KIND_TEXT, KIND_TREND
     from ui.widgets import chart_style as _chart_style
