@@ -80,6 +80,7 @@ class BacktestResultArea(QWidget):
         self._kline_state = None
         self._kline_win_draws: list = []   # 按 K 线窗口切片后的叠层
         self._overlay_items: list = []     # 已渲染的叠层图元（供"显示公式叠层"开关切换）
+        self._kline_hint_text: str = ""    # K 线空态提示文案（§7-A4 只读回放要用自定义文案）
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -220,10 +221,12 @@ class BacktestResultArea(QWidget):
     # 对外：渲染
     # ==========================================
     def render_result(self, result, name: str, symbol: str,
-                      df=None, draws=None) -> dict:
+                      df=None, draws=None, kline_hint: str = None) -> dict:
         """渲染一次完整结果（KPI + 净值 + 明细 + K线），返回引擎 summary 供页面写回执。
 
         页面负责用返回的 summary 拼"运行回执"文字（那里才有 current_name/symbol 的语境）。
+        :param kline_hint: K 线画不出时标题上的说明（如"历史存档不含逐日 K 线"）；
+                           为 None 时用默认文案。
         """
         if df is not None:
             self._df = df
@@ -234,7 +237,7 @@ class BacktestResultArea(QWidget):
         self._render_kpi(summary)
         self._render_equity(result)
         self._render_trades(result)
-        self._render_kline(result)
+        self._render_kline(result, hint=kline_hint)
         return summary
 
     def render_kline(self, result, df=None, draws=None, name: str = "", symbol: str = ""):
@@ -297,6 +300,17 @@ class BacktestResultArea(QWidget):
         plot_equity_curve(self.equity_chart, eq['equity'], fill_base=1.0, width=2)
         self.equity_chart.addLine(
             y=1.0, pen=pg.mkPen(color='#BDBDBD', style=Qt.PenStyle.DashLine))
+        # §7-A4：历史存档回放的净值序列带 buy_at / sell_at（成交日**净值**）⇒
+        # 买卖点直接落在净值曲线上（不用成交价 —— 与净值不同量纲，画上去会跑出坐标轴）。
+        for col, symbol, color in (("buy_at", 't', settings.COLOR_PROFIT),
+                                   ("sell_at", 'd', settings.COLOR_LOSS)):
+            if col not in eq.columns:
+                continue
+            xs = [i for i, ok in enumerate(eq[col].notna().tolist()) if ok]
+            if xs:
+                self.equity_chart.addItem(pg.ScatterPlotItem(
+                    x=xs, y=[float(eq[col].iloc[i]) for i in xs], symbol=symbol,
+                    size=12, brush=pg.mkBrush(color), pen='w'))
         self._equity_state = {'dates': dates.tolist()}
         self._refresh_equity_axis()
 
@@ -334,16 +348,18 @@ class BacktestResultArea(QWidget):
     # ==========================================
     # 内部：K 线 + 公式叠层
     # ==========================================
-    def _render_kline(self, result):
+    def _render_kline(self, result, hint: str = None):
         self.kline_chart.clear()
         self._kline_state = None
         self._overlay_items = []
         self._kline_win_draws = []
+        self._kline_hint_text = ""            # 空态提示文案（验收断言读它，不依赖 pyqtgraph 内部）
 
         df = self._df
         if df is None or df.empty or not result.trades:
+            self._kline_hint_text = hint or "请回测后查看买卖点标注"
             self.kline_chart.getPlotItem().setTitle(
-                "请回测后查看买卖点标注", color="#9AA3B2", size="11pt")
+                self._kline_hint_text, color="#9AA3B2", size="11pt")
             return
         data = df.copy()
         data['date'] = pd.to_datetime(data['date'])

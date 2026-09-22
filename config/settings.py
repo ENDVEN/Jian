@@ -41,8 +41,14 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #   1.36 = §7-A2 回测结果图表导出：build_daily_series（逐日净值+买卖点共同源）+
 #          CSV 末尾逐日净值数据段（Excel 选中列绘图）+ 新增 backtest_xlsx.py（openpyxl 内嵌
 #          净值曲线图+买卖点 marker），smoke 745 / 514→521。
+#   1.37 = §7-A4 回测历史存档：data/backtest_archive.py（不可变快照+轻量索引，save/list/load/
+#          pin/delete/滞动淘汰/uuid 防注入；净值抽稀端点保底+并入成交日；读路径不写盘）+
+#          ui/widgets/backtest_history_ui.py（版式/渲染）+ ui/views/backtest_history.py（薄壳，
+#          第4子页“运行历史”：载入查看/复用/重跑/送行情/★重点/删）；默认自动存档可关、
+#          每标的20/总500淘汰重点豁免；M1 只读回放（现场保存/恢复+禁导出+横幅）+
+#          导出菜单「存为历史快照」；结果区净值曲线新增买卖点散点，smoke 782 / 554。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.36"
+APP_VERSION = "1.37"
 
 # ==========================================
 # 界面配置 (UI Settings)

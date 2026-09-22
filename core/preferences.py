@@ -70,6 +70,10 @@ DEFAULTS = {
     #    "overlay_code": "sh000001"}# 副图指数（index_daily 分区；缺了自动补拉一次）
     #   ⚠ 同上：只存轻量配置，绝不存扫描结果。
     "breadth_ui": None,
+    # v1.37（§7-A4）：**回测历史存档**设置 —— 自动存档开关（默认开）。
+    #   {"auto": True}   # 每次回测成功出结果后自动落一份不可变快照
+    #   ⚠ 只存开关；存档本体在 ~/.jian_data/backtest_results/（每份一个文件），不写进偏好。
+    "backtest_archive": {"auto": True},
 }
 
 

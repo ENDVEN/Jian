@@ -3682,6 +3682,196 @@ try:
 except Exception as _e:  # noqa: BLE001
     check(f"§7-B10 定稿守卫/日历断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
+# ==========================================
+print("\n== §7-A4 · 回测历史存档（存储层：抽稀/往返/淘汰/防注入/只读不写盘）==")
+# ==========================================
+try:
+    import shutil as _sh4
+    import tempfile as _tf4
+    import json as _json4
+    import pandas as _pd4
+    import data.backtest_archive as _arc4
+    from core.backtest import BacktestResult as _BR4, BacktestTrade as _BT4
+    from data.backtest_archive import (BacktestArchive, build_record, record_to_result,
+                                       sample_equity, PER_SYMBOL_CAP, TOTAL_CAP,
+                                       MAX_FILE_BYTES, EQUITY_MAX_POINTS, KIND_M1,
+                                       RESERVED_KINDS, SOURCE_MANUAL)
+
+    def _mk_result(symbol='600000'):
+        dates = _pd4.to_datetime(['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'])
+        eq = _pd4.DataFrame({'date': dates, 'equity': [1.0, 1.1, 1.05, 1.2],
+                             'in_market': [0, 1, 1, 1]})
+        tr = [_BT4(entry_date=dates[1], exit_date=dates[3], entry_price=10.0,
+                   exit_price=12.0, pnl=2.0, return_pct=0.2)]
+        return _BR4(symbol, 'B', 'S', '2024-01-02', '2024-01-05', trades=tr, equity=eq)
+
+    _meta4 = {'symbol': '600000', 'name': '长江电力', 'strategy_name': '绿蓝红',
+              'start_date': '2024-01-02', 'end_date': '2024-01-05', 'segments': [],
+              'params_text': '', 'buy_expr': 'B', 'sell_expr': 'S', 'risk': {},
+              'fill': {'fill_mode': 'next_open', 'trigger_tick': 1}, 'index': None}
+    _roots = []      # 统一收尾清理
+
+    def _tmp4(prefix='jian_arc_'):
+        _p = _tf4.mkdtemp(prefix=prefix)
+        _roots.append(_p)
+        return _p
+
+    # ⓪ 口径常量（唯一出处 = data/backtest_archive.py）
+    check("存档上限常量：每标的20 / 总量500 / 单份2MB / 净值≤250点",
+          PER_SYMBOL_CAP == 20 and TOTAL_CAP == 500
+          and MAX_FILE_BYTES == 2 * 1024 * 1024 and EQUITY_MAX_POINTS == 250)
+    check("kind 预留 M2/M3、本轮只写 M1",
+          KIND_M1 == 'M1' and tuple(RESERVED_KINDS) == ('M2', 'M3'))
+    check("上限说明 caps() 与常量同源",
+          BacktestArchive.caps()['per_symbol'] == PER_SYMBOL_CAP
+          and BacktestArchive.caps()['total'] == TOTAL_CAP)
+
+    # ① save → list → load → pin → delete 往返
+    _root4 = _tmp4()
+    _ar4 = BacktestArchive(root=_root4)
+    _rid = _ar4.save(build_record(_mk_result(), _meta4, config={'symbol': '600000'}))
+    check("save 返回 id 且落一个 json + _index.json",
+          bool(_rid)
+          and os.path.exists(os.path.join(_root4, _rid + '.json'))
+          and os.path.exists(os.path.join(_root4, '_index.json')))
+    _lst = _ar4.list(kind='M1')
+    check("list 命中 1 条、kind=M1、带 KPI",
+          len(_lst) == 1 and _lst[0]['kind'] == 'M1'
+          and _lst[0]['cumulative_return'] is not None)
+    _rec = _ar4.load(_rid)
+    check("记录字段齐（meta/config/kpi/trades/equity/source/seq）",
+          all(k in _rec for k in ('meta', 'config', 'kpi', 'trades', 'equity', 'source', 'seq')))
+    check("记录带 kind=M1（M2/M3 未来复用同一 schema）", _rec['kind'] == 'M1')
+    _ar4.set_pinned(_rid, True)
+    check("pin 后 list 反映 pinned=True", _ar4.list()[0]['pinned'] is True)
+    check("只看重点过滤命中", len(_ar4.list(only_pinned=True)) == 1)
+    check("手动来源标记 source=manual",
+          _ar4.save(build_record(_mk_result(), _meta4, source=SOURCE_MANUAL)) and
+          _ar4.list()[0]['source'] == 'manual')
+    check("delete 后该文件移除",
+          _ar4.delete(_rid) and not os.path.exists(os.path.join(_root4, _rid + '.json'))
+          and all(e['id'] != _rid for e in _ar4.list()))
+
+    # ② 净值抽稀：端点保底（cumulative_return 依赖末点）+ 并入全部成交日 + in_market
+    _bd = _pd4.date_range('2020-01-01', periods=1000, freq='D')
+    _big = _BR4('600000', 'B', 'S', '2020-01-01', '2022-09-26',
+                trades=[_BT4(entry_date=_bd[7], exit_date=_bd[601], entry_price=1.0,
+                             exit_price=2.0, pnl=1.0, return_pct=1.0)],
+                equity=_pd4.DataFrame({'date': _bd, 'equity': list(range(1000)),
+                                       'in_market': [0] * 1000}))
+    _samp = sample_equity(_big, max_points=250)
+    _samp_dates = [r['date'] for r in _samp]
+    _samp_plain = sample_equity(_BR4('600000', 'B', 'S', '2020-01-01', '2022-09-26',
+                                     trades=[], equity=_big.equity), max_points=250)
+    _grid = {round(i * 999 / 249) for i in range(250)}          # 均匀网格（无用例日）
+    check("抽稀上限：没有成交日时不超过 250 点", len(_samp_plain) <= 250)
+    check("抽稀点数 = 均匀网格 ∪ 成交日（本例 250 + 2 个网格外成交日）",
+          len(_samp) == len(_samp_plain) + 2)
+    check("端点保底：首点与**末点**都保留（末点丢=累计收益算错）",
+          _samp_dates[0] == _bd[0].strftime('%Y-%m-%d')
+          and _samp_dates[-1] == _bd[-1].strftime('%Y-%m-%d'))
+    check("成交日并入是「必要」的（7 / 601 都不在均匀网格上）",
+          7 not in _grid and 601 not in _grid)
+    check("抽稀**强制并入全部成交日**（买卖点不丢）",
+          _bd[7].strftime('%Y-%m-%d') in _samp_dates
+          and _bd[601].strftime('%Y-%m-%d') in _samp_dates)
+    check("抽稀保留 in_market 列",
+          all(('in_market' in r) for r in _samp))
+    _rec_big = build_record(_big, _meta4)
+    check("抽稀后末点净值 == 原始末点（端点保底不引入偏差）",
+          abs(_rec_big['equity'][-1]['equity'] - 999.0) < 1e-6)
+
+    # ③ record_to_result 往返：trades / 买卖点列 / 累计
+    _rb = record_to_result(_rec_big)
+    check("record_to_result 往返：trades 数一致", len(_rb.trades) == 1)
+    check("重建 equity 带 buy_at / sell_at（净值曲线靠它画买卖点）",
+          'buy_at' in _rb.equity.columns and 'sell_at' in _rb.equity.columns
+          and int(_rb.equity['buy_at'].notna().sum()) == 1
+          and int(_rb.equity['sell_at'].notna().sum()) == 1)
+    check("重建后 cumulative_return 仍等于 (末点净值 − 1)",
+          abs(_rb.cumulative_return - 998.0) < 1e-6)
+    _rb2 = record_to_result(build_record(_mk_result(), _meta4))
+    check("record_to_result 往返：普通序列累计一致",
+          len(_rb2.trades) == 1 and abs(_rb2.cumulative_return - 0.2) < 1e-6)
+
+    # ④ 淘汰：分标的 + 全局 + **重点豁免**（用 monkeypatch 常量做小规模，快且不写 500 个文件）
+    _cap0, _tot0 = _arc4.PER_SYMBOL_CAP, _arc4.TOTAL_CAP
+    try:
+        _arc4.PER_SYMBOL_CAP, _arc4.TOTAL_CAP = 3, 100
+        _ar4b = BacktestArchive(root=_tmp4('jian_arc_cap_'))
+        _pinned_id = _ar4b.save(build_record(_mk_result(), _meta4))
+        _ar4b.set_pinned(_pinned_id, True)                 # 最早的这份标为重点
+        for _ in range(5):
+            _ar4b.save(build_record(_mk_result(), _meta4))
+        _rows = _ar4b.list()
+        check("每标的：非重点淘汰到 ≤3",
+              sum(1 for e in _rows if not e['pinned']) == 3)
+        check("★ 重点豁免淘汰（最早那份仍在）",
+              any(e['id'] == _pinned_id for e in _rows))
+
+        _arc4.PER_SYMBOL_CAP, _arc4.TOTAL_CAP = 100, 4
+        _ar4d = BacktestArchive(root=_tmp4('jian_arc_tot_'))
+        _first_id = _ar4d.save(build_record(_mk_result('000001'), _meta4))
+        for _i in range(6):
+            _ar4d.save(build_record(_mk_result(f'00000{_i + 2}'), _meta4))
+        check("全局：总量淘汰到 ≤4（最旧的被淘汰）",
+              len(_ar4d.list()) == 4 and all(e['id'] != _first_id for e in _ar4d.list()))
+    finally:
+        _arc4.PER_SYMBOL_CAP, _arc4.TOTAL_CAP = _cap0, _tot0
+
+    # ⑤ 读路径**绝不写盘**（否则开一次页就把真实目录建出来）
+    _ghost = os.path.join(_tmp4('jian_arc_ghost_'), 'never_created')
+    _ar5 = BacktestArchive(root=_ghost)
+    check("list() 不建目录", _ar5.list() == [] and not os.path.exists(_ghost))
+    check("stats() 不建目录",
+          _ar5.stats()['count'] == 0 and not os.path.exists(_ghost))
+    check("load() 不建目录", _ar5.load('nope') is None and not os.path.exists(_ghost))
+    check("delete 一个不存在的 id 也不建目录",
+          _ar5.delete('nope') is False and not os.path.exists(_ghost))
+
+    # ⑥ 索引自愈（只读）+ 僵尸项剔除
+    _ar6 = BacktestArchive(root=_tmp4('jian_arc_heal_'))
+    _rid6 = _ar6.save(build_record(_mk_result(), _meta4))
+    os.remove(os.path.join(_ar6.root, '_index.json'))
+    check("索引丢失 → list 从各存档文件重建", len(_ar6.list()) == 1)
+    check("重建是**只读**的（不顺手把索引写回）",
+          not os.path.exists(os.path.join(_ar6.root, '_index.json')))
+    _rid6b = _ar6.save(build_record(_mk_result(), _meta4))     # 这次会把索引写回
+    os.remove(os.path.join(_ar6.root, _rid6b + '.json'))       # 手删文件、留僵尸索引
+    check("僵尸索引项（文件已不在）被剔除",
+          len(_ar6.list()) == 1 and all(e['id'] != _rid6b for e in _ar6.list()))
+
+    # ⑦ 防注入：文件名只用 时间戳_uuid；用户文本只进 JSON 字段
+    _evil = dict(_meta4)
+    _evil['strategy_name'] = '../../etc/passwd, 攻击'
+    _evil['symbol'] = '600000'
+    _rid3 = _ar6.save(build_record(_mk_result(), _evil))
+    check("防注入：文件名无用户文本 / 无路径分隔",
+          '/' not in _rid3 and '\\' not in _rid3 and '..' not in _rid3
+          and os.path.exists(os.path.join(_ar6.root, _rid3 + '.json')))
+    check("用户文本原样落在 JSON 字段里（转义而非执行）",
+          _ar6.load(_rid3)['meta']['strategy_name'] == '../../etc/passwd, 攻击')
+    check("id 文件名与策略名无关（不含'攻击'）", '攻击' not in _rid3)
+
+    # ⑧ 超体积上限 → 拒存（防体积炸弹）；拒存时不落任何文件
+    _mb0 = _arc4.MAX_FILE_BYTES
+    try:
+        _arc4.MAX_FILE_BYTES = 50
+        _ar7 = BacktestArchive(root=_tmp4('jian_arc_big_'))
+        check("超上限拒存（返回 None 且不落文件）",
+              _ar7.save(build_record(_mk_result(), _meta4)) is None
+              and _ar7.list() == []
+              and not os.path.exists(os.path.join(_ar7.root, '_index.json')))
+    finally:
+        _arc4.MAX_FILE_BYTES = _mb0
+
+    for _p in _roots:
+        _sh4.rmtree(_p, ignore_errors=True)
+    check("存档目录内容可被 JSON 序列化（无 bytes/NaN 残留）",
+          bool(_json4.dumps(build_record(_mk_result(), _meta4), ensure_ascii=False)))
+except Exception as _e:  # noqa: BLE001
+    check(f"§7-A4 存档存储层断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

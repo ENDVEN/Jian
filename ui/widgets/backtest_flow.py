@@ -21,14 +21,20 @@ import pandas as pd
 from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import QMessageBox
 
+import logging
+
 from core.formula import FormulaEngine
 from core.formula.program import (FormulaProgramError, execute_programs,
                                   execute_programs_with_draws)
+from core.preferences import preferences
 from core.utils import align_by_date
 from data.akshare_feed import is_index_symbol, is_stock_code
+from data.backtest_archive import SOURCE_AUTO, SOURCE_MANUAL, BacktestArchive, build_record
 from data.sync_service import ZONE_INDEX, ZONE_KLINE, friendly_fetch_message
 from data.trade_calendar import latest_settled_trading_day
 from ui.workers import BacktestRunWorker, CalendarWorker, SingleSyncWorker
+
+logger = logging.getLogger(__name__)
 
 
 def _date_from_preset(preset: str) -> QDate:
@@ -205,6 +211,10 @@ class BacktestFlow:
             "index": index_cfg,
             "fill": p._fill_config(),
         }
+        # §7-A4：同时定格**编辑器完整配置**（存档要用它还原成"可复用/可重跑"的载荷）。
+        # ⚠ 必须在发起瞬间定格：若等回测跑完再 `payload()`，用户中途改过的编辑器内容
+        #   会被存进"这次结果"的快照里 —— 存档就不再是"跑出来那次"的忠实复现。
+        p._last_config = p.strategy.payload()
 
         self._prepare_index_then_stock()
 
@@ -403,6 +413,42 @@ class BacktestFlow:
         p._render_result(result)
         summary = result.summary()
         p.strategy.archive_result(summary)   # 归档进"当前/同配置策略"，供跨策略对比
+        self._auto_archive(result)           # §7-A4：开关开时自动落一份不可变历史快照
+
+    def _auto_archive(self, result) -> None:
+        """自动存档（开关关 / 无 meta 则跳过）；失败只记日志，绝不打断回测。"""
+        p = self.page
+        cfg = preferences.get("backtest_archive") or {}
+        if not cfg.get("auto", True):
+            return
+        if not getattr(p, "_last_meta", None):
+            return
+        try:
+            p._last_archive_id = BacktestArchive().save(build_record(
+                result, p._last_meta, config=self._frozen_config(), source=SOURCE_AUTO))
+        except Exception as e:  # noqa: BLE001 —— 存档失败不能拖垮回测回执
+            logger.warning("回测自动存档失败（忽略）: %s", e)
+
+    def archive_now(self):
+        """手动"存为历史"：落一份当前结果快照，返回 id（无结果/无 meta 返回 None）。"""
+        p = self.page
+        if getattr(p, "_last_result", None) is None or not getattr(p, "_last_meta", None):
+            return None
+        return BacktestArchive().save(build_record(
+            p._last_result, p._last_meta, config=self._frozen_config(),
+            source=SOURCE_MANUAL))
+
+    def _frozen_config(self) -> dict:
+        """存档用的配置快照：优先用发起瞬间定格的那份（`_last_config`）。
+
+        旧代码路径（无定格）才回落到"当前编辑器"—— 但那是次优解：它会存进
+        "跑完之后"的编辑器状态，与这次结果不一定是同一次配置。
+        """
+        p = self.page
+        cfg = getattr(p, "_last_config", None)
+        if cfg:
+            return cfg
+        return p.strategy.payload()
 
     def _set_busy(self, busy: bool, text: str = ""):
         """忙碌态：禁用入口 + 可选回执文字（回执落在摘要条右端，§10-14 的 L2）。"""

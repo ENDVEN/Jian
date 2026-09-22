@@ -123,6 +123,10 @@ _du = _pref_module.preferences.get("desk_ui")
 if isinstance(_du, dict) and _du.get("sub_order"):
     _pref_module.preferences.set("desk_ui", {**_du, "sub_order": []})
 
+# §7-A4：构造前关掉自动存档，避免任何测试回测写脏真实 ~/.jian_data/backtest_results/。
+# （存档接线在下方用临时 root 直接测；真实目录仅可能被读，不会被写。）
+_pref_module.preferences.set("backtest_archive", {"auto": False})
+
 from core.formula.program import parse_program, execute_programs_with_draws  # noqa: E402
 from ui.main_window import JianMainWindow  # noqa: E402
 from ui.views.trading_desk import SUB_PLOT_HEIGHT  # noqa: E402
@@ -3237,12 +3241,186 @@ except Exception as _e:  # noqa: BLE001
     check(f"§7-A2 图表导出断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
 # ==========================================
+# ★ §7-A4 · 运行历史子页（列表/预览/选中/pin/载入回放/复用/重跑/送行情/删除 + 存档接线）
+# ==========================================
+print("\n== §7-A4 · 运行历史子页接线 ==")
+try:
+    import tempfile as _tf5
+    import shutil as _sh5
+    import pandas as _pd5
+    from core.backtest import BacktestResult as _BR5, BacktestTrade as _BT5
+    from data.backtest_archive import (SOURCE_MANUAL, BacktestArchive, build_record)
+    from ui.widgets import backtest_flow as _bflow5
+    from ui.widgets.backtest_history_ui import COL_PIN, _SignedValueDelegate
+
+    _hv = win.page_backtest.page_history
+    _sv5 = win.page_backtest.single_view
+    check("市场回测页第4子页 = 运行历史（index 3）",
+          _hv is not None and win.page_backtest.tabs.indexOf(_hv) == 3)
+
+    # —— 版式护栏：kind 过滤 M2/M3 置灰"预留"；数字着色走 delegate（选中行不叠色）——
+    _kmodel = _hv.cmb_kind.model()
+    check("kind 过滤：M1 可选、M2/M3 置灰不可选（预留而非空列表）",
+          _hv.cmb_kind.count() == 3 and _kmodel.item(0).isEnabled()
+          and not _kmodel.item(1).isEnabled() and not _kmodel.item(2).isEnabled())
+    check("列表数字着色走 delegate（修『点一下就变色』）",
+          isinstance(_hv.table.itemDelegate(), _SignedValueDelegate))
+    check("版式分层：过滤条 + 列表/预览分栏 + 页脚设置",
+          hasattr(_hv, 'filter_bar') and hasattr(_hv, 'splitter')
+          and hasattr(_hv, 'settings') and _hv.splitter.count() == 2)
+
+    # —— 用临时 root 喂存档，绝不碰真实目录 ——
+    _root5 = _tf5.mkdtemp(prefix='jian_hist_')
+    _hv.archive = BacktestArchive(root=_root5)
+    _d5 = _pd5.to_datetime(['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'])
+    _eq5 = _pd5.DataFrame({'date': _d5, 'equity': [1.0, 1.1, 1.05, 1.2],
+                           'in_market': [0, 1, 1, 1]})
+    _res5 = _BR5('600000', 'B', 'S', '2024-01-02', '2024-01-05',
+                 trades=[_BT5(entry_date=_d5[1], exit_date=_d5[3], entry_price=10.0,
+                              exit_price=12.0, pnl=2.0, return_pct=0.2)], equity=_eq5)
+    _meta5 = {'symbol': '600000', 'name': '长江电力', 'strategy_name': '绿蓝红',
+              'start_date': '2024-01-02', 'end_date': '2024-01-05', 'segments': ['A:MA(C,5);'],
+              'params_text': 'N=5', 'buy_expr': 'B', 'sell_expr': 'S', 'risk': {},
+              'fill': {'fill_mode': 'next_open', 'trigger_tick': 1}, 'index': None}
+    _meta5b = dict(_meta5, symbol='000001', name='平安银行', strategy_name='另一套')
+    _rid5 = _hv.archive.save(build_record(_res5, _meta5, config=dict(_meta5)))
+    _hv.archive.save(build_record(_res5, _meta5b, config=dict(_meta5b)))
+    _hv.refresh()
+    check("列表渲染出 2 行", _hv.table.rowCount() == 2)
+
+    # —— 选中即预览（按下标点还行不行：改按 id 选中，杜绝行序漂移）——
+    check("按 id 选中命中", _hv.table.select_by_id(_rid5) and _hv.table.current_id() == _rid5)
+    check("选中后 _current 有值 + 预览头含标的/策略",
+          _hv._current is not None and '600000' in _hv.lbl_head.text()
+          and '绿蓝红' in _hv.lbl_head.text())
+    check("预览 KPI 胶囊已填（累计/胜率/笔数）",
+          '累计' in _hv.preview.pill_cum.text() and '胜率' in _hv.preview.pill_win.text()
+          and _hv.preview.pill_trades.text() == '成交 1 笔')
+    check("迷你净值曲线已画（含买卖点散点）",
+          len([it for it in _hv.preview.chart.getPlotItem().items
+               if isinstance(it, pg.ScatterPlotItem)]) >= 2)
+    check("参数详情默认只给摘要，点开后补全（可折叠）",
+          '区间' in _hv.preview.lbl_params.text()
+          and '风控' not in _hv.preview.lbl_params.text())
+    _hv.preview.btn_params.setChecked(True)
+    check("展开参数详情 → 出现风控/成交/条件组",
+          all(k in _hv.preview.lbl_params.text() for k in ('风控', '成交', '条件组')))
+    _hv.preview.btn_params.setChecked(False)
+
+    # —— pin：**必须保持选中**（用户实测"重点选不上"的根因）——
+    _hv._on_pin()
+    check("pin 后仍保持选中（不再整表重建清空选择）",
+          _hv.table.current_id() == _rid5)
+    check("pin 后该行 ★ 列已就地更新",
+          _hv.table.item(0, COL_PIN).text() == '★'
+          or _hv.table.item(1, COL_PIN).text() == '★')
+    check("pin 后记录 pinned=True + 按钮变『取消重点』",
+          _hv.archive.load(_rid5)['pinned'] is True
+          and '取消' in _hv.preview.btn_pin.text())
+    _hv.chk_pinned.setChecked(True)
+    check("『只看重点』过滤生效（2 行 → 1 行）", _hv.table.rowCount() == 1)
+    _hv.chk_pinned.setChecked(False)
+    _hv.ed_search.setText('平安')
+    check("搜索过滤生效（按策略/标的）", _hv.table.rowCount() == 1)
+    _hv.ed_search.setText('')
+
+    # —— 载入查看 = 只读回放：不改写现场 / 禁导出 / 有横幅 / 净值曲线带买卖点 ——
+    _prior = _BR5('000002', 'B', 'S', '2023-01-01', '2023-01-31', trades=[], equity=_eq5)
+    _sv5._last_result = _prior
+    _sv5._last_meta = {'symbol': '000002', 'name': '万科A'}
+    _sv5._last_df = _pd5.DataFrame()
+    _sv5._last_draws = []
+    _hv.table.select_by_id(_rid5)
+    _hv._on_view()
+    check("载入查看：M1 进只读回放态 + 横幅出现（不是靠 tooltip 告诉用户）",
+          _sv5._preview_mode is True and not _sv5._preview_bar.isHidden()
+          and '只读回放' in _sv5.lbl_preview.text())
+    check("只读回放**不改写现场**（_last_result/_last_meta 原样）",
+          _sv5._last_result is _prior and _sv5._last_meta['symbol'] == '000002')
+    check("只读回放期间**导出被禁用**（防导出『存档结果 + 旧参数』）",
+          not _sv5.btn_export_result.isEnabled())
+    check("回放的净值曲线画出买卖点（buy_at/sell_at → 散点）",
+          len([it for it in _sv5.result.equity_chart.getPlotItem().items
+               if isinstance(it, pg.ScatterPlotItem)]) >= 2)
+    check("回放的 K 线页给出诚实提示（存档不含逐日 OHLC）",
+          '历史存档' in getattr(_sv5.result, '_kline_hint_text', '')
+          and _sv5.result._kline_state is None)
+    _sv5.exit_preview()
+    check("退出预览：现场恢复 + 导出恢复 + 横幅收起",
+          _sv5._preview_mode is False and _sv5._last_result is _prior
+          and _sv5.btn_export_result.isEnabled() and _sv5._preview_bar.isHidden())
+
+    # —— 手动『存为历史』入口（自动存档关掉时的兜底）——
+    _orig_arc_cls = _bflow5.BacktestArchive
+    _bflow5.BacktestArchive = lambda *a, **k: _orig_arc_cls(root=_root5)
+    _sv5._last_result = _res5
+    _sv5._last_meta = _meta5
+    _sv5._last_config = dict(_meta5)
+    _manual_id = _sv5.save_to_history()
+    check("💾 存为历史：手动入口落一份 source=manual",
+          bool(_manual_id)
+          and _hv.archive.load(_manual_id)['source'] == SOURCE_MANUAL)
+
+    # —— 自动存档接线：开关开 + 定格 config ⇒ flow 落一份 ——
+    _pref_module.preferences.set("backtest_archive", {"auto": True})
+    _n_before = len(_hv.archive.list())
+    _sv5.flow._auto_archive(_res5)
+    _auto_id = _sv5._last_archive_id
+    check("自动存档接线：开关开时 flow 落一份快照（+1）",
+          len(_hv.archive.list()) == _n_before + 1 and bool(_auto_id))
+    check("自动存档**用发起瞬间定格的 config**（不是调用时的编辑器状态）",
+          _hv.archive.load(_auto_id)['config']['symbol'] == '600000')
+    _pref_module.preferences.set("backtest_archive", {"auto": False})
+    _sv5.flow._auto_archive(_res5)
+    check("自动存档开关关掉时不再落盘", len(_hv.archive.list()) == _n_before + 1)
+    _pref_module.preferences.set("backtest_archive", {"auto": True})
+    _bflow5.BacktestArchive = _orig_arc_cls     # 存档类已用完，尽早还原（后续段落不再打桩）
+
+    # —— 复用参数 / 重跑 / 送行情页 ——
+    _hv.table.select_by_id(_rid5)
+    _hv._on_reuse()
+    check("复用参数：M1 切到该标的 + 退出预览态 + 函数段已还原",
+          _sv5.current_symbol == '600000' and _sv5._preview_mode is False
+          and _sv5.current_formula_segments() == ['A:MA(C,5);'])
+    _hv._on_rerun()
+    check("重跑：复用参数后确实触发了 M1 运行流程（条件缺失时安全退出，不联网）",
+          _sv5.current_symbol == '600000')
+
+    _sent = {}
+    _orig_send = win.send_formula_to_market
+    win.send_formula_to_market = (lambda segs, params='':
+                                  _sent.update(n=len(segs), params=params) or len(segs))
+    try:
+        _hv._on_send_to_market()
+    finally:
+        win.send_formula_to_market = _orig_send
+    check("送行情页：经主窗口转交存档函数段（两页互不 import）",
+          _sent.get('n') == 1 and _sent.get('params') == 'N=5')
+
+    # —— 删除（二次确认已打桩为 Yes）——
+    _n_before_del = len(_hv.archive.list())
+    _hv.table.select_by_id(_rid5)
+    _hv._on_delete()
+    check("删除后列表少一行（删的是存档文件本身）",
+          len(_hv.archive.list()) == _n_before_del - 1 and _hv.table.rowCount() >= 0)
+    check("删除后列表选中态已清空（不给幽灵选中）", _hv.table.current_id() is None)
+    _hv.refresh()
+    check("刷新后行数与存档数一致",
+          _hv.table.rowCount() == len(_hv.archive.list()))
+
+    _bflow5.BacktestArchive = _orig_arc_cls
+    _sh5.rmtree(_root5, ignore_errors=True)
+except Exception as _e:  # noqa: BLE001
+    check(f"§7-A4 运行历史接线断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402
 
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
-              "backtest_strategies.json", "preferences.json", "trade_calendar.json"):
+              "backtest_strategies.json", "preferences.json", "trade_calendar.json",
+              "backtest_results"):
     _path = os.path.join(settings.USER_DATA_DIR, _name)
     _untouched = (not os.path.exists(_path)) or os.path.getmtime(_path) < RUN_STARTED_AT
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)

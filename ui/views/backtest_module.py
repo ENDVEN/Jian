@@ -11,6 +11,7 @@
 from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
 from ui.views.backtest import SingleStockBacktestView
+from ui.views.backtest_history import BacktestHistoryView
 from ui.views.breadth_view import BreadthView
 from ui.views.scan_view import ScanView
 
@@ -41,6 +42,8 @@ class BacktestModule(QWidget):
         #   版式 / 流程 / 空态 / 图表分居 `breadth_layout` / `breadth_flow` / `breadth_result`
         #   / `breadth_chart`；与 M2 共用同一个内核 + 会话缓存（一个引擎两种视图，C 节）。
         self.page_breadth = BreadthView(main_win)
+        # ★§7-A4（v1.37）：运行历史子页——历次回测的不可变快照列表 + 预览（载入/复用/重跑）。
+        self.page_history = BacktestHistoryView(main_win)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 6, 0)
@@ -52,6 +55,7 @@ class BacktestModule(QWidget):
         self.tabs.addTab(self.single_view, "📈 单股回测")
         self.tabs.addTab(self.page_scan, "🌐 全市场筛选")
         self.tabs.addTab(self.page_breadth, "📊 广度统计")
+        self.tabs.addTab(self.page_history, "🗂 运行历史")
         layout.addWidget(self.tabs, 1)
 
     # 供测试/其它模块快速访问单股页

@@ -88,7 +88,16 @@ class StrategyBridge:
         if not strategy:
             return
         p._active_strategy_id = strategy.get("id")
-        # 载入函数：新档用 segments 多段还原；旧档回落单段 function
+        self.apply_payload(strategy)
+        p.lbl_run_status.setText(f"已载入策略「{strategy.get('name')}」，请选择股票后运行。")
+
+    def apply_payload(self, strategy: dict) -> None:
+        """把一份配置快照（策略 payload / 历史存档 config 同构）整体还原进编辑器。
+
+        旧档字段缺失一律回落默认；与 `on_strategy_selected` 共用同一套还原口径（单一事实源）。
+        不负责切标的（symbol 由调用方按需设），也不写回执（便于历史页自定义提示）。
+        """
+        p = self.page
         segments = strategy.get("segments") or [str(strategy.get("function", ""))]
         p.segments.set_texts([s for s in segments if s and s.strip()])
         p.txt_params.setText(str(strategy.get("params_text", "")))
@@ -106,7 +115,6 @@ class StrategyBridge:
         self._apply_index_config(strategy.get("index") or {})
         # 还原成交模型 (旧策略无 fill 字段 -> 次日开盘 + 1 跳，等价改动前行为)
         p._apply_fill_config(strategy.get("fill") or {})
-        p.lbl_run_status.setText(f"已载入策略「{strategy.get('name')}」，请选择股票后运行。")
 
     # ==========================================
     # 指数门控（策略快照的一个字段，读写都在这里）

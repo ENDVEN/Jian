@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>§7-A4 回测结果历史存档 · UI 样式原型</title>
+<style>
+  :root{
+    --blue:#1976D2; --blue-d:#1565C0; --ink:#1F2430; --gray:#8A94A6;
+    --line:#E4E9F0; --bg:#F5F6F8; --card:#FFFFFF; --green:#2E7D32; --red:#C62828;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);font-size:14px;}
+  .topbar{display:flex;align-items:center;gap:8px;background:#fff;
+          border-bottom:1px solid var(--line);padding:0 18px;height:44px;}
+  .topbar .brand{font-weight:bold;color:var(--blue);margin-right:18px;}
+  .subtab{padding:12px 16px;color:var(--gray);font-weight:bold;cursor:pointer;
+          border-bottom:2px solid transparent;}
+  .subtab.on{color:var(--blue);border-bottom-color:var(--blue);}
+  .wrap{padding:14px 18px;}
+  .toolbar{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--line);
+           border-radius:10px;padding:10px 14px;margin-bottom:12px;}
+  .toolbar .sp{flex:1;}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;
+       font-size:13px;cursor:pointer;color:var(--ink);}
+  .btn.primary{background:var(--blue);color:#fff;border:none;font-weight:bold;}
+  .btn.hist{background:#E3F2FD;color:var(--blue);border:1px solid #BBDEFB;font-weight:bold;}
+  .layout{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;align-items:start;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;}
+  .card h3{margin:0 0 10px;font-size:14px;}
+  .row{display:flex;align-items:center;gap:10px;}
+  .muted{color:var(--gray);font-size:12px;}
+  .chip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:8px;
+        background:var(--bg);color:var(--gray);border:1px solid var(--line);}
+  .chip.auto{background:#FFF3E0;color:#E65100;border-color:#FFE0B2;}
+  .chip.manual{background:#E8F5E9;color:#2E7D32;border-color:#C8E6C9;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--line);white-space:nowrap;}
+  th{color:var(--gray);font-weight:normal;font-size:12px;}
+  tbody tr{cursor:pointer;}
+  tbody tr:hover{background:#F3F8FE;}
+  tbody tr.sel{background:#E3F2FD;}
+  .pos{color:var(--green);font-weight:bold;}
+  .neg{color:var(--red);font-weight:bold;}
+  .act{color:var(--blue);cursor:pointer;font-size:12px;margin-right:8px;}
+  .act.del{color:var(--red);}
+  .kpi{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+  .kpi .pill{flex:1;min-width:90px;background:var(--bg);border-radius:8px;padding:8px 10px;text-align:center;}
+  .kpi .pill b{display:block;font-size:16px;}
+  .kpi .pill span{font-size:11px;color:var(--gray);}
+  .spark{width:100%;height:70px;background:linear-gradient(#fff,#fff);border:1px solid var(--line);
+         border-radius:8px;margin-bottom:12px;position:relative;overflow:hidden;}
+  .spark svg{width:100%;height:100%;}
+  .kv{font-size:12.5px;line-height:1.9;color:#3A4150;}
+  .kv b{color:var(--ink);}
+  .detail-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+  .note{background:#FFFDE7;border:1px solid #FFF59D;border-radius:8px;padding:8px 10px;
+        font-size:12px;color:#795548;margin-top:10px;}
+  .callouts{margin-top:16px;}
+  .callouts .co{background:#fff;border:1px dashed var(--blue);border-radius:8px;
+                padding:8px 10px;font-size:12.5px;margin-bottom:8px;color:#37474F;}
+  .callouts .co b{color:var(--blue);}
+  .switch{position:relative;display:inline-block;width:38px;height:20px;}
+  .switch input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;cursor:pointer;inset:0;background:#ccc;border-radius:20px;transition:.2s;}
+  .slider:before{content:"";position:absolute;height:14px;width:14px;left:3px;top:3px;background:#fff;border-radius:50%;}
+  .switch input:checked + .slider{background:var(--blue);}
+  .switch input:checked + .slider:before{transform:translateX(18px);}
+  .settings{font-size:12.5px;}
+  .settings .line{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--line);}
+  .tag{font-size:11px;color:var(--gray);}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="brand">Jian · 市场回测</span>
+    <span class="subtab">单股回测</span>
+    <span class="subtab">全市场筛选</span>
+    <span class="subtab">广度统计</span>
+    <span class="subtab on">运行历史</span>
+  </div>
+
+  <div class="wrap">
+    <div class="toolbar">
+      <button class="btn hist">🗂 运行历史</button>
+      <span class="chip" style="background:#E3F2FD;color:#1976D2;border-color:#BBDEFB;">M1 单股回测</span>
+      <span class="chip" title="架构已预留 kind，后续增量接入">M2 全市场筛选 · 预留</span>
+      <span class="chip" title="架构已预留 kind，后续增量接入">M3 广度统计 · 预留</span>
+      <span class="sp"></span>
+      <button class="btn">⚙ 存档设置</button>
+      <button class="btn">▶ 开始回测</button>
+    </div>
+
+    <div class="layout">
+      <!-- 左：历史列表 -->
+      <div class="card">
+        <div class="row" style="margin-bottom:10px;">
+          <h3 style="margin:0;">运行历史</h3>
+          <label class="row" style="gap:4px;font-size:12px;color:var(--gray);cursor:pointer;">
+            <input type="checkbox" style="accent-color:#1976D2;"> 只看重点 ★</label>
+          <span class="sp" style="flex:1;"></span>
+          <input class="btn" style="width:150px;" placeholder="按 标的 / 策略 搜索">
+          <select class="btn"><option>全部标的</option><option>600000 长江电力</option><option>000001 平安银行</option></select>
+        </div>
+        <table>
+          <thead>
+            <tr><th></th><th>存档时间</th><th>标的</th><th>策略</th><th>区间</th><th>胜率</th><th>累计收益</th><th>笔数</th><th>来源</th></tr>
+          </thead>
+          <tbody>
+            <tr class="sel">
+              <td>★</td><td>09-22 14:03</td><td>600000 长江电力</td><td>绿蓝红策略</td>
+              <td>2023-09~2026-09</td><td class="pos">61%</td><td class="pos">+38.2%</td><td>42</td>
+              <td><span class="chip auto">自动</span></td>
+            </tr>
+            <tr>
+              <td></td><td>09-21 20:11</td><td>600000 长江电力</td><td>绿蓝红策略</td>
+              <td>2023-09~2026-09</td><td>58%</td><td class="pos">+31.5%</td><td>40</td>
+              <td><span class="chip auto">自动</span></td>
+            </tr>
+            <tr>
+              <td>★</td><td>09-20 09:47</td><td>000001 平安银行</td><td>动量突破</td>
+              <td>2022-01~2026-09</td><td class="neg">44%</td><td class="neg">-6.4%</td><td>77</td>
+              <td><span class="chip auto">自动</span></td>
+            </tr>
+            <tr>
+              <td></td><td>09-18 22:30</td><td>600519 贵州茅台</td><td>绿蓝红策略</td>
+              <td>2021-06~2026-09</td><td>55%</td><td class="pos">+12.9%</td><td>103</td>
+              <td><span class="chip manual">手动</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="row" style="margin-top:10px;">
+          <span class="act">☆ 标为重点 / 取消</span>
+          <span class="act">📌 选中 2 份 → 加入策略对比</span>
+          <span class="sp" style="flex:1;"></span>
+          <span class="act del">🗑 删除所选（移入回收 + 二次确认）</span>
+        </div>
+        <div class="note">
+          列表只读、不占当前回测编辑区；点一行 → 右侧预览。<b>“★ 重点”由用户手标</b>，用于快速筛选；
+          <b>重点存档豁免自动滚动淘汰</b>（永不被 20/500 上限删掉，但仍计入 500 总量），只能手动删。
+          删除的对象 = 一份不可变存档文件（危险动作隔离 + 二次确认，§10-10）。
+        </div>
+      </div>
+
+      <!-- 右：选中项预览 -->
+      <div class="card">
+        <div class="row" style="margin-bottom:8px;">
+          <h3 style="margin:0;">存档预览</h3>
+          <span class="sp" style="flex:1;"></span>
+          <span class="tag">快照 · 2026-09-22 14:03 · M1</span>
+        </div>
+        <div class="kpi">
+          <div class="pill"><b class="pos">+38.2%</b><span>累计收益</span></div>
+          <div class="pill"><b>61%</b><span>胜率</span></div>
+          <div class="pill"><b>42</b><span>成交笔数</span></div>
+          <div class="pill"><b>-9.1%</b><span>最大回撤</span></div>
+        </div>
+        <div class="spark">
+          <svg viewBox="0 0 300 70" preserveAspectRatio="none">
+            <polyline fill="none" stroke="#1976D2" stroke-width="2"
+              points="0,60 25,55 50,58 75,44 100,40 125,46 150,30 175,26 200,34 225,18 250,22 275,10 300,14"/>
+            <circle cx="100" cy="40" r="3" fill="#2E7D32"/>
+            <circle cx="150" cy="30" r="3" fill="#C62828"/>
+            <circle cx="225" cy="18" r="3" fill="#2E7D32"/>
+          </svg>
+        </div>
+        <div class="kv">
+          <div><b>标的：</b>600000 长江电力 · 前复权</div>
+          <div><b>区间：</b>2023-09-06 ~ 2026-09-22</div>
+          <div><b>函数段：</b>绿蓝红动量核心（MOMENTUM / DYN_INDEX / STATE_*）… <span class="act">展开</span></div>
+          <div><b>买卖：</b>CROSS(DYN_INDEX,0) &nbsp;·&nbsp; 风控：止损 8% / 移动止盈 5%</div>
+          <div><b>成交模型：</b>次日开盘 · T+1 · 触发 1 跳</div>
+          <div class="muted">留档内容：配置快照 + KPI + 逐笔(全量) + 净值(抽稀≤250)</div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn primary">👁 载入查看（只读回放）</button>
+          <button class="btn">↺ 复用参数到编辑器</button>
+          <button class="btn">▶ 按当前数据重跑</button>
+          <button class="btn">📤 送行情页</button>
+        </div>
+        <div class="note">
+          <b>“载入查看”</b>读存档里冻结的逐笔/净值（<b>留档</b>：忠实还原当天，不受后续数据更新影响）；
+          <b>“重跑”</b>用存档配置对<b>最新数据</b>再算（<b>复现</b>：可能因复权漂移/新数据而不同）。载入查看=只读态，不动当前编辑器。
+        </div>
+      </div>
+    </div>
+
+    <!-- 存档设置 -->
+    <div class="card" style="margin-top:14px;">
+      <h3>⚙ 存档设置</h3>
+      <div class="settings">
+        <div class="line">
+          <span><b>每次回测自动存档</b> <span class="muted">（默认开；关=只手动点“存档”才留）</span></span>
+          <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+        </div>
+        <div class="line">
+          <span><b>留档内容</b> <span class="muted">（复现 + 留档 都保留）</span></span>
+          <span class="muted">配置快照 + KPI + <b>逐笔全量</b> + <b>净值抽稀≤250</b>（预览用，省算力/空间）</span>
+        </div>
+        <div class="line">
+          <span><b>命名 / 防注入</b></span>
+          <span class="muted">文件名 = <b>时间戳_uuid8.json</b>（绝不把用户输入写进路径，防路径穿越）；策略/标的名只进 JSON 字段</span>
+        </div>
+        <div class="line">
+          <span><b>保留上限</b></span>
+          <span class="muted">每标的 <b>20</b> 份 · 总量 <b>500</b> 份滚动淘汰最旧 · <b>★重点豁免淘汰</b>（仍计入 500）· 单文件 ≤2 MB</span>
+        </div>
+        <div class="line" style="border-bottom:none;">
+          <span><b>存储位置</b></span>
+          <span class="muted">~/.jian_data/backtest_results/*.json（物理隔离；纳入冒烟防污染自检；schema 带 kind 预留 M2/M3）</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 已定稿 -->
+    <div class="callouts">
+      <div class="co"><b>已定稿</b>：① 复现+留档都留（逐笔全量、净值抽稀）；② 自动存档默认开 + 用户手标“★重点”快速筛选；③ 入口=顶部“运行历史”子页，schema 带 kind 预留 M2/M3 增量接入；④ 上限 每标的20/总500 滚动淘汰，<b>重点豁免</b>；⑤ 文件名 时间戳_uuid 防注入 + 单文件≤2MB。</div>
+      <div class="co"><b>下一步</b>：据此起 §7-A4 正式施工 plan（先方案后动手），确认后再写代码。</div>
+    </div>
+  </div>
+</body>
+</html>
