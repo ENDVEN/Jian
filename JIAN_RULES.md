@@ -9,11 +9,11 @@
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **1.35**（= 本次提交首词 · **三处已同批同步 §9-A**：commit 首词 / `APP_VERSION` / `version.json`） |
-| 文档版本 | **v6.47**（§7-B10 数据新鲜度**全案收官**：定稿守卫 + 真交易日历 + M1 区间修复 + M2/M3 更新引导，已发 **1.35**。上一版 v6.46 = §7-B10-M1 切片） |
-| 最近三版 | `1.35` §7-B10 数据新鲜度全案 · `1.34` R7 副图换序收尾 · `1.33` M2/M3 体验修复轮 |
-| **当前主线** | **§7-B10（数据新鲜度）全案 ✅（本版 1.35）· M2/M3（§7-B1/B2）已收尾**；下一步 = §7-B8 余量（R4 组合配置=远期新引擎 / R12 数据页暂缓）+ 其它 backlog（§7-A/C/D） |
-| **断点** | **v6.47（1.35）§7-B10 全案收官 ✅**：M1 切片（定稿守卫 + 真日历 + M1 区间默认终点/滞后自动补/回退回执，v6.46）之上，本切片补齐 STEP 2–4——M2/M3 共用 `ReadinessFlow` 新增 **`update_latest()` 一键「⬆ 更新到最新交易日」**（与“补齐缺失”**合并**：对整批当前范围跑增量，缺的补、旧的拉到最新、已新鲜的自然 skip；`fill_missing` 保留退位次级）、**滞后提示**（`start_calendar_fetch` 挂 `CalendarWorker`，`trading_days_between` 按真日历精确数“约 N 交易日”，`format_stale` 零 UI 文案；拿不到日历不提示不猜）、**M2 基准日诚实化**（`lbl_asof_hint` 说“上限=本地最新”、`_calibrate_asof_date` 抬升上限+回显）。验收：`smoke_chart` **745** / `smoke_pages_overlay` **514** 全绿 + compileall（两页起 `CalendarWorker` 均测中打桩不联网；`trade_calendar.json` 入防污染自检）。坑=§11.5-71/72。**下一步** = §7-B8 余量与其它 backlog |
+| APP 版本 | **1.36**（= 本次提交首词 · **三处已同批同步 §9-A**：commit 首词 / `APP_VERSION` / `version.json`） |
+| 文档版本 | **v6.48**（§7-A2 回测结果**图表导出**：新增 .xlsx 内嵌净值曲线图+买卖点（逐日数据放隐藏表）；CSV 保持参数+逐笔。已发 **1.36**。上一版 v6.47 = §7-B10 数据新鲜度全案 1.35） |
+| 最近三版 | `1.36` §7-A2 回测图表导出 · `1.35` §7-B10 数据新鲜度全案 · `1.34` R7 副图换序收尾 |
+| **当前主线** | **§7-A2（回测图表导出）✅（本版 1.36）· §7-B10（数据新鲜度）全案已收官**；下一步 = §7-A4 回测历史存档（远期）/ §7-B8 余量（R4 组合配置=远期新引擎 / R12 暂缓）+ 其它 backlog（§7-C/D） |
+| **断点** | **v6.48（1.36）§7-A2 回测结果图表导出 ✅**（用户实测：CSV 里“图表完全无法显示”——根因是 CSV 纯文本不能内嵌图，那一大段“图形绘制/QSD/GLX/STICKLINE”只是公式源码文本）。做法：① `build_daily_series(result)`（逐日净值+买卖点，取 equity+trades，**单一事实源**）；② CSV **不写逐日段**（用户反馈“逐日全量太占空间”，看图靠 xlsx）；③ 新增 `ui/widgets/backtest_xlsx.py`——openpyxl **内嵌真图表**（净值折线 + 买卖点 marker 落在曲线上），逐日数据放**隐藏 sheet**、主表只剩图；导出菜单加「📊 导出 Excel 图表…」。验收：`smoke_chart` **745** / `smoke_pages_overlay` **521** 全绿 + compileall（xlsx 图对**构建时 Workbook** 断言，openpyxl 读回会丢图；BytesIO 不落盘）。坑=§11.5-74。**上一版 v6.47（1.35）= §7-B10 全案收官**（定稿守卫+真日历+M1 区间修复+M2/M3 更新引导/滞后/基准日诚实化，坑 §11.5-71/72）。**下一步** = §7-A4 回测历史存档 / §7-B8 余量与其它 backlog |
 
 ### 📚 文档地图（先看这里，再定点检索）
 
@@ -118,7 +118,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   │                    #        "整段分节被跳过 + 假报失败"（修前 328/3、修后 356/0）
 │   └── smoke_pages_overlay.py # 回测页/工作台/**复盘页**叠层 + 标注 + 互送 + 自选/周期(含**分钟**)/
 │                        #       复权/坐标轴 + 顶栏分段控件/chips + 图标轨/分页面板/折起
-│                        #       （§7-B6 STEP 3b/3c/4）+ 成交模型行/教学弹窗/导出口径**页面级**验收（**514 项**）
+│                        #       （§7-B6 STEP 3b/3c/4）+ 成交模型行/教学弹窗/导出口径**页面级**验收（**521 项**）
 │                        #       + **M2/M3 护栏（v6.43：y 真跟随/刻度可见/先选后扫/闸门/分界线拖动模拟）**
 │                        #       + **「行情工作台 / 复盘页 / M2 / M3 迁移护栏」**（公共面改名/删除、把薄壳写成
 │                        #         空函数、**§9-U 分栏退化 / 不落偏好**，立刻红）
@@ -342,7 +342,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #   / backtest_summary_bar.py(★1.22 配置摘要条：一行 chips = 当前配置状态 + 入口，
     │                    #        右端承载运行回执与「▶ 开始回测」—— 样板 A 的 L2 层)
     │                    #   / backtest_export.py(★1.22 结果导出：compose_result_csv 纯函数 +
-    │                    #        CSV/PNG 两个文件入口；页面只留同名转发)
+    │                    #        build_daily_series(§7-A2 逐日净值+买卖点共同源) + CSV/PNG 入口)
+    │                    #   / backtest_xlsx.py(★v1.36 §7-A2：openpyxl 内嵌净值曲线图+买卖点，
+    │                    #        _build_workbook 与存盘解耦)
     │                    #   / review_*.py —— ★1.26/§9-U+§9-L **复盘页拆出来的 5 个模块**
     │                    #     （同款约定：状态留页面、行为搬模块 + 页面保留同名薄壳）：
     │                    #     · review_layout.py(310：两行操作轴 + 宏观/微观**可拖竖向分栏** +
@@ -546,8 +548,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
   `data/annotations.py` + `ui/widgets/annotation_layer.py` 取代 —— 三类标注、
   按 `(标的, 周期)` 持久化、**逐个独立删除**、坐标按日期锚定（不漂移）。
   复盘页复用（回放图上标注）属 P8 之后的事：API 已按 `(symbol, period, id)` 解耦，**只换调用方**。
-- **A2 [~] 回测结果导出（半程）** `ui/views/backtest.py`：
-  ✅ **v5.14 已做"导出当前结果"**（§6.3）：CSV 含表头参数块 + 逐笔明细 + 净值曲线。
+- **A2 [x] 回测结果导出（✅ v1.36 图表能力补齐）** `ui/views/backtest.py` + `ui/widgets/backtest_export.py` + `ui/widgets/backtest_xlsx.py`：
+  ✅ 导出菜单三项：📄 CSV 明细（**参数快照 + 逐笔成交**，不写逐日净值——看图靠 xlsx）、🖼 PNG 报告图、📊 **xlsx 内嵌真正的净值曲线图 + 买卖点标记**（openpyxl，打开即见图）。
+  xlsx 三 sheet：「回测明细」+ 可见「净值曲线」（只放图）+ **隐藏「净值数据」**（逐日全量放隐藏表，主表不刷屏）；共同数据源 `build_daily_series(result)`（买卖点用成交日净值定位）。
   **明确不做**：结果删除 —— 用户判断"当前没有显式保存、结果会被覆盖，删除没有对象可删"。
   `StrategyStore.record_result` 仍是自动归档的缩略指标（同股对比用），不属于"可管理的结果集"。
 - **A4 [ ] 回测结果历史存档（远期 · 由用户 v5.14 明确"找机会再做"）**：
@@ -1005,6 +1008,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 
 | 版本 | 一句话 |
 |---|---|
+| **1.36** | §7-A2 回测结果图表导出：`build_daily_series`（逐日净值+买卖点共同源）+ CSV 末尾逐日净值数据段（Excel 选中列绘图）+ 新增 `ui/widgets/backtest_xlsx.py`（openpyxl 内嵌净值折线图+买卖点 marker，导出菜单「📊 导出 Excel 图表…」）；smoke 745 / 514→521（§11.5-74） |
 | **1.35** | §7-B10 数据新鲜度全案（M2/M3 收尾）：`ReadinessFlow` 新增 `update_latest()` 一键「⬆ 更新到最新」（与“补齐缺失”合并、共用 `_launch_sync`）+ 滞后提示（`start_calendar_fetch`/`trading_days_between`/`format_stale`，真日历）+ M2 基准日诚实化（`lbl_asof_hint`）；承 v6.46 M1 切片（定稿守卫/真日历/M1 区间修复）；smoke 737→745 / 508→514（§11.5-71/72） |
 | **1.34** | §7-B8 R7 副图换序收尾：`layer_model` 可持久化顺序（换序只改格位不改 target）+ `desk_ui.sub_order` + 配方页 ⬆⬇/拖拽（复用 `DragHandleListWidget` 三道闸）+ 测试偏好隔离补正（§11.5-70） |
 | **1.33** | M2/M3 体验修复轮：M3 图表可读性根治（bar 轴/双视觉/指数四图形/分界把手/轴对齐）+ M2 先选后扫与缺数据诚实化（闸门/就近落位/missing 进总数）+ 成分股换中证官网权威源（§11.5-64…69） |
@@ -1022,7 +1026,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
   · **每次 push 递增 0.01**（1.21 → 1.22 → 1.23 …）：不跳号、不改三段式、不引入第四套编号；
   · ★ 2026-09-20 整合记录：未推送的 1.28–1.32 五批按用户要求重写为 **1.31（扫描模块代码）+ 1.32（文档与版本）**，
     1.28 / 1.29 / 1.30 三个号被消化（远端自 1.27 直达 1.31）；原五提交存于分支 `backup/1.28-1.32`；
-  · **当前值 = `1.35`**（= §7-B10 数据新鲜度全案（定稿守卫+真交易日历+M1 区间修复+M2/M3 更新引导）；1.34 = §7-B8 R7 副图换序收尾；1.33 = M2/M3 体验修复轮；1.32 = 修复成分股名称列全空 + 内核警告出口；1.31 = 成分股代码格式；1.30 = STEP 6 联动收尾；1.29 = M3 广度页；
+  · **当前值 = `1.36`**（= §7-A2 回测结果图表导出（CSV 逐日净值/买卖点数据列 + .xlsx 内嵌净值曲线图）；1.35 = §7-B10 数据新鲜度全案；1.34 = §7-B8 R7 副图换序收尾；1.33 = M2/M3 体验修复轮；1.32 = 修复成分股名称列全空 + 内核警告出口；1.31 = 成分股代码格式；1.30 = STEP 6 联动收尾；1.29 = M3 广度页；
     1.28 = M2 全市场筛选页；1.27 = 文档分层重构；1.26 = 复盘页
     版式收口；1.25 = 画线工具重做「点选绘制」+ 通道语义修正；1.24 = 侧边栏重设计 + 自选分组；
     1.23 = 行情工作台收口）；
@@ -1382,7 +1386,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 改内置指标（MA/BOLL）配色 | **`ui/widgets/chart_style.py` 的 `MA_SERIES` / `BOLL_LINE_COLOR`**（v6.6 起唯一来源，原在 market.py） |
 | 改"函数参数"输入格式 / 缺参探测口径 | **`core/utils.parse_params_text`** + **`core/formula/program.probe_missing_parameters`**（v6.6 起两页共用**同一份**，别在页面里重写正则或探测循环 —— 否则同一函数会"这页能跑那页缺参"） |
 | 改行情页"云端同步"行为 | 行情工作台 `ui/views/trading_desk.py` 的 `sync_cloud`（v5.13 起默认增量：本地有数据=增量、没数据=全量；全量重下在「🗄 数据管理」页） |
-| 改回测结果导出 | CSV：**`ui/widgets/backtest_export.py`** 的 `compose_result_csv`（纯函数，1.22 从页面拆出；页面留同名转发供断言）+ `_last_meta`（配置快照，`start_backtest` 定格）；PNG 报告图：**`ui/widgets/backtest_report.py`**（离屏 grab 渲染）；标签/配色/风控文案只改 **`core/backtest.py`**（三处同源） |
+| 改回测结果导出 | CSV：**`ui/widgets/backtest_export.py`** 的 `compose_result_csv`（参数快照+逐笔，**不写逐日净值**；页面留同名转发）+ `build_daily_series`（逐日净值+买卖点共同源，供 xlsx）；**xlsx（内嵌净值曲线图+买卖点，openpyxl）：`ui/widgets/backtest_xlsx.py`**（可见「净值曲线」只放图 + 隐藏「净值数据」放逐日行；`_build_workbook` 与存盘解耦）；PNG 报告图：**`ui/widgets/backtest_report.py`**（离屏 grab）；标签/配色/风控文案只改 **`core/backtest.py`**（三处同源）。⚠ CSV 纯文本不能内嵌图，“看图”靠 xlsx/PNG |
 | 判断"这笔是赚还是亏"（任何着色/正负号/标记色） | **`core/utils.record_net_amount(record)`**（v6.9）—— 净额 = 平仓盈亏 − 手续费的**唯一取值口径**。**禁止**再手写 `net_profit > 0` 或 `net_profit - commission`（§5.3-B / §9-P1） |
 | 改下拉/日期等复合控件的外观 | **`ui/widgets/custom_widgets.py`**：用生成器 `combo_qss()` / `date_edit_qss()` 造新变体，或直接引用 8 个具名常量（`COMBO_QSS` / `COMBO_QSS_SMALL` / `COMBO_QSS_ACCENT` / `COMBO_QSS_EDIT` / `COMBO_QSS_EDIT_OK` / `LINE_COMBO_QSS` / `DATEEDIT_QSS_WARN` / `DIALOG_INPUT_QSS`）。**业务页面禁止就地 setStyleSheet**，且 `::drop-down` 与 `::down-arrow` 必须成对（v6.9：否则箭头消失，§10-9） |
 | **给图表加自适应坐标轴**（刻度随缩放变密/换格式、纵轴跟随可视区间） | **`ui/widgets/adaptive_axis.py`（§7-B4 · v6.15）一处**：`attach_date_axis(pane, dates / texts, y_provider=…)`、`follow_y(pane, provider)`、`attach_all(host, dates, providers_by_pane)`。页面只写 `provider(i0, i1) -> (lo, hi)`（回答"这个窗格在可视区间内数值范围是多少"）。**禁止再手写 `setTicks` / `setYRange`**；日期格式梯子只在该文件的 `choose_date_format`（将来分钟线只改这里） |
@@ -1459,9 +1463,18 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - **11.5-71** 【v6.46 · §7-B10-M1】三坑同体：① **回测静默截断** —— 本地日线滞后时 `BacktestEngine` 会把 `data<=end_date` 截到旧末日而不告知 ⇒ 默认终点必须走日历算“最近已定稿交易日”且回测前滞后自动补、补不到**回退+回执**（`_apply_end_date_receipt`，只回退不前移）；② **构页自启的 QThread Worker 会在离屏冒烟里真联网 + 写真实目录** ⇒ 测前必须把 `CalendarWorker` 打桩为不 `start`（并发到 `~/.jian_data/trade_calendar.json`，防污染自检名单要加）；③ **冒烟脚本里同名模块别名（`_bflow`）会被后续段落重新绑定成别的模块**（breadth_flow）⇒ 给新模块用**唯一别名**，否则 monkeypatch 打到错的模块、真线程偷偷跑起来
 - **11.5-72** 【v6.47 · §7-B10 M2/M3】① **滞后提示必须用真日历而非 busday**——节假日用 busday 会虚报“滞后”，而拿不到日历时“不提示”远胜于“猜错”（`format_stale` 三参任一缺 → 空串）；② **合并“补齐缺失”为一键后，`set_empty` 只有一个动作位** —— 新旧两语义（缺/旧）共用 `update_latest` 单入口、`fill_missing` 退位次级（方法保留），别再往空态塞第二个按钮；③ **两页都在构页时 `start_calendar_fetch`** → 测前除 M1 外还要在 `readiness_flow` 命名空间把 `CalendarWorker` 打桩（同一桩类复用，§11.5-71②）；④ **就绪度“本地最新”=全局 max 会被单只刚同步的标的掩盖**（昨天扫的 300 只，今天只同步 1 只→latest=今天→M2 基准日默认跳到今天→其余 299 当天无行全判“数据不足”）⇒ 滞后用 `representative_latest`（中位日）、另报 `coverage_at(基准日)` 诚实提示“仅 N/total 有数据”（就绪≠扫描：就绪=历史行数够、扫描=基准日当天有行，两套口径）
 - **11.5-73** 【v6.47 · 窄屏不撑窗（用户明令）】工具栏/摘要条的**单行 QLabel 绝不能塞长文本**——`QLabel` 不包字时 `minimumSizeHint` = 整串宽度，会把窗口**最小宽度**顶大，窄屏/小屏直接铺不开。做法：**单行标签只留短状态 + 一个“⚠”短标记，长说明进 tooltip 或结果区（`lbl_empty` 已 wordWrap，可换行）**；并给这类单行标签设 `setSizePolicy(QSizePolicy.Ignored, Preferred)` 使其**可缩不撑窗**（已用于 M2/M3 `lbl_receipt` 与 M1 `lbl_range_note`）。新加任何顶部回执都遵此模式。
+- **11.5-74** 【v6.48 · §7-A2 回测图表导出】① **CSV 是纯文本、物理上不能内嵌渲染图**——用户看到的“图形绘制/QSD/GLX/STICKLINE”只是公式源码被当注释写进去了，不是数据也不是图；要“打开即见图”只能 .xlsx（openpyxl LineChart）。② **买卖点 marker 的 y 必须用“成交日净值”定位、不是成交价**——成交价与净值不同量纲，直接画会跑出坐标轴。③ **openpyxl 读回会丢图表**（`load_workbook` 不重建 chart）⇒ 测图只能对**构建时的 Workbook 对象**（`_build_workbook`）断言 `ws._charts`，不能存回再读；写盘用 BytesIO 不污染用户目录。④ **逐日全量很占空间、主表刷屏**（用户反馈）⇒ 不抽稀，而是把逐日数据放**隐藏 sheet「净值数据」**、图放可见 sheet（图表 Reference 跨表引用、`plotVisOnly=False`）；**CSV 干脆不写逐日段**（看图靠 xlsx）。
 
 
 ### 11.6 当前"下一步做什么"的推荐顺序（历史刷新**倒序**排列：主清单之下**第一块就是最新**）
+
+> **v6.48（§7-A2 回测结果图表导出 · 1.36 · 2026-09-22）**
+> 用户实测“CSV 里图表完全无法显示”→ 根因：CSV 纯文本不能内嵌图（那一大段“图形绘制/QSD/GLX”只是公式源码）。做法：
+> ① **`build_daily_series(result)`**（`backtest_export.py`）——逐日净值 + 买卖点（取 equity+trades，**单一事实源**）；
+> ② **CSV 不写逐日净值**（用户反馈“逐日全量太占空间”）——回到参数快照 + 逐笔成交；看图交给 xlsx；
+> ③ **新增 `ui/widgets/backtest_xlsx.py`**——openpyxl **内嵌真正的净值曲线图 + 买卖点 marker**（成交日净值定位、落在曲线上）；逐日数据放**隐藏 sheet「净值数据」**、图放可见「净值曲线」（主表只剩图）；导出菜单加「📊 导出 Excel 图表…」；`_build_workbook` 与存盘解耦。
+> 验收：`smoke_chart` 745 / `smoke_pages_overlay` 514→**521** 全绿 + compileall（xlsx 对构建时 Workbook 断言，openpyxl 读回丢图；BytesIO 不落盘）。坑=§11.5-74。
+> **下一步** = §7-A4 回测历史存档（远期）/ §7-B8 余量与其它 backlog。
 
 > **v6.47（§7-B10 全案收官 · 1.35 · 2026-09-22）**
 > 承 v6.46 M1 切片，补齐 §7-B10 STEP 2–4（M2/M3）并**发版 1.35**（三处同步）：
@@ -1554,15 +1567,15 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       **项目 Releases 页**（正式发版时才需要换成具体版本的下载直链）。
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
 - [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**745 项**，纯组件、离屏）
-- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**514 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
+- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**521 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
       并在其收尾的防污染自检名单里**加上任何新写的 `~/.jian_data/*.json`**（现在有 annotations /
       formula_library / watchlist / backtest_strategies / **preferences（1.23 起）** 五个）
 - [ ] **改了复盘页（`ui/views/review.py`）/ `ui/widgets/review_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**514 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
+      `py tests/smoke_pages_overlay.py`（**521 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
       公共面被改名、**把薄壳写成空函数**、宏观/微观**分栏退化成写死的 5:4 平铺**、
       分栏高度不落 `review_ui.v_sizes`，都会立刻红）
 - [ ] **改了全市场筛选页（`ui/views/scan_view.py`）/ `ui/widgets/scan_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**514 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
+      `py tests/smoke_pages_overlay.py`（**521 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
       ⚠ 六条最容易顺手改坏的：① **常驻行必须 ≤3**（粗筛阈值收在抽屉里，别往结果区上方加行）；
       ② **阈值"内核 ⇄ 界面"换算只许在 `ScanFilterPane` 一处**（界面亿元/% ⇄ 内核元/小数，
       换手率/市值**关闭时必须是 None**，变成 0 = 误杀一片）；
@@ -1573,7 +1586,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ⑥ **缺数据闸门不许删**（`_confirm_scan_with_gaps`：体检有缺口/未完成 ⇒ 二次确认才能扫，
         选「否」不得启动任何线程；本地齐了不打扰）
 - [ ] **改了广度统计页（`ui/views/breadth_view.py`）/ `ui/widgets/breadth_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**514 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
+      `py tests/smoke_pages_overlay.py`（**521 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
       ⚠ 七条最容易顺手改坏的：① **常驻行必须 ≤3**（⚡/⟳ 收在摘要条，别往结果区上方加行）；
       ② **双窗格必须 x 联动**（`ChartHost` 编排，禁止页面自己 `addPlot` 拼副图，§10-12）；
       ③ **广度占比的分母 = 有效样本**（命中+未命中）—— 换成"全市场只数" = 系统性压低且看不出来；
@@ -1621,7 +1634,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] **改了 `QComboBox` / `QDateEdit` / `QDateTimeEdit` 的样式吗？**
       → 只能用 `custom_widgets` 的常量（`::drop-down` 与 `::down-arrow` 必须成对，否则箭头消失）；
       改完跑 `py tests/smoke_chart.py` 看**箭头像素断言**（§11.5-17）
-- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**514 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；三条离屏打桩见 §11.5-20，**别删**）
+- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**521 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；三条离屏打桩见 §11.5-20，**别删**）
 - [ ] **新加了"往用户数据目录写文件"的功能吗？** → ① 用 `tmp + os.replace` 原子写；② 给 `tests/smoke_pages_overlay.py` 的收尾自检加一行文件名（§11.7 上一条）；③ 单条坏数据必须**跳过自己**而不是拖垮整库；
       ④ ⚠ 若它会**自动落盘**（"记住上次"类偏好，如 `backtest_ui` / `desk_ui`）→ **必须在冒烟脚本里
       把偏好单例的 `path` 重定向到临时目录**（只给 `Preferences.save` 打桩**实测不够**，仍被写脏过一次），

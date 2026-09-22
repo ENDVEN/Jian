@@ -38,8 +38,11 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #   1.35 = §7-B10 数据新鲜度全案（M1+M2/M3）：定稿守卫（is_daily_bar_settled/裁尾）+
 #          真交易日历（trade_calendar/CalendarWorker，当日缓存+离线回退）+ M1 区间默认终点/滞后自动补/
 #          回退回执 + M2/M3 一键「更新到最新」/滞后提示/基准日诚实化，smoke 737→742 / 508→513。
+#   1.36 = §7-A2 回测结果图表导出：build_daily_series（逐日净值+买卖点共同源）+
+#          CSV 末尾逐日净值数据段（Excel 选中列绘图）+ 新增 backtest_xlsx.py（openpyxl 内嵌
+#          净值曲线图+买卖点 marker），smoke 745 / 514→521。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.35"
+APP_VERSION = "1.36"
 
 # ==========================================
 # 界面配置 (UI Settings)

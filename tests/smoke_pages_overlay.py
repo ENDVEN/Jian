@@ -1413,7 +1413,12 @@ import csv as _csv  # noqa: E402
 import io as _io  # noqa: E402
 _rows = list(_csv.reader(_io.StringIO(_csv_text)))
 _hdr = next(i for i, r in enumerate(_rows) if r and r[0] == "买入日期")
-_data = [r for r in _rows[_hdr + 1:] if r]
+# 逐笔明细区 = 表头之后、遇到分隔空行或“# 以下逐日净值…”注释行为止（§7-A2 新增了尾部净值段）
+_data = []
+for _r in _rows[_hdr + 1:]:
+    if not _r or _r[0].startswith("#") or _r[0] == "日期":
+        break
+    _data.append(_r)
 check("逐笔区仍是 8 列（新增标记没破坏列结构）", all(len(r) == 8 for r in _data))
 check("逐笔行数 == 成交笔数", len(_data) == 2)
 check("表头区每行仍是单格（含逗号的函数行不会被拆列）",
@@ -3174,6 +3179,62 @@ try:
         _btflow.SingleSyncWorker = _orig_sync
 except Exception as _e:  # noqa: BLE001
     check(f"§7-B10 M1 区间断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
+# ★ §7-A2 · 回测结果图表导出（CSV 逐日净值列 + .xlsx 内嵌图）
+# ==========================================
+print("\n== §7-A2 · 回测结果图表导出（CSV 数据列 + xlsx 内嵌图）==")
+try:
+    import io as _ioA
+    import pandas as _pdA
+    from core.backtest import BacktestResult as _BRA, BacktestTrade as _TRA
+    from ui.widgets.backtest_export import build_daily_series, compose_result_csv
+    from ui.widgets.backtest_xlsx import _build_workbook, write_result_xlsx
+
+    _dates = _pdA.to_datetime(['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'])
+    _eq = _pdA.DataFrame({'date': _dates, 'equity': [1.0, 1.1, 1.05, 1.2],
+                          'in_market': [0, 1, 1, 1]})
+    _tr = [_TRA(entry_date=_dates[1], exit_date=_dates[3], entry_price=10.0,
+                exit_price=12.0, pnl=2.0, return_pct=0.2)]
+    _resA = _BRA(symbol='600000', buy_expression='B', sell_expression='S',
+                 start_date='2024-01-02', end_date='2024-01-05', trades=_tr, equity=_eq)
+    _metaA = {'symbol': '600000', 'name': '测试', 'start_date': '2024-01-02',
+              'end_date': '2024-01-05', 'segments': [], 'params_text': '',
+              'buy_expr': 'B', 'sell_expr': 'S', 'risk': {},
+              'fill': {'fill_mode': 'next_open', 'trigger_tick': 1}, 'index': None}
+
+    # ① build_daily_series
+    _dA = build_daily_series(_resA)
+    check("build_daily_series 列齐且日期升序",
+          list(_dA.columns) == ['date', 'equity', 'in_market', 'buy_price', 'sell_price']
+          and _dA['date'].tolist() == sorted(_dA['date'].tolist()))
+    check("买卖点落在成交日（1/3 买 10、1/5 卖 12），非交易日留空",
+          float(_dA.loc[_dA.date == '2024-01-03', 'buy_price'].iloc[0]) == 10.0
+          and float(_dA.loc[_dA.date == '2024-01-05', 'sell_price'].iloc[0]) == 12.0
+          and _pdA.isna(_dA.loc[_dA.date == '2024-01-02', 'buy_price'].iloc[0]))
+
+    # ② CSV 不再输出逐日净值段（按用户反馈去掉；看图靠 xlsx）
+    _csvA = compose_result_csv(_resA, _metaA)
+    check("CSV 只保留逐笔表头、不再含逐日净值段",
+          '买入日期,买入价' in _csvA and '日期,净值,持仓,买入价,卖出价' not in _csvA)
+
+    # ③ xlsx 内嵌图（对构建时的 Workbook 断言，openpyxl 读回会丢图）
+    _wbA = _build_workbook(_resA, _metaA)
+    check("xlsx 三个 sheet（回测明细 + 可见净值曲线 + 隐藏净值数据）",
+          '回测明细' in _wbA.sheetnames and '净值曲线' in _wbA.sheetnames
+          and '净值数据' in _wbA.sheetnames)
+    check("逐日数据放隐藏 sheet（主表不刷屏）",
+          _wbA['净值数据'].sheet_state == 'hidden'
+          and _wbA['净值曲线'].sheet_state == 'visible')
+    _wsA = _wbA['净值曲线']
+    check("净值曲线 sheet 内嵌 ≥1 图且系列数 ≥3（净值+买+卖）",
+          len(_wsA._charts) >= 1 and len(_wsA._charts[0].series) >= 3)
+    # 真能存盘（BytesIO，不落真实目录）
+    _bufA = _ioA.BytesIO()
+    write_result_xlsx(_resA, _metaA, _bufA)
+    check("write_result_xlsx 能写入字节流（非空）", _bufA.tell() > 0)
+except Exception as _e:  # noqa: BLE001
+    check(f"§7-A2 图表导出断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
 # ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）

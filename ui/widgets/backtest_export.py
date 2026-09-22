@@ -25,11 +25,46 @@ def risk_readable(risk: dict) -> str:
     return risk_summary(risk)
 
 
+_DAILY_COLUMNS = ['date', 'equity', 'in_market', 'buy_price', 'sell_price']
+
+
+def build_daily_series(result) -> pd.DataFrame:
+    """逐日净值 + 买卖点标记 —— CSV 数据段与 xlsx 图表的**共同数据源**（单一事实来源）。
+
+    列：`date`(YYYY-MM-DD 字符串) / `equity`(归一累计净值) / `in_market`(0/1 是否持仓)
+    / `buy_price` / `sell_price`（开/平仓日在对应行标该笔成交价，非交易日留空）。
+    只取 `result.equity` + `result.trades`，不牵动公式叠层。equity 为空时返回空表。
+    """
+    eq = getattr(result, 'equity', None)
+    if eq is None or getattr(eq, 'empty', True) or 'date' not in eq.columns:
+        return pd.DataFrame(columns=_DAILY_COLUMNS)
+    d = eq.copy()
+    d['date'] = pd.to_datetime(d['date'], errors='coerce')
+    d = d.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
+    if 'in_market' not in d.columns:
+        d['in_market'] = 0
+    key = d['date'].dt.strftime('%Y-%m-%d')
+    buy_map, sell_map = {}, {}
+    for t in (getattr(result, 'trades', None) or []):
+        try:
+            bk = pd.Timestamp(t.entry_date).strftime('%Y-%m-%d')
+            ek = pd.Timestamp(t.exit_date).strftime('%Y-%m-%d')
+        except (ValueError, TypeError):  # noqa: BLE001 —— 日期异常的单笔跳过标记，不致命
+            continue
+        buy_map.setdefault(bk, round(float(t.entry_price), 4))
+        sell_map.setdefault(ek, round(float(t.exit_price), 4))
+    d['buy_price'] = key.map(buy_map)
+    d['sell_price'] = key.map(sell_map)
+    d['date'] = key
+    return d[_DAILY_COLUMNS]
+
+
 def compose_result_csv(result, meta: dict) -> str:
     """把一次回测结果渲染成规范 CSV 文本（表头参数块 + 逐笔成交明细）。
 
     拆成纯函数便于断言：导出的东西必须等于"这次跑出来的结果"，不掺现编。
-    v5.15 起**不再输出每日净值行**（用户拍板，见文件尾注释）。
+    v5.15 起不再输出「每日净值行」（CSV 可读性）；v1.36 一度补回逐日净值数据列，
+    又按用户反馈去掉（“逐日全量太占空间”）——**看图交给 xlsx**（那里逐日数据放隐藏 sheet）。
 
     【v5.16 为什么连"注释头行"都走 csv.writer 转义】
     函数源码里很多行含**英文逗号**（`STICKLINE(A, B, C, 3, 0), COLORFF0000;`、
@@ -95,9 +130,9 @@ def compose_result_csv(result, meta: dict) -> str:
             EXIT_REASON_LABELS.get(getattr(t, "exit_reason", "signal"), "卖出信号")
             + ("（T+1 顺延）" if getattr(t, "deferred_t1", False) else ""),
         ])
-    # NOTE(v5.15 · 用户拍板)：不再输出 200+ 行的「每日净值明细」——
+    # NOTE(v5.15 · 用户拍板)：不输出 200+ 行的「每日净值明细」——
     #   ① 它是 CSV 可读性低的主因；② 专业投资者要核查的确定性事实是 参数+逐笔，
-    #   引擎可用相同参数复现净值序列；③ 净值曲线的可视化由「导出结果图 PNG」承担。
+    #   引擎可用相同参数复现净值序列；③ 净值曲线的可视化由 xlsx（内嵌图）/ PNG 承担。
     return buf.getvalue()
 
 

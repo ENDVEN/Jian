@@ -71,6 +71,7 @@ from ui.widgets.backtest_flow import BacktestFlow
 from ui.widgets.backtest_strategy import StrategyBridge
 from ui.widgets.backtest_export import (compose_result_csv, export_result_csv,
                                         export_result_png_file, risk_readable)
+from ui.widgets.backtest_xlsx import export_result_xlsx_file
 # v6.17：成交模型的用户教学弹窗（术语必须"看得见地"解释，不能只藏在 tooltip 里）
 from ui.dialogs.fill_model_help import FillModelHelpDialog
 
@@ -711,6 +712,9 @@ class SingleStockBacktestView(QWidget):
         act_png = self._export_menu.addAction("🖼 导出结果图 PNG…")
         act_png.setToolTip("单页报告图：KPI + 净值曲线 + 离场原因饼图 + 参数简表，打开即懂")
         act_png.triggered.connect(self.export_result_png)
+        act_xlsx = self._export_menu.addAction("📊 导出 Excel 图表…")
+        act_xlsx.setToolTip(".xlsx 内嵌真正的净值曲线图 + 买卖点标记（打开即见图）；另含明细 sheet")
+        act_xlsx.triggered.connect(self.export_result_xlsx)
         self.btn_export_result.setMenu(self._export_menu)
 
     # ==========================================
@@ -753,6 +757,15 @@ class SingleStockBacktestView(QWidget):
         meta, symbol, name = self._export_meta()
         export_result_png_file(self, result=self._last_result, meta=meta,
                                symbol=symbol, name=name)
+
+    def export_result_xlsx(self):
+        """导出 .xlsx（内嵌净值曲线图 + 买卖点；§7-A2，渲染在 ui/widgets/backtest_xlsx.py）"""
+        if self._last_result is None:
+            QMessageBox.information(self, "提示", "请先完成一次回测，再导出 Excel。")
+            return
+        meta, symbol, name = self._export_meta()
+        export_result_xlsx_file(self, result=self._last_result, meta=meta,
+                                symbol=symbol, name=name)
 
 
     # ==========================================
