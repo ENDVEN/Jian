@@ -3979,6 +3979,66 @@ try:
 except Exception as _e:  # noqa: BLE001
     check(f"§7-E2 代理分类/熔断断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
+# ==========================================
+print("\n== §7-E3 · 日线落盘列白名单（v1.39）==")
+# ==========================================
+try:
+    import pandas as _pd3
+    from core import cross_section as _cs3
+    from data.akshare_feed import (DAILY_KEEP_COLUMNS, OHLCV_COLUMNS, AkShareFeed)
+
+    _JUNK3 = {'股票代码', '成交额', '振幅', '涨跌幅', '涨跌额', '换手率', '持仓量', '动态结算价'}
+
+    check("白名单 = OHLCV + symbol/amount/turnover/outstanding_share",
+          set(OHLCV_COLUMNS) <= set(DAILY_KEEP_COLUMNS)
+          and {'symbol', 'amount', 'turnover', 'outstanding_share'} <= set(DAILY_KEEP_COLUMNS))
+    check("白名单不含任何杂列（东财中文透传列 / 期货列）",
+          not (_JUNK3 & set(DAILY_KEEP_COLUMNS)))
+
+    # ★★ 本项**最高价值**的一条：白名单必须覆盖下游真正要读的列 ——
+    #    否则将来任何一次"裁列"都会让换手率 / 流通市值筛选**静默失效**（§9.1 的核心警告）。
+    _req3 = set(_cs3._BASE_COLUMNS) | set(_cs3.columns_for(
+        _cs3.ScanThresholds(min_turnover=0.01, min_float_mktcap=1e9)))
+    check("★★ 白名单覆盖横截面内核所需的**全部**列（少一个 = 该筛选静默失效）",
+          _req3 <= set(DAILY_KEEP_COLUMNS))
+
+    # 照 v1.39 实测的三类杂列构造真实脏数据
+    _dirty3 = _pd3.DataFrame({
+        '日期': ['2024-01-02', '2024-01-03'], '开盘': [10.0, 10.5], '收盘': [10.5, 10.6],
+        '最高': [10.6, 10.7], '最低': [9.9, 10.4], '成交量': [1e6, 1.1e6],
+        '成交额': [1e7, 1.1e7], '振幅': [0.07, 0.03], '涨跌幅': [5.0, 0.95],
+        '涨跌额': [0.5, 0.1], '换手率': [0.93, 1.02], '股票代码': ['600519'] * 2,
+        '持仓量': [1, 2], '动态结算价': [1.0, 2.0],
+    })
+    _out3 = AkShareFeed._normalize_ohlcv(
+        _dirty3, {'日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high',
+                  '最低': 'low', '成交量': 'volume'}, '600519')
+    check("★ 脏数据清洗后**只剩白名单列**（三类杂列全被挡在湖外）",
+          set(_out3.columns) <= set(DAILY_KEEP_COLUMNS) and not (_JUNK3 & set(_out3.columns))
+          and 'date' in _out3.columns and 'symbol' in _out3.columns)
+
+    # apply-if-present：各分区列集合本来不同（v1.39 实测 index_daily 无 amount、kline_min 无 symbol）
+    _only_ohlcv3 = _pd3.DataFrame({'date': ['2024-01-02'], 'open': [1.0], 'high': [1.1],
+                                   'low': [0.9], 'close': [1.05], 'volume': [100]})
+    _out3b = AkShareFeed._normalize_ohlcv(_only_ohlcv3, {}, 'sh000001')
+    check("★ apply-if-present：只有 OHLCV 也不报错、不凭空造列（index_daily / 分钟同款）",
+          set(_out3b.columns) <= set(DAILY_KEEP_COLUMNS)
+          and 'amount' not in _out3b.columns and 'turnover' not in _out3b.columns)
+
+    # 新浪/东财源透传的"受支持列"必须**留下**（"有就用、没有就数据不足"的前提）
+    _rich3 = _pd3.DataFrame({'date': ['2024-01-02'], 'open': [1.0], 'high': [1.1],
+                             'low': [0.9], 'close': [1.05], 'volume': [100],
+                             'amount': [1e7], 'turnover': [0.0093], 'outstanding_share': [1e9]})
+    _out3c = AkShareFeed._normalize_ohlcv(_rich3, {}, '600519')
+    check("★ 受支持列 amount / turnover / outstanding_share **不被裁掉**（裁掉=换手率筛选静默失效）",
+          {'amount', 'turnover', 'outstanding_share', 'symbol'} <= set(_out3c.columns))
+
+    # 分钟路径行为不变：白名单含 symbol，但分钟随后仍按 OHLCV_COLUMNS 裁回 6 列
+    check("★ 分钟路径行为不变（`fetch_a_share_minute` 随后仍裁回 6 列，不含 symbol）",
+          set(OHLCV_COLUMNS) <= set(DAILY_KEEP_COLUMNS) and 'symbol' not in OHLCV_COLUMNS)
+except Exception as _e:  # noqa: BLE001
+    check(f"§7-E3 落盘列白名单断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

@@ -52,8 +52,12 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          + looks_like_proxy_error + 三出口文案各一档（不写死本机端口）
 #          + ThrottlePolicy.proxy_circuit_breaker=3 + abort_reason_text 三消费方共用
 #          + bulk_download 竞态判据收编公共件 JobGuard，smoke 796 / 557。
+#   1.39 = §7-E3 日线落盘列白名单：akshare_feed.DAILY_KEEP_COLUMNS（OHLCV + symbol/amount/
+#          turnover/outstanding_share）+ _normalize_ohlcv 末尾 apply-if-present 裁列
+#          ⇒ 源透传的中文列/期货列不再进湖；白名单 ⊇ 横截面内核所需列有交叉断言钉住；
+#          存量 parquet 不动，smoke 803 / 557。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.38"
+APP_VERSION = "1.39"
 
 # ==========================================
 # 界面配置 (UI Settings)

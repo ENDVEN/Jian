@@ -9,6 +9,25 @@ from core.utils import MINUTE_PERIODS, normalize_period
 # 系统内部统一的标准量价列名 (Canonical OHLCV Schema)
 OHLCV_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume']
 
+# ★v1.39 / §7-E3：**落盘列白名单**（数据湖里"允许存在"的列，唯一出处）
+# 【为什么要有它】v6.33 实测 + v1.39 复核实测（420 个日线文件）：`_normalize_ohlcv` 只 rename、
+#   **不裁列** ⇒ 三类杂列进湖：① 新浪源透传 `turnover` / `outstanding_share`；
+#   ② 东财兜底的中文列（`股票代码`/`成交额`/`振幅`/`涨跌幅`/`涨跌额`/`换手率`，1 个文件）；
+#   ③ 期货列 `持仓量` / `动态结算价`（5 个文件）。
+#   对照：**分钟路径有显式裁剪**（见 `fetch_a_share_minute` 的 `keep`），日线没有 ——
+#   不对称就是漂移的开始（§9.1）。
+# 【为什么白名单里必须有 amount / turnover / outstanding_share】**它们是下游的"受支持列"**：
+#   `core/cross_section._BASE_COLUMNS` 恒读 `amount`，`columns_for()` 在启用换手率 / 流通市值
+#   筛选时会读 `turnover` / `outstanding_share` —— 裁掉会让这两项筛选**当场全变「数据不足」**
+#   （正是 §9.1 警告的"静默失效"）。§7-E3 拍板 P2：**保留**。
+# 【为什么是 apply-if-present】各分区的列集合本来就不同（v1.39 实测：`index_daily` **无** `amount`、
+#   `kline_min` 只有 6 列**无** `symbol`）⇒ 只"保留存在的白名单列"，**绝不 require**。
+# 【本项明确不做】不给东财兜底源把 `成交额→amount` / `换手率→turnover` 做映射：东财 `换手率`
+#   是**百分数**(0.93)、新浪 `turnover` 是**小数**(0.0093)，直接映射会把 **100× 口径**混进同一列
+#   （§9-V 最怕的事故）；要做得先定单位换算 + 断言，属独立一环（§7-E3「不做」）。
+DAILY_KEEP_COLUMNS = tuple(OHLCV_COLUMNS) + ('symbol', 'amount', 'turnover',
+                                             'outstanding_share')
+
 # 新浪/东财日线接口的中文列名统一映射 (兼容两个接口不同时期的列名)
 KLINE_CN_RENAME = {
     '日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume',
@@ -229,6 +248,7 @@ class AkShareFeed:
         - 重命名列名 -> 统一英文
         - 日期转 datetime 并剔除无法解析的行
         - 价格与成交量强制转数值
+        - ★v1.39/§7-E3 **裁列**：只留 `DAILY_KEEP_COLUMNS` 里存在的列（把源透传的杂列挡在湖外）
         - 打上标的标签
         """
         df = df.rename(columns=rename_map)
@@ -240,6 +260,12 @@ class AkShareFeed:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
         df['symbol'] = symbol_value
+        # ★v1.39/§7-E3 落盘前**裁列**（唯一白名单）：对齐分钟路径的做法，让"湖里的列集合"
+        # 从"各源碰运气"变成"一处说了算"。⚠ apply-if-present（只减不增）——
+        # `index_daily` 无 amount、`kline_min` 无 symbol 都是**正常**的，绝不 require。
+        # ⚠ 位置在 `symbol` 赋值**之后**：白名单含 symbol，所以日线类分区照常带上它；
+        #   而分钟路径接下来还会用 OHLCV_COLUMNS 再裁一次（symbol 被去掉）⇒ **分钟行为不变**。
+        df = df[[c for c in DAILY_KEEP_COLUMNS if c in df.columns]]
         # ★v6.23 物理护栏：非正价 / 缺价的行一律不进数据湖（否则一根负价会把整张图压扁）
         df = drop_unusable_price_rows(df, symbol_value)
         return df.reset_index(drop=True)

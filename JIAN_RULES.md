@@ -12,11 +12,11 @@
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **1.38**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / **commit 首词待用户提交**） |
-| 文档版本 | **v6.52**（§7-E2 落地：代理失败"说人话" + 熔断提前；E1 已提交 `c969112`。上一版 v6.51 = §7-E 施工队列落档，v6.50 = 文档瘦身 118k→73k） |
-| 最近三版 | `1.38` §7-E2 代理失败说人话+熔断提前 · `1.37` §7-A4 回测历史存档 · `1.36` §7-A2 回测图表导出 |
-| **当前主线** | **§7-E 施工队列（v6.51 定稿）**：E1 ✅ 已提交 → **E2 ✅ 已落地 1.38** → **E3 日线落盘列白名单（下一步）** → E4 时点成分股（前置可行性闸门）。§7-A4 / §7-A2 / §7-B10 / §7-B1-B2 均已收官 |
-| **断点** | **v6.49（1.37）§7-A4 回测历史存档 ✅（v6.49 复核重做）**：存储 = `data/backtest_archive.py`（不可变快照：每份 `<时间戳_uuid>.json` + 轻量索引 `_index.json`；save/list/load/pin/delete/淘汰/防注入）；**版式 = `ui/widgets/backtest_history_ui.py`（1.22 同款分工：过滤条 / `HistoryTable` / `MiniEquityChart` / `HistoryPreviewPane` / 页脚设置），页面 `ui/views/backtest_history.py` 只持状态与接线**（市场回测页第 4 子页「运行历史」：列表+预览+载入查看/复用参数/重跑/送行情页/★重点/删除）。每次回测默认自动存档（偏好 `backtest_archive.auto` 可关；发起瞬间定格 `_last_config` 保证"存档=跑的那次"）；逐笔全量 + 净值抽稀≤250（**端点保底 + 并入全部成交日**）；每标的20/总500 滞动淘汰、**重点豁免**；文件名 uuid 防注入、单文件≤2MB；**读路径绝不写盘**；schema 带 kind 预留 M2/M3（本轮只 M1）。M1 视图新增 `show_archived`（**只读回放：保存/恢复现场 + 预览期禁导出 + 黄色横幅与「退出预览」**）/`exit_preview`/`load_archive_config`/`save_to_history`（导出菜单「💾 存为历史快照」）；结果区净值曲线**新增买卖点散点**（`buy_at`/`sell_at`）；`StrategyBridge.apply_payload` 抽出复用。验收：`smoke_chart` **782** / `smoke_pages_overlay` **554** 全绿 + compileall（存档测试全用临时 root；防污染自检含 `backtest_results`）。坑=§11.5-75。**（v6.50）文档瘦身已完成**：主文件 **118k → ≈73k 字符**（逐文件地图 → `docs/JIAN_CODEMAP.md`；§7-B1/B2 + §7-B10 主案与 §11.6 历史块 → `docs/JIAN_ARCHIVE.md`）。**（v1.38）§7-E2 已落地**：代理失败"说人话" + 熔断提前 —— `_classify_error` 先判 `proxy` 文本指纹（⚠ `requests.ProxyError` 也是 `OSError` 子类，顺序错就被吞成 network）、三出口文案各一档（**不写死 `127.0.0.1:7897`**）、`proxy_circuit_breaker=3`、`abort_reason_text` 三消费方共用、`bulk_download` 竞态判据收编 `JobGuard`；smoke **796 / 557** 全绿。**下一步 = §7-E3 日线落盘列白名单（1.39）**：先跑探针量全湖列清单（跑完即删）→ 上 `DAILY_KEEP_COLUMNS` → 断言钉住"列存在性 + 落盘列 ⊆ 白名单"。 |
+| APP 版本 | **1.39**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / **commit 首词待用户提交**） |
+| 文档版本 | **v6.53**（§7-E3 落地：日线落盘列白名单 + STEP 1 实测表；E1 已提交 `c969112`、E2 已提交 `0e080c0`） |
+| 最近三版 | `1.39` §7-E3 日线列白名单 · `1.38` §7-E2 代理失败说人话+熔断提前 · `1.37` §7-A4 回测历史存档 |
+| **当前主线** | **§7-E 施工队列（v6.51 定稿）**：E1 ✅ 提交 → E2 ✅ 落地 1.38 → **E3 ✅ 落地 1.39** → **E4 时点成分股（下一步 · 先过可行性闸门，不过则就地结案）**。§7-A4 / §7-A2 / §7-B10 / §7-B1-B2 均已收官 |
+| **断点** | **v6.49（1.37）§7-A4 回测历史存档 ✅（v6.49 复核重做）**：存储 = `data/backtest_archive.py`（不可变快照：每份 `<时间戳_uuid>.json` + 轻量索引 `_index.json`；save/list/load/pin/delete/淘汰/防注入）；**版式 = `ui/widgets/backtest_history_ui.py`（1.22 同款分工：过滤条 / `HistoryTable` / `MiniEquityChart` / `HistoryPreviewPane` / 页脚设置），页面 `ui/views/backtest_history.py` 只持状态与接线**（市场回测页第 4 子页「运行历史」：列表+预览+载入查看/复用参数/重跑/送行情页/★重点/删除）。每次回测默认自动存档（偏好 `backtest_archive.auto` 可关；发起瞬间定格 `_last_config` 保证"存档=跑的那次"）；逐笔全量 + 净值抽稀≤250（**端点保底 + 并入全部成交日**）；每标的20/总500 滞动淘汰、**重点豁免**；文件名 uuid 防注入、单文件≤2MB；**读路径绝不写盘**；schema 带 kind 预留 M2/M3（本轮只 M1）。M1 视图新增 `show_archived`（**只读回放：保存/恢复现场 + 预览期禁导出 + 黄色横幅与「退出预览」**）/`exit_preview`/`load_archive_config`/`save_to_history`（导出菜单「💾 存为历史快照」）；结果区净值曲线**新增买卖点散点**（`buy_at`/`sell_at`）；`StrategyBridge.apply_payload` 抽出复用。验收：`smoke_chart` **782** / `smoke_pages_overlay` **554** 全绿 + compileall（存档测试全用临时 root；防污染自检含 `backtest_results`）。坑=§11.5-75。**（v6.50）文档瘦身已完成**：主文件 **118k → ≈73k 字符**（逐文件地图 → `docs/JIAN_CODEMAP.md`；§7-B1/B2 + §7-B10 主案与 §11.6 历史块 → `docs/JIAN_ARCHIVE.md`）。**（v1.38）§7-E2 已落地**：代理失败"说人话" + 熔断提前 —— `_classify_error` 先判 `proxy` 文本指纹（⚠ `requests.ProxyError` 也是 `OSError` 子类，顺序错就被吞成 network）、三出口文案各一档（**不写死 `127.0.0.1:7897`**）、`proxy_circuit_breaker=3`、`abort_reason_text` 三消费方共用、`bulk_download` 竞态判据收编 `JobGuard`；smoke **796 / 557** 全绿。**（v1.39）§7-E3 已落地**：日线落盘**列白名单** —— `DAILY_KEEP_COLUMNS`（OHLCV + `symbol`/`amount`/`turnover`/`outstanding_share`）+ `_normalize_ohlcv` 末尾 **apply-if-present** 裁列（对齐分钟路径）；STEP 1 探针实测：杂列仅涉 **6 个文件**（期货两列 ×5 / 东财中文六列 ×1，全仓 0 引用）、`index_daily` 无 `amount`、`kline_min` 无 `symbol` ⇒ 实证"必须只减不增"；**存量 parquet 不动**；`smoke_chart` 新增"白名单 ⊇ 横截面内核所需列"**交叉护栏**（防筛选静默失效）；验收 **803 / 557** 全绿。**下一步 = §7-E4 时点成分股（1.40）**：⚠ **先过可行性闸门**（探针实测能否拿到"带生效日"的历史调样数据；v6.43 已否过三个候选接口），**拿不到就按拍板 P3 就地结案**（不发版、不写 UI，只回写 §7-D4 结论）。 |
 
 ### 📚 文档地图（先看这里，再定点检索）
 
@@ -158,8 +158,8 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
     再长可把 `enable_divider_drag`+eventFilter 拆成 `ui/widgets/divider_drag.py` 伴生件）>
   ⚠ `ui/widgets/scan_flow.py` **413**（v6.43 先选后扫/闸门/落位越线；**登记不返工**，
     再长可把"日期控件三件套（选择/落位/同步）"抽成伴生件）>
-  ⚠ `data/akshare_feed.py` **462**（v6.46 §7-B10 `fetch_trade_calendar` 越线；本就是"行情源大杂烩"候选拆点，
-    再加新源前先分文件）> ⚠ `data/sync_service.py` **457 → 531**（v1.38/§7-E2 又长：`proxy` 分类
+  ⚠ `data/akshare_feed.py` **462 → 487**（v6.46 §7-B10 `fetch_trade_calendar` 越线、v1.39/§7-E3 再加
+    `DAILY_KEEP_COLUMNS` + 落盘裁列；本就是"行情源大杂烩"候选拆点，**再加新源前先分文件**）> ⚠ `data/sync_service.py` **457 → 531**（v1.38/§7-E2 又长：`proxy` 分类
    + `looks_like_proxy_error` + 三出口文案 + `abort_reason_text` + `proxy_circuit_breaker`；
    **登记不返工** —— 再长可把"失败分类与人话文案"整段抽成 `data/fetch_messages.py` 伴生件）。
   ⚠ `core/cross_section.py` **655**（v6.43 又长：轴外落位/missing 诚实化；**处置不变**：
@@ -466,16 +466,40 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 - **STEP 5 文档 + 版本**：§9.3 三条打勾；§11.5 加新坑（**批量同错 + `ProxyError` ⇒ 先查代理，别怀疑行情源、别加重试**）；§8 加 1.38；三处版本号。
 - **不做**：❌ 加重试（只让代理全灭更慢）❌ 自动改 `trust_env` ❌ 主动探测代理端口 ❌ 「不走系统代理」开关（见 P5）。
 
-#### E3 · 日线落盘列白名单（→ 1.39）
-**根因（已核实）**：`_normalize_ohlcv`（`data/akshare_feed.py:234`）**只 rename 不裁列** ⇒ 三类杂列进湖：① 新浪源透传 `turnover` / `outstanding_share`；② 东财兜底的中文列；③ 期货列 `持仓量` / `动态结算价`。
-**对照**：分钟路径**有**显式裁剪（同文件 `:402` 的 `keep`）⇒ **日线/分钟不对称**。
-**依赖盘点（已全仓 grep）**：`_BASE_COLUMNS`（`core/cross_section.py:86`）= `date/open/high/low/close/volume/amount`；另加 `turnover` / `outstanding_share`（`:193-196`、`:323-330`）；**`持仓量` / `动态结算价` 全仓 0 次引用 ⇒ 纯噪声**。落盘侧 `data/market_db.py:58 save_data` **不做任何列校验**。
-- **STEP 1 实测（探针，跑完即删）**：全湖扫【列清单 × 出现文件数 × 体积占比】，确认有没有**第四类**未发现的列；结果回填 §9.1（把 v6.33 那批旧数字换成"当前实测"）。**这步不能跳** —— 白名单必须建立在实测上。
+#### E3 · 日线落盘列白名单（→ 1.39 · ✅ **已落地 v1.39**）
+**根因（已核实）**：`_normalize_ohlcv`（`data/akshare_feed.py`）**只 rename 不裁列** ⇒ 三类杂列进湖：
+① 新浪源透传 `turnover` / `outstanding_share`；② 东财兜底的中文列；③ 期货列 `持仓量` / `动态结算价`。
+**对照**：分钟路径**有**显式裁剪（`fetch_a_share_minute` 的 `keep`）⇒ **日线/分钟不对称**。
+**依赖盘点（已全仓 grep）**：`_BASE_COLUMNS`（`core/cross_section.py`）= `date/open/high/low/close/volume/amount`；另加 `turnover` / `outstanding_share`（`columns_for` / 逐行判定）；**`持仓量` / `动态结算价` 全仓 0 次引用 ⇒ 纯噪声**。落盘侧 `data/market_db.py: save_data` **不做任何列校验**。
+- **STEP 1 ✅ 实测（只读 parquet footer；探针跑完即删）**：
+
+  | 分区 | 文件 | 体积 | 列集合（v1.39 实测） |
+  |---|---|---|---|
+  | `kline_daily` | **420** | 48.7 MB | OHLCV+`symbol` = 100% · `amount`/`turnover`/`outstanding_share` = **98.6%（414）** · `持仓量`/`动态结算价` = 5 · 东财中文六列 = **1** |
+  | `kline_daily_raw` | 1 | 0.2 MB | 10 列标准（**干净**） |
+  | `index_daily` | 29 | 3.1 MB | OHLCV+`symbol`（**无 `amount`**） |
+  | `kline_min` | 3 | 0.1 MB | **只有 6 列 OHLCV（无 `symbol`）** |
+
+  **结论**：① 没有"第四类"未发现的杂列（§9.1 记载的三类就是全部）；
+  ② 杂列只涉及 **6 个文件** ⇒ **本项收益不是省空间，而是"消除隐性依赖 + 让列集合由一处说了算"**；
+  ③ `index_daily` 无 `amount`、`kline_min` 无 `symbol` ⇒ **必须 apply-if-present**（require 就会砍坏），
+  这两处是实测给出的硬证据（不是推理）。
 - **STEP 2 白名单 + 落盘裁剪**：`akshare_feed` 新增**模块级** `DAILY_KEEP_COLUMNS = OHLCV_COLUMNS + ('symbol', 'amount', 'turnover', 'outstanding_share')`；`_normalize_ohlcv` 末尾按 **apply-if-present**（只留"存在且在白名单里"的列）⇒ `index_daily`（无 amount）/ 期货（无 turnover）**不会被砍坏**。
-- **STEP 3 断言**：① 四个 OHLCV 分区落盘列集合 ⊆ 白名单；② `turnover` / `outstanding_share` 在**新浪源**数据里存在（把 §9.1 的"**隐性依赖**"显式钉住）；③ 期货列不再透传；④ **改造现有那条"缺列的票落「数据不足」"断言的新口径**（它的前提"湖里有中文列"会消失，不改就成**假绿**）。
-- **STEP 4 存量数据**：白名单**只对新落盘生效**，湖里已有杂列**不动**（数据主权）；数据管理页补一句说明，想瘦身用「重新全量下载」。**不做自动迁移**。
-- **STEP 5 文档 + 版本**：§9.1 改写为「**现行**：白名单已上，受支持列 = …」；§11.4 加行「改日线落盘列 → `DAILY_KEEP_COLUMNS` **一处**」；§4 红榜更新 `akshare_feed` 行数；三处版本号。
+- **STEP 3 ✅ 断言**（`smoke_chart` **+7 项**）：① 白名单 ⊇ OHLCV + `symbol`/`amount`/`turnover`/`outstanding_share`，且**不含任何杂列**；
+  ② **★★ 白名单 ⊇ 横截面内核所需的全部列**（`_BASE_COLUMNS` ∪ `columns_for(启用换手率 + 市值)`）
+  —— 这条是防"将来裁列让筛选**静默失效**"的**交叉护栏**（§9.1 的核心警告）；
+  ③ 脏数据（**照实测的三类杂列构造**）清洗后只剩白名单列；④ **apply-if-present**：只有 OHLCV 也不报错、不凭空造列；
+  ⑤ 受支持列 `amount`/`turnover`/`outstanding_share` **不被裁掉**；⑥ 分钟路径行为不变（白名单含 `symbol`，但分钟随后仍裁回 6 列）。
+  ⚠ **原计划第 ④ 条预判有误，如实修正**：原以为"存量杂列会被清掉 ⇒ 旧断言『缺列的票落数据不足』前提消失、变成**假绿**"，
+  但实测显示**存量 parquet 不动** ⇒ 那条断言前提**依然成立**，**保留不动**（它测的三态诚实仍有效）。
+  **教训**：涉及"存量数据"的推断，**必须等探针跑完再下结论**。
+- **STEP 4 ✅ 存量数据**：白名单**只对新落盘生效**，湖里已有杂列**不动**（数据主权）；想瘦身用「重新全量下载」。**不做自动迁移**。
+  ⚠ **本轮不做**："在数据管理页加一句'重新下载可瘦身'说明" —— 收益边际（只涉 6 个文件、且用户不可见），
+  而该页有 6 条护栏不变量，不值得为一句话动它；诚实登记为**不做**（不假装做了）。
+- **STEP 5 ✅ 文档 + 版本**：§9.1 改写为「**现行**：白名单已上」+ 实测表；§11.4 加行「改数据湖允许存在哪些列 → `DAILY_KEEP_COLUMNS` **一处**」；
+  §4 红榜更新 `akshare_feed` 行数（462 → 487）；§8 加 1.39；三处版本号。
 - **不做**：❌ **不给东财兜底源补 `成交额→amount` / `换手率→turnover` 映射** —— 东财 `换手率` 是**百分数**(0.93)、新浪 `turnover` 是**小数**(0.0093)，直接映射会把 **100× 口径**混进同一列（正是 §9-V 最怕的事故）；要做得先定换算 + 断言，**登记为后续项**。❌ 不动 `OHLCV_COLUMNS` 常量本身（被 `_PRICE_COLUMNS` 与分钟 `keep` 依赖）。❌ 不动存量 parquet。
+- **验收**：`smoke_chart` **796 → 803 项** / `smoke_pages_overlay` **557 项** 全绿 + 全仓 compileall。
 
 #### E4 · 时点成分股（治幸存者偏差）（→ 1.40 · **前置可行性闸门**）
 > ⚠ **本项成败不取决于代码量，而取决于"有没有带生效日的历史调样数据源"**（v6.43 已实测：三个候选接口都**没有**调入/调出日期）。**闸门不过 ⇒ 就地结案，不发版、不写 UI** —— 绝不允许出现"界面看着支持、名单是假的"。
@@ -530,10 +554,11 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 
 | 版本 | 一句话 |
 |---|---|
+| **1.39** | §7-E3 日线落盘列白名单：`data/akshare_feed.py: DAILY_KEEP_COLUMNS`（OHLCV + `symbol`/`amount`/`turnover`/`outstanding_share`，**apply-if-present**）+ `_normalize_ohlcv` 末尾裁列 ⇒ 源透传的中文列 / 期货列**不再进湖**；**白名单 ⊇ 横截面内核所需全部列**有交叉断言钉住（防"换手率 / 市值筛选静默失效"）；**存量 parquet 不动**（数据主权）；实测杂列仅涉 6 个文件 ⇒ 收益是"消除隐性依赖"而非省空间；smoke 796→803 / 557（§11.5-77） |
 | **1.38** | §7-E2 代理失败"说人话" + 熔断提前：`_classify_error` 新增 `"proxy"`（**必须先判文本指纹再退回 isinstance** —— `requests.ProxyError` 也是 `OSError` 子类，顺序错就被吞成 network）+ `looks_like_proxy_error` + 三出口文案各一档（**不写死 `127.0.0.1:7897`**）+ `ThrottlePolicy.proxy_circuit_breaker=3` + `abort_reason_text` 三处消费方共用 + P4 收编 `JobGuard`；smoke 782→796 / 554→557（§11.5-76） |
 | **1.37** | §7-A4 回测历史存档：`data/backtest_archive.py`（不可变快照 + 轻量索引，save/list/load/pin/delete/滞动淘汰/uuid 防注入；**抽稀端点保底 + 并入成交日、读路径不写盘**）+ `ui/widgets/backtest_history_ui.py`（版式/列表/迷你净值/预览）+ `ui/views/backtest_history.py`（薄壳：状态+接线；市场回测页第4子页「运行历史」：列表+预览+载入查看/复用/重跑/送行情/★重点/删除）；默认自动存档可关、每标的20/总500淘汰重点豁免；M1 新增 show_archived（只读回放：现场保存恢复 + 禁导出 + 横幅）/exit_preview/load_archive_config/save_to_history；结果区净值曲线新增买卖点散点；smoke 782 / 554（§11.5-75） |
-| **1.36** | §7-A2 回测结果图表导出：`build_daily_series`（逐日净值+买卖点共同源）+ 新增 `ui/widgets/backtest_xlsx.py`（openpyxl 内嵌净值折线图+买卖点 marker，逐日数据放隐藏表主表只剩图）；CSV 不写逐日段（看图靠 xlsx）；smoke 745 / 521→530（§11.5-74） |
-> **1.35 及更早**（含 `1.35` §7-B10 全案 / `1.34` R7 副图换序 / `1.33` M2-M3 体验修复轮，
+
+> **1.36 及更早**（`1.36` §7-A2 图表导出 / `1.35` §7-B10 全案 / `1.34` R7 副图换序 / `1.33` M2-M3 体验修复轮，
 > 以及 v6.42–v6.46 各批叙事）→ **`docs/JIAN_HISTORY.md` §8 全表**（v1.38 已把这批叙事归档补齐）。
 >
 > 版本号纪律见 **§9-A**（唯一出处：commit 首词 + `settings.APP_VERSION` + `version.json`）。
@@ -596,9 +621,18 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
    M2/M3 既然要用，就**必须先把它们显式登记为「受支持列」**，并加冒烟断言钉住"列存在"；
    否则将来任何一次列裁剪都会让**换手率过滤静默失效**（"静默"是本项目最忌讳的一类事故）。
 3. **兜底源（东财）没有这两列** ⇒ 该股换手率 / 流通市值**一律记「数据不足」**（**绝不当 0**，否则会误杀一片）。
-4. 可修的小债（择机，**别顺手做**）：给日线也补一次列裁剪 / 白名单校验（对齐分钟线做法），
-   并在落盘与导出前统一列集合。
-   → **施工方案已定稿：见 §7-E3**（v6.51 · 用户 2026-09-23 拍板；白名单 = `DAILY_KEEP_COLUMNS`）。
+4. **~~可修的小债（择机）~~ ✅ v1.39/§7-E3 已修**：日线补上**落盘列白名单**（对齐分钟线做法）——
+   白名单 = `data/akshare_feed.py: DAILY_KEEP_COLUMNS`（OHLCV + `symbol`/`amount`/`turnover`/`outstanding_share`），
+   `_normalize_ohlcv` 末尾按 **apply-if-present** 裁列。
+   **v1.39 实测（只读 footer，420 个日线文件）**：杂列只剩
+   `持仓量`/`动态结算价`（期货，5 文件）+ 东财中文六列（1 文件）—— **全仓 0 引用 ⇒ 已可安全裁掉**；
+   `kline_daily_raw` 1 文件、`index_daily` 29 文件（**无 `amount`**）、`kline_min` 3 文件（**只有 6 列、无 `symbol`**）
+   ⇒ 这三处正是"**必须 apply-if-present**"的实证（require 就会砍坏）。
+   ⚠ **存量 parquet 不动**（数据主权）：白名单只对新落盘生效；想瘦身用「重新全量下载」。
+   ⚠ **本项收益不是省空间**（6 个文件而已）：是**消除"隐性依赖"**——从此"湖里的列集合"由**一处**说了算，
+   下游要什么列就在白名单里登记（有 `smoke_chart` 的**交叉一致性断言**钉住）。
+   仍**不做**：不给东财把 `成交额→amount` / `换手率→turnover` 做映射（单位分别是百分数/小数，
+   直接映射会造成 100× 口径混入 —— §9-V）⇒ **登记为后续项**。
 
 ### 9.2 宽表 `shift` / `REF` / `CROSS` 的"跨空洞"语义分歧（v6.33 · STEP 0 实测 · **STEP 7 前必须定口径**）
 
@@ -883,6 +917,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 改行情同步/抓取节流 | `data/sync_service.py`（增量合并 + `ThrottlePolicy` 都在这里，**勿在 UI 里另起炉灶**） |
 | 改**失败原因分类 / 失败文案** | **`data/sync_service.py` 一处**（v1.38/§7-E2）：`_classify_error`（⚠ **先判 `looks_like_proxy_error` 文本指纹、再退回 isinstance** —— `requests.ProxyError` 也是 `OSError` 子类）+ `short_fetch_reason` / `friendly_fetch_message` / `friendly_constituent_message` 三出口 + `abort_reason_text`（批量中断原因，**三消费方共用**）。⚠ 文案里**不许写死本机端口/proxy 术语当唯一解释**（§10-10），有断言钉着 |
 | 改**代理全灭时的停手时机** | `ThrottlePolicy.proxy_circuit_breaker`（默认 **3**，与通用 `circuit_breaker=12` 分开，v1.38/§7-E2）+ `ui/workers.py: SyncWorker.run` 的 `consecutive_proxy` 计数与 `aborted_by` 回传 |
+| 改**数据湖里允许存在哪些列** | **`data/akshare_feed.py: DAILY_KEEP_COLUMNS`（唯一白名单）**（v1.39/§7-E3）—— `_normalize_ohlcv` 末尾 apply-if-present 裁列。⚠ **要加列先想清楚**：下游要读的列必须在这里登记，否则 **M2/M3 的相应筛选会静默失效**（`smoke_chart` 有"白名单 ⊇ 内核所需列"的交叉断言钉着）；⚠ 各分区列集合本来就不同（`index_daily` 无 `amount`、`kline_min` 无 `symbol`）⇒ 只能"只减不增"，**别 require** |
 | 改日线收盘定稿判据 | **`data/sync_service.py` 一处**（v6.46 / §7-B10）：`DAILY_SETTLE_HHMM` + `is_daily_bar_settled`（纯函数）+ `_drop_unsettled_tail`（`refresh_one` 落盘前对 `DAILY_ZONES` 裁尾）。M1/M2/M3 一律复用，**别在页面另写一套“今天算不算数”** |
 | 改“最近交易日”/交易日历 | **`data/trade_calendar.py`（v6.46 / §7-B10）**：`load_or_fetch`（当日 JSON 缓存 `~/.jian_data/trade_calendar.json` + 失败回退）/ `latest_settled_trading_day`（日历 ∩ 定稿判据）。接口细节在 `data/akshare_feed.py:fetch_trade_calendar`；UI 取数只走 `ui/workers.py:CalendarWorker` |
 | 改 M1 回测区间默认终点/滞后补 | `ui/views/backtest.py`（`date_end` 默认 + `lbl_range_note` 回执行 + 构页时 `flow.start_calendar_fetch()`）+ `ui/widgets/backtest_flow.py`（`_on_calendar` 精修默认终点 / `_prepare_stock_then_run` 滞后自动补 / `_apply_end_date_receipt` 补不到回退+回执）。⚠ **控件名 `date_end`/`date_start`/`cmb_range_preset` 不能改**（迁移护栏）；状态仍留在页面 |
@@ -1019,10 +1054,38 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
    写进弹窗就是对新用户撒谎 —— 文案只说"检查代理软件是否在运行 / 切节点"，并加断言钉住。
    ④ **中断原因文案要做成公共件**（`abort_reason_text`）：`SyncWorker.finished` 有三个消费方，
    各写一遍"（已中断）"必然有一处漏 —— 漏的那处用户就看不到"为什么提前停"（§11.5-11）。
+- **11.5-77** 【v1.39 · §7-E3】① **"裁列白名单"必须 apply-if-present（只减不增）**：各分区列集合
+   **本来就不一样**（实测：`index_daily` 无 `amount`、`kline_min` 只有 6 列无 `symbol`）——
+   写成"必须包含这些列"就会把正常分区砍坏，写成"只保留存在的白名单列"才对。
+   ② **白名单必须覆盖下游真正要读的列，且要有交叉断言**：`smoke_chart` 有一条
+   "白名单 ⊇ 横截面内核所需的全部列（`_BASE_COLUMNS` ∪ `columns_for(启用换手率+市值)`）"——
+   没有它，"哪天顺手裁一下列"就会让换手率/市值筛选**当场全变「数据不足」而没人发现**（§9.1 的静默失效）。
+   ③ **先探针、再下结论**：我原本预判"存量杂列会被清掉 ⇒ 旧断言会变成假绿"，跑完探针才发现
+   **存量 parquet 不动**（数据主权）⇒ 旧断言前提仍在、保留即可。**涉及"存量数据"的推断必须实测**。
+   ④ **收益要如实说**：本项只涉 6 个文件 ⇒ **不是省空间**，是"让列集合由一处说了算 + 消除隐性依赖"；
+   别把"防未来事故"包装成"优化体积"（§10-4 诚实）。
 
 
 
 ### 11.6 当前"下一步做什么"的推荐顺序（历史刷新**倒序**排列：主清单之下**第一块就是最新**）
+
+> **v6.53（§7-E3 落地 · `1.39` · 2026-09-23）**
+> 按 §7-E 队列续做 E3（**日线落盘列白名单**）。**STEP 1 先探针实测**（只读 parquet footer，跑完即删）：
+> 420 个日线文件里，杂列只剩 **期货两列 × 5 文件 + 东财中文六列 × 1 文件**（全仓 0 引用 ⇒ 可安全裁）；
+> `kline_daily_raw` 干净、`index_daily` **无 `amount`**、`kline_min` **只有 6 列无 `symbol`**
+> —— 后两者是"**必须 apply-if-present**"的实证（require 就会砍坏正常分区）。
+> **STEP 2 落地**：`data/akshare_feed.py: DAILY_KEEP_COLUMNS`（OHLCV + `symbol`/`amount`/`turnover`/
+> `outstanding_share`）+ `_normalize_ohlcv` 末尾裁列（对齐分钟路径早就有的 `keep`，消除"日线/分钟不对称"）。
+> **STEP 3 断言**（`smoke_chart` **+7**）：其中最重要的是 **★ 白名单 ⊇ 横截面内核所需全部列**
+> （`_BASE_COLUMNS` ∪ `columns_for(换手率+市值)`）—— 没有它，"哪天顺手裁一下列"就会让
+> 换手率/市值筛选**当场全变「数据不足」而没人发现**（§9.1 的静默失效）。
+> **STEP 4 存量**：白名单**只对新落盘生效**，湖里已有杂列**不动**（数据主权）。
+> ⚠ **如实登记**：① 原计划"改造旧断言（怕它变假绿）"的**预判有误** —— 实测存量不动 ⇒ 旧断言前提仍在，
+> **保留即可**（涉及存量数据的推断必须等探针跑完）；② "在数据管理页加一句瘦身说明"**本轮不做**
+> （收益边际 + 该页有 6 条护栏不变量），诚实登记而不是假装做了。
+> 验收：`smoke_chart` **803** / `smoke_pages_overlay` **557** 全绿 + 全仓 compileall。坑=§11.5-77。
+> **下一步** = **E4 时点成分股（1.40）**：**先过可行性闸门**（探针问"能不能拿到带生效日的历史调样"），
+> 拿不到就按拍板 P3 **就地结案**、不发版不写 UI。
 
 > **v6.52（§7-E2 落地 · `1.38` · 2026-09-23）**
 > 用户批准 §7-E 后按序开工（E1 提交 `1.37` → **E2 完成**）。**代理失败"说人话" + 熔断提前**：
@@ -1079,7 +1142,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ③ 仓库根 `version.json`。⚠ 顺便确认 `version.json` 的 `url` 仍指向
       **项目 Releases 页**（正式发版时才需要换成具体版本的下载直链）。
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
-- [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**796 项**，纯组件、离屏）
+- [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**803 项**，纯组件、离屏）
 - [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**557 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
       并在其收尾的防污染自检名单里**加上任何新写的 `~/.jian_data/*.json`**（现在有 annotations /
       formula_library / watchlist / backtest_strategies / **preferences（1.23 起）** / **backtest_results（1.37 起）** 六个）
@@ -1167,7 +1230,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       临时探针与输出**用完即删**；删文件同批 `git rm`
 - [ ] **动了数据源/落盘护栏吗？（`data/akshare_feed.py` 的 `drop_unusable_price_rows` /
       `em_volume_to_shares`、`data/sync_service.py` 的取数分区）** → 跑 `py tests/smoke_chart.py`
-      （**796 项**：非正价行必须被拦下、兜底源成交量必须 ×100 成「股」、量纲接缝判据不许误报
+      （**803 项**：非正价行必须被拦下、兜底源成交量必须 ×100 成「股」、量纲接缝判据不许误报
       单日放量/不许漏报持续换单位）；⚠ **降级到兜底源时必须在出口统一量纲**（§9-V：单位不一致
       会让同一分区里同时存在"手/股"两种单位，量能副图出现 100× 台阶）
 - [ ] **动了 K 线图元（`CandlestickItem`）或其它"图形绘制"吗？** → ⚠ 记住：**"数据对不对"与
