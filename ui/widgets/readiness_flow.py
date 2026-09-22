@@ -29,7 +29,8 @@ from PyQt6.QtWidgets import QMessageBox
 
 from data.readiness import ReadinessReport, format_stale
 from data.scan_store import kline_zone_dir
-from data.sync_service import (ZONE_KLINE, abort_reason_text,
+from data.sync_service import (ZONE_KLINE, ThrottlePolicy, abort_reason_text,
+                               estimate_seconds, format_duration,
                                friendly_constituent_message)
 from data.trade_calendar import latest_settled_trading_day, trading_days_between
 from ui.workers import CalendarWorker, JobGuard, ReadinessWorker, SyncWorker
@@ -280,16 +281,40 @@ class ReadinessFlow:
             return
         self._launch_sync(report.gap_symbols(), '补齐')
 
+    def _estimate_stale(self, n: int):
+        """估算「真正需要联网」的只数与耗时（★v1.40/§7-E5）。
+
+        【为什么要算】旧版一律按"每只都要跑"估时（`n // 60` 分钟），于是哪怕本地全是最新的，
+        二次确认框也照样说"要很久"——**等于把用户劝退**；而体检报告里其实已经拿着
+        每只文件的最后日期（`lasts`，只读 parquet footer，代价早付过了），
+        拿它与 `trading_target`（最近已收盘定稿的交易日）一比就知道谁已新鲜。
+
+        【什么时候不敢用】名单与体检范围**不一致**（如「补齐」只传 missing）时口径不符，
+        按覆盖率硬减会**低估**耗时 ⇒ 退回上限估算。拿不到日历（`trading_target is None`）
+        或没有日期分布时同理退回上限 —— 宁可说得保守，不可骗用户。
+
+        :return: `(stale_count, estimate_seconds)`；stale_count = n 表示"按全部都要跑"的上限。
+        """
+        report = self.report
+        target = self.trading_target
+        if report is None or target is None or not report.lasts or n != report.total:
+            return n, estimate_seconds(n, ThrottlePolicy())
+        covered = report.coverage_at(target)          # 已到该日的只数（>= 目标日）
+        stale = max(0, n - covered)
+        return stale, estimate_seconds(n, ThrottlePolicy(), stale_count=stale)
+
     def _launch_sync(self, symbols, label: str, note: str = '') -> None:
         """共享的后台增量启动（update_latest / fill_missing 都走它，勿各写一份）。"""
         p = self.page
         self._sync_label = label
         n = len(symbols)
         if n > CONFIRM_FILL_COUNT:
+            stale, est = self._estimate_stale(n)
             answer = QMessageBox.question(
                 p, f'{label}数据',
-                f'本次要逐只温柔抓取 {n} 只的日线数据，预计需要较长时间'
-                f'（默认间隔下约 {max(1, n // 60)} 分钟），随时可中断，'
+                f'本次要逐只温柔抓取 {n} 只的日线数据'
+                f'（其中约 {stale} 只需要真正联网、约 {format_duration(est)}；'
+                f'已是最新的 {max(0, n - stale)} 只会自动跳过），随时可中断，'
                 f'已下载的部分会保留。\n\n现在开始{label}吗？',
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)

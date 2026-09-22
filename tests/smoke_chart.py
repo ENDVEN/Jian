@@ -3947,7 +3947,12 @@ try:
     def _run_sync2(reason, n=15):
         stub = _StubSvc2(reason)
         _orig = _uw2.MarketSyncService
+        _orig_cal = _uw2.load_or_fetch
         _uw2.MarketSyncService = lambda *a, **k: stub
+        # ⚠ v1.40/§7-E5：`SyncWorker.run()` 现在会取交易日历（冷缓存 ⇒ 联网 + 写真实缓存）。
+        #   测试打桩成 None ⇒ `inject_expected_latest` 原样返回策略（零行为变化），
+        #   且**不联网、不污染** `~/.jian_data/trade_calendar.json`（收尾自检会查它的 mtime）。
+        _uw2.load_or_fetch = lambda *a, **k: None
         try:
             w = _uw2.SyncWorker([f"S{i:03d}" for i in range(n)],
                                 policy=_TP2(interval=0, jitter=0))
@@ -3957,6 +3962,7 @@ try:
             return (out[0] if out else {}), stub
         finally:
             _uw2.MarketSyncService = _orig
+            _uw2.load_or_fetch = _orig_cal
 
     _pro, _pro_stub = _run_sync2("proxy")
     check("★ 代理连败 **3 次**即熔断（不是默认的 12 次）—— 且原因带回 UI",
@@ -3973,7 +3979,12 @@ try:
     _cancel.cancel()
     _out_c = []
     _cancel.finished.connect(lambda s: _out_c.append(s))
-    _cancel.run()
+    _orig_cal3 = _uw2.load_or_fetch
+    _uw2.load_or_fetch = lambda *a, **k: None       # 同上：不联网、不写真实日历缓存
+    try:
+        _cancel.run()
+    finally:
+        _uw2.load_or_fetch = _orig_cal3
     check("用户主动中断 ⇒ `aborted_by=cancel`（与熔断区分开，回执文案不同）",
           _out_c and _out_c[0].get("aborted_by") == "cancel")
 except Exception as _e:  # noqa: BLE001
@@ -4038,6 +4049,158 @@ try:
           set(OHLCV_COLUMNS) <= set(DAILY_KEEP_COLUMNS) and 'symbol' not in OHLCV_COLUMNS)
 except Exception as _e:  # noqa: BLE001
     check(f"§7-E3 落盘列白名单断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
+print("\n== §7-E5 · 下载层新鲜度对齐真交易日历（v1.40）==")
+# ==========================================
+try:
+    from datetime import date as _dc5
+
+    import ui.workers as _uw5
+    from data.sync_service import MarketSyncService as _MSS5
+    from data.sync_service import ThrottlePolicy as _TP5
+    from data.sync_service import estimate_seconds as _est5, format_duration as _fd5
+    from data.trade_calendar import latest_settled_trading_day as _lstd5
+
+    # 固定用"远过去"的日期 ⇒ 断言不受脚本运行当天影响（可重复跑，不会隔天变红）
+    _D_A = _dc5(2019, 1, 3)
+    _D_B = _dc5(2019, 1, 4)
+    _ANCIENT = _dc5(2010, 1, 6)
+
+    # ---- ① 判据：注入 expected_latest ⇒ 以「该到哪天」为尺（本项唯一真源）----
+    check("★ `_is_fresh` 注入后：last == expected ⇒ 新鲜（周末 / 盘中不再空跑整个池子）",
+          _MSS5._is_fresh(_D_A, 0, _D_A) is True)
+    check("★ last < expected ⇒ 不新鲜（盘后该补当天，绝不被新判据误跳过）",
+          _MSS5._is_fresh(_D_A, 0, _D_B) is False)
+    check("last > expected（本地比日历还新）⇒ 仍算新鲜（不拦用户已拉到的更近数据）",
+          _MSS5._is_fresh(_D_B, 0, _D_A) is True)
+    check("坏输入一律 False（None / 空串 / expected 不可解析 —— 绝不放行）",
+          _MSS5._is_fresh(None, 0, _D_A) is False
+          and _MSS5._is_fresh("", 0) is False
+          and _MSS5._is_fresh(_D_A, 0, "不是日期") is False)
+    check("★ `ThrottlePolicy.expected_latest` 默认 None ⇒ 未注入时零行为变化（可安全回滚）",
+          _TP5().expected_latest is None)
+
+    # ---- ② 端到端：周末 / 盘中「零请求」—— 这就是要省的 ≈50 分钟 ----
+    def _series5(day_str):
+        return pd.DataFrame({"date": [pd.Timestamp(day_str)], "open": 10.0, "high": 11.0,
+                             "low": 9.0, "close": 10.5, "volume": 100, "symbol": "600519"})
+
+    class _MemLake5:
+        """内存湖：只实现门面用到的四个方法（**绝不碰用户真实数据**）。"""
+
+        def __init__(self, seed=None):
+            self.store = dict(seed or {})
+
+        def exists(self, zone, key):
+            return key in self.store
+
+        def load_data(self, zone, key):
+            return self.store.get(key, pd.DataFrame())
+
+        def save_data(self, zone, key, df):
+            self.store[key] = df.copy()
+            return True
+
+        def get_latest_date(self, zone, key):
+            df = self.store.get(key)
+            return "" if df is None or df.empty else str(df["date"].max())
+
+    _calls5 = []
+    _orig_fetch5 = _MSS5._fetch
+
+    def _fake_fetch5(symbol, zone, start_date, period=None):
+        _calls5.append((symbol, start_date))
+        return _series5("2019-01-04")
+
+    _MSS5._fetch = staticmethod(_fake_fetch5)
+    _no_sleep5 = (lambda _s: None)
+    try:
+        _svc5 = _MSS5()
+        _svc5.lake = _MemLake5({"600519": _series5("2019-01-03")})
+
+        _skip5 = _svc5.refresh_one(
+            "600519", policy=_TP5(interval=0, jitter=0, expected_latest=_D_A),
+            sleep_fn=_no_sleep5)
+        check("★★ 周末 / 盘中：本地末日 == 最近已定稿交易日 ⇒ **跳过且零请求**"
+              "（旧判据这时会给全池各发一次注定返空的请求）",
+              _skip5.get("skipped") is True and _skip5.get("reason") == "fresh"
+              and len(_calls5) == 0)
+
+        _real5 = _svc5.refresh_one(
+            "600519", policy=_TP5(interval=0, jitter=0, expected_latest=_D_B),
+            sleep_fn=_no_sleep5)
+        check("★ 盘后（expected 前进一天）⇒ 必须真拉：跳过判据不许'跳过该拉的'",
+              _real5.get("ok") is True and not _real5.get("skipped")
+              and len(_calls5) == 1 and _real5.get("added") == 1)
+
+        _svc_old5 = _MSS5()
+        _svc_old5.lake = _MemLake5({"600519": _series5("2010-01-06")})
+        _legacy5 = _svc_old5.refresh_one("600519", policy=_TP5(interval=0, jitter=0),
+                                         sleep_fn=_no_sleep5)
+        check("★ 未注入（None）⇒ 旧判据照旧：古老末日仍会发请求"
+              "（'可安全回滚'不是空话）",
+              not _legacy5.get("skipped") and len(_calls5) == 2)
+    finally:
+        _MSS5._fetch = staticmethod(_orig_fetch5)
+
+    # ---- ③ 注入件：每批只取一次日历；拿不到就原样返回（离线可用）----
+    _cal5 = [_dc5(2019, 1, 2), _dc5(2019, 1, 3), _dc5(2019, 1, 4)]
+    _orig_cal5 = _uw5.load_or_fetch
+    _cal_calls5 = []
+
+    def _fake_cal5(*a, **k):
+        _cal_calls5.append(1)
+        return _cal5
+
+    _uw5.load_or_fetch = _fake_cal5
+    try:
+        _p5 = _uw5.inject_expected_latest(_TP5())
+        check("★ 注入件把「最近已收盘定稿的交易日」写进策略"
+              "（与 M1/M2/M3 的滞后提示同一把尺子 = 同一真源）",
+              _p5.expected_latest == _dc5(2019, 1, 4)
+              and _p5.expected_latest == _lstd5(calendar=_cal5))
+        check("调用方已显式注入 ⇒ 尊重它、不再取日历（测试可打桩、也避免重复取）",
+              _uw5.inject_expected_latest(
+                  _TP5(expected_latest=_D_A)).expected_latest == _D_A
+              and len(_cal_calls5) == 1)
+
+        _uw5.load_or_fetch = lambda *a, **k: None
+        _p_none5 = _TP5()
+        check("★ 拿不到日历 ⇒ **原样返回同一对象**（落在旧判据上，离线也能正常下载）",
+              _uw5.inject_expected_latest(_p_none5) is _p_none5
+              and _p_none5.expected_latest is None)
+
+        class _StubSvc5:
+            def refresh_one(self, symbol, **kw):
+                return {"ok": True, "symbol": symbol, "skipped": True,
+                        "reason": "fresh", "rows": 0, "added": 0}
+
+        _cal_calls5.clear()
+        _uw5.load_or_fetch = _fake_cal5
+        _orig_ms5 = _uw5.MarketSyncService
+        _uw5.MarketSyncService = lambda *a, **k: _StubSvc5()
+        try:
+            _w5 = _uw5.SyncWorker(["A", "B", "C"], policy=_TP5(interval=0, jitter=0))
+            _w5.run()
+        finally:
+            _uw5.MarketSyncService = _orig_ms5
+        check("★ 日历**每批只取一次**（3 只标的 → 1 次；每只都取才是真慢）",
+              len(_cal_calls5) == 1)
+    finally:
+        _uw5.load_or_fetch = _orig_cal5
+
+    # ---- ④ 预估：按「真正会联网的只数」算 + 说人话出口唯一 ----
+    _pol5 = _TP5(interval=0.6, jitter=0.0)
+    check("★ 预估吃 `stale_count`：已新鲜的跳过不耗时 ⇒ 不再一律报「50 分钟」把用户劝退",
+          _est5(1000, _pol5, stale_count=0) == 0
+          and _est5(1000, _pol5, stale_count=100) == 60
+          and _est5(1000, _pol5) == 600)
+    check("★ `format_duration` 单一出口（两个页面同一说法，不许各写一遍）",
+          _fd5(45) == "45 秒" and _fd5(600) == "10 分钟"
+          and _fd5(5400) == "1.5 小时" and _fd5(0) == "0 秒")
+except Exception as _e5:  # noqa: BLE001
+    check(f"§7-E5 下载层新鲜度对齐断言整段抛异常: {type(_e5).__name__}: {_e5}", False)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:

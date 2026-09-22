@@ -55,9 +55,15 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #   1.39 = §7-E3 日线落盘列白名单：akshare_feed.DAILY_KEEP_COLUMNS（OHLCV + symbol/amount/
 #          turnover/outstanding_share）+ _normalize_ohlcv 末尾 apply-if-present 裁列
 #          ⇒ 源透传的中文列/期货列不再进湖；白名单 ⊇ 横截面内核所需列有交叉断言钉住；
-#          存量 parquet 不动，smoke 803 / 557。
+#          存量 parquet 不动。
+#   1.40 = §7-E5 下载层新鲜度对齐真交易日历：ThrottlePolicy.expected_latest（由调度层
+#          ui/workers 每批注入一次「最近一个已收盘定稿的交易日」）+ _is_fresh 改判
+#          last >= expected ⇒ 周末/节假日/盘中不再把全池判成"不新鲜"而白跑一遍空增量
+#          （5400 只 ≈ 50 分钟换来零变化）；estimate_seconds 支持 stale_count +
+#          format_duration 单一出口，修掉"永远显示约 50 分钟"的劝退式预估。
+#          拿不到日历 ⇒ 原样回落旧判据（零行为变化，可安全回滚）。smoke 817 / 557。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.39"
+APP_VERSION = "1.40"
 
 # ==========================================
 # 界面配置 (UI Settings)

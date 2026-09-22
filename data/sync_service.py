@@ -17,6 +17,9 @@
     · 失败指数退避重试（1s / 2s / 4s）
     · 连续失败熔断（默认 12 次即停，判定"疑似被限流"）
     · 本地已是最新的自动跳过（断点续传：中断后重跑不重复劳动）
+      —— ★v1.40/§7-E5：「最新」以**真交易日历里最近一个已收盘定稿的交易日**为准
+      （由调度层注入 `ThrottlePolicy.expected_latest`），而不是"日历日 == 今天"。
+      否则周末 / 节假日 / 盘中会把全池都判成不新鲜，白跑一遍空增量（5400 只 ≈ 50 分钟）。
     · 单批上限保护（防止误触超大规模任务）
 
 【本模块是纯 Python、零 Qt 依赖】
@@ -28,7 +31,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -55,6 +58,7 @@ MINUTE_KEY_SEP = "@"
 __all__ = ["MarketSyncService", "ThrottlePolicy", "ADJUST_QFQ", "ADJUST_NONE",
            "ADJUST_CHOICES", "ADJUST_LABELS", "adjust_label", "zone_for_adjust",
            "ZONE_KLINE", "ZONE_KLINE_RAW", "ZONE_INDEX", "ZONE_MIN", "estimate_seconds",
+           "format_duration",
            "short_fetch_reason", "friendly_fetch_message", "friendly_constituent_message",
            "looks_like_proxy_error", "abort_reason_text",
            "DEFAULT_MIN_DATE", "MINUTE_PERIODS", "MINUTE_DEPTH_DAYS",
@@ -187,11 +191,23 @@ class ThrottlePolicy:
     #   不是"等一等" ⇒ 这种失败率必须**提前停手并直说原因**。
     proxy_circuit_breaker: int = 3
     skip_fresh: bool = True      # 本地已是最新的直接跳过（断点续传）
-    # 【时效判据 = 0】只有"末日 == 今天"才算最新。
+    # 【回退判据（**仅在拿不到日历时**用）= 0】只有"末日 == 今天"才算最新。
     # 不能放宽到 1：否则"昨天收盘后已同步"的标的在今天的收盘后窗口会被误跳过，
     # 永远滞后一天拿不到当日 bar（A 股日线 bar 当天收盘后才发布）。
-    # 代价 = 休市/盘中点同步会做一次"空增量"（见 refresh_one 的空增量处理，不算失败）。
     fresh_within_days: int = 0
+    # ★v1.40 / §7-E5：**注入式"该到哪天"** = 最近一个**已收盘定稿**的交易日（`datetime.date`）。
+    # 【为什么必须有】上面那条判据比的是**日历日**，而"今天"不一定是交易日 ——
+    #   周末 / 法定节假日 / 盘中（< 15:05 定稿）时"末日 == 今天"永不成立 ⇒
+    #   **全池每一只都判为"不新鲜"**，逐只发一次注定返空的请求：
+    #   5400 只 × 0.6s ≈ 50 分钟，换来**零变化**（§7-E5 实测复核）。
+    #   更刺眼的是：这些场景下 M1/M2/M3 的滞后提示**早已用真交易日历**正确判定"已最新"，
+    #   于是"UI 说已最新、下载层却跑满 50 分钟"—— 两把尺子打架，用户看到的就是体验落差。
+    # 【为什么是"注入"而不是在这里自己算】`data/trade_calendar` 已依赖本模块
+    #   （它 import `is_daily_bar_settled`），本模块反向 import 会**成环**；
+    #   且日历**每批只该取一次**（冷缓存时含一次网络），绝不能每只标的都取。
+    #   ⇒ 由已持有日历的调度层（`ui/workers.SyncWorker`）注入。
+    # 【`None` 的语义】完全回落到 `fresh_within_days` 那套旧判据 ⇒ **零行为变化**（可安全回滚）。
+    expected_latest: date | None = None
     max_symbols: int = 20000     # 单批上限保护
 
     def sleep(self, sleep_fn=time.sleep):
@@ -342,7 +358,8 @@ class MarketSyncService:
                     # 而 `_is_fresh` 只比到"天" ⇒ 盘中会把 10:00 的旧快照当成"已是今天=最新"。
                     # 分钟快照单只约 5 秒，宁可每次都真拉一次（用户点同步就是要最新）。
                     if zone != ZONE_MIN and not force_full \
-                            and self._is_fresh(last, policy.fresh_within_days) \
+                            and self._is_fresh(last, policy.fresh_within_days,
+                                               policy.expected_latest) \
                             and policy.skip_fresh:
                         result.update(ok=True, skipped=True, rows=old_rows,
                                       first=self._first_day(old), last=last.strftime("%Y-%m-%d"),
@@ -394,8 +411,12 @@ class MarketSyncService:
         merged = new if (force_full or old.empty) else self._merge(old, new)
 
         # ---- 3.5) 定稿守卫（§7-B10 STEP 1）：日线类分区落盘前裁掉"今天未定稿"那根 ----
-        # 附带自洽效果：盘中把今天裁掉 → 本地末日=昨天 → 盘后再同步 `_is_fresh` 不跳过、
-        # 起点=昨天+1=今天 → 拉到完整当天并落库（无需改 `_is_fresh`/增量起点语义）。
+        # ⚠ v1.40/§7-E5 后这是**第二道防线**（第一条是"日历感知的新鲜度判据"）：
+        #   · 有日历时（`expected_latest` 非 None）盘中根本不会走到这里 —— 末日已 >= 上一交易日
+        #     ⇒ 直接 `fresh` 跳过，连请求都不发；
+        #   · 无日历时（None，回落旧判据）盘中会拉到今天半根 bar，仍由这里裁掉。
+        # 两条路径的**自洽终点一致**：盘后本地末日=上一交易日 ⇒ 不跳过 ⇒ 起点=昨天+1=今天
+        # ⇒ 拉到完整当天并落库（无需改增量起点语义）。
         if zone in DAILY_ZONES:
             merged = _drop_unsettled_tail(merged)
 
@@ -445,9 +466,26 @@ class MarketSyncService:
         return both.sort_values("date").reset_index(drop=True)
 
     @staticmethod
-    def _is_fresh(last_date, within_days: int) -> bool:
+    def _is_fresh(last_date, within_days: int, expected_latest=None) -> bool:
+        """本地末日是否已"新鲜到不用再拉"。
+
+        ★v1.40/§7-E5：`expected_latest`（最近一个**已收盘定稿**的交易日）给定时，
+        改判 `last >= expected_latest` —— 这才是"该到哪天"的**唯一真源**，
+        与 M1/M2/M3 的滞后提示**同一把尺子**（`data.trade_calendar.latest_settled_trading_day`）。
+        未给定时保持**旧语义**（`(今天 - last).days <= within_days`），零行为变化。
+
+        【为什么"大于等于"也要算新鲜】本地末日可能**超过** expected（例如用户手动
+        「重新全量下载」拉到过更近的 bar、或日历缓存落后）—— 那更不该拦。
+        """
         try:
             last = pd.to_datetime(last_date)
+            if pd.isna(last):
+                return False
+            if expected_latest is not None:
+                exp = pd.to_datetime(expected_latest)
+                if pd.isna(exp):
+                    return False
+                return last.normalize() >= exp.normalize()
             return (pd.Timestamp.today().normalize() - last.normalize()).days <= within_days
         except Exception:  # noqa: BLE001
             return False
@@ -469,9 +507,32 @@ class MarketSyncService:
             return None
 
 
-def estimate_seconds(count: int, policy: ThrottlePolicy) -> int:
-    """粗略预估批量任务耗时（秒），仅供 UI 提示，不保证精确"""
-    return int(count * policy.interval * (1 + policy.jitter / 2))
+def estimate_seconds(count: int, policy: ThrottlePolicy, stale_count: int = None) -> int:
+    """粗略预估批量任务耗时（秒），仅供 UI 提示，不保证精确。
+
+    ★v1.40/§7-E5：`stale_count`（**真正会发请求**的只数）给定时按它算 ——
+    已新鲜的一只不发请求、零耗时。旧版一律按 `count` 算，于是哪怕该干的是 0 件，
+    界面也永远显示"约 50 分钟"（**等于把用户劝退**，§7-E5 实测复核）。
+    未给定时保持旧语义：结果视为**上限**（调用方应据此说"最多约…"）。
+    """
+    n = count if stale_count is None else max(0, int(stale_count))
+    return int(n * policy.interval * (1 + policy.jitter / 2))
+
+
+def format_duration(seconds) -> str:
+    """把预估秒数说成人话（`45 秒` / `12 分钟` / `1.5 小时`）—— **唯一出口**。
+
+    ★v1.40/§7-E5：批量弹窗与 M2/M3 的二次确认都要说"大概多久"。
+    别在 UI 里各写一遍（§11.5：跨模块的**展示口径**同样必须有单一出口，
+    否则同一件事在两个页面会显示成两种说法）。
+    """
+    seconds = max(0, int(seconds or 0))
+    if seconds < 60:
+        return f"{seconds} 秒"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{minutes:.0f} 分钟"
+    return f"{minutes / 60:.1f} 小时"
 
 
 # ==========================================

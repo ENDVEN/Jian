@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 
 from data.akshare_feed import INDEX_PRESETS
 from data.sync_service import (ThrottlePolicy, ZONE_KLINE, ZONE_INDEX,
-                               abort_reason_text, estimate_seconds,
+                               abort_reason_text, estimate_seconds, format_duration,
                                friendly_constituent_message)
 from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
                                        NoWheelDoubleSpinBox, NoWheelSpinBox)
@@ -386,14 +386,16 @@ class BulkDownloadDialog(QDialog):
             self.lbl_estimate.setText(f"待下载：—（{self._empty_source_hint()}）")
             return
         seconds = estimate_seconds(len(symbols), policy)
-        minutes = seconds / 60
-        when = f"{minutes:.0f} 分钟" if minutes >= 1 else f"{seconds} 秒"
-        if minutes >= 60:
-            when = f"{minutes / 60:.1f} 小时"
         self.lbl_estimate.setText(
             f"待下载：{len(symbols)} 只　·　区间 {self._zone}　·　"
-            f"预计约 {when}（间隔 {policy.interval:.1f}s"
+            f"最多约 {format_duration(seconds)}（间隔 {policy.interval:.1f}s"
             f"{' + 抖动' if self.chk_jitter.isChecked() else ''}）")
+        # ★v1.40/§7-E5：这里**给不出**"真正要跑几只"（没体检过，逐只读 footer 反而要先花时间），
+        # 所以数字只能是**上限**；把"已最新的会自动跳过"说清楚，用户才不会看到 50 分钟就放弃。
+        self.lbl_estimate.setToolTip(
+            "上限估算：按每只都发一次请求算。\n"
+            "已是最新的标的（本地末日 >= 最近一个已收盘定稿的交易日）会被自动跳过、不发请求，\n"
+            "所以实际通常明显更快 —— 周末 / 节假日 / 盘中批量同步几乎瞬时完成。")
 
     def _build_policy(self) -> ThrottlePolicy:
         return ThrottlePolicy(

@@ -27,6 +27,7 @@
     （版本检测不是 UI 职责），不搬进 ui/。
 """
 import logging
+from dataclasses import replace
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -37,9 +38,37 @@ from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
                                short_fetch_reason)
-from data.trade_calendar import load_or_fetch
+from data.trade_calendar import latest_settled_trading_day, load_or_fetch
 
 logger = logging.getLogger(__name__)
+
+
+def inject_expected_latest(policy: ThrottlePolicy = None) -> ThrottlePolicy:
+    """★v1.40/§7-E5：把「最近一个已收盘定稿的交易日」注入节流策略（**每批只取一次**）。
+
+    【为什么由 ui/workers 干这件事】`data/trade_calendar` 已依赖 `data/sync_service`
+    （它用 `is_daily_bar_settled`），反向 import 会**成环**；而日历**每批只该取一次**
+    （冷缓存时含一次网络），绝不能每只标的都取。本模块是唯一调度层，天然持有"批量上下文"。
+
+    【拿不到日历怎么办】原样返回策略（`expected_latest` 保持 None）⇒ `refresh_one`
+    完全回落到旧的"末日 == 今天"判据，**不改变任何既有语义** —— 离线也能正常工作
+    （只是可能多跑一次空增量，与旧行为一模一样）。
+
+    :param policy: 调用方策略；`None` 时用默认策略。调用方已显式注入时**尊重它**（便于测试打桩）。
+    """
+    if policy is None:
+        policy = ThrottlePolicy()
+    if getattr(policy, "expected_latest", None) is not None:
+        return policy
+    try:
+        calendar = load_or_fetch()
+        expected = latest_settled_trading_day(calendar=calendar)
+    except Exception as e:  # noqa: BLE001 —— 日历故障绝不阻断下载（宁可退回旧判据）
+        logger.warning("交易日历不可用，本次按旧判据判新鲜度（可能多跑空增量）: %s", e)
+        return policy
+    if expected is None:
+        return policy
+    return replace(policy, expected_latest=expected)
 
 
 class ScanWorker(QThread):
@@ -94,6 +123,8 @@ class SyncWorker(QThread):
 
     def run(self):
         service = MarketSyncService()
+        # ★v1.40/§7-E5：整批共用一份"该到哪天"（日历只在循环外取一次）
+        policy = inject_expected_latest(self._policy)
         stats = {"ok": 0, "fail": 0, "skipped": 0, "added": 0,
                  "aborted": False, "aborted_by": "", "symbols_failed": [],
                  "total": len(self._symbols)}
@@ -108,7 +139,7 @@ class SyncWorker(QThread):
             self.progress.emit(index, len(self._symbols), symbol)
             result = service.refresh_one(
                 symbol, zone=self._zone, force_full=self._force_full,
-                min_date=self._min_date, policy=self._policy)
+                min_date=self._min_date, policy=policy)
 
             if result.get("skipped"):
                 stats["skipped"] += 1
@@ -132,11 +163,11 @@ class SyncWorker(QThread):
                 # ★【代理全灭 ⇒ 提前停手】§9.3 实测：本机代理瞬断时失败率是 100%，
                 #   按默认 12 连败熔断等于白等十几次超时；用户的正确动作是"立刻去查代理"。
                 #   所以这类失败用更小的阈值，并把原因带回 UI（`aborted_by`）。
-                if consecutive_proxy >= max(1, self._policy.proxy_circuit_breaker):
+                if consecutive_proxy >= max(1, policy.proxy_circuit_breaker):
                     stats.update(aborted=True, aborted_by="proxy")
                     break
                 # 【温柔抓取·熔断】其余原因的连续失败过多判定为"疑似被限流"，主动停手保护用户 IP
-                if consecutive_fail >= max(1, self._policy.circuit_breaker):
+                if consecutive_fail >= max(1, policy.circuit_breaker):
                     stats.update(aborted=True, aborted_by="circuit")
                     break
 
@@ -161,9 +192,12 @@ class SingleSyncWorker(QThread):
         self._period = period
 
     def run(self):
+        # ★v1.40/§7-E5：单只同步同样吃"日历感知新鲜度" —— 盘中点同步不再白跑一次请求
+        # （日线的今天那根要 15:05 才定稿，此前拉回来也只会被定稿守卫裁掉）。
         result = MarketSyncService().refresh_one(
             self._symbol, zone=self._zone, force_full=self._force_full,
-            min_date=self._min_date, policy=self._policy, period=self._period)
+            min_date=self._min_date, policy=inject_expected_latest(self._policy),
+            period=self._period)
         self.finished.emit(result)
 
 
