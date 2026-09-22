@@ -3436,6 +3436,101 @@ except Exception as _e:  # noqa: BLE001
     check(f"§7-E2 批量预下载 JobGuard 断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
 # ==========================================
+# §7-B1/B2 补漏 · 「需要动作」必须有**入口**（v1.41 · 用户实测反馈驱动 · §11.5-80）
+#   现场（用户截图）：M2 范围切到「指数成分 · 中证500」，体检说"未下载 456"，
+#   结果区却**没有任何更新入口**；上方还挂着旧范围(300)的统计，与 500 的就绪度同屏打架。
+#   根因**三处**（本次一并治，不是只补那一处）：
+#     ① 唯一入口是结果区**空态**按钮，而它只在"还没有扫描结果"时出现
+#        ⇒ 一旦扫过一次，整页再也找不到"更新/补齐数据"的地方；
+#     ② `resolve_scope` 从不清旧 `_outcome` ⇒ 旧统计与新就绪度混串，
+#        且 `_render_readiness` 误以为"已有当前范围的结果"而不再给入口；
+#     ③ 各处文案指称的按钮名（旧「⬇ 补齐缺失」）在 v6.47 改名后**已不存在** ⇒ 指路指到空处。
+# ==========================================
+print("\n== §7-B1/B2 补漏 · 需要动作必有入口 / 按钮名单一出口 / 范围切换清旧结果（v1.41）==")
+try:
+    import pathlib as _pl11  # noqa: E402
+
+    from data.readiness import ReadinessReport as _RRep11  # noqa: E402
+    from ui.widgets.custom_widgets import SYNC_ACTION_LABEL as _SAL11  # noqa: E402
+
+    _m2_11 = win.page_backtest.page_scan
+    _m3_11 = win.page_backtest.page_breadth
+
+    # ---- ① 常驻入口：两页都有，且文字来自**唯一常量出口** ----
+    check("★★ 两页都有**常驻**「更新到最新」按钮（旧版唯一入口藏在空态里 ⇒ 扫过一次就再也点不到）",
+          hasattr(_m2_11, 'btn_sync') and hasattr(_m3_11, 'btn_sync')
+          and _m2_11.btn_sync.text() == _SAL11 and _m3_11.btn_sync.text() == _SAL11)
+    check("★ 空态按钮与常驻按钮**同文字**（同一个动作在页面上只有一种叫法）",
+          _SAL11 == '⬆ 更新到最新交易日')
+
+    # ---- ② 接线：点常驻按钮 ⇒ 走就绪度控制器的 update_latest（打桩，绝不联网）----
+    _hit11 = []
+    _orig_upd11 = _m3_11._readiness.update_latest
+    _m3_11._readiness.update_latest = lambda: _hit11.append(1)
+    try:
+        _m2_11._readiness.update_latest = lambda: _hit11.append(2)
+        _m3_11.btn_sync.click()
+        _m2_11.btn_sync.click()
+    finally:
+        _m3_11._readiness.update_latest = _orig_upd11
+    check("★ 两页的常驻按钮都真的接到 `update_latest`（按钮存在但没接线 = 假入口）",
+          _hit11 == [1, 2])
+
+    # ---- ③ 范围切换 ⇒ 旧结果必须作废（消除"旧统计 + 新就绪度"混串）----
+    _m3_11._outcome = object()                       # 哨兵：假装上一范围有结果
+    _m3_11.lbl_cal.setText('口径：沪深300 · 有效 295/300')
+    _orig_start11 = _m3_11._readiness.start
+    _m3_11._readiness.start = lambda *a, **k: None    # 不真跑体检（省时间、零副作用）
+    try:
+        # ⚠ 只切到**本地范围**（自选 / 全A）：索引 1 = 指数成分会真起 ConstituentsWorker 联网
+        _m3_11.cb_scope.setCurrentIndex(2 if _m3_11.cb_scope.currentIndex() != 2 else 0)
+    finally:
+        _m3_11._readiness.start = _orig_start11
+    _expect_key11 = (_m3_11.cb_scope.currentIndex(), '')
+    check("★★ 换范围 ⇒ 旧 `_outcome` 作废 + 口径摘要清空（不许两套数字同屏打架）",
+          _m3_11._outcome is None and _m3_11.lbl_cal.text() == ''
+          and _m3_11._scope_key == _expect_key11)
+    check("★ 范围没变时**不白丢结果**（同一范围重复解析 ⇒ `_scope_key` 不变、结果保留）",
+          (_m3_11._flow._drop_stale_result(_expect_key11) is None
+           and _m3_11._scope_key == _expect_key11))
+
+    # ---- ④ 「已有结果」分支**不许抢结果区**（抢了会把刚扫出的结果藏起来）----
+    _gap11 = _RRep11(total=5, missing=['A', 'B'], lasts=[])
+    _m3_11._readiness.report = _gap11
+    _m3_11.lbl_empty.setText('这是扫描结果的空态文字（不许被抢）')
+    _m3_11._outcome = object()                       # 非 None ⇒ 走"已有结果"分支
+    _m3_11._readiness._render_readiness()
+    check("★ 已有结果时 `_render_readiness` **不调 set_empty**（否则 `empty_box.show()+chart.hide()`"
+          " 会把用户刚扫出来的图/表藏掉 —— 比「没按钮」严重得多）",
+          _m3_11.lbl_empty.text() == '这是扫描结果的空态文字（不许被抢）')
+
+    # ---- ⑤ 坏文件也是"需要动作" ⇒ 必须给入口（旧版只给一句话）----
+    _bad11 = _RRep11(total=5, unreadable={'X': '打不开'}, lasts=[])
+    _m3_11._readiness.report = _bad11
+    _m3_11._outcome = None
+    _m3_11._readiness._render_readiness()
+    check("★ 只有坏文件（无缺口）也**给「去数据管理」入口**（判据是「要不要用户动手」，"
+          "不是「有没有缺口」）",
+          _m3_11.btn_empty_action.text() == '去数据管理')
+
+    # ---- ⑥ 源码级防漂移：旧按钮名彻底退役；core/data 不许指名 UI 按钮 ----
+    _ui_src11 = ''.join(
+        _pl11.Path(f).read_text(encoding='utf-8') for f in (
+            'ui/widgets/scan_flow.py', 'ui/widgets/breadth_flow.py',
+            'ui/widgets/readiness_flow.py', 'ui/widgets/scan_layout.py',
+            'ui/widgets/breadth_layout.py'))
+    check("★ 旧按钮名「补齐缺失」在 UI 层**彻底退役**（它已不是任何控件 —— 留着就会出现"
+          "「文案指路到不存在的按钮」，本次缺陷的直接成因）",
+          '补齐缺失' not in _ui_src11)
+    _layer_src11 = (_pl11.Path('core/cross_section.py').read_text(encoding='utf-8')
+                    + _pl11.Path('data/readiness.py').read_text(encoding='utf-8'))
+    check("★ core/ 与 data/ **不许指名 UI 按钮**（分层纪律：它们曾写死「用结果区的…」，"
+          "按钮一改名就全失联 ⇒ 只说「页面的下载入口」）",
+          '补齐缺失' not in _layer_src11 and '更新到最新交易日' not in _layer_src11)
+except Exception as _e11:  # noqa: BLE001
+    check(f"§7-B1/B2 补漏 入口完整性断言整段抛异常: {type(_e11).__name__}: {_e11}", False)
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402

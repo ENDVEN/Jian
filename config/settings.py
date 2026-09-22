@@ -62,8 +62,14 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          （5400 只 ≈ 50 分钟换来零变化）；estimate_seconds 支持 stale_count +
 #          format_duration 单一出口，修掉"永远显示约 50 分钟"的劝退式预估。
 #          拿不到日历 ⇒ 原样回落旧判据（零行为变化，可安全回滚）。smoke 817 / 557。
+#   1.41 = §7-B1/B2 补漏「需要动作必有入口」（用户实测：M2 换范围后体检说未下载 456，
+#          整页无更新入口）：按钮名收成单出口 custom_widgets.SYNC_ACTION_LABEL
+#          （core/data 不许指名 UI 按钮）+ M2/M3 摘要条常驻 btn_sync + 两页
+#          _drop_stale_result 作废旧结果（ScanResult/BreadthResult.clear）+
+#          "已有结果"分支绝不调 set_empty + 坏文件补「去数据管理」入口；
+#          同批把 JIAN_RULES.md 从 99.1k 瘦身回 96.8k。smoke 817 / 566。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.40"
+APP_VERSION = "1.41"
 
 # ==========================================
 # 界面配置 (UI Settings)

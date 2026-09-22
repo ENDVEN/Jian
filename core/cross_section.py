@@ -589,12 +589,12 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
         # ★ 整份名单都没有本地文件时也不能回"空结果"（v6.42 用户实测：扫描返回全空白，
         #   什么解释都没有）—— 逐只记「数据不足」+ 出声，让界面永远有东西可看。
         no_file = {s: INSUFFICIENT for s in missing_syms}
-        det = {s: '本地没有日线文件（未下载）—— 用结果区的「⬇ 补齐缺失」可一键下载'
+        det = {s: '本地没有日线文件（未下载）—— 用页面的下载入口可一次补齐'
                   for s in missing_syms}
         w = list(warnings)
         if missing_syms:
             w.append(f'{len(missing_syms)} 只标的本地没有日线文件（已记「数据不足」，'
-                     f'可「⬇ 补齐缺失」后再扫）')
+                     f'可先补齐本地数据后再扫）')
         else:
             w.append('没有任何可用标的（读数为空）')
         return CrossSectionResult(
@@ -714,10 +714,10 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
                         + '；'.join(failed[:3]) + ('…' if len(failed) > 3 else ''))
     for sym in missing_syms:
         status[sym] = INSUFFICIENT
-        detail[sym] = '本地没有日线文件（未下载）—— 用结果区的「⬇ 补齐缺失」可一键下载'
+        detail[sym] = '本地没有日线文件（未下载）—— 用页面的下载入口可一次补齐'
     if missing_syms:
         warnings.append(f'{len(missing_syms)} 只标的本地没有日线文件（已记「数据不足」，'
-                        f'有效样本只来自有文件的 {total} 只；可「⬇ 补齐缺失」后再扫）')
+                        f'有效样本只来自有文件的 {total} 只；可先补齐本地数据后再扫）')
 
     counts = tally_status(status, total=total + len(missing_syms))
     return CrossSectionResult(

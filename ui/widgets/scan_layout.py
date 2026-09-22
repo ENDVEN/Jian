@@ -24,9 +24,9 @@ from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, EditDrawer, EditPane,
                                        FLAT_QSS, number_spin)
 from ui.widgets.custom_widgets import (CHIP_QSS_OFF, CHIP_QSS_ON, COMBO_QSS,
-                                       NoWheelComboBox, NoWheelDateEdit,
-                                       TAB_QSS_OFF, TAB_QSS_ON, date_edit_qss,
-                                       hint_icon, mini_label)
+                                       SYNC_ACTION_LABEL, NoWheelComboBox,
+                                       NoWheelDateEdit, TAB_QSS_OFF, TAB_QSS_ON,
+                                       date_edit_qss, hint_icon, mini_label)
 from ui.widgets.scan_result import STATUS_BG, STATUS_FG
 
 __all__ = ['ScanLayout', 'ScanFormulaPane', 'ScanFilterPane',
@@ -291,6 +291,22 @@ class ScanLayout:
         p.bar_progress.setFixedWidth(120)
         p.bar_progress.hide()
         lay.addWidget(p.bar_progress)
+
+        # ★v1.41 / §11.5-80：**常驻**「更新到最新」入口。
+        # 【为什么必须常驻】旧版唯一的"补数据"入口是结果区的空态按钮，而它只在
+        #   `_outcome is None`（还没有扫描结果）时出现 ⇒ **一旦扫过一次，整页就再也
+        #   找不到"更新/补齐数据"的地方**（用户实测：范围切到中证500、体检说未下载 456，
+        #   页面上没有任何入口）。入口不该依赖结果区的显示状态。
+        #   文字与空态按钮、以及各处**指称它的文案**同源（`SYNC_ACTION_LABEL`）。
+        p.btn_sync = QPushButton(SYNC_ACTION_LABEL)
+        p.btn_sync.setStyleSheet(FLAT_QSS)
+        p.btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_sync.setToolTip(
+            '把当前范围的数据补齐/更新到**最近一个已收盘定稿的交易日**\n'
+            '（当日日线 15:05 后才定稿；此前不拉，避免半截数据入库）。\n'
+            '已是最新的标的会**自动跳过、不发请求** —— 周末 / 节假日 / 盘中几乎瞬时完成。\n'
+            '只补未下载的少数几只时，点它也够了（与旧版的"补齐"入口是同一个动作）。')
+        lay.addWidget(p.btn_sync)
 
         p.btn_run = QPushButton('▶ 开始扫描')
         p.btn_run.setCursor(Qt.CursorShape.PointingHandCursor)

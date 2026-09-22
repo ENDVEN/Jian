@@ -10,7 +10,7 @@
 
     ready        本地有文件且行数 ≥ min_bars（够公式历史）
     partial      有文件但行数不足（新上市 / 下载起点晚 —— 多数**补不齐**，不算缺口）
-    missing      本地没有文件 —— **真正的缺口**，「⬇ 补齐缺失」的对象
+    missing      本地没有文件 —— **真正的缺口**，「补齐数据」动作的对象
     unreadable   文件打不开（坏文件）—— 问题清单，绝不静默跳过
 
 【只读 footer】行数与 date 统计来自 parquet **footer**（实测 0.66 ms/只 ⇒
@@ -66,7 +66,7 @@ class ReadinessReport:
         return len(self.missing)
 
     def gap_symbols(self) -> list:
-        """「⬇ 补齐缺失」要下载的名单（= missing，按花名册顺序）。"""
+        """「补齐数据」要下载的名单（= missing，按花名册顺序）。"""
         return list(self.missing)
 
     @property
@@ -130,7 +130,7 @@ class ReadinessReport:
             head = '、'.join(list(self.unreadable)[:5])
             lines.append(f'文件损坏（建议重新全量下载）：{head}'
                          + ('…' if len(self.unreadable) > 5 else ''))
-        lines.append('「历史不足」多数补不齐（数据本来就只有这么多）；「未下载」可用补齐缺失一键备齐。')
+        lines.append('「历史不足」多数补不齐（数据本来就只有这么多）；「未下载」可用页面的下载入口一键补齐。')
         return '\n'.join(lines)
 
 
@@ -141,9 +141,11 @@ def format_stale(latest, target, stale_days: int) -> str:
     """
     if latest is None or target is None or int(stale_days or 0) <= 0:
         return ''
+    # ⚠ 本模块在 `data/` 层 ⇒ **不写 UI 按钮的确切文字**（只描述动作）：
+    #   写死按钮名就会在改名后失联（§11.5-80 的真实成因）。
     return (f'⚠ 数据滞后约 {int(stale_days)} 个交易日 · 本地到 '
             f'{pd.Timestamp(latest).date()}，最近交易日 {target} · '
-            f'点「⬆ 更新到最新交易日」')
+            f'点页面的「更新到最新」入口把数据拉齐')
 
 
 def probe_readiness(zone_dir: str, symbols, min_bars: int = None,

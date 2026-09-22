@@ -32,6 +32,7 @@ from data.sync_service import ZONE_INDEX
 from data.watchlist_store import WatchlistStore
 from ui.widgets.breadth_chart import DEFAULT_CHART_TYPE, DEFAULT_INDEX_STYLE
 from ui.widgets.breadth_layout import DEFAULT_INDEX_CODE, DEFAULT_RANGE, RANGE_PRESETS
+from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.widgets.readiness_flow import (constituent_failure_text,
                                        constituent_snapshot_text)
 from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard, SingleSyncWorker
@@ -64,6 +65,8 @@ class BreadthFlow:
         p.btn_run.clicked.connect(self.on_run_clicked)
         p.btn_incr.clicked.connect(self.on_incremental_clicked)
         p.btn_full.clicked.connect(self.on_full_clicked)
+        # ★v1.41 / §11.5-80：常驻「更新到最新」入口（晚绑定，不与构造顺序耦合）
+        p.btn_sync.clicked.connect(lambda: p._readiness.update_latest())
         p._filter_pane.btn_reset.clicked.connect(self.reset_thresholds)
         p._display_pane.chk_smooth.toggled.connect(self.on_display_changed)
         p._display_pane.chk_ratio.toggled.connect(self.on_display_changed)
@@ -84,11 +87,29 @@ class BreadthFlow:
         if self.page.cb_scope.currentIndex() == 1:
             self.resolve_scope()
 
+    def _drop_stale_result(self, scope_key) -> None:
+        """范围变了 ⇒ 丢掉上一范围的展示痕迹（★v1.41 / §11.5-80，与 M2 同款）。
+
+        【为什么必须丢】旧范围的口径摘要（"口径：沪深300 · 有效 295/300"）继续挂着，
+        会与**新范围**的就绪度提示同屏打架；且 `_render_readiness` 会误以为
+        "已有当前范围的结果"而走"回执不动"分支、不再给下载入口。
+        判据用 `(范围选择, 指数代码)`：同一范围重新解析不清楚（别白丢用户的结果）。
+        """
+        p = self.page
+        if getattr(p, '_scope_key', None) == scope_key:
+            return
+        p._scope_key = scope_key
+        p._outcome = None
+        p._result.clear()
+
     def resolve_scope(self) -> None:
         """把"统计范围"落成 `{标的: 名称}`。自选 / 全A 同步；指数成分**异步**（§9-H）。"""
         p = self.page
         p._names = {}
         choice = p.cb_scope.currentIndex()
+        # ★v1.41：范围真的变了 ⇒ 旧结果作废（见 `_drop_stale_result` 的说明）
+        self._drop_stale_result(
+            (choice, str(p.cb_index.currentData() or '') if choice == 1 else ''))
         if choice == 0:                                   # 我的自选
             p._cons_meta = None                           # 非成分股范围 ⇒ 无快照语义
             p._symbols = list(WatchlistStore().symbols())
@@ -369,10 +390,13 @@ class BreadthFlow:
             return
         full = outcome.breadth_frame()
         if full.empty:
+            # ★v1.41 / §11.5-80：文案说"先补数据再扫"，按钮就该是**补数据** ——
+            #   旧版这里给的是「重新扫描」，与文案所指的动作根本不是一件事
+            #   （数据没变，重扫一遍还是没产出），按钮名与实际行为必须一致。
             p._result.set_empty(
                 '这次扫描没有产出任何广度数据 —— 范围内标的本地没有日线文件是首要原因'
-                '（看上方回执的 ⚠ 提示），先「⬇ 补齐缺失」再扫。',
-                '重新扫描', self.on_run_clicked)
+                f'（看上方回执的 ⚠ 提示），先「{SYNC_ACTION_LABEL}」把数据补上再扫。',
+                SYNC_ACTION_LABEL, lambda: p._readiness.update_latest())
             return
         offset = _RANGE_OFFSET.get(p._range_key)
         frame = full if offset is None else full[full.index >= full.index[-1] - offset]

@@ -81,6 +81,23 @@ class ScanResult:
         self.page.empty_box.show()
         self.page.table.hide()
 
+    def clear(self) -> None:
+        """丢掉上一范围的结果痕迹（★v1.41 / §11.5-80：切换统计范围时调用）。
+
+        【为什么必须有】范围变了以后，旧范围的 KPI（"命中 N · M 只" / "有效样本 x/M"）
+        若继续挂在结果区上方，会和**新范围**的就绪度提示（"未下载 456/500"）同屏，
+        两套数字打架、用户不知道该信哪个（用户实测截图复现）。
+        只复位 KPI 与表格；空态由紧随其后的 `set_empty(...)` 接管，这里不碰。
+        """
+        p = self.page
+        for pill in (p.kpi or {}).values():
+            pill.setText('—')
+            pill.setToolTip('还没有结果')
+            pill.setStyleSheet(
+                'font-size: 12px; font-weight: bold; color:#8A94A6;'
+                'background:#F5F6F8; border-radius:8px; padding:5px 10px;')
+        p.table.setRowCount(0)
+
     # ---------- KPI ----------
     def _render_kpis(self, counts: dict, elapsed_ms: float, cached: bool) -> None:
         p = self.page

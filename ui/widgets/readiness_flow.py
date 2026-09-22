@@ -1,5 +1,5 @@
 # ui/widgets/readiness_flow.py
-"""「就绪度体检 + ⬇ 补齐缺失」的**两页共用控制器**（§7-B1/B2 主案 D6 · v6.39）。
+"""「就绪度体检 + 补齐数据」的**两页共用控制器**（§7-B1/B2 主案 D6 · v6.39）。
 
 【为什么收成一个类】D6 的铁律是"**就绪度模型只有一份**、两页口径一致"——
 否则必然出现"管理页说最新、扫描页说缺数据"这种让用户失去信任的矛盾。
@@ -12,7 +12,7 @@ M2（全市场筛选）与 M3（广度统计）的范围解析完成后各调一
     `friendly_constituent_message` 分类说清原因（网络 / 源未收录 / 代码有误）；
   ② 本控制器体检给出**名单里本地真正有多少**（就绪 N/M · 未下载 X · 历史不足 Y
     · 文件损坏 Z · 本地最新到几号）；
-  ③ 「⬇ 补齐缺失」把**未下载**的补齐（`SyncWorker` 走 `MarketSyncService`，
+  ③ 「更新到最新」把**未下载**的补齐（`SyncWorker` 走 `MarketSyncService`，
     温柔抓取可中断）；「历史不足」多数补不齐（数据本来就只有这么多）——
     只解释、不假装能修；「文件损坏」指去数据管理重新全量下载（D6-5 问题清单）。
 
@@ -33,6 +33,7 @@ from data.sync_service import (ZONE_KLINE, ThrottlePolicy, abort_reason_text,
                                estimate_seconds, format_duration,
                                friendly_constituent_message)
 from data.trade_calendar import latest_settled_trading_day, trading_days_between
+from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.workers import CalendarWorker, JobGuard, ReadinessWorker, SyncWorker
 
 __all__ = ['ReadinessFlow', 'constituent_failure_text', 'constituent_snapshot_text']
@@ -176,7 +177,7 @@ class ReadinessFlow:
             cov = r.coverage_at(asof.toPyDate())
             if cov < r.total:
                 cov_hint = (f'⚠ 基准日 {asof.toString("yyyy-MM-dd")} 当天仅 {cov}/{r.total} 只有数据'
-                            f' —— 多数标的未更新到该日，先「⬆ 更新到最新交易日」或把基准日往前挪')
+                            f' —— 多数标的未更新到该日，先「{SYNC_ACTION_LABEL}」或把基准日往前挪')
                 need_action = True
         if p._outcome is None:
             # 顶部单行只留“短状态 + 待更新标记”；滞后/覆盖长说明走 tooltip 与结果区（可换行），
@@ -192,17 +193,35 @@ class ReadinessFlow:
                     body += '\n' + cov_hint
                 if r.unreadable:
                     body += '\n文件损坏的标的请到「🗄 数据管理」重新全量下载。'
-                p._result.set_empty(body, '⬆ 更新到最新交易日', self.update_latest)
+                p._result.set_empty(body, SYNC_ACTION_LABEL, self.update_latest)
             elif r.unreadable:
+                # ★v1.41 / §11.5-80：**有坏文件也是"需要动作"** —— 旧版只给一句话
+                # （"请到数据管理重新全量下载"）却**不给入口**，用户只能自己找路。
+                # 判据是"要不要用户动手"，不是"有没有缺口"。
+                n_bad = len(r.problem_symbols())
                 p._result.set_empty(
-                    line + '\n文件损坏的标的请到「🗄 数据管理」重新全量下载。')
+                    line + f'\n有 {n_bad} 个文件读不出来（损坏）—— '
+                           f'去「🗄 数据管理」对它们重新全量下载。',
+                    '去数据管理', self._go_data_manager)
             else:
                 p._result.set_empty(line + ' —— 点「▶ 开始扫描」。')
-        elif '正在体检' in p.lbl_empty.text():
-            # ★ v6.42：已有扫描结果 ⇒ 回执不动，但"正在体检"的占位必须换掉 ——
-            #   旧版在这里直接 return，占位文案永远停在那里，用户以为体检了 3 分钟没完成。
-            p.lbl_empty.setText(f'就绪度体检：{line}')
-            p.lbl_empty.setToolTip(r.detail_text())
+        else:
+            # ★v6.42：已有扫描结果 ⇒ **回执不动**（它是扫描的，不是体检的），
+            #   但"正在体检"的占位必须换掉 —— 旧版在这里直接 return，
+            #   占位文案永远停在那里，用户以为体检了 3 分钟没完成。
+            # ★v1.41 / §11.5-80：这里**绝不能调 set_empty** —— 那会 `empty_box.show()` +
+            #   `table.hide()`，把用户刚扫出来的结果**藏起来**（比"没按钮"严重得多）。
+            #   所以本分支只改空态文字（不可见时无副作用），而"补数据的入口"由
+            #   **摘要条常驻按钮** `btn_sync` 提供 —— 任何状态下都在，不再依赖空态。
+            if '正在体检' in p.lbl_empty.text():
+                p.lbl_empty.setText(f'就绪度体检：{line}')
+                p.lbl_empty.setToolTip(r.detail_text())
+
+    def _go_data_manager(self) -> None:
+        """跳到「🗄 数据管理」页（跨页导航收在主窗口，两页同款，别各写一遍）。"""
+        win = getattr(self.page, 'main_win', None)
+        if win is not None:
+            win.switch_to('data')
 
     def _calibrate_asof_date(self, report) -> None:
         """把 M2 的基准日控件校准到**本地最新交易日**（先选后扫的"默认值"环节）。
@@ -228,7 +247,8 @@ class ReadinessFlow:
         # 基准日诚实化（§7-B10 STEP 4）：上限=本地最新，要更少先“更新到最新”；复检后自动抬升并回显
         hint = getattr(p, 'lbl_asof_hint', None)
         if hint is not None:
-            hint.setText(f'上限=本地最新 {qd.toString("yyyy-MM-dd")}；要选更近先「⬆ 更新到最新」')
+            hint.setText(f'上限=本地最新 {qd.toString("yyyy-MM-dd")}；'
+                         f'要选更近先「{SYNC_ACTION_LABEL}」')
 
     def _on_probe_failed(self, job_id: int, reason: str, scope: list) -> None:
         if not self._guard.accept(job_id) or self._current_scope_changed(scope):
@@ -253,10 +273,10 @@ class ReadinessFlow:
             self._render_readiness()          # 日历后到 ⇒ 把滞后提示补上
 
     # ==========================================
-    # ② 更新到最新 / 补齐缺失（联网走 SyncWorker ⇒ MarketSyncService，§9-H）
+    # ② 更新到最新 / 补齐数据（联网走 SyncWorker ⇒ MarketSyncService，§9-H）
     # ==========================================
     def update_latest(self) -> None:
-        """一键「⬆ 更新到最新交易日」（§7-B10 STEP 2 · 用户拍板与"补齐缺失"合并）：
+        """一键「⬆ 更新到最新交易日」（§7-B10 STEP 2 · 用户拍板与"补齐"动作合并）：
         对**整批当前范围**跑增量 —— 没下过的补、下过但滞后的拉到最近交易日；
         已新鲜的被 _is_fresh 自然 skipped。中断/断点续传/二次确认同补齐。"""
         p = self.page
@@ -346,7 +366,7 @@ class ReadinessFlow:
 
     def _on_fill_failed(self, symbol: str, reason: str) -> None:
         """单只失败**出声不中断**（SyncWorker 自己有熔断）；明细进 tooltip（问题清单）。"""
-        logger.warning(f"补齐缺失失败 [{symbol}]: {reason}")
+        logger.warning(f"补齐数据失败 [{symbol}]: {reason}")
 
     def _on_fill_finished(self, stats: dict) -> None:
         p = self.page
@@ -361,7 +381,7 @@ class ReadinessFlow:
         if aborted:
             # 中断原因要说清（§7-E2）：代理全灭 ⇒ "请检查代理软件"；否则只是"被限流/已中断"
             _why = abort_reason_text(stats)
-            text += f' · 已中断（{_why}；可再点「⬆ 更新到最新」续传）'
+            text += f' · 已中断（{_why}；可再点「{SYNC_ACTION_LABEL}」续传）'
         p.lbl_receipt.setText(text)
         failed_symbols = list(stats.get('symbols_failed') or [])
         if failed_symbols:

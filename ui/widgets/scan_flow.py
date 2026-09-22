@@ -26,6 +26,7 @@ from core.utils import parse_params_text
 from data.scan_store import kline_zone_dir
 from data.sync_service import MarketSyncService
 from data.watchlist_store import WatchlistStore
+from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.widgets.readiness_flow import (constituent_failure_text,
                                        constituent_snapshot_text)
 from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard
@@ -69,6 +70,9 @@ class ScanFlow:
         p.cb_index.currentIndexChanged.connect(self.on_index_changed)
         p.btn_config.clicked.connect(self.open_config)
         p.btn_run.clicked.connect(self.on_run_clicked)
+        # ★v1.41 / §11.5-80：常驻「更新到最新」入口 —— 晚绑定（点击时才取 `p._readiness`），
+        # 避免依赖"构造顺序"（本页的就绪度控制器在视图里装配，晚于本类）。
+        p.btn_sync.clicked.connect(lambda: p._readiness.update_latest())
         p.btn_prev_day.clicked.connect(lambda: self.shift_date(-1))
         p.btn_next_day.clicked.connect(lambda: self.shift_date(1))
         p.btn_latest_day.clicked.connect(self.jump_latest)
@@ -88,15 +92,37 @@ class ScanFlow:
         if self.page.cb_scope.currentIndex() == 1:
             self.resolve_scope()
 
+    def _drop_stale_result(self, scope_key) -> None:
+        """范围变了 ⇒ 丢掉上一范围的扫描结果（★v1.41 / §11.5-80）。
+
+        【为什么必须丢】旧版从不清 `_outcome`：用户把范围从沪深300 换成中证500 后，
+        结果区上方仍挂着**沪深300 的统计**（命中 6 · 300 只 / 有效样本 295/300），
+        而结果区里写的是**中证500 的就绪度**（未下载 456/500）—— **两套数字同屏打架**，
+        用户不知道该信哪个（用户实测截图复现）。更隐蔽的后果：`_render_readiness`
+        会因此以为"已有当前范围的结果"，走"回执不动"分支、**不再给下载入口**。
+        判据用 `(范围选择, 指数代码)`：**同一范围**重新解析（例如成分股解析重试）不清 ——
+        否则会把用户已经跑出来的结果白丢掉。
+        """
+        p = self.page
+        if getattr(p, '_scope_key', None) == scope_key:
+            return
+        p._scope_key = scope_key
+        p._outcome = None
+        p._asof = None
+        p._result.clear()
+
     def resolve_scope(self) -> None:
         """把"统计范围"落成 `{标的: 名称}`。自选 / 全A 同步；指数成分**异步**（§9-H：联网走门面）。
 
         名单落定后**自动触发一次就绪度体检**（D6-1：告诉用户"本地能真正拿到多少只"，
-        缺口给「⬇ 补齐缺失」动作）—— 实现只在 `ReadinessFlow`，两页共用一份。
+        缺口给「更新到最新」动作）—— 实现只在 `ReadinessFlow`，两页共用一份。
         """
         p = self.page
         p._names = {}
         choice = p.cb_scope.currentIndex()
+        # ★v1.41：范围真的变了 ⇒ 旧结果作废（见 `_drop_stale_result` 的说明）
+        self._drop_stale_result(
+            (choice, str(p.cb_index.currentData() or '') if choice == 1 else ''))
         if choice == 0:                                   # 我的自选
             p._cons_meta = None                           # 非成分股范围 ⇒ 无快照语义
             p._symbols = list(WatchlistStore().symbols())
@@ -239,12 +265,12 @@ class ScanFlow:
                 f'统计范围 {report.total} 只里，本地缺 {report.gap_count} 只的日线文件\n'
                 f'（体检：{report.summary_line()}）\n\n'
                 '缺的会被记成「数据不足」，命中/有效样本只基于现有数据算 ——\n'
-                '这种结果只能看局部，不能当全市场结论。建议先「⬇ 补齐缺失」再扫。\n\n'
+                f'这种结果只能看局部，不能当全市场结论。建议先「{SYNC_ACTION_LABEL}」再扫。\n\n'
                 '仍要现在就基于现有数据扫描吗？',
                 yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != yes:
-                p.lbl_receipt.setText('已取消 —— 点结果区的「⬇ 补齐缺失」下载缺的数据，'
-                                      '或再点「▶ 开始扫描」。')
+                p.lbl_receipt.setText(f'已取消 —— 点「{SYNC_ACTION_LABEL}」把缺的数据下载齐，'
+                                      f'或再点「▶ 开始扫描」。')
                 return False
             return True
         answer = QMessageBox.question(
@@ -401,7 +427,7 @@ class ScanFlow:
         p = self.page
         if p._outcome is None or p._outcome.result.dates is None:
             p.lbl_receipt.setText('没有可切换的交易日轴 —— 范围内标的本地多半没有日线，'
-                                  '先「⬇ 补齐缺失」再扫。')
+                                  f'先「{SYNC_ACTION_LABEL}」再扫。')
             return
         dates = p._outcome.result.dates
         current = p._asof or p._outcome.result.asof

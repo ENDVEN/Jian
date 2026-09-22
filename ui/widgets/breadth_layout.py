@@ -24,7 +24,8 @@ from ui.widgets.breadth_chart import (CHART_TYPES, DEFAULT_CHART_TYPE,
                                       DEFAULT_INDEX_STYLE, INDEX_STYLES,
                                       BreadthChart)
 from ui.widgets.custom_widgets import (CHIP_QSS_ON, COMBO_QSS,
-                                       NoWheelComboBox, hint_icon, mini_label)
+                                       SYNC_ACTION_LABEL, NoWheelComboBox,
+                                       hint_icon, mini_label)
 from ui.widgets.scan_layout import ScanFilterPane, ScanFormulaPane
 
 __all__ = ['BreadthLayout', 'BreadthDisplayPane', 'RANGE_PRESETS', 'DEFAULT_INDEX_CODE']
@@ -212,6 +213,15 @@ class BreadthLayout:
         p.bar_progress.setFixedWidth(120)
         p.bar_progress.hide()
         lay.addWidget(p.bar_progress)
+
+        # ★v1.41 / §11.5-80：**常驻**「更新到最新」入口（与 M2 同款、同文案）。
+        #   ⚠ 与下面「⚡ 增量到最新」**职责不同**：这个**下载数据**，那个**用已有数据重算广度**。
+        #   旧版 M3 也没有任何常驻的下载入口（唯一入口同样是空态按钮）⇒ 一并补齐。
+        p.btn_sync = _flat_btn(SYNC_ACTION_LABEL,
+                               '把当前范围的数据补齐/更新到最近一个已收盘定稿的交易日。\n'
+                               '已是最新的标的会**自动跳过、不发请求**。\n'
+                               '⚠ 它只**下载数据**；下载完还要点「⚡ 增量到最新」把广度续算上去。')
+        lay.addWidget(p.btn_sync)
 
         p.btn_incr = _flat_btn('⚡ 增量到最新', '把广度续算到数据里的最新交易日：历史一天都不重算'
                                '（D7）。数据没变时点了也只是确认一下"已是最新"。')

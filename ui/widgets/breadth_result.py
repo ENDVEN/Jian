@@ -40,3 +40,17 @@ class BreadthResult:
         self.page.lbl_empty.setText(text)
         self.page.empty_box.show()
         self.page.chart.hide()
+
+    def clear(self) -> None:
+        """丢掉上一范围的展示痕迹（★v1.41 / §11.5-80：切换统计范围时调用）。
+
+        M3 没有 KPI 行，但标题行的**口径摘要**（"口径：沪深300 · 有效 295/300 · 近 1 年"）
+        与"缓存命中"标记同属旧范围 ⇒ 必须一起清，否则新范围的就绪度提示会与它打架。
+        图与空态由紧随其后的 `set_empty(...)` 接管。
+        """
+        p = self.page
+        for name in ('lbl_cal', 'lbl_cached', 'lbl_mini'):
+            label = getattr(p, name, None)
+            if label is not None:
+                label.setText('')
+                label.setToolTip('')
