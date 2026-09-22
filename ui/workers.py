@@ -69,7 +69,9 @@ class SyncWorker(QThread):
     信号：
         progress(done, total, symbol)
         failed(symbol, reason)
-        finished(summary)   # {ok, fail, skipped, added, aborted, symbols_failed}
+        finished(summary)   # {ok, fail, skipped, added, aborted, aborted_by, symbols_failed}
+                            #   aborted_by ∈ ""/"cancel"/"proxy"/"circuit"（v1.38/§7-E2）
+                            #   ⇒ 消费方用 `sync_service.abort_reason_text(stats)` 出人话，别各写一遍
     """
 
     progress = pyqtSignal(int, int, str)
@@ -93,12 +95,14 @@ class SyncWorker(QThread):
     def run(self):
         service = MarketSyncService()
         stats = {"ok": 0, "fail": 0, "skipped": 0, "added": 0,
-                 "aborted": False, "symbols_failed": [], "total": len(self._symbols)}
+                 "aborted": False, "aborted_by": "", "symbols_failed": [],
+                 "total": len(self._symbols)}
         consecutive_fail = 0
+        consecutive_proxy = 0
 
         for index, symbol in enumerate(self._symbols, start=1):
             if self._cancel:
-                stats["aborted"] = True
+                stats.update(aborted=True, aborted_by="cancel")
                 break
 
             self.progress.emit(index, len(self._symbols), symbol)
@@ -109,19 +113,31 @@ class SyncWorker(QThread):
             if result.get("skipped"):
                 stats["skipped"] += 1
                 consecutive_fail = 0
+                consecutive_proxy = 0
             elif result.get("ok"):
                 stats["ok"] += 1
                 stats["added"] += int(result.get("added", 0))
                 consecutive_fail = 0
+                consecutive_proxy = 0
             else:
                 stats["fail"] += 1
                 consecutive_fail += 1
+                if str(result.get("reason") or "") == "proxy":
+                    consecutive_proxy += 1          # ★v1.38/§7-E2：代理类失败单独计数
+                else:
+                    consecutive_proxy = 0
                 stats["symbols_failed"].append(symbol)
-                # 给 UI 一条"一句话归类"（网络？还是无数据/退市？），避免技术报错直接甩给用户
+                # 给 UI 一条"一句话归类"（代理 / 网络 / 无数据·退市？），避免技术报错直接甩给用户
                 self.failed.emit(symbol, short_fetch_reason(result))
-                # 【温柔抓取·熔断】连续失败过多判定为"疑似被限流"，主动停手保护用户 IP
+                # ★【代理全灭 ⇒ 提前停手】§9.3 实测：本机代理瞬断时失败率是 100%，
+                #   按默认 12 连败熔断等于白等十几次超时；用户的正确动作是"立刻去查代理"。
+                #   所以这类失败用更小的阈值，并把原因带回 UI（`aborted_by`）。
+                if consecutive_proxy >= max(1, self._policy.proxy_circuit_breaker):
+                    stats.update(aborted=True, aborted_by="proxy")
+                    break
+                # 【温柔抓取·熔断】其余原因的连续失败过多判定为"疑似被限流"，主动停手保护用户 IP
                 if consecutive_fail >= max(1, self._policy.circuit_breaker):
-                    stats["aborted"] = True
+                    stats.update(aborted=True, aborted_by="circuit")
                     break
 
         self.finished.emit(stats)
@@ -254,8 +270,8 @@ class JobGuard:
     【为什么做成公共件】"发起新任务 ⇒ 旧回包作废"在本项目至少三处需要（数据管理页的分区扫描、
     批量下载弹窗的成分股解析、扫描页的多个动作）。各写一遍 `_token` 计数器，迟早有一处忘了比
     ⇒ **旧结果覆盖新结果**，而且界面看起来完全正常（§11.5-11「同类防护只改一处」的正解）。
-    ⚠ 现状：`ui/dialogs/bulk_download.py` 的 `_cons_token` 是同一套判据的**手写版**，
-      **择机改用本类**（本轮不动已验证的页面，§7-G 纪律）。
+    ✅ v1.38/§7-E2：`ui/dialogs/bulk_download.py` 原先那套手写判据（`_cons_token`）已改用本类 ——
+      至此"发起新任务 ⇒ 旧回包作废"在全仓**只有一处实现**（§11.5-11「同类防护做全套」还清这笔挂账）。
     """
 
     def __init__(self):

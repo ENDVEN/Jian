@@ -47,8 +47,13 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          第4子页“运行历史”：载入查看/复用/重跑/送行情/★重点/删）；默认自动存档可关、
 #          每标的20/总500淘汰重点豁免；M1 只读回放（现场保存/恢复+禁导出+横幅）+
 #          导出菜单「存为历史快照」；结果区净值曲线新增买卖点散点，smoke 782 / 554。
+#   1.38 = §7-E2 代理失败“说人话” + 熔断提前：_classify_error 新增 "proxy"
+#          （⚠ 必须先判文本指纹再退回 isinstance —— requests 的 ProxyError 也是 OSError 子类）
+#          + looks_like_proxy_error + 三出口文案各一档（不写死本机端口）
+#          + ThrottlePolicy.proxy_circuit_breaker=3 + abort_reason_text 三消费方共用
+#          + bulk_download 竞态判据收编公共件 JobGuard，smoke 796 / 557。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.37"
+APP_VERSION = "1.38"
 
 # ==========================================
 # 界面配置 (UI Settings)

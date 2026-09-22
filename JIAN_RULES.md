@@ -12,11 +12,11 @@
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **1.37**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / **commit 首词待用户提交**） |
-| 文档版本 | **v6.51**（§7-E 施工队列落档 —— **只落方案不动代码**；E1 提交 1.37 / E2 代理文案 / E3 列白名单 / E4 时点成分股。上一版 v6.50 = 文档瘦身 118k→73k） |
-| 最近三版 | `1.37` §7-A4 回测历史存档 · `1.36` §7-A2 回测图表导出 · `1.35` §7-B10 数据新鲜度全案 |
-| **当前主线** | **§7-E 施工队列（v6.51 定稿 · 用户 2026-09-23 拍板）**：**E1 → E2 → E3 → E4** 按序施工、一项一 commit。§7-A4 / §7-A2 / §7-B10 / §7-B1-B2 均已收官 |
-| **断点** | **v6.49（1.37）§7-A4 回测历史存档 ✅（v6.49 复核重做）**：存储 = `data/backtest_archive.py`（不可变快照：每份 `<时间戳_uuid>.json` + 轻量索引 `_index.json`；save/list/load/pin/delete/淘汰/防注入）；**版式 = `ui/widgets/backtest_history_ui.py`（1.22 同款分工：过滤条 / `HistoryTable` / `MiniEquityChart` / `HistoryPreviewPane` / 页脚设置），页面 `ui/views/backtest_history.py` 只持状态与接线**（市场回测页第 4 子页「运行历史」：列表+预览+载入查看/复用参数/重跑/送行情页/★重点/删除）。每次回测默认自动存档（偏好 `backtest_archive.auto` 可关；发起瞬间定格 `_last_config` 保证"存档=跑的那次"）；逐笔全量 + 净值抽稀≤250（**端点保底 + 并入全部成交日**）；每标的20/总500 滞动淘汰、**重点豁免**；文件名 uuid 防注入、单文件≤2MB；**读路径绝不写盘**；schema 带 kind 预留 M2/M3（本轮只 M1）。M1 视图新增 `show_archived`（**只读回放：保存/恢复现场 + 预览期禁导出 + 黄色横幅与「退出预览」**）/`exit_preview`/`load_archive_config`/`save_to_history`（导出菜单「💾 存为历史快照」）；结果区净值曲线**新增买卖点散点**（`buy_at`/`sell_at`）；`StrategyBridge.apply_payload` 抽出复用。验收：`smoke_chart` **782** / `smoke_pages_overlay` **554** 全绿 + compileall（存档测试全用临时 root；防污染自检含 `backtest_results`）。坑=§11.5-75。**（v6.50）文档瘦身已完成**：主文件 **118k → ≈73k 字符**（逐文件地图 → `docs/JIAN_CODEMAP.md`；§7-B1/B2 + §7-B10 主案与 §11.6 历史块 → `docs/JIAN_ARCHIVE.md`）。**下一步 = 执行 §7-E**：E1 提交推送 1.37（本地领先远端 2）→ E2 代理文案"说人话"+熔断提前（1.38）→ E3 日线落盘列白名单（1.39）→ E4 时点成分股（1.40 · 先过可行性闸门） |
+| APP 版本 | **1.38**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / **commit 首词待用户提交**） |
+| 文档版本 | **v6.52**（§7-E2 落地：代理失败"说人话" + 熔断提前；E1 已提交 `c969112`。上一版 v6.51 = §7-E 施工队列落档，v6.50 = 文档瘦身 118k→73k） |
+| 最近三版 | `1.38` §7-E2 代理失败说人话+熔断提前 · `1.37` §7-A4 回测历史存档 · `1.36` §7-A2 回测图表导出 |
+| **当前主线** | **§7-E 施工队列（v6.51 定稿）**：E1 ✅ 已提交 → **E2 ✅ 已落地 1.38** → **E3 日线落盘列白名单（下一步）** → E4 时点成分股（前置可行性闸门）。§7-A4 / §7-A2 / §7-B10 / §7-B1-B2 均已收官 |
+| **断点** | **v6.49（1.37）§7-A4 回测历史存档 ✅（v6.49 复核重做）**：存储 = `data/backtest_archive.py`（不可变快照：每份 `<时间戳_uuid>.json` + 轻量索引 `_index.json`；save/list/load/pin/delete/淘汰/防注入）；**版式 = `ui/widgets/backtest_history_ui.py`（1.22 同款分工：过滤条 / `HistoryTable` / `MiniEquityChart` / `HistoryPreviewPane` / 页脚设置），页面 `ui/views/backtest_history.py` 只持状态与接线**（市场回测页第 4 子页「运行历史」：列表+预览+载入查看/复用参数/重跑/送行情页/★重点/删除）。每次回测默认自动存档（偏好 `backtest_archive.auto` 可关；发起瞬间定格 `_last_config` 保证"存档=跑的那次"）；逐笔全量 + 净值抽稀≤250（**端点保底 + 并入全部成交日**）；每标的20/总500 滞动淘汰、**重点豁免**；文件名 uuid 防注入、单文件≤2MB；**读路径绝不写盘**；schema 带 kind 预留 M2/M3（本轮只 M1）。M1 视图新增 `show_archived`（**只读回放：保存/恢复现场 + 预览期禁导出 + 黄色横幅与「退出预览」**）/`exit_preview`/`load_archive_config`/`save_to_history`（导出菜单「💾 存为历史快照」）；结果区净值曲线**新增买卖点散点**（`buy_at`/`sell_at`）；`StrategyBridge.apply_payload` 抽出复用。验收：`smoke_chart` **782** / `smoke_pages_overlay` **554** 全绿 + compileall（存档测试全用临时 root；防污染自检含 `backtest_results`）。坑=§11.5-75。**（v6.50）文档瘦身已完成**：主文件 **118k → ≈73k 字符**（逐文件地图 → `docs/JIAN_CODEMAP.md`；§7-B1/B2 + §7-B10 主案与 §11.6 历史块 → `docs/JIAN_ARCHIVE.md`）。**（v1.38）§7-E2 已落地**：代理失败"说人话" + 熔断提前 —— `_classify_error` 先判 `proxy` 文本指纹（⚠ `requests.ProxyError` 也是 `OSError` 子类，顺序错就被吞成 network）、三出口文案各一档（**不写死 `127.0.0.1:7897`**）、`proxy_circuit_breaker=3`、`abort_reason_text` 三消费方共用、`bulk_download` 竞态判据收编 `JobGuard`；smoke **796 / 557** 全绿。**下一步 = §7-E3 日线落盘列白名单（1.39）**：先跑探针量全湖列清单（跑完即删）→ 上 `DAILY_KEEP_COLUMNS` → 断言钉住"列存在性 + 落盘列 ⊆ 白名单"。 |
 
 ### 📚 文档地图（先看这里，再定点检索）
 
@@ -138,7 +138,8 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
     拆成 `backtest_history_preview.py`）>
   ⚠ `ui/widgets/backtest_flow.py` **304 → 416**（v1.37 越线：`_auto_archive`/`archive_now`/`_frozen_config`
     + 定格 `_last_config`；**登记不返工**，再长可把"存档接线"抽成伴生件）>
-  `core/backtest.py 495` > `ui/views/data_manager.py 473` > ⚠ `ui/widgets/desk_layout.py` **570 → 613**
+  `core/backtest.py 495` > ⚠ `ui/views/data_manager.py` **473 → 476**（v1.38/§7-E2 中断原因文案；
+    已接近 500，**登记不返工**）> ⚠ `ui/widgets/desk_layout.py` **570 → 613**
     （v6.44 加 R7 副图换序 UI：按钮/工具条/列表；**登记不返工**，再长可把配方页 `build_formula_page` 拆出）>
   ⚠ `ui/widgets/annotation_layer.py 613`（v6.26 接绘制会话、v6.28 加"按形状拾取"、
     v6.29 接 `reshape`/`normalize` 两个钩子又越线；**处置不变**：场景 I/O（挂信号/落点换算/
@@ -149,7 +150,8 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
     + 两个上下文对象 + 回归几何搬进 **`ui/widgets/annotation_layouts.py`(360)**，
     两个文件都回到 400 线内；`ui/widgets/annotation_decos.py 342` 也在线内）>
   `core/database.py 435` > ⚠ `ui/widgets/backtest_result.py` **432 → 478**（v1.37 §7-A4 加净值曲线
-    买卖点散点 + `kline_hint`；仍<600，**登记不返工**）> `ui/dialogs/bulk_download.py 416` >
+    买卖点散点 + `kline_hint`；仍<600，**登记不返工**）> ⚠ `ui/dialogs/bulk_download.py` **416 → 454**
+    （v1.38/§7-E2：竞态判据改用公共件 `JobGuard` + 中断原因文案；**登记不返工**）>
   ⚠ `ui/widgets/breadth_flow.py` **443**（v6.39 越线后 v6.43 又长：幸存者偏差提示/指数图形透传；
     **登记不返工** —— 收口时可把"范围解析→体检接线"这对重复动作与 `scan_flow` 一起收进 `ReadinessFlow`）>
   ⚠ `ui/widgets/chart_host.py` **580**（v6.43 分界线拖动调高越线；新设施是宿主级可复用件（§9-U），
@@ -157,9 +159,9 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   ⚠ `ui/widgets/scan_flow.py` **413**（v6.43 先选后扫/闸门/落位越线；**登记不返工**，
     再长可把"日期控件三件套（选择/落位/同步）"抽成伴生件）>
   ⚠ `data/akshare_feed.py` **462**（v6.46 §7-B10 `fetch_trade_calendar` 越线；本就是"行情源大杂烩"候选拆点，
-    再加新源前先分文件）> `data/sync_service.py` **457**（v6.46 §7-B10 定稿守卫越线：
-    `DAILY_SETTLE_HHMM`/`is_daily_bar_settled`/`_drop_unsettled_tail` + `refresh_one` 接裁尾；
-    **登记不返工**，再长可把定稿守卫抽成伴生件）。
+    再加新源前先分文件）> ⚠ `data/sync_service.py` **457 → 531**（v1.38/§7-E2 又长：`proxy` 分类
+   + `looks_like_proxy_error` + 三出口文案 + `abort_reason_text` + `proxy_circuit_breaker`；
+   **登记不返工** —— 再长可把"失败分类与人话文案"整段抽成 `data/fetch_messages.py` 伴生件）。
   ⚠ `core/cross_section.py` **655**（v6.43 又长：轴外落位/missing 诚实化；**处置不变**：
     新增优先另起模块）。
   ✅ `ui/views/trading_desk.py` **1375 → 345**（1.23 · §7-B6 STEP 6，**退出 400 线**）；
@@ -447,12 +449,14 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 > 四项均已勘察到**代码落点**（不是设想）。关联账目：E2 → §9.3 待修清单；E3 → §9.1「可修的小债」；E4 → §7-D4。
 > 拍板记录见本节末尾「E. 拍板」。
 
-#### E1 · 提交推送 1.37（收尾 · 非功能）
-- **现状**：`APP_VERSION` / `version.json` 均 `1.37`；`git log` 最后仍是 `1.36`；本地领先远端 **2**（1.35/1.36 未推）。
-- **STEP**：① `git add -A`（含新增 `data/backtest_archive.py`、`ui/views/backtest_history.py`、`ui/widgets/backtest_history_ui.py`、`docs/JIAN_CODEMAP.md`、`design/1.37-backtest-history/`）→ ② commit 首词 `1.37` → ③ **push 由用户执行**（会一次带上 1.35/1.36）。
+#### E1 · 提交推送 1.37（收尾 · 非功能 · ✅ **已提交 `c969112`；push 待用户**）
+- **现状**：`APP_VERSION` / `version.json` 均 `1.37`；已提交 **17 文件 / +2983 −722**（含 5 个新文件：
+  `data/backtest_archive.py`、`ui/views/backtest_history.py`、`ui/widgets/backtest_history_ui.py`、
+  `docs/JIAN_CODEMAP.md`、`design/1.37-backtest-history/index.html`）；本地领先远端 **3**（1.35/1.36/1.37 未推）。
+- **STEP**：① `git add -A` ✅ → ② commit 首词 `1.37` ✅ → ③ **push 由用户执行**（会一次带上 1.35/1.36）。
 - ⚠ push 的两个**设计内**副作用：① 所有 ≤1.36 用户开机弹「✨ 发现新版本」（`version.json` 的 `notes` 就是弹窗文案）；② 点「是」打开 Releases **列表页**（现阶段不制作 Release，§9-A）。
 
-#### E2 · 代理失败"说人话" + 熔断提前（→ 1.38）
+#### E2 · 代理失败"说人话" + 熔断提前（→ 1.38 · ✅ **已落地 v1.38**）
 **已核实落点**：`_classify_error`（`data/sync_service.py:478`，关键词表**已含** `proxy` ⇒ 现归 `network`）· 三个文案出口 `short_fetch_reason:486` / `friendly_fetch_message:496` / `friendly_constituent_message:518` · **熔断真正执行处 = `ui/workers.py:123`** `SyncWorker.run()`（`consecutive_fail >= policy.circuit_breaker`，默认 12）。
 - **STEP 1 纯函数层**：`_classify_error` 增加 **`"proxy"`**（**优先级高于 `network`**）+ 可复用 `looks_like_proxy_error(text)`。断言：`ProxyError` → proxy、普通断网 → network、**互不误伤**。
 - **STEP 2 三出口文案**：`proxy` 分支 =「疑似**本机代理问题**：请检查代理软件（Clash / V2Ray 等）是否在运行，或切换节点后重试；国内行情源通常可直连」。
@@ -526,12 +530,12 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 
 | 版本 | 一句话 |
 |---|---|
+| **1.38** | §7-E2 代理失败"说人话" + 熔断提前：`_classify_error` 新增 `"proxy"`（**必须先判文本指纹再退回 isinstance** —— `requests.ProxyError` 也是 `OSError` 子类，顺序错就被吞成 network）+ `looks_like_proxy_error` + 三出口文案各一档（**不写死 `127.0.0.1:7897`**）+ `ThrottlePolicy.proxy_circuit_breaker=3` + `abort_reason_text` 三处消费方共用 + P4 收编 `JobGuard`；smoke 782→796 / 554→557（§11.5-76） |
 | **1.37** | §7-A4 回测历史存档：`data/backtest_archive.py`（不可变快照 + 轻量索引，save/list/load/pin/delete/滞动淘汰/uuid 防注入；**抽稀端点保底 + 并入成交日、读路径不写盘**）+ `ui/widgets/backtest_history_ui.py`（版式/列表/迷你净值/预览）+ `ui/views/backtest_history.py`（薄壳：状态+接线；市场回测页第4子页「运行历史」：列表+预览+载入查看/复用/重跑/送行情/★重点/删除）；默认自动存档可关、每标的20/总500淘汰重点豁免；M1 新增 show_archived（只读回放：现场保存恢复 + 禁导出 + 横幅）/exit_preview/load_archive_config/save_to_history；结果区净值曲线新增买卖点散点；smoke 782 / 554（§11.5-75） |
 | **1.36** | §7-A2 回测结果图表导出：`build_daily_series`（逐日净值+买卖点共同源）+ 新增 `ui/widgets/backtest_xlsx.py`（openpyxl 内嵌净值折线图+买卖点 marker，逐日数据放隐藏表主表只剩图）；CSV 不写逐日段（看图靠 xlsx）；smoke 745 / 521→530（§11.5-74） |
-| **1.35** | §7-B10 数据新鲜度全案（M2/M3 收尾）：`ReadinessFlow` 新增 `update_latest()` 一键「⬆ 更新到最新」（与“补齐缺失”合并、共用 `_launch_sync`）+ 滞后提示（`start_calendar_fetch`/`trading_days_between`/`format_stale`，真日历）+ M2 基准日诚实化（`lbl_asof_hint`）；承 v6.46 M1 切片（定稿守卫/真日历/M1 区间修复）；smoke 737→745 / 508→514（§11.5-71/72） |
-| **1.34** | §7-B8 R7 副图换序收尾：`layer_model` 可持久化顺序（换序只改格位不改 target）+ `desk_ui.sub_order` + 配方页 ⬆⬇/拖拽（复用 `DragHandleListWidget` 三道闸）+ 测试偏好隔离补正（§11.5-70） |
-| **1.33** | M2/M3 体验修复轮：M3 图表可读性根治（bar 轴/双视觉/指数四图形/分界把手/轴对齐）+ M2 先选后扫与缺数据诚实化（闸门/就近落位/missing 进总数）+ 成分股换中证官网权威源（§11.5-64…69） |
-
+> **1.35 及更早**（含 `1.35` §7-B10 全案 / `1.34` R7 副图换序 / `1.33` M2-M3 体验修复轮，
+> 以及 v6.42–v6.46 各批叙事）→ **`docs/JIAN_HISTORY.md` §8 全表**（v1.38 已把这批叙事归档补齐）。
+>
 > 版本号纪律见 **§9-A**（唯一出处：commit 首词 + `settings.APP_VERSION` + `version.json`）。
 
 
@@ -611,7 +615,7 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 
 **默认路线**：本轮**只交付「引擎逐只」**（口径天然与 M1 一致、实现最简单），向量化留作可选性能档。
 
-### 9.3 系统代理环境下行情拉取「批量全灭」（v6.42 · 2026-09-20 诊断 · **已定因待修 · 只记录不改码**）
+### 9.3 系统代理环境下行情拉取「批量全灭」（v6.42 诊断 · **v1.38/§7-E2 已修 ✅**）
 
 **用户实测现象**：「⬇ 补齐缺失」一轮里**每一只**都报
 `A股日线东财源失败 …(Caused by ProxyError('Unable to connect to proxy', RemoteDisconnected(...)))`
@@ -633,23 +637,29 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 1. **`beg=20260919` 的旁证**：增量请求的起点 = 本地末日+1，说明 000591 本地已有数据（到 09-18）——
    它出现在"补齐缺失"名单里是因为**当时体检用的旧 data_version 还挂着**（补齐完成后复检会消掉）；
    若复现"已有数据的票也在补齐名单"请按这条排查，不要急着改补齐逻辑。
-2. **`_classify_error` 已把 `proxy` 归入 network 类**（`data/sync_service.py` 的关键词表）⇒
-   失败文案归类没错，但**没有把"疑似本机代理问题"单独说出来** —— 用户看不出该去检查代理。
+2. ~~**`_classify_error` 已把 `proxy` 归入 network 类** ⇒ 失败文案归类没错，但没有把"疑似本机代理问题"
+   单独说出来 —— 用户看不出该去检查代理。~~ **✅ v1.38 已修，且发现真正的坑**：
+   `requests.exceptions.ProxyError` → `ConnectionError` → `RequestException` → **`IOError`（就是内建 `OSError`）**，
+   所以"先 `isinstance(error, OSError)` 再看文本"的写法会把代理失败**先归成 network** ——
+   必须**先判文本指纹、再退回 isinstance**（§11.5-76）。
 
-> **施工方案已定稿：见 §7-E2**（v6.51 · 用户 2026-09-23 拍板：文案识别 + 熔断提前 + `JobGuard` 顺手项；
-> 「不走系统代理」开关**本轮不做**，理由见 §7-E 拍板 P5）。
+**施工方案 = §7-E2（✅ 已落地 v1.38）**。三条待修的处置：
 
-**待修清单（用户拍板后再动，本轮零代码）**：
-- [ ] 拉取失败文案**识别 ProxyError**：`疑似本机代理问题 —— 请检查代理软件（127.0.0.1:7897）是否在运行`，
-      与"行情源失败 / 被限流"分开安抚（§10-10 分类安抚的补全）；
-      ⚠ **进用户文案时不许写死 `127.0.0.1:7897`**（那是本机诊断值）—— 只说"检查代理软件是否在运行 / 切节点"；
-- [ ] 可选增强：连续 N 次 ProxyError ⇒ **熔断提前**并直接提示检查代理（现在的 12 连败熔断
-      对"代理全灭"这种 100% 失败率太迟钝，白白等十几次超时）；
-- [ ] 可选（谨慎）：设置里加"行情拉取不走系统代理"开关（`session.trust_env=False` /
-      显式空 proxies）—— 国内行情源直连通常更快，但**必须默认跟随系统**，别替用户决定。
+- [x] **拉取失败文案识别 ProxyError**（✅ v1.38）：`_classify_error` 新增 `"proxy"`，
+      三出口（`short_fetch_reason` / `friendly_fetch_message` / `friendly_constituent_message`）
+      各有一档"疑似本机代理问题"文案 —— 与"行情源失败 / 被限流"**分开安抚**（§10-10 补全）。
+      ⚠ **没有写死 `127.0.0.1:7897`**（那是本机诊断值）—— 只说"检查代理软件是否在运行 / 切节点"；
+      且有断言钉住"三个出口的文案里都不许出现 `127.0.0.1` / `7897`"。
+- [x] **连续 ProxyError ⇒ 熔断提前**（✅ v1.38）：`ThrottlePolicy.proxy_circuit_breaker = 3`
+      （通用仍 12）；`SyncWorker` 另计 `consecutive_proxy`，达阈值即停并把
+      `aborted_by="proxy"` 带回 UI —— 三处消费方（批量预下载 / 数据管理 / M2-M3 更新补齐）
+      统一用 `abort_reason_text(stats)` 出人话，**不再只显示一个"已中断"**。
+- [ ] **不做（本轮）**：设置里加"行情拉取不走系统代理"开关（`session.trust_env=False` / 显式空 proxies）
+      —— 国内行情源直连通常更快，但**必须默认跟随系统**；且 app **目前没有设置页**，
+      要做须先定"设置入口放哪"，**属独立话题**（§7-E 拍板 P5），已登记 backlog。
 
-**判据（给未来的我）**：凡"批量同错 + `ProxyError`/`Unable to connect to proxy` 字样" ⇒
-先查 `requests.utils.getproxies()` 与代理进程状态，**别怀疑行情源、别加重试**；
+**⚠ 给未来的我（判据）**：凡"**批量同错 + `ProxyError` / `Unable to connect to proxy` 字样**"
+⇒ 先查 `requests.utils.getproxies()` 与代理进程状态，**别怀疑行情源、别加重试**；
 反之单只失败 / 两源报错形态不同，才往行情源方向查。
 
 ### 9.H 历史台账（**已归档 → `docs/JIAN_ARCHIVE.md`**）
@@ -871,6 +881,8 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 改 Dashboard 日历热力图 | `ui/widgets/calendar_heatmap.py`（纯手绘控件）+ `dashboard.py` 的 `_prepare_calendar` / `_render_calendar` |
 | 增删/清理数据湖缓存 | 原语在 `data/market_db.py`；页面在 `ui/views/data_manager.py`（⚠ 删完要 `_rescan` 刷新） |
 | 改行情同步/抓取节流 | `data/sync_service.py`（增量合并 + `ThrottlePolicy` 都在这里，**勿在 UI 里另起炉灶**） |
+| 改**失败原因分类 / 失败文案** | **`data/sync_service.py` 一处**（v1.38/§7-E2）：`_classify_error`（⚠ **先判 `looks_like_proxy_error` 文本指纹、再退回 isinstance** —— `requests.ProxyError` 也是 `OSError` 子类）+ `short_fetch_reason` / `friendly_fetch_message` / `friendly_constituent_message` 三出口 + `abort_reason_text`（批量中断原因，**三消费方共用**）。⚠ 文案里**不许写死本机端口/proxy 术语当唯一解释**（§10-10），有断言钉着 |
+| 改**代理全灭时的停手时机** | `ThrottlePolicy.proxy_circuit_breaker`（默认 **3**，与通用 `circuit_breaker=12` 分开，v1.38/§7-E2）+ `ui/workers.py: SyncWorker.run` 的 `consecutive_proxy` 计数与 `aborted_by` 回传 |
 | 改日线收盘定稿判据 | **`data/sync_service.py` 一处**（v6.46 / §7-B10）：`DAILY_SETTLE_HHMM` + `is_daily_bar_settled`（纯函数）+ `_drop_unsettled_tail`（`refresh_one` 落盘前对 `DAILY_ZONES` 裁尾）。M1/M2/M3 一律复用，**别在页面另写一套“今天算不算数”** |
 | 改“最近交易日”/交易日历 | **`data/trade_calendar.py`（v6.46 / §7-B10）**：`load_or_fetch`（当日 JSON 缓存 `~/.jian_data/trade_calendar.json` + 失败回退）/ `latest_settled_trading_day`（日历 ∩ 定稿判据）。接口细节在 `data/akshare_feed.py:fetch_trade_calendar`；UI 取数只走 `ui/workers.py:CalendarWorker` |
 | 改 M1 回测区间默认终点/滞后补 | `ui/views/backtest.py`（`date_end` 默认 + `lbl_range_note` 回执行 + 构页时 `flow.start_calendar_fetch()`）+ `ui/widgets/backtest_flow.py`（`_on_calendar` 精修默认终点 / `_prepare_stock_then_run` 滞后自动补 / `_apply_end_date_receipt` 补不到回退+回执）。⚠ **控件名 `date_end`/`date_start`/`cmb_range_preset` 不能改**（迁移护栏）；状态仍留在页面 |
@@ -919,10 +931,13 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 改下拉/日期等复合控件的外观 | **`ui/widgets/custom_widgets.py`**：用生成器 `combo_qss()` / `date_edit_qss()` 造新变体，或直接引用 8 个具名常量（`COMBO_QSS` / `COMBO_QSS_SMALL` / `COMBO_QSS_ACCENT` / `COMBO_QSS_EDIT` / `COMBO_QSS_EDIT_OK` / `LINE_COMBO_QSS` / `DATEEDIT_QSS_WARN` / `DIALOG_INPUT_QSS`）。**业务页面禁止就地 setStyleSheet**，且 `::drop-down` 与 `::down-arrow` 必须成对（v6.9：否则箭头消失，§10-9） |
 | **给图表加自适应坐标轴**（刻度随缩放变密/换格式、纵轴跟随可视区间） | **`ui/widgets/adaptive_axis.py`（§7-B4 · v6.15）一处**：`attach_date_axis(pane, dates / texts, y_provider=…)`、`follow_y(pane, provider)`、`attach_all(host, dates, providers_by_pane)`。页面只写 `provider(i0, i1) -> (lo, hi)`（回答"这个窗格在可视区间内数值范围是多少"）。**禁止再手写 `setTicks` / `setYRange`**；日期格式梯子只在该文件的 `choose_date_format`（将来分钟线只改这里） |
 ### 11.5 最容易踩的坑（**全量清单已归档 → `docs/JIAN_PLAYBOOK.md`**）
-> ⚠ 本清单**持续累积、只增不减**（已占原文件 8.2% 版面）—— 全文（含每条的血泪细节）在
+> ⚠ 本清单**持续累积、只增不减**（已占原文件 8.2% 版面）—— 详情在
 > **`docs/JIAN_PLAYBOOK.md`**，**编号不变**（`§11.5-25` 仍然叫 `§11.5-25`）。
 > 用法：在下面索引里找到相关编号 → 只去 PLAYBOOK 读那一条（省 context，且不会漏）。
 > **改动任何模块前，先扫一眼本期相关编号。**
+> ⚠ **实际存放（v1.38 核对，别再搞错）**：**1–50 的完整血泪细节在 PLAYBOOK**（按序号排）；
+> **51 起的条目本体就写在下面索引里**（编号即条目，写得较全）—— 去 PLAYBOOK 找是**找不到**的。
+> 新条目**只往下面索引加**，不要两边写（会漂）。
 
 - **11.5-1** 净额 = net_profit − commission
 - **11.5-2** trade_time 永远是纯日期 00:00:00
@@ -993,10 +1008,35 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - **11.5-73** 【v6.47 · 窄屏不撑窗（用户明令）】工具栏/摘要条的**单行 QLabel 绝不能塞长文本**——`QLabel` 不包字时 `minimumSizeHint` = 整串宽度，会把窗口**最小宽度**顶大，窄屏/小屏直接铺不开。做法：**单行标签只留短状态 + 一个“⚠”短标记，长说明进 tooltip 或结果区（`lbl_empty` 已 wordWrap，可换行）**；并给这类单行标签设 `setSizePolicy(QSizePolicy.Ignored, Preferred)` 使其**可缩不撑窗**（已用于 M2/M3 `lbl_receipt` 与 M1 `lbl_range_note`）。新加任何顶部回执都遵此模式。
 - **11.5-74** 【v6.48 · §7-A2 回测图表导出】① **CSV 是纯文本、物理上不能内嵌渲染图**——用户看到的“图形绘制/QSD/GLX/STICKLINE”只是公式源码被当注释写进去了，不是数据也不是图；要“打开即见图”只能 .xlsx（openpyxl LineChart）。② **买卖点 marker 的 y 必须用“成交日净值”定位、不是成交价**——成交价与净值不同量纲，直接画会跑出坐标轴。③ **openpyxl 读回会丢图表**（`load_workbook` 不重建 chart）⇒ 测图只能对**构建时的 Workbook 对象**（`_build_workbook`）断言 `ws._charts`，不能存回再读；写盘用 BytesIO 不污染用户目录。④ **逐日全量很占空间、主表刷屏**（用户反馈）⇒ 不抽稀，而是把逐日数据放**隐藏 sheet「净值数据」**、图放可见 sheet（图表 Reference 跨表引用、`plotVisOnly=False`）；**CSV 干脆不写逐日段**（看图靠 xlsx）。
 - **11.5-75** 【v6.49 · §7-A4 回测历史存档】① **读路径绝不能写盘**——`_rebuild_index`/`list()` 若顺手 `_write_index`，开一次页就把真实 `~/.jian_data/backtest_results/` 建出来（实测污染自检红）；写盘只在 save/delete/pin 真变更时发生；`delete(不存在 id)` 也必须不建目录。② **滞动淘汰的新旧判据不能用秒级 created_at**——同秒批量保存会误把最新当最旧删；加单调 `seq=time.time_ns()` 作排序/淘汰键。③ **载入查看=只读回放态**（`_preview_mode`）：**不能改写 `_last_result/_last_meta`**（否则预览里点导出＝"存档结果 + 上次参数"这对错误组合）→ 预览前保存现场，`exit_preview` 还原，预览期**禁用导出**并显示横幅；复用参数走 `StrategyBridge.apply_payload`（与策略选用同一还原口径，单一事实源）。④ **防注入**：文件名只用 时间戳_uuid（用户输入不进路径），策略/标的名只进 JSON 字段。⑤ **净值抽稀必须端点保底**——`BacktestResult.cumulative_return == equity[-1] − 1`，末点丢了"载入查看"的累计就是错的；均匀网格用 `round(i*(n-1)/(k-1))` 并显式补 0 与 n-1。⑥ **抽稀上限与买卖点冲突时，成交日优先**（上限是省空间的软目标，另有 2MB 硬闸）——但要如实登记"可能超 250 点"。⑦ **pin 不能整表重建**——`refresh()` 会清空选中 ⇒ 用户看到的是"重点选不上"；必须就地更新那一行 + 保住选中（`select_by_id`）。⑧ **`setRowCount` 缩表后 Qt 可能保留旧 selection** ⇒ 删除后出现"幽灵选中"；不恢复选中时必须显式 `clearSelection()`。⑨ **表格数字着色不能用 `item.setForeground`**——选中行会在蓝色高亮上叠红/绿字（用户实测"点一下就变色"）；改用 `QStyledItemDelegate` 并让选中态走样式表。⑩ **`pg.PlotWidget.plot` 是 `__getattr__` 转发到 PlotItem 的**，不在 MRO 里 ⇒ 子类自定义 `plot()` 后 `super().plot(...)` 直接 `AttributeError`；要么改名（`set_series`），要么显式 `getPlotItem().plot(...)`。
+- **11.5-76** 【v1.38 · §7-E2】① **`requests` 的异常继承链会让"先 isinstance 后看文本"的分类顺序翻车**：
+   `ProxyError` → `requests.ConnectionError` → `RequestException` → **`IOError`（= 内建 `OSError`）**
+   ⇒ 若先判 `isinstance(e, OSError)` 就归成"网络"，**"本机代理问题"永远说不出口**；
+   必须**先判文本指纹（`looks_like_proxy_error`）、再退回 isinstance**，且要有
+   "把 `ProxyError` 造在 `OSError` 子类上"的断言钉住（否则改回去也没人发现）。
+   ② **代理全灭不能用通用熔断阈值**：失败率 100% 时 12 连败 = 白等十几次超时，
+   用户该做的是"立刻查代理" ⇒ 单独 `proxy_circuit_breaker=3` + `aborted_by` 回传原因。
+   ③ **诊断信息不许写进用户文案**：`127.0.0.1:7897` 是**某一台机器**的记录（§9.3），
+   写进弹窗就是对新用户撒谎 —— 文案只说"检查代理软件是否在运行 / 切节点"，并加断言钉住。
+   ④ **中断原因文案要做成公共件**（`abort_reason_text`）：`SyncWorker.finished` 有三个消费方，
+   各写一遍"（已中断）"必然有一处漏 —— 漏的那处用户就看不到"为什么提前停"（§11.5-11）。
 
 
 
 ### 11.6 当前"下一步做什么"的推荐顺序（历史刷新**倒序**排列：主清单之下**第一块就是最新**）
+
+> **v6.52（§7-E2 落地 · `1.38` · 2026-09-23）**
+> 用户批准 §7-E 后按序开工（E1 提交 `1.37` → **E2 完成**）。**代理失败"说人话" + 熔断提前**：
+> ① 修一个真陷阱 —— `requests.ProxyError` → … → **`IOError`(=`OSError`)**，所以"先 isinstance 再判文本"
+> 会把代理失败**吞成 network**（§9.3"说不出代理"的真因）；新增 `looks_like_proxy_error` +
+> `_classify_error` 先判指纹，新增 `"proxy"` 档；② 三出口文案各一档（**不写死 `127.0.0.1:7897`**、
+> 明说"不是源挂了/不是限流，稍后重试没用"）；③ `ThrottlePolicy.proxy_circuit_breaker = 3`（通用仍 12）
+> + `SyncWorker` 回传 `aborted_by`；④ 中断原因做成公共件 `abort_reason_text`（三消费方共用）；
+> ⑤ P4 还清旧挂账：`bulk_download._cons_token` → 公共件 `JobGuard`（"只接受最新回包"全仓只剩一处实现）。
+> 验收：`smoke_chart` **796** / `smoke_pages_overlay` **557** 全绿 + compileall。坑=§11.5-76。
+> ⚠ **一处如实登记**：计划里的"真机复现验证（把代理指到死端口）"需联网/改环境，**未能执行**
+> （分类判定已由单测钉死 —— 含"把 `ProxyError` 造在 `OSError` 子类上"这条最关键的陷阱）；
+> 若要补真实复现，请按 §9.3 的做法做一次（探针跑完即删）。
+> **下一步** = **E3 日线落盘列白名单（1.39）**：先跑 STEP 1 探针量列清单，再上 `DAILY_KEEP_COLUMNS`。
 
 > **v6.51（§7-E 施工队列落档 · 2026-09-23 · 用户拍板"直接写进去，改动前先提交 git"）**
 > 主文件**只落方案、不动代码**：§7-E 定稿四项队列，并给出**已核实的代码落点**（不是设想）。
@@ -1039,16 +1079,16 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ③ 仓库根 `version.json`。⚠ 顺便确认 `version.json` 的 `url` 仍指向
       **项目 Releases 页**（正式发版时才需要换成具体版本的下载直链）。
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
-- [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**782 项**，纯组件、离屏）
-- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**554 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
+- [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**796 项**，纯组件、离屏）
+- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**557 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
       并在其收尾的防污染自检名单里**加上任何新写的 `~/.jian_data/*.json`**（现在有 annotations /
       formula_library / watchlist / backtest_strategies / **preferences（1.23 起）** / **backtest_results（1.37 起）** 六个）
 - [ ] **改了复盘页（`ui/views/review.py`）/ `ui/widgets/review_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**554 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
+      `py tests/smoke_pages_overlay.py`（**557 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
       公共面被改名、**把薄壳写成空函数**、宏观/微观**分栏退化成写死的 5:4 平铺**、
       分栏高度不落 `review_ui.v_sizes`，都会立刻红）
 - [ ] **改了全市场筛选页（`ui/views/scan_view.py`）/ `ui/widgets/scan_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**554 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
+      `py tests/smoke_pages_overlay.py`（**557 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
       ⚠ 六条最容易顺手改坏的：① **常驻行必须 ≤3**（粗筛阈值收在抽屉里，别往结果区上方加行）；
       ② **阈值"内核 ⇄ 界面"换算只许在 `ScanFilterPane` 一处**（界面亿元/% ⇄ 内核元/小数，
       换手率/市值**关闭时必须是 None**，变成 0 = 误杀一片）；
@@ -1059,7 +1099,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ⑥ **缺数据闸门不许删**（`_confirm_scan_with_gaps`：体检有缺口/未完成 ⇒ 二次确认才能扫，
         选「否」不得启动任何线程；本地齐了不打扰）
 - [ ] **改了广度统计页（`ui/views/breadth_view.py`）/ `ui/widgets/breadth_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**554 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
+      `py tests/smoke_pages_overlay.py`（**557 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
       ⚠ 七条最容易顺手改坏的：① **常驻行必须 ≤3**（⚡/⟳ 收在摘要条，别往结果区上方加行）；
       ② **双窗格必须 x 联动**（`ChartHost` 编排，禁止页面自己 `addPlot` 拼副图，§10-12）；
       ③ **广度占比的分母 = 有效样本**（命中+未命中）—— 换成"全市场只数" = 系统性压低且看不出来；
@@ -1107,7 +1147,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] **改了 `QComboBox` / `QDateEdit` / `QDateTimeEdit` 的样式吗？**
       → 只能用 `custom_widgets` 的常量（`::drop-down` 与 `::down-arrow` 必须成对，否则箭头消失）；
       改完跑 `py tests/smoke_chart.py` 看**箭头像素断言**（§11.5-17）
-- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**554 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；三条离屏打桩见 §11.5-20，**别删**）
+- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**557 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；三条离屏打桩见 §11.5-20，**别删**）
 - [ ] **新加了"往用户数据目录写文件"的功能吗？** → ① 用 `tmp + os.replace` 原子写；② 给 `tests/smoke_pages_overlay.py` 的收尾自检加一行文件名（§11.7 上一条）；③ 单条坏数据必须**跳过自己**而不是拖垮整库；
       ④ ⚠ 若它会**自动落盘**（"记住上次"类偏好，如 `backtest_ui` / `desk_ui`）→ **必须在冒烟脚本里
       把偏好单例的 `path` 重定向到临时目录**（只给 `Preferences.save` 打桩**实测不够**，仍被写脏过一次），
@@ -1127,7 +1167,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       临时探针与输出**用完即删**；删文件同批 `git rm`
 - [ ] **动了数据源/落盘护栏吗？（`data/akshare_feed.py` 的 `drop_unusable_price_rows` /
       `em_volume_to_shares`、`data/sync_service.py` 的取数分区）** → 跑 `py tests/smoke_chart.py`
-      （**782 项**：非正价行必须被拦下、兜底源成交量必须 ×100 成「股」、量纲接缝判据不许误报
+      （**796 项**：非正价行必须被拦下、兜底源成交量必须 ×100 成「股」、量纲接缝判据不许误报
       单日放量/不许漏报持续换单位）；⚠ **降级到兜底源时必须在出口统一量纲**（§9-V：单位不一致
       会让同一分区里同时存在"手/股"两种单位，量能副图出现 100× 台阶）
 - [ ] **动了 K 线图元（`CandlestickItem`）或其它"图形绘制"吗？** → ⚠ 记住：**"数据对不对"与

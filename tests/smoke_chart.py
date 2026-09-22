@@ -3872,6 +3872,113 @@ try:
 except Exception as _e:  # noqa: BLE001
     check(f"§7-A4 存档存储层断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
+# ==========================================
+print("\n== §7-E2 · 代理失败分类 + 三出口文案 + 熔断提前（v1.38）==")
+# ==========================================
+try:
+    import data.sync_service as _ss2
+    import ui.workers as _uw2
+    from data.sync_service import (ThrottlePolicy as _TP2, _classify_error,
+                                   abort_reason_text, friendly_constituent_message,
+                                   friendly_fetch_message, looks_like_proxy_error,
+                                   short_fetch_reason)
+
+    # ---- ① 分类判据：proxy 必须**先于** network 判定 ----
+    #   真实链路：requests.exceptions.ProxyError → ... → IOError(**就是内建 OSError**)。
+    #   所以"先 isinstance(error, OSError) 再看文本"会把代理失败归成 network
+    #   —— 这正是 §9.3 里"归类没错、但用户看不出该去查代理"的成因。本断言钉住修法。
+    class _FakeProxyError(OSError):
+        pass
+
+    _pe = _FakeProxyError("HTTPSConnectionPool(host='hq.sinajs.cn', port=443): Max retries exceeded "
+                          "with url: / (Caused by ProxyError('Unable to connect to proxy', "
+                          "RemoteDisconnected('Remote end closed connection without response')))")
+    check("★ 代理失败归 `proxy`（**即使它是 OSError 子类** —— 判定顺序错了就会被吞成 network）",
+          _classify_error(_pe) == "proxy" and isinstance(_pe, OSError))
+    check("同判据接受纯文本（文案层复用同一入口）",
+          looks_like_proxy_error("ProxyError: Unable to connect to proxy")
+          and not looks_like_proxy_error("Read timed out"))
+    check("普通超时 / 断连仍是 `network`（不误伤原有语义）",
+          _classify_error(TimeoutError("timed out")) == "network"
+          and _classify_error(ConnectionResetError("connection reset by peer")) == "network")
+    check("其它异常仍是 `error`", _classify_error(ValueError("bad value")) == "error")
+
+    # ---- ② 三个文案出口都认 proxy；三档原因文案互不相同；不写死端口、不带 markdown ----
+    _rs = {"reason": "proxy", "message": "ProxyError('Unable to connect to proxy', ...)"}
+    _short = short_fetch_reason(_rs)
+    _single = friendly_fetch_message("600519", _rs)
+    _cons = friendly_constituent_message("000300", _rs)
+    check("★ 三出口都有 proxy 分支（不再笼统说「稍后重试」）",
+          "代理" in _short and "代理" in _single and "代理" in _cons)
+    check("★ 文案**不写死本机端口**（127.0.0.1:7897 只属于 §9.3 的诊断记录，不进用户文案）",
+          all(("127.0.0.1" not in t and "7897" not in t) for t in (_short, _single, _cons)))
+    check("★ 三档原因文案互不相同（分类安抚，§10-10）",
+          len({_short, short_fetch_reason({"reason": "network"}),
+               short_fetch_reason({"reason": "no_data"})}) == 3
+          and friendly_fetch_message("600519", {"reason": "network"}) != _single
+          and friendly_fetch_message("600519", {"reason": "no_data"}) != _single)
+    check("用户文案里不出现 markdown 星号（Qt 弹窗是纯文本，星号会原样显示出来）",
+          all("**" not in t for t in (_short, _single, _cons)))
+
+    # ---- ③ 中断原因文案（公共件：三处消费方共用，别各写一遍）----
+    check("★ abort_reason_text：proxy 说「查代理」/ cancel 说「被中断」/ 其余说「被限流」/ 未中断为空",
+          "代理" in abort_reason_text({"aborted": True, "aborted_by": "proxy"})
+          and "中断" in abort_reason_text({"aborted": True, "aborted_by": "cancel"})
+          and "限流" in abort_reason_text({"aborted": True, "aborted_by": "circuit"})
+          and abort_reason_text({"aborted": False}) == "")
+
+    # ---- ④ 阈值：代理 3 必须远小于通用 12 ----
+    _tp2 = _TP2()
+    check("★ 代理熔断阈值 3 < 通用熔断阈值 12（代理全灭时不该白等十几次超时）",
+          _tp2.proxy_circuit_breaker == 3 and _tp2.circuit_breaker == 12
+          and _tp2.proxy_circuit_breaker < _tp2.circuit_breaker)
+
+    # ---- ⑤ 熔断提前：真跑 SyncWorker（直接调 run()、不起线程 ⇒ 确定性，无等待）----
+    class _StubSvc2:
+        def __init__(self, reason):
+            self.reason = reason
+            self.calls = []
+
+        def refresh_one(self, symbol, **kw):
+            self.calls.append(symbol)
+            return {"ok": False, "symbol": symbol, "reason": self.reason,
+                    "message": self.reason, "rows": 0, "skipped": False}
+
+    def _run_sync2(reason, n=15):
+        stub = _StubSvc2(reason)
+        _orig = _uw2.MarketSyncService
+        _uw2.MarketSyncService = lambda *a, **k: stub
+        try:
+            w = _uw2.SyncWorker([f"S{i:03d}" for i in range(n)],
+                                policy=_TP2(interval=0, jitter=0))
+            out = []
+            w.finished.connect(lambda s: out.append(s))
+            w.run()
+            return (out[0] if out else {}), stub
+        finally:
+            _uw2.MarketSyncService = _orig
+
+    _pro, _pro_stub = _run_sync2("proxy")
+    check("★ 代理连败 **3 次**即熔断（不是默认的 12 次）—— 且原因带回 UI",
+          _pro.get("aborted") and _pro.get("aborted_by") == "proxy"
+          and _pro.get("fail") == 3 and len(_pro_stub.calls) == 3)
+    _net, _net_stub = _run_sync2("network")
+    check("非代理失败仍按通用阈值 12 熔断（`aborted_by=circuit`，原语义不被误伤）",
+          _net.get("aborted") and _net.get("aborted_by") == "circuit"
+          and _net.get("fail") == 12 and len(_net_stub.calls) == 12)
+    _few, _ = _run_sync2("network", n=2)
+    check("没到阈值 ⇒ 不中断（`aborted=False`、`aborted_by` 为空）",
+          not _few.get("aborted") and _few.get("aborted_by") == "" and _few.get("fail") == 2)
+    _cancel = _uw2.SyncWorker(["S000", "S001"])
+    _cancel.cancel()
+    _out_c = []
+    _cancel.finished.connect(lambda s: _out_c.append(s))
+    _cancel.run()
+    check("用户主动中断 ⇒ `aborted_by=cancel`（与熔断区分开，回执文案不同）",
+          _out_c and _out_c[0].get("aborted_by") == "cancel")
+except Exception as _e:  # noqa: BLE001
+    check(f"§7-E2 代理分类/熔断断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

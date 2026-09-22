@@ -56,6 +56,7 @@ __all__ = ["MarketSyncService", "ThrottlePolicy", "ADJUST_QFQ", "ADJUST_NONE",
            "ADJUST_CHOICES", "ADJUST_LABELS", "adjust_label", "zone_for_adjust",
            "ZONE_KLINE", "ZONE_KLINE_RAW", "ZONE_INDEX", "ZONE_MIN", "estimate_seconds",
            "short_fetch_reason", "friendly_fetch_message", "friendly_constituent_message",
+           "looks_like_proxy_error", "abort_reason_text",
            "DEFAULT_MIN_DATE", "MINUTE_PERIODS", "MINUTE_DEPTH_DAYS",
            "minute_key", "split_minute_key",
            "DAILY_SETTLE_HHMM", "is_daily_bar_settled", "DAILY_ZONES"]
@@ -178,7 +179,13 @@ class ThrottlePolicy:
     jitter: float = 0.3          # 间隔随机抖动比例（0.3 = ±30%）
     max_retries: int = 3         # 单只最多重试次数（不含首次）
     backoff_base: float = 1.0    # 指数退避基数：1s → 2s → 4s
-    circuit_breaker: int = 12    # 连续失败达到该数即熔断
+    circuit_breaker: int = 12    # 连续失败达到该数即熔断（**任意原因**）
+    # ★v1.38 / §7-E2：**代理类失败单独用更小的阈值**（见下）。
+    # 【为什么不能共用 12】12 连败是给"偶发网络抖动"留的余量；而本机代理瞬断时
+    #   失败率是 100%（§9.3 实测：一轮里**每一只**都报 ProxyError），
+    #   12 次 = 白等十几次超时（每次都好几秒）。用户该做的动作是"立刻去查代理"，
+    #   不是"等一等" ⇒ 这种失败率必须**提前停手并直说原因**。
+    proxy_circuit_breaker: int = 3
     skip_fresh: bool = True      # 本地已是最新的直接跳过（断点续传）
     # 【时效判据 = 0】只有"末日 == 今天"才算最新。
     # 不能放宽到 1：否则"昨天收盘后已同步"的标的在今天的收盘后窗口会被误跳过，
@@ -303,6 +310,9 @@ class MarketSyncService:
         policy = policy or ThrottlePolicy()
         # reason 供 UI 决定"怎么安抚用户"：
         #   "ok"/"fresh"/"no_new"  = 成功或视为成功；
+        #   "proxy"                = **疑似本机代理问题**（v1.38/§7-E2：Requests 的
+        #                            ProxyError 也是 OSError 子类，必须**先于** network 判定）
+        #                            → 提示去查代理软件，而不是"稍后重试"；
         #   "network"              = 网络类异常（断网/超时/被限流）→ 提示稍后重试；
         #   "no_data"              = 两源都返回空 → 最可能是代码有误 / 已退市 / 长期停牌；
         #   "error"                = 其它异常。
@@ -474,23 +484,72 @@ _NET_HINTS = (
     "max retries", "name resolution", "11001", "10060", "remote end",
 )
 
+# ★v1.38 / §7-E2：**本机代理问题**的指纹（与 _NET_HINTS **分开**，见下面 _classify_error 的说明）
+_PROXY_HINTS = (
+    "proxyerror",                      # requests.exceptions.ProxyError 的类名
+    "unable to connect to proxy",      # 实测报错原文（§9.3）
+    "cannot connect to proxy",
+    "proxy",                           # 兜底：消息里出现 proxy 这个词基本就是代理问题
+)
+
+
+def _error_text(value) -> str:
+    """异常 / 文本 -> 小写文本（分类判据的唯一取值方式，避免各处各写一遍格式化）"""
+    if isinstance(value, BaseException):
+        return f"{type(value).__name__}: {value}".lower()
+    return str(value or "").lower()
+
+
+def looks_like_proxy_error(value) -> bool:
+    """是不是**本机代理问题**的失败指纹（v1.38 / §7-E2）—— 纯函数，文案层与熔断层共用。
+
+    【为什么要单独一个判据】§9.3 实测：本机系统代理（Clash 类）瞬断时，
+    一轮同步里**每一只**都报 `ProxyError('Unable to connect to proxy')`。
+    用户该做的动作是"**去查代理软件**"，而不是"稍后重试 / 调大间隔" ——
+    与普通断网、被限流**必须分开安抚**（§10-10）。
+
+    :param value: 异常实例，或已经是文本（大小写不敏感）
+    """
+    text = _error_text(value)
+    return any(hint in text for hint in _PROXY_HINTS)
+
 
 def _classify_error(error: Exception) -> str:
-    """异常 -> "network"（网络/超时/被限流）或 "error"（其它）"""
+    """异常 -> "proxy"（疑似本机代理问题）/ "network"（网络/超时/被限流）/ "error"（其它）。
+
+    ⚠⚠ **判定顺序是有讲究的，别随手调换**：
+      `requests.exceptions.ProxyError` 继承自 `requests.exceptions.ConnectionError`
+      → `RequestException` → `IOError`(**就是内建 OSError**)。
+      所以若先走 `isinstance(error, (..., OSError))`，代理失败会被**先归成 network**
+      —— 这正是 §9.3 里"文案归类没错、但用户看不出该去查代理"的真实成因。
+      ⇒ **必须先看文本指纹，再退回 isinstance**。
+    """
+    text = _error_text(error)
+    if looks_like_proxy_error(text):
+        return "proxy"
     if isinstance(error, (ConnectionError, TimeoutError, OSError)):
         return "network"
-    text = f"{type(error).__name__}: {error}".lower()
     return "network" if any(hint in text for hint in _NET_HINTS) else "error"
 
 
 def short_fetch_reason(result: dict) -> str:
     """给批量任务的失败清单用：一句话说清这只要怎么归类"""
     reason = (result or {}).get("reason")
+    if reason == "proxy":
+        return "疑似本机代理问题（请检查代理软件是否在运行）"
     if reason == "network":
         return "网络请求失败（断网 / 超时 / 被限流）"
     if reason == "no_data":
         return "无行情数据（代码有误？或已退市 / 长期停牌）"
     return str((result or {}).get("message", "") or "未知原因")
+
+
+# 【代理文案的唯一出处】三处（单个标的弹窗 / 成分股弹窗 / 批量回执）共用同一套措辞。
+# ⚠ **绝不写死 `127.0.0.1:7897`**：那是诊断记录（§9.3）里**某一台机器**的端口，
+#   写进用户文案就是对新用户撒谎；端口只留在 §9.3 的历史记录里。
+_PROXY_WHAT = ("本机系统代理（Clash / V2Ray 等）在同步过程中断连，或中途切换了节点。"
+               "这类失败的特征是：短时间内每一只都报同一句「无法连接代理」的错误。"
+               "（这不是行情源挂了、也不是被限流，所以「稍后重试」通常没用，先查代理。）")
 
 
 def friendly_fetch_message(symbol: str, result: dict) -> str:
@@ -502,6 +561,11 @@ def friendly_fetch_message(symbol: str, result: dict) -> str:
     """
     symbol = str(symbol or "")
     reason = (result or {}).get("reason")
+    if reason == "proxy":
+        return (f"{symbol} 未能同步：疑似本机代理问题。\n\n"
+                f"最可能是什么：{_PROXY_WHAT}\n\n"
+                f"怎么办：① 检查代理软件是否在运行、规则是否覆盖了行情域名；\n"
+                f"② 切换节点后重试；③ 若不需要代理，可临时关闭系统代理再同步。")
     if reason == "network":
         return (f"{symbol} 未能同步：网络请求失败。\n\n"
                 f"可能原因：① 当前断网；② 请求超时；③ 请求过于频繁被行情源临时限流。\n"
@@ -523,6 +587,11 @@ def friendly_constituent_message(index_code: str, result: dict) -> str:
     """
     index_code = str(index_code or "")
     reason = (result or {}).get("reason")
+    if reason == "proxy":
+        return (f"未能获取 {index_code} 的成分股：疑似本机代理问题。\n\n"
+                f"最可能是什么：{_PROXY_WHAT}\n\n"
+                f"怎么办：① 检查代理软件是否在运行；② 切换节点后重试；\n"
+                f"③ 若不需要代理，可临时关闭系统代理再解析。")
     if reason == "network":
         return (f"未能获取 {index_code} 的成分股：网络请求失败。\n\n"
                 f"可能原因：① 当前断网；② 请求超时；③ 请求过于频繁被临时限流。\n"
@@ -534,3 +603,21 @@ def friendly_constituent_message(index_code: str, result: dict) -> str:
                 f"建议：改用「粘贴代码列表」或「全市场 A 股」。")
     return (f"未能获取 {index_code} 的成分股：{result.get('message', '未知原因')}\n\n"
             f"建议：① 稍后重试；② 改用「粘贴代码列表」或「全市场 A 股」。")
+
+
+def abort_reason_text(stats: dict) -> str:
+    """批量任务**被中断的原因**（一句话，不带括号；没被中断返回空串）。
+
+    【为什么做成公共件】`SyncWorker` 的 `finished` 回包有三个消费方
+    （批量预下载弹窗 / 数据管理页 / M2-M3 的更新与补齐），
+    三处各写一遍"（已中断）"就会漏 —— 代理中断必须**说清为什么提前停**，
+    否则用户只看到一个"已中断"，还是不知道该去查代理（§11.5-11 同类防护做全套）。
+    """
+    stats = stats or {}
+    if not stats.get("aborted"):
+        return ""
+    if stats.get("aborted_by") == "proxy":
+        return "疑似本机代理问题，已提前停手以免白等（请检查代理软件）"
+    if stats.get("aborted_by") == "cancel":
+        return "已被你中断"
+    return "连续失败过多，已停手保护（疑似被限流）"

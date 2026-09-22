@@ -31,7 +31,8 @@ from PyQt6.QtGui import QColor, QFont
 
 from data.market_db import DataLakeManager
 from data.sync_service import (MarketSyncService, ThrottlePolicy,
-                               ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX)
+                               ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX,
+                               abort_reason_text)
 from ui.dialogs.bulk_download import BulkDownloadDialog
 from ui.widgets.custom_widgets import NoWheelDoubleSpinBox
 from ui.workers import ScanWorker, SyncWorker
@@ -530,7 +531,9 @@ class DataManagerView(QWidget):
 
     def _on_sync_finished(self, stats: dict):
         self._set_busy(False, "")
-        tail = "（已中断）" if stats.get("aborted") else ""
+        # 中断原因必须说清（§7-E2）：代理全灭时只显示"已中断"，用户还是不知道该查代理
+        _why = abort_reason_text(stats)
+        tail = f"（{_why}）" if _why else ""
         self.lbl_status.setText(
             f"{tail}完成：成功 {stats.get('ok', 0)} · 跳过 {stats.get('skipped', 0)} · "
             f"失败 {stats.get('fail', 0)} · 新增 {stats.get('added', 0)} 行")
@@ -540,7 +543,7 @@ class DataManagerView(QWidget):
                 self, "部分失败",
                 f"{stats['fail']} 只未能同步。常见原因：\n"
                 f"① 代码输入有误；② 该股已退市/长期停牌，行情源不再提供（属正常现象）；\n"
-                f"③ 网络抖动或触发限流。\n\n"
+                f"③ 网络抖动或触发限流；④ 本机代理软件断连（表现为短时间每一只都失败）。\n\n"
                 f"失败标的：{', '.join(stats.get('symbols_failed', [])[:10])}"
                 f"{' …' if len(stats.get('symbols_failed', [])) > 10 else ''}")
         self._sync_worker = None

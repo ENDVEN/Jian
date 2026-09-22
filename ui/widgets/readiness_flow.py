@@ -29,7 +29,8 @@ from PyQt6.QtWidgets import QMessageBox
 
 from data.readiness import ReadinessReport, format_stale
 from data.scan_store import kline_zone_dir
-from data.sync_service import ZONE_KLINE, friendly_constituent_message
+from data.sync_service import (ZONE_KLINE, abort_reason_text,
+                               friendly_constituent_message)
 from data.trade_calendar import latest_settled_trading_day, trading_days_between
 from ui.workers import CalendarWorker, JobGuard, ReadinessWorker, SyncWorker
 
@@ -333,7 +334,9 @@ class ReadinessFlow:
         aborted = bool(stats.get('aborted'))
         text = f'{self._sync_label}结束：成功 {ok} · 已最新 {skipped} · 失败 {fail}'
         if aborted:
-            text += f' · 已中断（可再点「⬆ 更新到最新」续传）'
+            # 中断原因要说清（§7-E2）：代理全灭 ⇒ "请检查代理软件"；否则只是"被限流/已中断"
+            _why = abort_reason_text(stats)
+            text += f' · 已中断（{_why}；可再点「⬆ 更新到最新」续传）'
         p.lbl_receipt.setText(text)
         failed_symbols = list(stats.get('symbols_failed') or [])
         if failed_symbols:

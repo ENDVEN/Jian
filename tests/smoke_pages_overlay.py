@@ -3414,6 +3414,28 @@ except Exception as _e:  # noqa: BLE001
     check(f"§7-A4 运行历史接线断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
 # ==========================================
+# ★ §7-E2 · 批量预下载的竞态判据改用公共件 JobGuard（P4 顺手项 · v1.38）
+# ==========================================
+print("\n== §7-E2 · 批量预下载 JobGuard 收编（P4）==")
+try:
+    from ui.dialogs.bulk_download import BulkDownloadDialog
+    from ui.workers import JobGuard as _JG2
+
+    _dlg2 = BulkDownloadDialog(win, parent=win)
+    check("★ P4：批量预下载的竞态判据已改用公共件 JobGuard（手写 `_cons_token` 退役）",
+          isinstance(_dlg2._cons_guard, _JG2) and not hasattr(_dlg2, "_cons_token"))
+    _stale = _dlg2._cons_guard.next()
+    _fresh = _dlg2._cons_guard.next()
+    _dlg2._symbols = ["SENTINEL"]
+    _dlg2._on_constituents({"ok": True, "symbols": ["600519"]}, _stale)   # 迟到 ⇒ 必须丢弃
+    check("迟到回包被丢弃（不覆盖新结果）", _dlg2._symbols == ["SENTINEL"])
+    _dlg2._on_constituents({"ok": True, "symbols": ["600519", "000001"]}, _fresh)
+    check("最新回包正常生效（2 只）", _dlg2._symbols == ["600519", "000001"])
+    _dlg2.close()
+except Exception as _e:  # noqa: BLE001
+    check(f"§7-E2 批量预下载 JobGuard 断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402

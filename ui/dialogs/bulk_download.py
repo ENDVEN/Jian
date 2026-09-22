@@ -11,6 +11,9 @@
   1. 可调间隔 + 随机抖动：打散"机器人固定频率"特征；
   2. 失败指数退避重试：偶发抖动自己扛过去；
   3. 连续失败熔断：达到阈值立即停手，判定"疑似被限流"，保护用户 IP。
+     ★v1.38/§7-E2：**代理类失败（ProxyError）另有更小的阈值**（3 连败即停）——
+     代理瞬断时失败率是 100%，按 12 连败等下去只是白等十几次超时；
+     且这类失败**必须直说"去查代理"**（中断原因文案 = `sync_service.abort_reason_text`）。
   另外「跳过已最新」实现断点续传：中断后重跑不会重复劳动。
 
 本弹窗只做参数收集与进度展示，真正干活的是 ui/workers.SyncWorker
@@ -24,11 +27,12 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 
 from data.akshare_feed import INDEX_PRESETS
 from data.sync_service import (ThrottlePolicy, ZONE_KLINE, ZONE_INDEX,
-                               estimate_seconds, friendly_constituent_message)
+                               abort_reason_text, estimate_seconds,
+                               friendly_constituent_message)
 from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
                                        NoWheelDoubleSpinBox, NoWheelSpinBox)
 # 【架构纪律 v5.12 · §9-O2】线程一律用 ui/workers.py 的，弹窗不自造 QThread
-from ui.workers import ConstituentsWorker, SyncWorker
+from ui.workers import ConstituentsWorker, JobGuard, SyncWorker
 
 # 成分股可选指数（代码 -> 展示名）
 CONSTITUENT_INDEXES = {
@@ -56,7 +60,10 @@ class BulkDownloadDialog(QDialog):
         self._zone = ZONE_KLINE
         self._worker: SyncWorker | None = None
         self._cons_worker: ConstituentsWorker | None = None
-        self._cons_token = 0   # 成分股请求序号：快速连点时只接受最后一次的结果
+        # ★v1.38/§7-E2（P4 顺手项）：成分股的"只认最后一次"改用**公共件** JobGuard
+        #   （原先这里是手写的 `_cons_token` 计数器，与 §9-O5 的公共判据重复 ——
+        #    `ui/workers.py` 的 JobGuard docstring 里早就挂账"择机改用它"，本次还清）。
+        self._cons_guard = JobGuard()
 
         self.setWindowTitle("⬇ 批量预下载")
         self.resize(640, 620)
@@ -333,17 +340,16 @@ class BulkDownloadDialog(QDialog):
             return
         self.btn_resolve.setEnabled(False)
         self.lbl_cons.setText("解析中…")
-        self._cons_token += 1
+        job = self._cons_guard.next()          # 取号 ⇒ 此前所有在途请求的回包作废
         worker = ConstituentsWorker(code, self)
-        token = self._cons_token
         worker.finished_signal.connect(
-            lambda result, t=token: self._on_constituents(result, t))
+            lambda result, t=job: self._on_constituents(result, t))
         self._cons_worker = worker
         worker.start()
 
     def _on_constituents(self, result, token: int):
-        # 【竞态防护】只接受最新一次请求的结果，迟到的旧请求直接丢弃
-        if token != self._cons_token:
+        # 【竞态防护】只接受最新一次请求的结果，迟到的旧请求直接丢弃（§9-O5 · 公共件 JobGuard）
+        if not self._cons_guard.accept(token):
             return
         self.btn_resolve.setEnabled(True)
         # v6.9：结果由 MarketSyncService 统一回包（dict），失败原因分类文案也由它给
@@ -442,16 +448,23 @@ class BulkDownloadDialog(QDialog):
         self.btn_start.setEnabled(True)
         self.btn_cancel.setEnabled(False)
         self.btn_copy.setEnabled(bool(stats.get("symbols_failed")))
-        tail = "（已中断）" if stats.get("aborted") else ""
+        # 中断原因必须说清（§7-E2）：代理全灭时只显示"已中断"，用户还是不知道该查代理
+        _why = abort_reason_text(stats)
+        tail = f"（{_why}）" if _why else ""
         self.lbl_status.setText(
             f"{tail}完成：成功 {stats.get('ok', 0)} · 跳过 {stats.get('skipped', 0)} · "
             f"失败 {stats.get('fail', 0)} · 新增 {stats.get('added', 0)} 行")
         if stats.get("fail"):
+            # 代理类失败要**前置**说出来（§7-E2）：它是唯一"重试无用、必须先去查代理"的原因
+            proxy_line = ("④ 本机代理软件断连 —— 表现为短时间每一只都失败。"
+                          "这种情况请先检查代理软件，重试无用。\n"
+                          if stats.get("aborted_by") == "proxy" else "")
             QMessageBox.warning(
                 self, "部分失败",
                 f"{stats['fail']} 只未下载成功。常见原因：\n"
                 f"① 代码输入有误；② 该股已退市 / 长期停牌，行情源不再提供（属正常现象）；\n"
-                f"③ 网络抖动或被限流。\n\n"
+                f"③ 网络抖动或被限流。\n"
+                f"{proxy_line}\n"
                 f"失败清单可用左下角「复制失败清单」取出，稍后重试即可（已完成的不重复）。")
         self._worker = None
 
