@@ -58,9 +58,10 @@ class ScanView(QWidget):
         self._setup_ui()
         self._result = ScanResult(self)
         self._flow = ScanFlow(self)
-        self._readiness = ReadinessFlow(self)        # 就绪度体检 + 补齐缺失（D6，两页共用）
+        self._readiness = ReadinessFlow(self)        # 就绪度体检 + 更新到最新/滞后（D6/§7-B10，两页共用）
         self._load_scan_ui()
         self._result.set_empty('还没有扫描结果 —— 选好统计范围与条件，点「▶ 开始扫描」。')
+        self._readiness.start_calendar_fetch()       # 后台拉一次交易日历，喂滞后提示（§7-B10 STEP 3）
 
     # ==========================================
     # 装配（同名薄壳：实现都在 scan_layout）

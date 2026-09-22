@@ -27,10 +27,11 @@ import pandas as pd
 from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import QMessageBox
 
-from data.readiness import ReadinessReport
+from data.readiness import ReadinessReport, format_stale
 from data.scan_store import kline_zone_dir
 from data.sync_service import ZONE_KLINE, friendly_constituent_message
-from ui.workers import JobGuard, ReadinessWorker, SyncWorker
+from data.trade_calendar import latest_settled_trading_day, trading_days_between
+from ui.workers import CalendarWorker, JobGuard, ReadinessWorker, SyncWorker
 
 __all__ = ['ReadinessFlow', 'constituent_failure_text', 'constituent_snapshot_text']
 
@@ -78,8 +79,13 @@ class ReadinessFlow:
         self._probe = None
         self._sync = None
         self._syncing = False
+        self._sync_label = '补齐'            # 当前后台同步的动词（补齐 / 更新），供回执文案
         self._last_symbols: list = []
         self._last_min_bars = None
+        # 交易日历（§7-B10 STEP 3）：滞后判据与 M1 同源，拿不到则不提示滞后
+        self._calendar = None                # list[date] | None
+        self.trading_target = None           # 最近已定稿交易日 | None
+        self._cal_thread = None
 
     # ==========================================
     # ① 体检（后台 footer 探测；范围解析完成后调用）
@@ -140,25 +146,61 @@ class ReadinessFlow:
         self._calibrate_asof_date(report)               # 基准日默认值 = 本地最新交易日（v6.42）
         if self._busy_elsewhere():
             return          # 扫描/补齐进行中 ⇒ 回执区属于它们，体检不许打扰
-        line = report.summary_line()
+        self._render_readiness()
+
+    def _render_readiness(self) -> None:
+        """把就绪度报告 + 滞后提示 + 基准日覆盖诚实提示渲染到回执/空态。
+
+        §7-B10 修正：滞后用**代表性最新日**（中位日）而非全局 max，不被单只刚同步的标的掩盖；
+        另加“基准日当天覆盖 N/total”——避免“就绪 299/300”却“扫描 1/300”这种两套口径的困惑。
+        体检回包与日历回包都调它；已有扫描结果时不碰扫描回执。
+        """
+        p = self.page
+        r = self.report
+        if r is None:
+            return
+        # 滞后：用代表性最新日（多数文件真正覆盖到的），不被个别最新文件掩盖
+        rep = r.representative_latest
+        rep_date = pd.Timestamp(rep).date() if rep is not None else None
+        stale_days = trading_days_between(rep_date, self.trading_target, self._calendar)
+        stale = format_stale(rep_date, self.trading_target, stale_days)
+        line = r.summary_line()
+        # 基准日覆盖诚实提示（M2 有 date_asof；M3 无则跳过）：基准日当天真正有行的只数
+        cov_hint = ''
+        need_action = r.gap_count > 0 or stale_days > 0
+        edit = getattr(p, 'date_asof', None)
+        if edit is not None and r.lasts:
+            asof = edit.date()
+            cov = r.coverage_at(asof.toPyDate())
+            if cov < r.total:
+                cov_hint = (f'⚠ 基准日 {asof.toString("yyyy-MM-dd")} 当天仅 {cov}/{r.total} 只有数据'
+                            f' —— 多数标的未更新到该日，先「⬆ 更新到最新交易日」或把基准日往前挪')
+                need_action = True
         if p._outcome is None:
-            p.lbl_receipt.setText(line)
-            p.lbl_receipt.setToolTip(report.detail_text())
-            if report.gap_count or report.unreadable:   # 空态给下一步动作
-                action = (f'⬇ 补齐缺失（{report.gap_count} 只）' if report.gap_count else '')
-                p._result.set_empty(line + '\n' + report.gap_preview()
-                                    + ('' if report.gap_count
-                                       else '\n文件损坏的标的请到「🗄 数据管理」重新全量下载。'),
-                                    action, self.fill_missing if action else None)
+            # 顶部单行只留“短状态 + 待更新标记”；滞后/覆盖长说明走 tooltip 与结果区（可换行），
+            # 不把单行标签撑长 → 窄屏不会被顶宽窗口（§11.5 窄屏不撑窗原则）。
+            p.lbl_receipt.setText(line + (' · ⚠ 待更新' if need_action else ''))
+            tip = '\n'.join(x for x in (stale, cov_hint, r.detail_text()) if x)
+            p.lbl_receipt.setToolTip(tip)
+            if need_action:
+                body = line + '\n' + r.gap_preview()
+                if stale:
+                    body += '\n' + stale
+                if cov_hint:
+                    body += '\n' + cov_hint
+                if r.unreadable:
+                    body += '\n文件损坏的标的请到「🗄 数据管理」重新全量下载。'
+                p._result.set_empty(body, '⬆ 更新到最新交易日', self.update_latest)
+            elif r.unreadable:
+                p._result.set_empty(
+                    line + '\n文件损坏的标的请到「🗄 数据管理」重新全量下载。')
             else:
                 p._result.set_empty(line + ' —— 点「▶ 开始扫描」。')
         elif '正在体检' in p.lbl_empty.text():
             # ★ v6.42：已有扫描结果 ⇒ 回执不动，但"正在体检"的占位必须换掉 ——
-            #   旧版在这里直接 return，占位文案永远停在那里，用户以为体检了 3 分钟没完成
-            #   （实际早就完了，只是没人把真话挂上去）。表格在场时这段不可见，但下次露出
-            #   （切范围/清空结果）时它必须说实话。
+            #   旧版在这里直接 return，占位文案永远停在那里，用户以为体检了 3 分钟没完成。
             p.lbl_empty.setText(f'就绪度体检：{line}')
-            p.lbl_empty.setToolTip(report.detail_text())
+            p.lbl_empty.setToolTip(r.detail_text())
 
     def _calibrate_asof_date(self, report) -> None:
         """把 M2 的基准日控件校准到**本地最新交易日**（先选后扫的"默认值"环节）。
@@ -181,6 +223,10 @@ class ReadinessFlow:
             edit.setDate(qd)
         finally:
             edit.blockSignals(False)
+        # 基准日诚实化（§7-B10 STEP 4）：上限=本地最新，要更少先“更新到最新”；复检后自动抬升并回显
+        hint = getattr(p, 'lbl_asof_hint', None)
+        if hint is not None:
+            hint.setText(f'上限=本地最新 {qd.toString("yyyy-MM-dd")}；要选更近先「⬆ 更新到最新」')
 
     def _on_probe_failed(self, job_id: int, reason: str, scope: list) -> None:
         if not self._guard.accept(job_id) or self._current_scope_changed(scope):
@@ -189,9 +235,40 @@ class ReadinessFlow:
         self.page.lbl_receipt.setToolTip(str(reason))
 
     # ==========================================
-    # ② 补齐缺失（只补 missing；联网走 SyncWorker ⇒ MarketSyncService，§9-H）
+    # 交易日历（§7-B10 STEP 3）：与 M1 同源，喂滞后判据
     # ==========================================
+    def start_calendar_fetch(self) -> None:
+        """页面初始化时后台拉一次交易日历（缓存命中即零网络）。结果喂滞后提示；
+        拿不到（离线）→ trading_target 保持 None → 不提示滞后（诚实降级，不猜）。"""
+        self._cal_thread = CalendarWorker(parent=self.page)
+        self._cal_thread.finished_signal.connect(self._on_calendar)
+        self._cal_thread.start()
+
+    def _on_calendar(self, calendar) -> None:
+        self._calendar = calendar or None
+        self.trading_target = latest_settled_trading_day(calendar=calendar)
+        if self.report is not None and not self._busy_elsewhere():
+            self._render_readiness()          # 日历后到 ⇒ 把滞后提示补上
+
+    # ==========================================
+    # ② 更新到最新 / 补齐缺失（联网走 SyncWorker ⇒ MarketSyncService，§9-H）
+    # ==========================================
+    def update_latest(self) -> None:
+        """一键「⬆ 更新到最新交易日」（§7-B10 STEP 2 · 用户拍板与"补齐缺失"合并）：
+        对**整批当前范围**跑增量 —— 没下过的补、下过但滞后的拉到最近交易日；
+        已新鲜的被 _is_fresh 自然 skipped。中断/断点续传/二次确认同补齐。"""
+        p = self.page
+        if self._syncing:
+            self.stop_fill()
+            return
+        symbols = [str(s) for s in (self._last_symbols or []) if str(s).strip()]
+        if not symbols:
+            p.lbl_receipt.setText('范围还是空的 —— 先选好统计范围。')
+            return
+        self._launch_sync(symbols, '更新', note='· 已最新的自动跳过')
+
     def fill_missing(self) -> None:
+        """只补 missing（保留方法；空态主入口已合并到 update_latest）。"""
         p = self.page
         if self._syncing:                     # 再点一次 = 中断（断点续传，已下载的保留）
             self.stop_fill()
@@ -200,28 +277,34 @@ class ReadinessFlow:
         if report is None or not report.gap_count:
             p.lbl_receipt.setText('没有可补的缺口 —— 本地数据是齐的。')
             return
-        gap = report.gap_symbols()
-        if len(gap) > CONFIRM_FILL_COUNT:
+        self._launch_sync(report.gap_symbols(), '补齐')
+
+    def _launch_sync(self, symbols, label: str, note: str = '') -> None:
+        """共享的后台增量启动（update_latest / fill_missing 都走它，勿各写一份）。"""
+        p = self.page
+        self._sync_label = label
+        n = len(symbols)
+        if n > CONFIRM_FILL_COUNT:
             answer = QMessageBox.question(
-                p, '补齐缺失',
-                f'本地缺 {len(gap)} 只的日线数据，逐只温柔抓取预计需要较长时间'
-                f'（默认间隔下约 {max(1, len(gap) // 60)} 分钟），随时可中断，'
-                f'已下载的部分会保留。\n\n现在开始补齐吗？',
+                p, f'{label}数据',
+                f'本次要逐只温柔抓取 {n} 只的日线数据，预计需要较长时间'
+                f'（默认间隔下约 {max(1, n // 60)} 分钟），随时可中断，'
+                f'已下载的部分会保留。\n\n现在开始{label}吗？',
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
-                p.lbl_receipt.setText('已取消补齐 —— 本地数据未动。')
+                p.lbl_receipt.setText(f'已取消{label} —— 本地数据未动。')
                 return
         self._syncing = True
-        job = self._sync_guard.next()
-        self._sync = SyncWorker(gap, zone=ZONE_KLINE)
+        self._sync_guard.next()
+        self._sync = SyncWorker(symbols, zone=ZONE_KLINE)
         self._sync.progress.connect(self._on_fill_progress)
         self._sync.failed.connect(self._on_fill_failed)
         self._sync.finished.connect(self._on_fill_finished)
         self._sync.start()
-        p._result.set_empty(f'补齐中…（{len(gap)} 只 · 温柔抓取 · 已下载的自动跳过）',
-                            '⏹ 停止补齐', self.stop_fill)
-        p.lbl_receipt.setText(f'补齐 0/{len(gap)} · 准备中…')
+        p._result.set_empty(f'{label}中…（{n} 只 · 温柔抓取 {note}）',
+                            f'⏹ 停止{label}', self.stop_fill)
+        p.lbl_receipt.setText(f'{label} 0/{n} · 准备中…')
 
     def stop_fill(self) -> None:
         if self._sync is not None:
@@ -233,7 +316,7 @@ class ReadinessFlow:
         p.bar_progress.show()
         p.bar_progress.setRange(0, max(1, int(total)))
         p.bar_progress.setValue(int(done))
-        p.lbl_receipt.setText(f'补齐 {done}/{total} · {symbol}')
+        p.lbl_receipt.setText(f'{self._sync_label} {done}/{total} · {symbol}')
 
     def _on_fill_failed(self, symbol: str, reason: str) -> None:
         """单只失败**出声不中断**（SyncWorker 自己有熔断）；明细进 tooltip（问题清单）。"""
@@ -248,9 +331,9 @@ class ReadinessFlow:
         skipped = int(stats.get('skipped', 0))
         fail = int(stats.get('fail', 0))
         aborted = bool(stats.get('aborted'))
-        text = f'补齐结束：成功 {ok} · 已最新 {skipped} · 失败 {fail}'
+        text = f'{self._sync_label}结束：成功 {ok} · 已最新 {skipped} · 失败 {fail}'
         if aborted:
-            text += ' · 已中断（可再点「补齐缺失」续传）'
+            text += f' · 已中断（可再点「⬆ 更新到最新」续传）'
         p.lbl_receipt.setText(text)
         failed_symbols = list(stats.get('symbols_failed') or [])
         if failed_symbols:

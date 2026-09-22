@@ -36,7 +36,7 @@ import pandas as pd
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QLineEdit, QFrame,
+                             QLabel, QLineEdit, QFrame, QSizePolicy,
                              QMessageBox, QDialog, QInputDialog, QMenu)
 
 from core.formula.program import (parse_program, execute_programs_with_draws,
@@ -136,6 +136,9 @@ class SingleStockBacktestView(QWidget):
         self._sync_thread = None
         self._index_thread = None      # 阶段C：指数同步线程
         self._run_thread = None
+        # v6.45 / §7-B10：交易日历（后台一次性拉，供默认回测终点与滞后判定共用）
+        self._calendar = None          # list[date] | None（None = 未就绪/离线）
+        self._calendar_thread = None
         # v6.4 / §7-B3 P3：本次运行的公式叠层（引擎 IR，与 _last_df 行序一致）。
         # 注：`_kline_state` / `_kline_win_draws` / `_overlay_items` 已随结果区搬到
         #     `ui/widgets/backtest_result.py`（本页以 property 读口暴露，口径不变）。
@@ -162,6 +165,8 @@ class SingleStockBacktestView(QWidget):
         self._sync_fill_controls()
         self._restore_ui_state()   # 打开页面即恢复上次展开的卡片
         self._refresh_summary()
+        # 后台拉一次交易日历，就绪后把回测默认终点精修到「最近已定稿交易日」（§7-B10）
+        self.flow.start_calendar_fetch()
         # Esc 关闭配置抽屉（与样板 A 一致；抽屉没开时是空操作）
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self,
                   activated=lambda: self._open_pane(None))
@@ -265,7 +270,17 @@ class SingleStockBacktestView(QWidget):
         self.date_end = NoWheelDateEdit(QDate.currentDate())
         self.date_end.setCalendarPopup(True)
         self.date_end.setDisplayFormat("yyyy-MM-dd")
+        # 防选未来日（默认值随后由 CalendarWorker 精修为最近已定稿交易日）
+        self.date_end.setMaximumDate(QDate.currentDate())
         run_lay.addWidget(self.date_end)
+        # 一行回执：默认终点来源 / 离线回退 / 滞后补全后的实际终点（§7-B10）
+        self.lbl_range_note = QLabel("")
+        self.lbl_range_note.setStyleSheet(
+            "color:#8A94A6; font-size:12px; border:none; background:transparent;")
+        # 窄屏不撑窗：水平 Ignored ⇒ 回执长文本不抬高窗口最小宽度（详情走 tooltip）
+        self.lbl_range_note.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                          QSizePolicy.Policy.Preferred)
+        run_lay.addWidget(self.lbl_range_note)
         run_lay.addStretch()
         run_lay.addWidget(self._hint_icon(
             "回测数据最早可回溯到 2016-01-01（与引擎 DEFAULT_START_DATE 同源）。"

@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     'ReadinessReport', 'ReadinessCancelled', 'probe_readiness', 'DEFAULT_CHUNK',
+    'format_stale',
 ]
 
 # 与 core.cross_section.DEFAULT_CHUNK 同款口径：全市场 ≈27 次回调，进度条自然又不 harass
@@ -55,6 +56,7 @@ class ReadinessReport:
     missing: list = field(default_factory=list)        # 本地无文件（真缺口）
     unreadable: dict = field(default_factory=dict)     # 标的 → 打不开的原因（问题清单）
     latest: object = None                              # 本地日线全局最新日期（Timestamp | None）
+    lasts: list = field(default_factory=list)          # 每只文件的最后日期（升序 Timestamp）——供覆盖率/代表日
     elapsed_ms: float = 0.0
 
     # ---------- 查询 ----------
@@ -66,6 +68,25 @@ class ReadinessReport:
     def gap_symbols(self) -> list:
         """「⬇ 补齐缺失」要下载的名单（= missing，按花名册顺序）。"""
         return list(self.missing)
+
+    @property
+    def representative_latest(self):
+        """**代表性最新日**（多数文件真正覆盖到的中位日）——不被个别最新文件掩盖。
+
+        区别于 `latest`（全局最大值，会被单只刚同步的标的拉到今天）：拿不到分布时退回 `latest`。
+        滞后提示用它，才能诚实反映“多数标的其实还没更新到最近交易日”。
+        """
+        if not self.lasts:
+            return self.latest
+        s = sorted(self.lasts)
+        return s[len(s) // 2]
+
+    def coverage_at(self, date) -> int:
+        """基准日 `date` 当天**真正有行**（最后日期 >= 该日）的只数。无分布 → 0。"""
+        if not self.lasts or date is None:
+            return 0
+        d = pd.Timestamp(date).normalize()
+        return sum(1 for x in self.lasts if pd.Timestamp(x).normalize() >= d)
 
     def problem_symbols(self) -> list:
         """问题清单（D6-5）：打不开的坏文件 —— 补齐救不了它，要「重新全量下载」。"""
@@ -113,6 +134,18 @@ class ReadinessReport:
         return '\n'.join(lines)
 
 
+def format_stale(latest, target, stale_days: int) -> str:
+    """滞后提示文案（零 UI、可单测）。三参任一缺/无滞后 → 空串（诚实不打扰、不猜）。
+
+    :param stale_days: `(latest, target]` 的**交易日**数（调用方用日历精确算，非 busday 估）
+    """
+    if latest is None or target is None or int(stale_days or 0) <= 0:
+        return ''
+    return (f'⚠ 数据滞后约 {int(stale_days)} 个交易日 · 本地到 '
+            f'{pd.Timestamp(latest).date()}，最近交易日 {target} · '
+            f'点「⬆ 更新到最新交易日」')
+
+
 def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
                     progress=None, should_stop=None,
                     chunk: int = DEFAULT_CHUNK) -> ReadinessReport:
@@ -140,6 +173,7 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
         return report
 
     latest = None
+    lasts: list = []
     for k, sym in enumerate(symbols):
         if should_stop is not None and k % chunk == 0 and should_stop():
             raise ReadinessCancelled(f'体检已取消（已查 {k}/{len(symbols)} 只）')
@@ -151,8 +185,10 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
                 pf = pq.ParquetFile(path)
                 rows = int(pf.metadata.num_rows)
                 last = _footer_last_date(pf)
-                if last is not None and (latest is None or last > latest):
-                    latest = last
+                if last is not None:
+                    if latest is None or last > latest:
+                        latest = last
+                    lasts.append(last)          # 收集分布（供代表日/覆盖率）
                 if rows <= 0:
                     report.partial[sym] = rows        # 空文件 = 数据不足，不是"没下载"
                 elif min_bars is not None and rows < int(min_bars):
@@ -166,6 +202,7 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
             progress(k + 1, len(symbols), sym)
 
     report.latest = latest
+    report.lasts = sorted(lasts)
     report.elapsed_ms = (time.perf_counter() - t0) * 1000
     return report
 

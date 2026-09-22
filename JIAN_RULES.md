@@ -9,11 +9,11 @@
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **1.34**（= 本次提交首词 · **三处已同批同步 §9-A**：commit 首词 / `APP_VERSION` / `version.json`） |
-| 文档版本 | **v6.44**（§7-B8 R7 副图换序收尾：⬆⬇+拖拽 / `sub_order` 持久化 / 测试偏好隔离补正，§11.5-70） |
-| 最近三版 | `1.34` R7 副图换序收尾 · `1.33` M2/M3 体验修复轮 · `1.32` 成分股名称列修复 |
-| **当前主线** | **§7-B8 R7 副图换序 ✅（本版）· M2/M3（§7-B1/B2）已收尾**；下一步 = §7-B8 余量（R4 组合配置=远期新引擎 / R12 数据页暂缓）+ 其它 backlog（§7-A/C/D） |
-| **断点** | **v6.44（1.34）§7-B8 R7 副图换序收尾 ✅**（用户 2026-09-21/22 实测确认；坑=§11.5-70）：**副图换序全链路闭环** —— `layer_model` 新增可持久化副图顺序（`set_sub_order/move_sub/apply_order/sub_order_keys`，**换序只改格位、绝不改 target**）+ `desk_ui.sub_order` 落盘（构造与 `_rebuild_model` 均带序）+ 配方页「⇅ 副图换序」⬆⬇ + **拖拽**（复用 `DragHandleListWidget` 三道闸：平时不响应拖、只认 ⣿ 手柄、可撤销 + 边缘自动滚动；拖完 `rowsMoved → QTimer.singleShot(0) → apply` 绝不在信号里重建列表）；`desk_formula` 四方法 + `trading_desk` 薄壳。测试隔离补正：新键 `sub_order` 与 breadth 显示前置（ratio/chart/overlay/index_style）会在构造期从**真实** preferences 泄入、冲乱默认渲染顺序断言 → 冒烟脚本在 stub 保存后把用户态抹平（§11.6）。验收：`smoke_chart` **721** / `smoke_pages_overlay` **493** 全绿 + compileall；两条 R7 stash 半成品作废（desk_formula/desk_layout）。**下一步** = §7-B8 余量（R4 组合配置为独立立项）与其它 backlog |
+| APP 版本 | **1.35**（= 本次提交首词 · **三处已同批同步 §9-A**：commit 首词 / `APP_VERSION` / `version.json`） |
+| 文档版本 | **v6.47**（§7-B10 数据新鲜度**全案收官**：定稿守卫 + 真交易日历 + M1 区间修复 + M2/M3 更新引导，已发 **1.35**。上一版 v6.46 = §7-B10-M1 切片） |
+| 最近三版 | `1.35` §7-B10 数据新鲜度全案 · `1.34` R7 副图换序收尾 · `1.33` M2/M3 体验修复轮 |
+| **当前主线** | **§7-B10（数据新鲜度）全案 ✅（本版 1.35）· M2/M3（§7-B1/B2）已收尾**；下一步 = §7-B8 余量（R4 组合配置=远期新引擎 / R12 数据页暂缓）+ 其它 backlog（§7-A/C/D） |
+| **断点** | **v6.47（1.35）§7-B10 全案收官 ✅**：M1 切片（定稿守卫 + 真日历 + M1 区间默认终点/滞后自动补/回退回执，v6.46）之上，本切片补齐 STEP 2–4——M2/M3 共用 `ReadinessFlow` 新增 **`update_latest()` 一键「⬆ 更新到最新交易日」**（与“补齐缺失”**合并**：对整批当前范围跑增量，缺的补、旧的拉到最新、已新鲜的自然 skip；`fill_missing` 保留退位次级）、**滞后提示**（`start_calendar_fetch` 挂 `CalendarWorker`，`trading_days_between` 按真日历精确数“约 N 交易日”，`format_stale` 零 UI 文案；拿不到日历不提示不猜）、**M2 基准日诚实化**（`lbl_asof_hint` 说“上限=本地最新”、`_calibrate_asof_date` 抬升上限+回显）。验收：`smoke_chart` **745** / `smoke_pages_overlay` **514** 全绿 + compileall（两页起 `CalendarWorker` 均测中打桩不联网；`trade_calendar.json` 入防污染自检）。坑=§11.5-71/72。**下一步** = §7-B8 余量与其它 backlog |
 
 ### 📚 文档地图（先看这里，再定点检索）
 
@@ -63,7 +63,7 @@
 | 业务库 | SQLite，`INSERT OR IGNORE` 幂等 + MD5 确定性主键 | `core/database.py` |
 | 时序湖 | pyarrow Parquet 分区数据湖（DataLake） | `data/market_db.py` |
 | 偏好/策略库 | JSON 原子写（tmp + os.replace） | `core/preferences.py`、`data/strategy_store.py` |
-| 并发 | 耗时 I/O 一律 QThread Worker | ✅ v5.13 已收口：`ui/workers.py` 是全 app **唯一的 QThread 定义处**（ScanWorker / SyncWorker / SingleSyncWorker / BacktestRunWorker / ConstituentsWorker / FuturesImportWorker / **CrossSectionWorker** / **ReadinessWorker**(v6.39)）+ 公共件 **`JobGuard`（竞态守卫）**，页面与弹窗一律不自造线程类。**唯一例外**：`core/updater.py` 的 `UpdateCheckerThread` 属 core 层（版本检测不是 UI 职责），不搬进 ui/ |
+| 并发 | 耗时 I/O 一律 QThread Worker | ✅ v5.13 已收口：`ui/workers.py` 是全 app **唯一的 QThread 定义处**（ScanWorker / SyncWorker / SingleSyncWorker / BacktestRunWorker / ConstituentsWorker / FuturesImportWorker / **CrossSectionWorker** / **ReadinessWorker**(v6.39) / **CalendarWorker**(v6.46 交易日历一次性后台抓））+ 公共件 **`JobGuard`（竞态守卫）**，页面与弹窗一律不自造线程类。**唯一例外**：`core/updater.py` 的 `UpdateCheckerThread` 属 core 层（版本检测不是 UI 职责），不搬进 ui/ |
 
 **用户数据目录（物理隔离，勿在仓库存业务数据）:** `~/.jian_data/`
 （`jian_trades.db`、`preferences.json`、`backtest_strategies.json`、`annotations.json`(v6.10 用户标注)、
@@ -111,14 +111,14 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   │                    #        + **成交真实性(§7-B5)** + **§7-B8 R7/R8（副图换序 / 纵轴固定左槽）**
 │   │                    #        + **§7-B8 R1 自选分组（分类语义 / 删组不删股）**
 │   │                    #        + **v6.43 轴外基准日就近落位 / 缺文件诚实化 / 成分股选列回归钉**
-│   │                    #        + §9-V 数据源护栏（非正价 / 量纲接缝）断言（**721 项**）
+│   │                    #        + §9-V 数据源护栏（非正价 / 量纲接缝）断言（**745 项**）
 │   │                    #       `py tests/smoke_chart.py`（在仓库根执行）
 │   │                    #       ⚠ 两脚本开头**自设 UTF-8 stdout**（v6.21）—— Windows GBK 控制台
 │   │                    #        下带 `↔`/`⇒` 的 print 会抛 UnicodeEncodeError，表现为
 │   │                    #        "整段分节被跳过 + 假报失败"（修前 328/3、修后 356/0）
 │   └── smoke_pages_overlay.py # 回测页/工作台/**复盘页**叠层 + 标注 + 互送 + 自选/周期(含**分钟**)/
 │                        #       复权/坐标轴 + 顶栏分段控件/chips + 图标轨/分页面板/折起
-│                        #       （§7-B6 STEP 3b/3c/4）+ 成交模型行/教学弹窗/导出口径**页面级**验收（**493 项**）
+│                        #       （§7-B6 STEP 3b/3c/4）+ 成交模型行/教学弹窗/导出口径**页面级**验收（**514 项**）
 │                        #       + **M2/M3 护栏（v6.43：y 真跟随/刻度可见/先选后扫/闸门/分界线拖动模拟）**
 │                        #       + **「行情工作台 / 复盘页 / M2 / M3 迁移护栏」**（公共面改名/删除、把薄壳写成
 │                        #         空函数、**§9-U 分栏退化 / 不落偏好**，立刻红）
@@ -206,6 +206,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   │                    #      + ★v6.13 新增 kline_daily_raw 分区（不复权，与前复权**各存一份**）
 │   │                    #      + v5.8 清点删除(delete_data/clear_zone/list_zone/inventory 只读footer/zone_stats)
 │   ├── sync_service.py  #     MarketSyncService(v5.8)：行情同步唯一门面 = 增量合并去重 + 温柔抓取
+│   │                    #      + ★v6.46 §7-B10 日线收盘定稿守卫（is_daily_bar_settled / _drop_unsettled_tail）
+│   ├── trade_calendar.py #    ★v6.46 §7-B10 交易日历获取件：load_or_fetch（当日 JSON 缓存+失败回退）/
+│   │                    #      latest_settled_trading_day（日历∩定稿判据）；纯 Python 零 Qt，网络交 CalendarWorker
 │   │                    #      + ★v6.13 zone_for_adjust / ADJUST_* / adjust_label（复权口径的**唯一规范化入口**）
 │   │                    #      ThrottlePolicy(间隔/抖动/重试/熔断/断点续传)；纯 Python 零 Qt 依赖
 │   │                    #      + friendly_fetch_message / short_fetch_reason / friendly_constituent_message
@@ -396,15 +399,17 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     再长可把 `enable_divider_drag`+eventFilter 拆成 `ui/widgets/divider_drag.py` 伴生件）>
   ⚠ `ui/widgets/scan_flow.py` **413**（v6.43 先选后扫/闸门/落位越线；**登记不返工**，
     再长可把"日期控件三件套（选择/落位/同步）"抽成伴生件）>
-  ⚠ `data/akshare_feed.py` **446**（v6.43 成分股选列/快照列越线；本就是"行情源大杂烩"候选拆点，
-    再加新源前先分文件）> `data/sync_service.py` **400**（恰在线上，再加就越）。
+  ⚠ `data/akshare_feed.py` **462**（v6.46 §7-B10 `fetch_trade_calendar` 越线；本就是"行情源大杂烩"候选拆点，
+    再加新源前先分文件）> `data/sync_service.py` **457**（v6.46 §7-B10 定稿守卫越线：
+    `DAILY_SETTLE_HHMM`/`is_daily_bar_settled`/`_drop_unsettled_tail` + `refresh_one` 接裁尾；
+    **登记不返工**，再长可把定稿守卫抽成伴生件）。
   ⚠ `core/cross_section.py` **655**（v6.43 又长：轴外落位/missing 诚实化；**处置不变**：
     新增优先另起模块）。
   ✅ `ui/views/trading_desk.py` **1375 → 345**（1.23 · §7-B6 STEP 6，**退出 400 线**）；
   ✅ `ui/widgets/backtest_panes.py` 395、`adaptive_axis.py` 396 也都在 400 线内
   （按 v6.16 口径不再标数字）。
-- **验收脚本不参与"业务文件瘦身"**：`tests/smoke_chart.py 3539`、
-  `tests/smoke_pages_overlay.py 2904`（总行数；**它们不是业务文件，别为了让数字好看去拆**）。
+- **验收脚本不参与"业务文件瘦身"**：`tests/smoke_chart.py 3676`、
+  `tests/smoke_pages_overlay.py 3181`（总行数；**它们不是业务文件，别为了让数字好看去拆**）。
 - ✅ **历史拆分叙事（`backtest.py` 1697→787 / `trading_desk.py` 1375→345 / §9-U + §9-L 收官 /
   v6.6–v6.15 行数涨落记录）→ 已搬 `docs/JIAN_ARCHIVE.md`「四、§4 体积红黑榜·历史条目」**
   （v6.35 · 照 §10-14"先搬走，再写新内容"）。**结论仍有效**：`ui/views/` 全部回到 400 线内；
@@ -656,6 +661,14 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
   ② **平行通道从"四角可变形多边形"修正为"基线 + 填充带 + ⇕ 宽度手柄 ⇒ 两条严格平行的线"**；
   ③ **目录 32 种全部可画**（回归通道 / 波浪降级 / 头肩降级 / **甘氏扇形随缩放重算** / 斐波弧）。
   完整方案、拍板记录与施工产出见下方 **§7-B9 主案规格**（§8 v6.26 行）。
+- **B10 [x] ⭐数据新鲜度：日线收盘定稿守卫 + 扫描页「更新到最新」引导（v6.45 立项 · **§7-B10 全案已收官 v6.47/1.35 · 用户 2026-09-22）**：
+  ✅ **M1（v6.46）**：定稿守卫（STEP 0/1）+ 真交易日历件（`data/trade_calendar.py` + `fetch_trade_calendar` + `CalendarWorker`）+ **M1 回测区间默认终点修复**（默认=最近已定稿交易日 / 滞后自动联网补 / 补不到回退有数据那天并出回执，推翻原 F「不引日历」）。✅ **M2/M3（v6.47）**：`ReadinessFlow` 新增 `update_latest()` 一键「⬆ 更新到最新」（与“补齐缺失”**合并**，整批当前范围增量）+ 滞后提示（`start_calendar_fetch`/`trading_days_between`/`format_stale`，真日历）+ M2 基准日诚实化（`lbl_asof_hint`）。完整规格见下方 **§7-B10 主案规格**。
+  两个真实问题（用户实测）：① **盘中同步会把“今天那根未完成 bar”永久冻结进日线库**
+  （`_is_fresh` 末日==今天即跳过 + 增量起点 last+1 永不回补 → 半根 bar 再也刷不掉，污染收盘口径的回测/扫描）；
+  ② **M2/M3 页面没有“把数据更新到最新交易日”的入口**（“补齐缺失”只补从没下过的股票），
+  且基准日被硬收紧到本地最新、未来日灰掉无解释无桥。
+  **拍板**：问题2 走**方案A（严格：未收盘定稿的当天 bar 一律不写进日线库）**；问题1 **三条都做**
+  （更新动作 + 滞后检测 + 基准日诚实化，互相印证）。完整规格与 STEP 0–5 施工顺序见下方 **§7-B10 主案规格**。
 
 ### C 类 · 体验升级（有明确规格，尚未动工）
 - **[x] C1 Dashboard GitHub 风格日历热力图**（v5.7 已完成）`ui/widgets/calendar_heatmap.py` +
@@ -934,6 +947,57 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 **数据管理页结构确未被改动**（F 第 1 条）。
 
 ---
+### §7-B10 主案规格：数据新鲜度（日线收盘定稿守卫 + 扫描页更新引导）
+（v6.45 立项 · 用户 2026-09-22 拍板 · **设计定稿，待按 STEP 施工**）
+
+#### A. 用户拍板记录（不得回退）
+| # | 议题 | 结论 |
+|---|---|---|
+| 1 | 盘中半根 bar 污染 | ✅ **方案A（严格）**：未收盘定稿的“当天日线 bar”**一律不写进日线库**；盘中要看当天用分钟周期 |
+| 2 | M2/M3 更新引导 | ✅ **三条全做**：①「更新到最新交易日」动作 · ②日期滞后检测提示 · ③基准日诚实化（互相印证） |
+| 3 | 定稿时刻 | ✅ 默认 **15:05**（A股 15:00 收 + 缓冲），做成常量可配；判据**只此一处** |
+| 4 | 「最近交易日」来源（M1 追加拍板 · 2026-09-22） | ✅ **改引真交易日历**（推翻原 F 条「不引第三方交易日历」）：AkShare 日历 + 当日 JSON 缓存 + 失败回退本地最新；本次先服务 M1 默认终点 |
+| 5 | M2/M3 更新入口（STEP 2 追加拍板 · 2026-09-22） | ✅ **与“补齐缺失”合并为一键「⬆ 更新到最新」**（对整批当前范围跑增量，不再并列两个按钮）；滞后判据**复用真日历**（与 M1 同源）；本次连发版 1.35 |
+
+#### B. 根因（读代码核实，非臆测）
+- **问题2 · 半根 bar 永久冻结**（`data/sync_service.py`）：
+  ① `ThrottlePolicy.fresh_within_days=0` + `_is_fresh`（末日==今天 ⇒ “已最新”）→ 盘中同步过一次，**同日盘后再点被 skip**；
+  ② `refresh_one` 增量起点 `start_date = last + 1天` → **次日永不回补今天**；
+  ③ `_merge` 虽 `keep="last"`（本可自愈）却因①②拿不到今天的完整数据 → 盘中那根半 bar 落库后**再也刷不掉**，污染收盘口径回测/扫描（成交额/换手/收盘类判定全错且界面看不出）。
+- **问题1 · 无更新入口 + 基准日死胡同**：
+  ① `readiness_flow.fill_missing` 只补 `gap_symbols()`（本地**从来没有**的股票），已下到 9/18 的不算缺失 → “补齐缺失”**不会推进到最新交易日**；M2/M3 页**没有**“更新到最新”的入口；
+  ② `_calibrate_asof_date` 把 `date_asof` 上限**硬收到本地最新(9/18)** → 9/21 灰掉点不动，且无解释、无通往“先更新”的桥。
+
+#### C. 核心设计
+- **定稿判据（唯一真源）**：`sync_service.is_daily_bar_settled(bar_date, now=None, settle_hhmm=DAILY_SETTLE_HHMM) -> bool`
+  = `bar_date < 今天` 恒真；`bar_date == 今天` 仅当 `now >= 今天 settle_hhmm` 才真；未来日 False。纯函数、零 Qt、零网络。
+- **写入边界守卫**：`refresh_one` 落盘前，对**日线类分区**（`kline_daily` / `kline_daily_raw` / `index_daily`）应用 `_drop_unsettled_tail(df, now)`：**只裁掉“今天且未定稿”这一根**（历史/昨日/盘后当天都保留）。分钟分区 `kline_min` **不裁**（本就是盘中语义）。
+  → 附带效果：盘中把今天裁掉后，本地末日=昨天 → 盘后再同步 `_is_fresh` 自然不跳过、起点=昨天+1=今天 → 拉到完整当天并落库。**无需再改 `_is_fresh`/起点**，方案A 自洽。
+- **更新到最新（复用现成件）**：`ReadinessFlow.update_latest()` 对**当前统计范围整批**跑 `SyncWorker`（= `MarketSyncService.refresh_one` 增量，天然“拉到各自最新”），>50 二次确认、可中断、完成自动复检；与 `fill_missing` 并列、共用 SyncWorker/JobGuard。
+- **滞后检测**（v6.47 改）：**复用真交易日历**——`trading_days_between(代表性最新日, 最近已定稿交易日, 日历)` 精确数“约 N 个交易日滞后”（节假日不误报）；代表性最新日 = `ReadinessReport.representative_latest`（每只 last 的**中位日**，非全局 max，不被单只刚同步标的掩盖）；拿不到日历（离线）→ **不提示滞后数字**，不猜。（原 busday 估算法已废弃）。
+- **真交易日历（M1 追加 · 本次落地）**：`data/akshare_feed.py:fetch_trade_calendar`（源层）+ `data/trade_calendar.py`（薄模块：`load_or_fetch` 当日 JSON 缓存 / `latest_settled_trading_day` = 日历 ∩ `is_daily_bar_settled`）+ `ui/workers.py:CalendarWorker`（一次性后台抓，失败回 None → UI 回退本地最新）。三重兜底：缓存命中零网络 / 抓取失败回吐旧缓存 / 全无则 None。
+- **基准日诚实化**：上限仍 = 本地最新（防选了扫不出），但①旁边一行小字说明“上限=本地最新 X；要选更近先『更新到最新交易日』”②`update_latest` 完成后复检 → 上限自动抬升、回执回显“现在可选到 Y”；③**（v6.47）新增“基准日当天覆盖 N/total”诚实提示**（`coverage_at(基准日)`）——避免“就绪 299/300”却“扫描 1/300”的困惑（就绪=历史行数够、扫描=基准日当天有行，两套口径；基准日默认不改算法，只加提示）。
+
+#### D. 实施步骤（每步独立可验收 · 一 commit 一步 · 状态回写本表）
+
+> **本主案收官（§7-B10 全案 · v6.47 · 1.35）**：STEP 0–4 已全部落地；STEP 5 = 本条文档回写 + 发版 1.35。真交易日历已接（推翻原 F「不引日历」），M1（v6.46）+ M2/M3（v6.47）均共用。
+- **STEP 0 [x] 定稿判据（纯函数，零行为改变）**：`sync_service` 加 `DAILY_SETTLE_HHMM` + `is_daily_bar_settled` + `_drop_unsettled_tail`；`smoke_chart` 加纯函数断言（D<今天 / D==今天盘前 / 盘后 / 未来日；裁尾只削未定稿当天、不碰历史与分钟）。
+- **STEP 1 [x] 写入边界接守卫（= 问题2 落地）**：`refresh_one` 落盘前对日线类分区 `_drop_unsettled_tail`；`smoke_chart` 断言：monkeypatch `_fetch` 回吐含“今天未完成行” + 假 `now`=盘中 → 落盘无今天行；`now`=盘后 → 有；分钟分区不受影响。**联网实测**：盘中对某只 refresh_one，查 parquet 末日不含今天。
+- **STEP 2 [x] 「更新到最新交易日」动作（问题1-①）**：`ReadinessFlow.update_latest()` 与 `fill_missing` **合并为一键「⬆ 更新到最新交易日」**（共用 `_launch_sync`，整批当前范围增量）；M2/M3 空态同一入口；完成复检后 `date_asof` 上限自动抬升。
+- **STEP 3 [x] 日期滞后检测提示（问题1-②）**：`ReadinessFlow.start_calendar_fetch()` 挂 `CalendarWorker` → `trading_target`；`_render_readiness` 用 `trading_days_between` 算滞后交易日数 + `format_stale` 回执文案；离线（无日历）不提示。
+- **STEP 4 [x] 基准日诚实化（问题1-③）**：M2 `lbl_asof_hint`（上限=本地最新、要更先更新）+ 更新后复检 `_calibrate_asof_date` 抬升上限并回显（M3 无 date_asof，不适用）。
+- **STEP 5 [ ] 文档回写 + 版本（发版时）**：§4/§6/§7 B10 状态/§11.5（新坑：盘中半根 bar 冻结 + 定稿守卫）/§11.6/§11.7 断言数 + §9-A 三处版本号（1.34 → 1.35）。
+
+#### E. 验收口径
+`py tests/smoke_chart.py` + `py tests/smoke_pages_overlay.py` **失败 0 且断言数只增不减** + 全仓 `compileall` + **用户实测**：① 盘中同步后查日线库不含当天半根；② M2 点「更新到最新交易日」→ 进度 → 复检 → 基准日可选到最近交易日 → 扫描出数；③ 滞后提示与实际一致。
+
+#### F. 本主案明确“不做”（防范围失控）
+- ❌ ~~不引第三方交易日历~~ —— **已被 v6.46 修订推翻**（用户 2026-09-22 为 M1 默认终点拍板引入真交易日历，见 A 条 #4 / C 条「真交易日历」）；滞后仍可用 busday 估作快速提示，精确“最近交易日”现在走日历。
+- ❌ 不改 `_is_fresh`/增量起点语义（方案A 在写入边界裁尾已自洽，动它反而引入新分叉）。
+- ❌ 分钟周期不施加定稿守卫（本就是盘中）。
+- ❌ 不做“自动定时同步”（那是独立功能，本案只给**手动**更新入口 + 检测提示）。
+
+---
 ## 8. 版本演进备忘（压缩 changelog）
 
 > 📦 **完整 changelog（v1.0 → 现在）已归档 → `docs/JIAN_HISTORY.md` §8。**
@@ -941,9 +1005,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 
 | 版本 | 一句话 |
 |---|---|
+| **1.35** | §7-B10 数据新鲜度全案（M2/M3 收尾）：`ReadinessFlow` 新增 `update_latest()` 一键「⬆ 更新到最新」（与“补齐缺失”合并、共用 `_launch_sync`）+ 滞后提示（`start_calendar_fetch`/`trading_days_between`/`format_stale`，真日历）+ M2 基准日诚实化（`lbl_asof_hint`）；承 v6.46 M1 切片（定稿守卫/真日历/M1 区间修复）；smoke 737→745 / 508→514（§11.5-71/72） |
 | **1.34** | §7-B8 R7 副图换序收尾：`layer_model` 可持久化顺序（换序只改格位不改 target）+ `desk_ui.sub_order` + 配方页 ⬆⬇/拖拽（复用 `DragHandleListWidget` 三道闸）+ 测试偏好隔离补正（§11.5-70） |
 | **1.33** | M2/M3 体验修复轮：M3 图表可读性根治（bar 轴/双视觉/指数四图形/分界把手/轴对齐）+ M2 先选后扫与缺数据诚实化（闸门/就近落位/missing 进总数）+ 成分股换中证官网权威源（§11.5-64…69） |
-| **1.32** | 修复成分股名称列全空（回包漏装配 `_names`）+ 内核警告 UI 出口 |
 
 > 版本号纪律见 **§9-A**（唯一出处：commit 首词 + `settings.APP_VERSION` + `version.json`）。
 
@@ -958,7 +1022,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
   · **每次 push 递增 0.01**（1.21 → 1.22 → 1.23 …）：不跳号、不改三段式、不引入第四套编号；
   · ★ 2026-09-20 整合记录：未推送的 1.28–1.32 五批按用户要求重写为 **1.31（扫描模块代码）+ 1.32（文档与版本）**，
     1.28 / 1.29 / 1.30 三个号被消化（远端自 1.27 直达 1.31）；原五提交存于分支 `backup/1.28-1.32`；
-  · **当前值 = `1.32`**（= 修复成分股名称列全空 + 内核警告出口；1.31 = 成分股代码格式；1.30 = STEP 6 联动收尾；1.29 = M3 广度页；
+  · **当前值 = `1.35`**（= §7-B10 数据新鲜度全案（定稿守卫+真交易日历+M1 区间修复+M2/M3 更新引导）；1.34 = §7-B8 R7 副图换序收尾；1.33 = M2/M3 体验修复轮；1.32 = 修复成分股名称列全空 + 内核警告出口；1.31 = 成分股代码格式；1.30 = STEP 6 联动收尾；1.29 = M3 广度页；
     1.28 = M2 全市场筛选页；1.27 = 文档分层重构；1.26 = 复盘页
     版式收口；1.25 = 画线工具重做「点选绘制」+ 通道语义修正；1.24 = 侧边栏重设计 + 自选分组；
     1.23 = 行情工作台收口）；
@@ -1276,7 +1340,10 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 改 Dashboard 日历热力图 | `ui/widgets/calendar_heatmap.py`（纯手绘控件）+ `dashboard.py` 的 `_prepare_calendar` / `_render_calendar` |
 | 增删/清理数据湖缓存 | 原语在 `data/market_db.py`；页面在 `ui/views/data_manager.py`（⚠ 删完要 `_rescan` 刷新） |
 | 改行情同步/抓取节流 | `data/sync_service.py`（增量合并 + `ThrottlePolicy` 都在这里，**勿在 UI 里另起炉灶**） |
-| 给页面加后台任务 | `ui/workers.py` —— 全 app 唯一 QThread 定义处（Scan/Sync/SingleSync/BacktestRun/Constituents/FuturesImport/**CrossSection 七个 Worker**），**禁止页面自造线程类**（§9-O2）。⚠ **"发起新任务 ⇒ 旧回包作废"一律用公共件 `JobGuard`**（`next()` 取号 / `accept(id)` 判定），别再各写一个 `_token` 计数器（§9-O5 / §11.5-11） |
+| 改日线收盘定稿判据 | **`data/sync_service.py` 一处**（v6.46 / §7-B10）：`DAILY_SETTLE_HHMM` + `is_daily_bar_settled`（纯函数）+ `_drop_unsettled_tail`（`refresh_one` 落盘前对 `DAILY_ZONES` 裁尾）。M1/M2/M3 一律复用，**别在页面另写一套“今天算不算数”** |
+| 改“最近交易日”/交易日历 | **`data/trade_calendar.py`（v6.46 / §7-B10）**：`load_or_fetch`（当日 JSON 缓存 `~/.jian_data/trade_calendar.json` + 失败回退）/ `latest_settled_trading_day`（日历 ∩ 定稿判据）。接口细节在 `data/akshare_feed.py:fetch_trade_calendar`；UI 取数只走 `ui/workers.py:CalendarWorker` |
+| 改 M1 回测区间默认终点/滞后补 | `ui/views/backtest.py`（`date_end` 默认 + `lbl_range_note` 回执行 + 构页时 `flow.start_calendar_fetch()`）+ `ui/widgets/backtest_flow.py`（`_on_calendar` 精修默认终点 / `_prepare_stock_then_run` 滞后自动补 / `_apply_end_date_receipt` 补不到回退+回执）。⚠ **控件名 `date_end`/`date_start`/`cmb_range_preset` 不能改**（迁移护栏）；状态仍留在页面 |
+| 给页面加后台任务 | `ui/workers.py` —— 全 app 唯一 QThread 定义处（Scan/Sync/SingleSync/BacktestRun/Constituents/FuturesImport/**CrossSection / Readiness / Calendar 九个 Worker**），**禁止页面自造线程类**（§9-O2）。⚠ **"发起新任务 ⇒ 旧回包作废"一律用公共件 `JobGuard`**（`next()` 取号 / `accept(id)` 判定），别再各写一个 `_token` 计数器（§9-O5 / §11.5-11） |
 | 改版本号 | **三处同批同步（§9-A v6.16 新纪律）**：git commit message 首词 · `config/settings.py` 的 `APP_VERSION` · 仓库根 `version.json`。取值 = 上次 push 的版本 **+0.01**（形如 `1.20` → `1.21`） |
 | 回测页 UI / 版式 | `ui/views/backtest.py`（**787 行**，1.22 拆分收官）。**版式 = 样板 A**：工具栏行 → 摘要条 → 区间行 → **配置抽屉（覆盖层）** → 结果区。**加新的配置项一律「摘要条 chip + 抽屉内一张卡片」，不许在结果区上方新起常驻行、不许用"就地展开"**（§10-14）；卡片与抽屉改 `backtest_panes.py`，摘要条改 `backtest_summary_bar.py`，结果区改 `backtest_result.py`，导出改 `backtest_export.py` |
 | 回测页「运行流程」 | `ui/widgets/backtest_flow.py`（`BacktestFlow`）：选标的 / 数据就绪链 / 求值 / 后台计算 / 结果落地。⚠ **状态全在页面**（`_pending_*` / `_last_*` / 线程句柄），改它别在模块里存状态 |
@@ -1295,7 +1362,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 复盘页 UI | `ui/views/review.py`（**173 行**，1.26 拆分后只做装配与转发）；行为落 `ui/widgets/review_*.py`：`review_layout`(版式/可拖竖分栏) / `review_charts`(日历·月度·时长) / `review_playback`(交易回放) / `review_editor`(清单·编辑·孤儿缝合) / `review_flow`(筛选·导航·视图刷新) |
 | M2/M3 新子页 | **均已落地**：M2 = `ui/views/scan_view.py`（164 行）+ `ui/widgets/scan_layout|flow|result.py`（第 2 页签）；M3 = `ui/views/breadth_view.py`（197 行）+ `ui/widgets/breadth_layout|flow|result|chart.py`（第 3 页签）。**共用** `core/cross_section` / `data/scan_store`（含 ⚡增量）/ `ui/workers.CrossSectionWorker` |
 | M3 广度页（折线 / 指数副图 / 增量 / 重算） | 页面 = `ui/views/breadth_view.py`（状态 + 同名薄壳）。**版式** `breadth_layout.py`（ƒ/🎚 两卡**直接复用 `scan_layout`**；`BreadthDisplayPane` = 平滑/占比/指数）；**流程** `breadth_flow.py`（`_start_worker` 统一入口：`force` / `incremental` 两开关；`_ensure_index` 指数补拉链）；**图表** `breadth_chart.py`（`BreadthChart`：ChartHost 双窗格 + `attach_all` + 读数条 provider —— **别在页面手写 addPlot/setTicks**）。**⚡增量的矩阵续接在 `data/scan_store.py`**（`find_base` + `merge_tail`），改它必跑 `smoke_chart` 的「STEP 5」段 |
-| 就绪度体检 / 补齐缺失（M2/M3 共用） | 内核 = **`data/readiness.py`**（`probe_readiness` 只读 footer 四分类 + `latest` + `summary_line`/`gap_preview`/`detail_text`；**别在页面另写"有没有数据"的判断**）；线程 = `ui/workers.py:ReadinessWorker`（第 8 个 Worker）；编排 = **`ui/widgets/readiness_flow.py:ReadinessFlow`**（两页共用：范围就绪后自动体检、缺口给「⬇ 补齐缺失」、`fill_missing` 走 `SyncWorker` 可中断、**回调绑定各自 scope** —— 改它必跑 `smoke_pages_overlay` 的「STEP 6」段）；成分股失败文案唯一出口 = `constituent_failure_text()`（→ `friendly_constituent_message`）；「全市场扫描就绪」预设 = `bulk_download._apply_scan_ready_preset` |
+| 就绪度体检 / 更新到最新（M2/M3 共用） | 内核 = **`data/readiness.py`**（`probe_readiness` 只读 footer 四分类 + `latest` + `summary_line`/`gap_preview`/`detail_text` + **v6.47 `format_stale`** 滞后文案；**别在页面另写“有没有数据”的判断**）；线程 = `ui/workers.py:ReadinessWorker`（第 8 个）/ `CalendarWorker`（第 9 个，滞后判据）；编排 = **`ui/widgets/readiness_flow.py:ReadinessFlow`**（两页共用：自动体检、**v6.47 一键「⬆ 更新到最新」`update_latest` 与“补齐缺失”合并（整批当前范围增量，共用 `_launch_sync`；`fill_missing` 保留但退位次级）**、`start_calendar_fetch` 挂日历→`trading_target`、滞后用 `trading_days_between`、M2 `_calibrate_asof_date` 抬升上限+`lbl_asof_hint` 回显、**回调绑定各自 scope** —— 改它必跑 `smoke_pages_overlay` 的「STEP 6」段）；成分股失败文案唯一出口 = `constituent_failure_text()`；「全市场扫描就绪」预设 = `bulk_download._apply_scan_ready_preset` |
 | 全市场筛选页（M2） | `ui/views/scan_view.py`（状态 + 同名薄壳）。**版式** `scan_layout.py`（阈值⇄控件的**唯一换算处**在 `ScanFilterPane`，界面亿元/% ⇄ 内核元/小数）；**流程** `scan_flow.py`（范围解析 / 后台扫描 / 切日期零成本）；**渲染** `scan_result.py`（KPI 三态 + 结果表） |
 | 改图表轴样式 / 净值曲线绘制 | **`ui/widgets/chart_style.py`（唯一来源，v5.13）** —— `apply_pokorny_style`（PlotWidget/PlotItem 都兼容）+ `plot_equity_curve`；业务页面**禁止就地写轴样式** |
 | 给图表加"公式叠层"（STICKLINE/公式线/状态柱/DRAWICON） | **两条路都唯一**：引擎语义改 `core/formula/draw.py`；画图改 `ui/widgets/draw_overlay.py` 的 `OverlayPainter`（**入参 = `ChartPane`**，§7-B3）。宿主只做三件事：切窗口（`slice_draws`）、喂 x、扩 y（`overlay_extent`）。**禁止任何页面自己读函数文本再画** |
@@ -1389,9 +1456,35 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - **11.5-68** 【v6.43 · 数据源选列靠"含某字的第一个列"= 定时炸弹（官网 df 的「指数代码」被误当成分列）；测试打桩必须带与线上一致的列结构】
 - **11.5-69** 【v6.43 · `QHeaderView.ResizeToContents` × 大表逐格 setItem = 平方级冻死 UI；填表三件套：关更新 → 一次性测宽 → tooltip 只给必要列】
 - **11.5-70** 【v6.44 · 新增“记住上次”类偏好键会在构造期从**真实** preferences 泄入 → 冲乱默认顺序断言（且误写真实库）；`Preferences` 单例 import 时已载入真实值，光重定向 `path` 不够 ⇒ 必须在 **stub `save` 之后**把用户态在内存里抹平】
+- **11.5-71** 【v6.46 · §7-B10-M1】三坑同体：① **回测静默截断** —— 本地日线滞后时 `BacktestEngine` 会把 `data<=end_date` 截到旧末日而不告知 ⇒ 默认终点必须走日历算“最近已定稿交易日”且回测前滞后自动补、补不到**回退+回执**（`_apply_end_date_receipt`，只回退不前移）；② **构页自启的 QThread Worker 会在离屏冒烟里真联网 + 写真实目录** ⇒ 测前必须把 `CalendarWorker` 打桩为不 `start`（并发到 `~/.jian_data/trade_calendar.json`，防污染自检名单要加）；③ **冒烟脚本里同名模块别名（`_bflow`）会被后续段落重新绑定成别的模块**（breadth_flow）⇒ 给新模块用**唯一别名**，否则 monkeypatch 打到错的模块、真线程偷偷跑起来
+- **11.5-72** 【v6.47 · §7-B10 M2/M3】① **滞后提示必须用真日历而非 busday**——节假日用 busday 会虚报“滞后”，而拿不到日历时“不提示”远胜于“猜错”（`format_stale` 三参任一缺 → 空串）；② **合并“补齐缺失”为一键后，`set_empty` 只有一个动作位** —— 新旧两语义（缺/旧）共用 `update_latest` 单入口、`fill_missing` 退位次级（方法保留），别再往空态塞第二个按钮；③ **两页都在构页时 `start_calendar_fetch`** → 测前除 M1 外还要在 `readiness_flow` 命名空间把 `CalendarWorker` 打桩（同一桩类复用，§11.5-71②）；④ **就绪度“本地最新”=全局 max 会被单只刚同步的标的掩盖**（昨天扫的 300 只，今天只同步 1 只→latest=今天→M2 基准日默认跳到今天→其余 299 当天无行全判“数据不足”）⇒ 滞后用 `representative_latest`（中位日）、另报 `coverage_at(基准日)` 诚实提示“仅 N/total 有数据”（就绪≠扫描：就绪=历史行数够、扫描=基准日当天有行，两套口径）
+- **11.5-73** 【v6.47 · 窄屏不撑窗（用户明令）】工具栏/摘要条的**单行 QLabel 绝不能塞长文本**——`QLabel` 不包字时 `minimumSizeHint` = 整串宽度，会把窗口**最小宽度**顶大，窄屏/小屏直接铺不开。做法：**单行标签只留短状态 + 一个“⚠”短标记，长说明进 tooltip 或结果区（`lbl_empty` 已 wordWrap，可换行）**；并给这类单行标签设 `setSizePolicy(QSizePolicy.Ignored, Preferred)` 使其**可缩不撑窗**（已用于 M2/M3 `lbl_receipt` 与 M1 `lbl_range_note`）。新加任何顶部回执都遵此模式。
 
 
 ### 11.6 当前"下一步做什么"的推荐顺序（历史刷新**倒序**排列：主清单之下**第一块就是最新**）
+
+> **v6.47（§7-B10 全案收官 · 1.35 · 2026-09-22）**
+> 承 v6.46 M1 切片，补齐 §7-B10 STEP 2–4（M2/M3）并**发版 1.35**（三处同步）：
+> ① **一键「⬆ 更新到最新」**——`ReadinessFlow.update_latest()` 对**整批当前范围**跑 `SyncWorker` 增量（缺的补、旧的拉到最近交易日、已新鲜的自然 skip），与“补齐缺失”**合并**为单一空态动作（共用 `_launch_sync`，`fill_missing` 退位次级保留）。
+> ② **滞后提示**——`start_calendar_fetch()` 挂 `CalendarWorker` → `trading_target`；`_render_readiness` 用 `trading_days_between`（真日历精确数）+ `format_stale`（`data/readiness.py` 零 UI）出“约 N 交易日滞后”；离线不提示不猜。
+> ③ **M2 基准日诚实化**——`scan_layout` 新增 `lbl_asof_hint`；`_calibrate_asof_date` 抬升 `date_asof` 上限并回显（M3 无 date_asof 不适用）。
+> ④ **（用户实测后修正）覆盖诚实提示 + 滞后不被单只掩盖**——“就绪 299/300”与“扫描 1/300”不矛盾（就绪=历史行数够、扫描=基准日当天有行）；根因是 `report.latest` 用**全局最大值**，单只刚同步的标的会把基准日默认拉到今天。修：`probe_readiness` 收集每只 last 分布→`representative_latest`（中位日，滞后用它）+ `coverage_at(基准日)`；`_render_readiness` 新增“基准日当天仅 N/total 只有数据→先更新/往前挪”提示（**不改基准日默认算法**，只加诚实提示）。
+> 验收：`smoke_chart` **745** / `smoke_pages_overlay` **514** 全绿 + compileall；两页起 `CalendarWorker` 测中均打桩不联网。坑=§11.5-71/72。
+> **下一步** = §7-B8 余量（R4 组合配置独立远期 / R12 暂缓）与其它 backlog（§7-A/C/D）。
+
+> **v6.46（§7-B10-M1 切片 · 未发版 · 2026-09-22）**
+> 用户实测 M1 单股回测“区间末日总是旧日” → 拆出一个定稿守卫 + 真日历 + M1 默认终点修复的最小切片：
+> ① **定稿守卫（STEP 0/1）**——`sync_service` 新增 `DAILY_SETTLE_HHMM`/`is_daily_bar_settled`（纯函数）/
+> `_drop_unsettled_tail`，`refresh_one` 落盘前对日线类分区裁“今天未定稿”那根（分钟不裁）。
+> ② **真交易日历**（推翻 §7-B10 原 F「不引日历」）——`akshare_feed.fetch_trade_calendar` +
+> `data/trade_calendar.py`（`load_or_fetch` 当日 JSON 缓存+失败回退 / `latest_settled_trading_day`）+
+> `ui/workers.CalendarWorker`（一次性后台抓，异常回 None）。
+> ③ **M1 区间修复**——`backtest.py` 构页起日历抓取 + `lbl_range_note` 回执行；`backtest_flow` 三方法
+> （`_on_calendar` 精修默认终点 / `_prepare_stock_then_run` 滞后自动联网补 / `_apply_end_date_receipt`
+> 补不到回退有数据那天+同步 `last_meta`，只回退不前移、绝不静默截断）。
+> 验收：`smoke_chart` **745** / `smoke_pages_overlay` **514** 全绿 + compileall；新增防污染自检项
+> `trade_calendar.json`（测中 CalendarWorker 打桩不联网）。坑=§11.5-71。
+> **下一步** = §7-B10 STEP 2–4（M2/M3「更新到最新」入口 / 滞后提示 / 基准日诚实化）；发版时三处版本号 1.34→1.35。
 
 > **v6.44（§7-B8 R7 副图换序收尾 · 1.34 · 2026-09-22）**
 > R7 三步收尾（用户 2026-09-21/22 实测确认手感）：① **模型层（零 Qt）** —— `layer_model`
@@ -1460,16 +1553,16 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ③ 仓库根 `version.json`。⚠ 顺便确认 `version.json` 的 `url` 仍指向
       **项目 Releases 页**（正式发版时才需要换成具体版本的下载直链）。
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
-- [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**721 项**，纯组件、离屏）
-- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**493 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
+- [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**745 项**，纯组件、离屏）
+- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**514 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
       并在其收尾的防污染自检名单里**加上任何新写的 `~/.jian_data/*.json`**（现在有 annotations /
       formula_library / watchlist / backtest_strategies / **preferences（1.23 起）** 五个）
 - [ ] **改了复盘页（`ui/views/review.py`）/ `ui/widgets/review_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**493 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
+      `py tests/smoke_pages_overlay.py`（**514 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
       公共面被改名、**把薄壳写成空函数**、宏观/微观**分栏退化成写死的 5:4 平铺**、
       分栏高度不落 `review_ui.v_sizes`，都会立刻红）
 - [ ] **改了全市场筛选页（`ui/views/scan_view.py`）/ `ui/widgets/scan_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**493 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
+      `py tests/smoke_pages_overlay.py`（**514 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
       ⚠ 六条最容易顺手改坏的：① **常驻行必须 ≤3**（粗筛阈值收在抽屉里，别往结果区上方加行）；
       ② **阈值"内核 ⇄ 界面"换算只许在 `ScanFilterPane` 一处**（界面亿元/% ⇄ 内核元/小数，
       换手率/市值**关闭时必须是 None**，变成 0 = 误杀一片）；
@@ -1480,7 +1573,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ⑥ **缺数据闸门不许删**（`_confirm_scan_with_gaps`：体检有缺口/未完成 ⇒ 二次确认才能扫，
         选「否」不得启动任何线程；本地齐了不打扰）
 - [ ] **改了广度统计页（`ui/views/breadth_view.py`）/ `ui/widgets/breadth_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**493 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
+      `py tests/smoke_pages_overlay.py`（**514 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
       ⚠ 七条最容易顺手改坏的：① **常驻行必须 ≤3**（⚡/⟳ 收在摘要条，别往结果区上方加行）；
       ② **双窗格必须 x 联动**（`ChartHost` 编排，禁止页面自己 `addPlot` 拼副图，§10-12）；
       ③ **广度占比的分母 = 有效样本**（命中+未命中）—— 换成"全市场只数" = 系统性压低且看不出来；
@@ -1504,7 +1597,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ③ **体检回调必须绑定各自 scope**（旧范围的迟到进度/回包一律丢弃 —— 否则会覆盖新范围提示或扫描回执）；
       ④ **已有扫描结果后，体检不得写回执**（回执区属于扫描）；但**占位文案里的"正在体检"必须被更新**
         （v6.43 §11.5-66：早退守卫连文案一起跳过 = 永远挂着"正在体检…"骗人）；
-      ⑤ **补齐只补 missing**（partial 如实解释、不假装能修）；成分股失败文案必须走
+      ⑤ **更新到最新与“补齐缺失”已合并为单入口**（v6.47）：`update_latest` 对整批当前范围跑增量（缺的补/旧的拉到最新/已新鲜自然 skip，`fill_missing` 退位次级保留）；滞后提示走真日历（`trading_days_between`/`format_stale`，**离线不提示、不许 busday 虚报**）；partial 如实解释不假装能修；成分股失败文案必须走
          `constituent_failure_text()`（**不许再裸甩"接口未返回成分股"**）
 - [ ] **改了后台扫描线程（`CrossSectionWorker`）或竞态守卫（`JobGuard`）吗？** → 跑
       `py tests/smoke_chart.py`（「STEP 3 · CrossSectionWorker」+「STEP 5 · 增量 Worker 通道」段）。⚠ 三条红线：
@@ -1528,7 +1621,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] **改了 `QComboBox` / `QDateEdit` / `QDateTimeEdit` 的样式吗？**
       → 只能用 `custom_widgets` 的常量（`::drop-down` 与 `::down-arrow` 必须成对，否则箭头消失）；
       改完跑 `py tests/smoke_chart.py` 看**箭头像素断言**（§11.5-17）
-- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**493 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；三条离屏打桩见 §11.5-20，**别删**）
+- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**514 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；三条离屏打桩见 §11.5-20，**别删**）
 - [ ] **新加了"往用户数据目录写文件"的功能吗？** → ① 用 `tmp + os.replace` 原子写；② 给 `tests/smoke_pages_overlay.py` 的收尾自检加一行文件名（§11.7 上一条）；③ 单条坏数据必须**跳过自己**而不是拖垮整库；
       ④ ⚠ 若它会**自动落盘**（"记住上次"类偏好，如 `backtest_ui` / `desk_ui`）→ **必须在冒烟脚本里
       把偏好单例的 `path` 重定向到临时目录**（只给 `Preferences.save` 打桩**实测不够**，仍被写脏过一次），
@@ -1548,7 +1641,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       临时探针与输出**用完即删**；删文件同批 `git rm`
 - [ ] **动了数据源/落盘护栏吗？（`data/akshare_feed.py` 的 `drop_unusable_price_rows` /
       `em_volume_to_shares`、`data/sync_service.py` 的取数分区）** → 跑 `py tests/smoke_chart.py`
-      （**721 项**：非正价行必须被拦下、兜底源成交量必须 ×100 成「股」、量纲接缝判据不许误报
+      （**745 项**：非正价行必须被拦下、兜底源成交量必须 ×100 成「股」、量纲接缝判据不许误报
       单日放量/不许漏报持续换单位）；⚠ **降级到兜底源时必须在出口统一量纲**（§9-V：单位不一致
       会让同一分区里同时存在"手/股"两种单位，量能副图出现 100× 台阶）
 - [ ] **动了 K 线图元（`CandlestickItem`）或其它"图形绘制"吗？** → ⚠ 记住：**"数据对不对"与

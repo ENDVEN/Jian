@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
-                             QPushButton, QProgressBar, QVBoxLayout, QWidget)
+                             QPushButton, QProgressBar, QSizePolicy, QVBoxLayout, QWidget)
 
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import CARD_QSS, ClickCatcher, EditDrawer, EditPane, FLAT_QSS
@@ -201,6 +201,8 @@ class BreadthLayout:
 
         p.lbl_receipt = QLabel('还没有扫描过 —— 选好范围与条件后点「▶ 开始扫描」')
         p.lbl_receipt.setStyleSheet('font-size: 11.5px; color: #8A94A6;')
+        # 窄屏不撑窗：水平 Ignored ⇒ 长文本不抬高窗口最小宽度（详情走 tooltip / 结果区）
+        p.lbl_receipt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         lay.addWidget(p.lbl_receipt, 1)
 
         p.bar_progress = QProgressBar()

@@ -202,6 +202,24 @@ class AkShareFeed:
             return pd.DataFrame()
 
     # ==========================================
+    # 交易日历 (Trading Calendar)  v6.45 / §7-B10
+    # ==========================================
+    @staticmethod
+    def fetch_trade_calendar() -> pd.DataFrame:
+        """拉取 A 股全历史交易日历（新浪源），清洗成单列 `date`（升序 datetime）。
+
+        只负责"接口细节 + 清洗"这一件事；缓存 / 回退 / 判定在 `data/trade_calendar.py`。
+        ⚠ 异常一律**向上抛**（不在这里吞），由调用方决定回退（拿不到日历≠网络故障都算失败）。
+        """
+        logging.info("开始从云端拉取交易日历...")
+        df = ak.tool_trade_date_hist_sina()
+        if df is None or df.empty:
+            return pd.DataFrame(columns=['date'])
+        col = 'trade_date' if 'trade_date' in df.columns else df.columns[0]
+        out = pd.DataFrame({'date': pd.to_datetime(df[col], errors='coerce')}).dropna()
+        return out.sort_values('date').reset_index(drop=True)
+
+    # ==========================================
     # 日线行情 (Daily K-Line)
     # ==========================================
     @staticmethod

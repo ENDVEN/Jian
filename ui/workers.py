@@ -22,6 +22,7 @@
     · FuturesImportWorker 解析期货交割单
     · CrossSectionWorker  M2/M3 横截面扫描（§7-B1/B2 D4：分块 + 进度 + 取消 + 竞态守卫）
     · ReadinessWorker     就绪度体检（§7-B1/B2 D6-1：只读 parquet footer，不联网不写盘）
+    · CalendarWorker      交易日历一次性后台抓取（§7-B10：失败/无网回 None，UI 回退本地最新）
   ⚠ 唯一的例外是 `core/updater.py` 的 UpdateCheckerThread —— 它属于 core 层
     （版本检测不是 UI 职责），不搬进 ui/。
 """
@@ -36,6 +37,7 @@ from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
                                short_fetch_reason)
+from data.trade_calendar import load_or_fetch
 
 logger = logging.getLogger(__name__)
 
@@ -387,3 +389,25 @@ class ReadinessWorker(QThread):
             self.failed.emit(self._job_id, str(e))
             return
         self.finished.emit(self._job_id, report)
+
+
+class CalendarWorker(QThread):
+    """交易日历一次性后台抓取（v6.45 / §7-B10）。
+
+    · 缓存命中即零网络；未命中才联网一次（`data.trade_calendar.load_or_fetch`）；
+    · 异常一律在线程内吞掉并回 `None` —— 绝不让网络失败冒泡到 UI，
+      调用方收到 `None` 就回退"本地数据湖最新日"（拿不到日历绝不阻断回测默认值）。
+    """
+
+    finished_signal = pyqtSignal(object)   # list[date] | None
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def run(self):
+        try:
+            calendar = load_or_fetch()
+        except Exception as e:  # noqa: BLE001 —— 网络/接口异常一律回 None，交 UI 回退
+            logger.warning(f"交易日历后台抓取失败，UI 将回退本地最新日: {e}")
+            calendar = None
+        self.finished_signal.emit(calendar)

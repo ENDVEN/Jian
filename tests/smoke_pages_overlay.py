@@ -127,6 +127,32 @@ from core.formula.program import parse_program, execute_programs_with_draws  # n
 from ui.main_window import JianMainWindow  # noqa: E402
 from ui.views.trading_desk import SUB_PLOT_HEIGHT  # noqa: E402
 
+# §7-B10：M1 视图 __init__ 会自启 CalendarWorker（真实联网 + 写真实缓存）。
+# 测试一律打桩为"不发线程、不联网、不改 date_end"，保住既有断言基线；
+# 真实逻辑（_on_calendar / 滞后自动补 / 回退回执）在下节直接调 flow 方法测。
+import ui.widgets.backtest_flow as _btflow  # noqa: E402  （用唯一别名，避开中部 `_bflow`=breadth_flow 重绑）
+import ui.widgets.readiness_flow as _rflow0  # noqa: E402  （§7-B10：M2/M3 两页构页也自启 CalendarWorker）
+
+
+class _StubSig:
+    def __init__(self):
+        self.slots = []
+
+    def connect(self, fn):
+        self.slots.append(fn)
+
+
+class _StubCalendarWorker:
+    def __init__(self, parent=None):
+        self.finished_signal = _StubSig()
+
+    def start(self):        # 不启真实线程
+        pass
+
+
+_btflow.CalendarWorker = _StubCalendarWorker
+_rflow0.CalendarWorker = _StubCalendarWorker   # 两页起日历线程也不联网（trading_target 保持 None → 不提示滞后）
+
 app = QApplication.instance() or QApplication([])
 win = JianMainWindow()
 view = win.page_backtest.single_view
@@ -1595,6 +1621,22 @@ mkt.layer_model = LayerModel(formulas=_tmp_formula.all(),
                              enabled=["volume", "macd", _sub_key], params={})
 mkt._recipe_programs = {}
 mkt.render_charts()
+# ★体验修复回归：开关图层（同一份数据重渲染）不得把用户 x 缩放拉回全历史/默认
+_vb = mkt.main_plot.getViewBox()
+_n = len(mkt._rendered_df)
+_vb.setXRange(_n * 0.4, _n * 0.6, padding=0)      # 模拟用户缩放到中段
+_zoom_before = _vb.viewRange()[0]
+mkt.render_charts()                                # 同一份数据、仅重渲染（等价于开关图层）
+app.processEvents()                                # 过一轮事件循环（真实栅格重排/布局在此发生）
+app.processEvents()
+_zoom_after = _vb.viewRange()[0]
+check("★ 切图层重渲染保住用户 x 缩放（不再被拉回全历史/默认）",
+      abs(_zoom_after[0] - _zoom_before[0]) < 1 and abs(_zoom_after[1] - _zoom_before[1]) < 1)
+check("主图 x 轴 autoRange 已关（栅格重排不会再 auto-fit 回全部历史）",
+      _vb.state['autoRange'][0] is False)
+check("★ 每张联动副图 x 轴 autoRange 已关（联动图不得自我 auto-fit，否则重排会把共享 x 拉回全历史）",
+      all(mkt.host.pane(nm).plot_item.getViewBox().state['autoRange'][0] is False
+          for nm in ('vol', 'macd', _sub_key)))
 check("起点：副图格位 = 内置量 → MACD → 离差指标（渲染吃模型顺序）",
       mkt.layer_model.sub_order_keys() == ["volume", "macd", _sub_key, _sub_key2]
       and mkt.host.pane_names == ['main', 'vol', 'macd', _sub_key])
@@ -2851,9 +2893,9 @@ try:
           _rep9 is not None and len(_rep9.ready) == 5 and _rep9.gap_count == 2
           and '就绪 5/7' in _brd6.lbl_receipt.text()
           and '未下载 2' in _brd6.lbl_receipt.text())
-    check("★ 缺口**看得见名字** + 空态给「⬇ 补齐缺失（2 只）」动作（禁止静默，D6-1/E 节）",
+    check("★ 缺口**看得见名字** + 空态给「⬆ 更新到最新交易日」动作（§7-B10 合并一键，禁止静默，D6-1/E 节）",
           'ZZZ001' in _brd6.lbl_empty.text()
-          and '补齐缺失（2 只）' in _brd6.btn_empty_action.text())
+          and '更新到最新交易日' in _brd6.btn_empty_action.text())
 
     # ---- ② 补齐缺失：打桩 SyncWorker —— **绝不联网**（§11.5-20 离屏打桩铁律）----
     _fill_started = []
@@ -2887,6 +2929,19 @@ try:
     _brd6._readiness.stop_fill()
     check("停止补齐：cancel 置位 + 回执说明「已下载的保留」（断点续传）",
           _brd6._readiness._sync.cancelled and '保留' in _brd6.lbl_receipt.text())
+    _rf6.SyncWorker = _orig_sync9
+    _brd6._readiness._syncing = False          # 恢复现场
+
+    # ---- ②b 更新到最新（§7-B10 STEP 2 合并一键）：把**整批当前范围**交给同步门面 ----
+    _fill_started.clear()
+    _rf6.SyncWorker = _StubSyncWorker6
+    _brd6._readiness.update_latest()
+    check("★ 更新到最新：把整批当前范围（含已就绪的 7 只）都交给同步门面 —— 缺的补、旧的拉到最新",
+          _fill_started == [[str(s) for s in _syms9]]
+          and _brd6._readiness._syncing and '更新中' in _brd6.lbl_empty.text())
+    check("更新进行中按钮 = 「⏹ 停止更新」（可中断）",
+          _brd6.btn_empty_action.text() == '⏹ 停止更新')
+    _brd6._readiness.stop_fill()
     _rf6.SyncWorker = _orig_sync9
     _brd6._readiness._syncing = False          # 恢复现场
 
@@ -2942,6 +2997,50 @@ try:
     check("M3 同款名称映射（两页共用同一份实现口径，§11.5-11）",
           set(_brd6._names) == set(_syms10))
 
+    # ---- ④c §7-B10 STEP 3/4：滞后提示（真日历）+ M2 基准日诚实化 ----
+    import datetime as _dtm6
+    import pandas as _pdc
+
+    _cal9 = [_dtm6.date(2026, 1, d) for d in range(1, 31)]
+    _brd6._outcome = None
+    _brd6._symbols = list(_syms9)
+    _brd6._readiness._calendar = _cal9
+    _brd6._readiness.trading_target = _dtm6.date(2026, 1, 30)
+    _brd6._readiness.report = _RReport6(total=7, ready=list(_real9),
+                                        missing=['ZZZ001', 'ZZZ002'],
+                                        latest=_pdc.Timestamp('2026-01-05'))
+    _brd6._readiness._render_readiness()
+    check("★ §7-B10 滞后提示：本地到 2026-01-05、最近交易日 2026-01-30 ⇒ 结果区现「滞后…交易日」+引导",
+          '滞后' in _brd6.lbl_empty.text()
+          and '更新到最新' in _brd6.btn_empty_action.text()
+          and '待更新' in _brd6.lbl_receipt.text())
+    # 无滞后（本地已到最近交易日）⇒ 不提示滞后
+    _brd6._readiness.report = _RReport6(total=7, ready=list(_real9),
+                                        latest=_pdc.Timestamp('2026-01-30'))
+    _brd6._readiness._render_readiness()
+    check("§7-B10 不滞后（本地=最近交易日）⇒ 结果区不出现「滞后」",
+          '滞后' not in _brd6.lbl_empty.text())
+    # M2 基准日说明（STEP 4）：上限=本地最新 + hint 回显
+    _scan6._date_touched = False
+    _scan6._readiness._calibrate_asof_date(
+        _RReport6(total=1, ready=['x'], latest=_pdc.Timestamp('2026-01-20')))
+    check("★ §7-B10 M2 基准日诚实化：hint 说明「上限=本地最新」且 date_asof 上限抬到本地最新",
+          '上限=本地最新' in _scan6.lbl_asof_hint.text()
+          and _scan6.date_asof.maximumDate() == _QDate6(2026, 1, 20))
+
+    # §7-B10 修正：基准日覆盖诚实提示（M2）—— 多数文件滞后、仅少数覆盖基准日 ⇒ 明说覆盖 N/total
+    _scan6._outcome = None
+    _scan6._symbols = list(_syms9)
+    _scan6._readiness._calendar = _cal9
+    _scan6._readiness.trading_target = _dtm6.date(2026, 1, 30)
+    _scan6._readiness.report = _RReport6(
+        total=7, ready=list(_real9), latest=_pdc.Timestamp('2026-01-30'),
+        lasts=[_pdc.Timestamp('2026-01-05')] * 6 + [_pdc.Timestamp('2026-01-30')])
+    _scan6._readiness._render_readiness()
+    check("★ §7-B10 基准日覆盖诚实提示：基准日当天仅 1/7 有数据 ⇒ 结果区明说「仅 1/7 只有数据」（不撑顶栏）",
+          '仅 1/7 只有数据' in _scan6.lbl_empty.text()
+          and '只有数据' not in _scan6.lbl_receipt.text())
+
     # ---- ⑤ bulk_download「全市场扫描就绪」预设（D6-2）----
     _dlg9 = _BDD6(win)
     _dlg9._apply_scan_ready_preset()
@@ -2954,12 +3053,135 @@ except Exception as _e:  # noqa: BLE001
     check(f"就绪度体检/补齐断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
 # ==========================================
+# ★ §7-B10 · M1 回测区间默认终点 / 滞后自动补 / 回退回执
+# ==========================================
+try:
+    import pandas as _pd10
+    from datetime import datetime as _dtm10, timedelta as _td10
+    from PyQt6.QtCore import QDate as _QD10
+    from data.trade_calendar import latest_settled_trading_day as _lstd10
+
+    _btv = view                     # SingleStockBacktestView
+    _f10 = _btv.flow
+
+    # ① 迁移护栏：控件/方法名不变（薄壳护栏）
+    check("M1 迁移护栏：date_end/date_start/cmb_range_preset/lbl_range_note 齐",
+          all(hasattr(_btv, a) for a in
+              ('date_end', 'date_start', 'cmb_range_preset', 'lbl_range_note')))
+
+    # ② _on_calendar：默认终点精修到"最近已定稿交易日"（与实现同一判据，免时间竞态）
+    _tday = _dtm10.now().date()
+    _cal = [(_tday - _td10(days=i)) for i in range(5, -1, -1)]
+    _f10._on_calendar(_cal)
+    _exp = _lstd10(calendar=_cal)
+    check("§7-B10 默认终点 = 最近已定稿交易日（date_end 被拨到该日）",
+          _exp is not None
+          and _btv.date_end.date() == _QD10(_exp.year, _exp.month, _exp.day))
+    check("§7-B10 日历就绪回执非空（不静默）",
+          '最近交易日' in _btv.lbl_range_note.text())
+
+    # ③ 离线回退：拿不到日历 → 保持系统日 + 明确回执
+    _before = _btv.date_end.date()
+    _f10._on_calendar(None)
+    check("§7-B10 离线：date_end 不被乱改", _btv.date_end.date() == _before)
+    check("§7-B10 离线：回执提示未取到日历/离线",
+          ('离线' in _btv.lbl_range_note.text()
+           or '未取到交易日历' in _btv.lbl_range_note.text()))
+
+    # ④ 滞后回退 + 回执 + 定格快照同步（绝不静默截断）
+    _btv.date_end.setDate(_QD10(2026, 1, 1))
+    _btv._last_meta = {"end_date": "2026-01-01"}
+    _stale_df = _pd10.DataFrame({'date': _pd10.to_datetime(
+        ['2025-06-01', '2025-06-02', '2025-06-03'])})
+    _f10._apply_end_date_receipt(_stale_df)
+    check("§7-B10 回退：date_end 拨到有数据那天",
+          _btv.date_end.date() == _QD10(2025, 6, 3))
+    check("§7-B10 回退：短回执不撑窗（单行只留短文本），完整说明入 tooltip",
+          '未达目标终点' in _btv.lbl_range_note.toolTip()
+          and len(_btv.lbl_range_note.text()) < 40)
+    check("§7-B10 回退：_last_meta.end_date 同步（导出口径诚实）",
+          _btv._last_meta['end_date'] == '2025-06-03')
+
+    # ⑤ 只回退不前移：数据比目标终点更新时不动 date_end
+    _btv.date_end.setDate(_QD10(2025, 1, 1))
+    _f10._apply_end_date_receipt(_stale_df)
+    check("§7-B10 只回退不前移（用户手动更早终点被保留）",
+          _btv.date_end.date() == _QD10(2025, 1, 1))
+
+    # ⑥⑦ 滞后自动补 / 已齐 —— 用全新 BacktestFlow + 假 page（与真实方法同构、无实例态污染）
+    _today_qd = _QD10.currentDate()
+    _stale_last_qd = _today_qd.addMonths(-3)
+    _stale_df2 = _pd10.DataFrame({'date': _pd10.to_datetime([
+        _stale_last_qd.addDays(-2).toString('yyyy-MM-dd'),
+        _stale_last_qd.addDays(-1).toString('yyyy-MM-dd'),
+        _stale_last_qd.toString('yyyy-MM-dd')])})
+
+    _sync_start = []
+
+    class _StubSyncOnce:
+        def __init__(self, *a, **k):
+            self.finished = _StubSig()
+
+        def start(self):
+            _sync_start.append(1)
+
+    class _NeedD:
+        def __init__(self, d):
+            self._d = d
+
+        def date(self):
+            return self._d
+
+    class _LakeD:
+        def __init__(self, df):
+            self._df = df
+
+        def load_data(self, zone, key, **r):
+            return self._df
+
+    _orig_sync = _btflow.SingleSyncWorker
+    _btflow.SingleSyncWorker = _StubSyncOnce
+    try:
+        class _FakePage:
+            pass
+
+        # ⑥ 本地末日 < 目标终点（今天）→ 应起 SingleSyncWorker
+        _pg = _FakePage()
+        _pg.date_end = _NeedD(_today_qd)
+        _pg.data_lake = _LakeD(_stale_df2)
+        _pg.current_symbol = '600000'
+        _fn = _btflow.BacktestFlow(_pg)
+        _fn._set_busy = lambda *a, **k: None
+        _fn._on_data_ready = lambda df: None
+        _fn._prepare_stock_then_run()
+        check("§7-B10 滞后自动补：本地末日<终点 → 起 SingleSyncWorker",
+              len(_sync_start) == 1)
+
+        # ⑦ 本地末日 >= 目标终点 → 不联网、直接进就绪链
+        _sync_start.clear()
+        _ready_calls = []
+        _pg2 = _FakePage()
+        _pg2.date_end = _NeedD(_stale_last_qd)
+        _pg2.data_lake = _LakeD(_stale_df2)
+        _pg2.current_symbol = '600000'
+        _fn2 = _btflow.BacktestFlow(_pg2)
+        _fn2._set_busy = lambda *a, **k: None
+        _fn2._on_data_ready = lambda df: _ready_calls.append(df)
+        _fn2._prepare_stock_then_run()
+        check("§7-B10 已齐：不触发同步、直接进就绪链",
+              len(_sync_start) == 0 and len(_ready_calls) == 1)
+    finally:
+        _btflow.SingleSyncWorker = _orig_sync
+except Exception as _e:  # noqa: BLE001
+    check(f"§7-B10 M1 区间断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402
 
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
-              "backtest_strategies.json", "preferences.json"):
+              "backtest_strategies.json", "preferences.json", "trade_calendar.json"):
     _path = os.path.join(settings.USER_DATA_DIR, _name)
     _untouched = (not os.path.exists(_path)) or os.path.getmtime(_path) < RUN_STARTED_AT
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)

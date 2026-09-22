@@ -3568,6 +3568,120 @@ try:
 except Exception as _e:  # noqa: BLE001
     check(f"就绪度体检断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
+# ==========================================
+print("\n== §7-B10 · 日线收盘定稿守卫 + 交易日历（纯函数）==")
+# ==========================================
+try:
+    import shutil as _sh2
+    import tempfile as _tfd
+    import pandas as _pdt
+    from datetime import datetime as _dtc, date as _dc
+    from data.sync_service import is_daily_bar_settled, _drop_unsettled_tail
+    from data.trade_calendar import (latest_settled_trading_day,
+                                     previous_trading_day, load_or_fetch,
+                                     trading_days_between)
+    from data.readiness import format_stale
+
+    # ① is_daily_bar_settled 四态（盘中今天10:30 / 盘后15:30）
+    _noon = _dtc(2026, 9, 22, 10, 30)
+    _close = _dtc(2026, 9, 22, 15, 30)
+    check("定稿：昨天恒已定稿", is_daily_bar_settled(_dc(2026, 9, 21), _noon))
+    check("定稿：今天盘中未定稿", not is_daily_bar_settled(_dc(2026, 9, 22), _noon))
+    check("定稿：今天盘后已定稿", is_daily_bar_settled(_dc(2026, 9, 22), _close))
+    check("定稿：未来日未定稿", not is_daily_bar_settled(_dc(2026, 9, 23), _close))
+
+    # ② _drop_unsettled_tail 只削未定稿当天、不碰历史/盘后
+    _dfc = _pdt.DataFrame({'date': _pdt.to_datetime(
+        ['2026-09-18', '2026-09-21', '2026-09-22']), 'close': [1, 2, 3]})
+    _dropped = _drop_unsettled_tail(_dfc, now=_noon)
+    check("裁尾：盘中把今天削掉",
+          len(_dropped) == 2
+          and _dropped['date'].max() == _pdt.Timestamp('2026-09-21'))
+    check("裁尾：盘后保留今天", len(_drop_unsettled_tail(_dfc, now=_close)) == 3)
+    _dfc2 = _pdt.DataFrame({'date': _pdt.to_datetime(['2026-09-18']), 'close': [1]})
+    check("裁尾：不含今天原样返回（幂等）",
+          len(_drop_unsettled_tail(_dfc2, now=_noon)) == 1)
+
+    # ③ latest_settled_trading_day / previous_trading_day
+    _cal = [_dc(2026, 9, 17), _dc(2026, 9, 18), _dc(2026, 9, 21), _dc(2026, 9, 22)]
+    check("最近定稿交易日：盘中今天→上一交易日",
+          latest_settled_trading_day(now=_noon, calendar=_cal) == _dc(2026, 9, 21))
+    check("最近定稿交易日：盘后今天→今天",
+          latest_settled_trading_day(now=_close, calendar=_cal) == _dc(2026, 9, 22))
+    _cal2 = [_dc(2026, 9, 25), _dc(2026, 9, 28)]   # 25 周五 / 28 下周一，今天 26 周六
+    check("最近定稿交易日：周末→最近的过去交易日",
+          latest_settled_trading_day(now=_dtc(2026, 9, 26, 12, 0), calendar=_cal2)
+          == _dc(2026, 9, 25))
+    check("最近定稿交易日：日历 None→None（交调用方回退）",
+          latest_settled_trading_day(now=_noon, calendar=None) is None)
+    check("previous_trading_day 严格早于 ref",
+          previous_trading_day(_dc(2026, 9, 22), _cal) == _dc(2026, 9, 21))
+
+    # ④ load_or_fetch 三重兜底（注入假 fetch + 临时缓存，绝不联网）
+    _tmpc = _tfd.mkdtemp(prefix='jian_cal_')
+    _cp = os.path.join(_tmpc, 'tc.json')
+    _calls = []
+
+    def _fake_fetch():
+        _calls.append(1)
+        return _pdt.DataFrame({'date': _pdt.to_datetime(
+            ['2026-09-18', '2026-09-21', '2026-09-22'])})
+
+    _got = load_or_fetch(fetch_fn=_fake_fetch, now=_noon, cache_path=_cp)
+    check("load_or_fetch：未命中→抓一次并落盘",
+          _calls == [1] and _got and _got[-1] == _dc(2026, 9, 22))
+    _got2 = load_or_fetch(fetch_fn=_fake_fetch, now=_noon, cache_path=_cp)
+    check("load_or_fetch：缓存命中→不再联网", _calls == [1] and _got2 == _got)
+
+    def _boom():
+        raise RuntimeError('net down')
+
+    _got3 = load_or_fetch(fetch_fn=_boom, now=_dtc(2027, 1, 5, 10, 30), cache_path=_cp)
+    check("load_or_fetch：抓取失败→回吐旧缓存", _got3 == _got)
+    _got4 = load_or_fetch(fetch_fn=_boom, now=_dtc(2030, 1, 1),
+                          cache_path=os.path.join(_tmpc, 'none.json'))
+    check("load_or_fetch：失败且无缓存→None", _got4 is None)
+    _sh2.rmtree(_tmpc, ignore_errors=True)
+
+    # ⑤ trading_days_between 精确数交易日（跨周末不虚报）
+    _cal5 = [_dc(2026, 1, 5), _dc(2026, 1, 6), _dc(2026, 1, 7), _dc(2026, 1, 8), _dc(2026, 1, 9)]
+    check("trading_days_between：(1/6, 1/9] = 3 个日历日",
+          trading_days_between(_dc(2026, 1, 6), _dc(2026, 1, 9), _cal5) == 3)
+    check("trading_days_between：a>=b → 0（不早于不算滞后）",
+          trading_days_between(_dc(2026, 1, 9), _dc(2026, 1, 6), _cal5) == 0)
+    check("trading_days_between：任一 None / 无日历 → 0",
+          trading_days_between(None, _dc(2026, 1, 9), _cal5) == 0
+          and trading_days_between(_dc(2026, 1, 5), None, _cal5) == 0
+          and trading_days_between(_dc(2026, 1, 5), _dc(2026, 1, 9), None) == 0)
+
+    # ⑥ format_stale 滞后文案（零 UI、可单测）
+    check("format_stale：滞后>0 出完整提示（含本地/最近交易日/引导）",
+          '滞后' in format_stale(_dc(2026, 1, 5), _dc(2026, 1, 9), 3)
+          and '2026-01-05' in format_stale(_dc(2026, 1, 5), _dc(2026, 1, 9), 3)
+          and '更新到最新' in format_stale(_dc(2026, 1, 5), _dc(2026, 1, 9), 3))
+    check("format_stale：无滞后/缺参 → 空串（诚实不打扰）",
+          format_stale(_dc(2026, 1, 9), _dc(2026, 1, 9), 0) == ''
+          and format_stale(None, _dc(2026, 1, 9), 3) == ''
+          and format_stale(_dc(2026, 1, 5), None, 3) == '')
+
+    # ⑦ ReadinessReport.representative_latest / coverage_at（§7-B10 覆盖诚实提示的底层）
+    from data.readiness import ReadinessReport as _RRep7
+    _r7 = _RRep7(total=3, ready=['a', 'b', 'c'],
+                 latest=_pdt.Timestamp('2026-09-22'),
+                 lasts=[_pdt.Timestamp('2026-09-20'), _pdt.Timestamp('2026-09-21'),
+                        _pdt.Timestamp('2026-09-22')])
+    check("representative_latest = 中位日（不被单只最新掩盖）",
+          _r7.representative_latest == _pdt.Timestamp('2026-09-21'))
+    check("coverage_at：9/22=1 · 9/21=2 · 9/20=3（逐日统计覆盖）",
+          _r7.coverage_at(_dc(2026, 9, 22)) == 1 and _r7.coverage_at(_dc(2026, 9, 21)) == 2
+          and _r7.coverage_at(_dc(2026, 9, 20)) == 3)
+    _r7b = _RRep7(total=1, latest=_pdt.Timestamp('2026-09-22'))
+    check("无 lasts → representative_latest 退回 latest、coverage_at=0",
+          _r7b.representative_latest == _pdt.Timestamp('2026-09-22')
+          and _r7b.coverage_at(_dc(2026, 9, 22)) == 0)
+except Exception as _e:  # noqa: BLE001
+    check(f"§7-B10 定稿守卫/日历断言整段抛异常: {type(_e).__name__}: {_e}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

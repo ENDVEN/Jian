@@ -17,8 +17,8 @@ from __future__ import annotations
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFrame,
                              QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
-                             QProgressBar, QTableWidget, QTableWidgetItem, QTextEdit,
-                             QVBoxLayout, QWidget)
+                             QProgressBar, QSizePolicy, QTableWidget, QTableWidgetItem,
+                             QTextEdit, QVBoxLayout, QWidget)
 
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, EditDrawer, EditPane,
@@ -228,6 +228,13 @@ class ScanLayout:
                                '扫完后也可以改：切日期读的是缓存矩阵，零成本不重算。')
         lay.addWidget(p.date_asof)
 
+        # 基准日诚实化（§7-B10 STEP 4）：上限=本地最新（防选了扫不出），要更近先“更新到最新”
+        p.lbl_asof_hint = QLabel('')
+        p.lbl_asof_hint.setStyleSheet('font-size: 11px; color: #8A94A6;')
+        p.lbl_asof_hint.setToolTip('基准日只能选到本地已有数据的最新交易日；若需更近的日子，'
+                                   '先点空态的「⬆ 更新到最新交易日」把数据拉齐，上限会自动抬升。')
+        lay.addWidget(p.lbl_asof_hint)
+
         p.btn_prev_day = QPushButton('◀')
         p.btn_next_day = QPushButton('▶')
         p.btn_latest_day = QPushButton('最新')
@@ -273,6 +280,8 @@ class ScanLayout:
 
         p.lbl_receipt = QLabel('还没有扫描过 —— 选好范围与条件后点「▶ 开始扫描」')
         p.lbl_receipt.setStyleSheet('font-size: 11.5px; color: #8A94A6;')
+        # 窄屏不撑窗：水平方向 Ignored ⇒ 长文本不会抬高窗口最小宽度（详情走 tooltip / 结果区）
+        p.lbl_receipt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         lay.addWidget(p.lbl_receipt, 1)
 
         p.bar_progress = QProgressBar()

@@ -585,6 +585,11 @@ class ChartHost(QWidget):
         main = self._panes[0]
         for pane in self._panes[1:]:
             pane.plot_item.setXLink(main.plot_item)
+            # ★副图 x 轴既然联动到主图，就必须关掉它自己的 x autoRange：
+            #   pyqtgraph 的联动并不阻止子 viewbox 自动缩放 —— 加/删副图触发栅格重排时，
+            #   子图的 autoRange 会把**共享的 x 轴**一起 auto-fit 回全历史（主图跟着被拉远，
+            #   正是“加一个副图就缩到全历史”的根因）。x 由主图统一控，副图只跟随。
+            pane.plot_item.getViewBox().enableAutoRange(pg.ViewBox.XAxis, False)
 
     def _reindex_rows(self) -> None:
         """删除窗格后把剩余窗格按 0..n-1 重新排布（QGraphicsGridLayout 不做自动塌缩）。"""

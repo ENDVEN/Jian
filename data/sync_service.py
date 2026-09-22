@@ -28,6 +28,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 import pandas as pd
 
@@ -56,7 +57,8 @@ __all__ = ["MarketSyncService", "ThrottlePolicy", "ADJUST_QFQ", "ADJUST_NONE",
            "ZONE_KLINE", "ZONE_KLINE_RAW", "ZONE_INDEX", "ZONE_MIN", "estimate_seconds",
            "short_fetch_reason", "friendly_fetch_message", "friendly_constituent_message",
            "DEFAULT_MIN_DATE", "MINUTE_PERIODS", "MINUTE_DEPTH_DAYS",
-           "minute_key", "split_minute_key"]
+           "minute_key", "split_minute_key",
+           "DAILY_SETTLE_HHMM", "is_daily_bar_settled", "DAILY_ZONES"]
 
 
 def minute_key(symbol: str, period: str) -> str:
@@ -103,6 +105,65 @@ def zone_for_adjust(adjust: str) -> str:
 # 用 2010 是为了兼容市场行情页的既有行为：该页云端同步历史上就是 2010 起，
 # 若收窄会让用户曾经能看到的更早 K 线凭空消失（数据主权/不静默缩水的红线）。
 DEFAULT_MIN_DATE = "20100101"
+
+# ==========================================
+# 日线收盘定稿守卫 (v6.45 / §7-B10 STEP 0-1 · 单一真源)
+# ==========================================
+# 【为什么】盘中同步会把"今天那根未完成 bar"写进日线库，而 `_is_fresh` 只比到"天"、
+# 增量起点又是 last+1 永不回补 ⇒ 半根 bar 一旦落库再也刷不掉，污染收盘口径的回测/扫描
+# （成交额 / 换手 / 收盘类判定全错且界面看不出）。判据**只此一处**，M1/M2/M3 一律复用。
+# 默认 15:05（A 股 15:00 收 + 5 分钟缓冲）；做成常量可配。
+DAILY_SETTLE_HHMM = 1505
+
+# 受定稿守卫约束的日线类分区（分钟 `kline_min` 本就是盘中语义，不裁）
+DAILY_ZONES = (ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX)
+
+
+def is_daily_bar_settled(bar_date, now=None, settle_hhmm: int = DAILY_SETTLE_HHMM) -> bool:
+    """某根日线 bar 是否已"收盘定稿"（纯函数 · 零 Qt · 零网络）。
+
+    - `bar_date < 今天`  → 恒 True（历史/昨日的日线早已定稿）；
+    - `bar_date == 今天` → 仅当 `now >= 今天 settle_hhmm`（默认 15:05）才 True；
+    - `bar_date > 今天`  → False（未来日绝不算定稿）。
+
+    :param bar_date: `date` / `datetime` / `pd.Timestamp` / 可被 pandas 解析的日期串
+    :param now:      判定时刻（默认 `datetime.now()`；测试可注入假 now）
+    """
+    now = now or datetime.now()
+    try:
+        d = pd.Timestamp(bar_date).date()
+    except (ValueError, TypeError):  # noqa: BLE001 —— 解析不了即视为未定稿（保守不写）
+        return False
+    today = now.date()
+    if d < today:
+        return True
+    if d > today:
+        return False
+    settle = now.replace(hour=settle_hhmm // 100, minute=settle_hhmm % 100,
+                         second=0, microsecond=0)
+    return now >= settle
+
+
+def _drop_unsettled_tail(df: pd.DataFrame, now=None,
+                         settle_hhmm: int = DAILY_SETTLE_HHMM) -> pd.DataFrame:
+    """落盘前裁掉"今天且未定稿"的那一根日线（历史/昨日/盘后当天一律保留）。
+
+    幂等：已定稿或不含今天行时原样返回；无 `date` 列 / 空表原样返回。
+    """
+    if df is None or df.empty or "date" not in df.columns:
+        return df
+    now = now or datetime.now()
+    today = now.date()
+    try:
+        dates = pd.to_datetime(df["date"], errors="coerce").dt.date
+    except (TypeError, ValueError):  # noqa: BLE001
+        return df
+    if not (dates == today).any():          # 不含今天 ⇒ 无需判定，直接返回
+        return df
+    if is_daily_bar_settled(today, now, settle_hhmm):
+        return df                            # 今天已定稿 ⇒ 保留当天根
+    keep = dates != today
+    return df[keep].reset_index(drop=True)
 
 
 @dataclass
@@ -321,6 +382,12 @@ class MarketSyncService:
 
         # ---- 3) 合并去重（新数据优先，便于顺带修正前复权漂移）----
         merged = new if (force_full or old.empty) else self._merge(old, new)
+
+        # ---- 3.5) 定稿守卫（§7-B10 STEP 1）：日线类分区落盘前裁掉"今天未定稿"那根 ----
+        # 附带自洽效果：盘中把今天裁掉 → 本地末日=昨天 → 盘后再同步 `_is_fresh` 不跳过、
+        # 起点=昨天+1=今天 → 拉到完整当天并落库（无需改 `_is_fresh`/增量起点语义）。
+        if zone in DAILY_ZONES:
+            merged = _drop_unsettled_tail(merged)
 
         # ---- 4) 落盘 ----
         if not self.lake.save_data(zone, key, merged):

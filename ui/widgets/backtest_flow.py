@@ -27,7 +27,8 @@ from core.formula.program import (FormulaProgramError, execute_programs,
 from core.utils import align_by_date
 from data.akshare_feed import is_index_symbol, is_stock_code
 from data.sync_service import ZONE_INDEX, ZONE_KLINE, friendly_fetch_message
-from ui.workers import BacktestRunWorker, SingleSyncWorker
+from data.trade_calendar import latest_settled_trading_day
+from ui.workers import BacktestRunWorker, CalendarWorker, SingleSyncWorker
 
 
 def _date_from_preset(preset: str) -> QDate:
@@ -80,6 +81,75 @@ class BacktestFlow:
     def _on_range_preset(self, preset: str):
         """区间快捷档 → 只改起始日（结束日永远由用户自己定，不静默改口径）。"""
         self.page.date_start.setDate(_date_from_preset(preset))
+
+    # ==========================================
+    # 默认回测终点（§7-B10 · 最近已定稿交易日）
+    # ==========================================
+    def start_calendar_fetch(self):
+        """页面初始化时后台拉一次交易日历（缓存命中即零网络）；结果回来把默认终点
+        精修到「最近一个已定稿交易日」。拿不到日历（离线）→ 保持系统日，不阻断。"""
+        p = self.page
+        p._calendar_thread = CalendarWorker(parent=p)
+        p._calendar_thread.finished_signal.connect(self._on_calendar)
+        p._calendar_thread.start()
+
+    def _on_calendar(self, calendar):
+        """日历就绪回包：`list[date] | None`（None = 拿不到，交回退路径）。"""
+        p = self.page
+        p._calendar = calendar or None
+        target = latest_settled_trading_day(calendar=calendar)
+        if target is None:
+            self._note("离线：终点按系统日期",
+                       "未取到交易日历（离线），回测终点默认按系统日期；"
+                       "回测时会自动校验本地数据并补全。")
+            return
+        qd = QDate(target.year, target.month, target.day)
+        if qd <= p.date_end.maximumDate() and qd != p.date_end.date():
+            p.date_end.setDate(qd)             # 默认终点 = 最近已定稿交易日
+        self._note(f"终点默认 = 最近交易日 {qd.toString('yyyy-MM-dd')}",
+                   "回测区间默认终点已按交易日历落在最近一个已定稿交易日。")
+
+    def _note(self, short: str, full: str = '') -> None:
+        """工具栏单行只放短文本（窄屏不撑窗），完整说明进 tooltip。"""
+        p = self.page
+        p.lbl_range_note.setText(short)
+        p.lbl_range_note.setToolTip(full or short)
+
+    @staticmethod
+    def _qdate_last(df):
+        """df 的最新交易日 → `QDate`；空 / 无 date 列 → None。"""
+        if df is None or getattr(df, "empty", True) or "date" not in df.columns:
+            return None
+        try:
+            last = pd.to_datetime(df["date"], errors="coerce").max()
+        except (TypeError, ValueError):  # noqa: BLE001
+            return None
+        if pd.isna(last):
+            return None
+        return QDate(last.year, last.month, last.day)
+
+    def _apply_end_date_receipt(self, df):
+        """回测前诚实化（§7-B10 / 用户拍板 #3#4）：若该标的本地最新日仍早于 date_end
+        （离线 / 补不到）→ 把终点**回退到有数据那天**并给一行回执，绝不静默截断。
+        用户手动设过的更早终点不被前移（只回退）。"""
+        p = self.page
+        last = self._qdate_last(df)
+        need = p.date_end.date()
+        if last is None:
+            return
+        if last < need:
+            p.date_end.setDate(last)           # 只回退、不前移
+            self._note(
+                f"⚠ 本地到 {last.toString('yyyy-MM-dd')}（未到 {need.toString('yyyy-MM-dd')}），已按前者回测",
+                f"本地数据到 {last.toString('yyyy-MM-dd')}，未达目标终点 "
+                f"{need.toString('yyyy-MM-dd')}（离线/未补全），已按前者回测。")
+            if p._last_meta:
+                p._last_meta["end_date"] = last.toString("yyyy-MM-dd")
+        elif p._calendar:
+            target = latest_settled_trading_day(calendar=p._calendar)
+            if target is not None:
+                self._note(f"已到最近交易日 {need.toString('yyyy-MM-dd')}",
+                           "本地数据已覆盖最近交易日，开始回测。")
 
     # ==========================================
     # 发起回测（校验 + 定格快照）
@@ -176,8 +246,12 @@ class BacktestFlow:
     def _prepare_stock_then_run(self):
         p = self.page
         df = p.data_lake.load_data(ZONE_KLINE, p.current_symbol)
-        if df.empty:
-            self._set_busy(True, "本地无日线，正在联网同步...")
+        # 滞后自动补（§7-B10 / 拍板 #3）：由“仅无数据才补”放宽为
+        # “该标的本地末日 < 回测终点也补”（含 `df.empty`）。
+        need = p.date_end.date()
+        local_last = self._qdate_last(df)
+        if df.empty or local_last is None or local_last < need:
+            self._set_busy(True, f"本地日线未到 {need.toString('yyyy-MM-dd')}，正在联网补全...")
             p._sync_thread = SingleSyncWorker(p.current_symbol, zone=ZONE_KLINE, parent=p)
             p._sync_thread.finished.connect(self._on_synced)
             p._sync_thread.start()
@@ -208,6 +282,9 @@ class BacktestFlow:
     # ==========================================
     def _on_data_ready(self, df):
         p = self.page
+        # 回测前诚实化：补完后若本地末日仍早于 date_end → 回退终点 + 回执（不静默截断）。
+        # 必须在下方定格 worker 的 end_date / 写回 _last_meta 之前执行。
+        self._apply_end_date_receipt(df)
         params = getattr(p, '_pending_params', {})
         try:
             # v6.4 / §7-B3 P3：同一次求值**同时**产出 变量 + 绘图 IR（不二次求值）

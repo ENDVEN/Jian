@@ -78,6 +78,7 @@ class DeskLayers:
     # ==========================================
     def render_charts(self):
         p = self.page
+        prev_bars = p._layer_bars      # 上一次渲染的根数（用于区分“换数据” vs “仅切图层”）
         p.host.clear_sub_panes()
         p.formula_plots = {}
         p._layer_builtin = []
@@ -140,8 +141,22 @@ class DeskLayers:
 
         self._paint_layers()
 
-        if len(df) > DEFAULT_VISIBLE_BARS:
-            p.main_plot.getViewBox().setXRange(len(df) - DEFAULT_VISIBLE_BARS, len(df))
+        # ---- x 轴可视区间：换数据才重置到默认最近 N 根；仅切图层/改公式时保住用户当前缩放 ----
+        #   ⚠ 全程显式关掉 x 轴 autoRange —— 否则“加/删副图触发的栅格重排 + 重新 addItem”
+        #   会让 pyqtgraph 把 x 重新 auto-fit 回**全部历史**（整图“啪”地缩到最小，正是
+        #   用户报的“加图就压缩到最小 / 关图又弹回来”的脱节）。
+        vb = p.main_plot.getViewBox()
+        n = len(df)
+        vb.enableAutoRange(pg.ViewBox.XAxis, False)
+        if n != prev_bars:                          # 换标的/换周期 ⇒ 根数变 ⇒ 回默认窗口
+            lo, hi = max(0, n - DEFAULT_VISIBLE_BARS), n
+        else:                                       # 同一份数据上仅开关图层 ⇒ 保住当前可视区间
+            lo, hi = vb.viewRange()[0]
+            lo = min(max(lo, 0.0), n)
+            hi = min(max(hi, 0.0), n)
+            if hi - lo < 1:                         # 区间退化/越界 ⇒ 兜底回默认
+                lo, hi = max(0, n - DEFAULT_VISIBLE_BARS), n
+        vb.setXRange(lo, hi, padding=0)
 
         # ---- 自适应坐标轴（§7-B4）：横轴刻度随可视区间重算 + 每个窗格 y 跟随可视区间 ----
         # ⚠ 必须放在 setXRange **之后**：attach 内部会按当前的 x 区间算一次刻度与量程
