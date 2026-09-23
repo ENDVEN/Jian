@@ -36,6 +36,8 @@ DEFAULT_FORMULA = ("DIFF := EMA(C,12) - EMA(C,26);\n"
 class BreadthView(QWidget):
     """📊 广度统计（M3）。挂载在 `backtest_module.tabs` 的第 3 个页签。"""
 
+    hub_origin = "breadth"   # v1.43：提交到后台下载队列时的发起方标识（回执只回给本页）
+
     def __init__(self, main_win):
         super().__init__()
         self.main_win = main_win

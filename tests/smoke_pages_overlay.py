@@ -3,13 +3,18 @@
 
 用法：py tests/smoke_pages_overlay.py  （在仓库根目录执行）
 ⚠ 会真实构造主窗口（打开 ~/.jian_data），请勿在 app 运行中同时跑。
-⚠ 三条"离屏测试必备"的打桩（**缺一条就会表现为"卡住、无输出"**，见 §11.7）：
+⚠ 四条"离屏测试必备"的打桩（**缺一条就会表现为"卡住、无输出"，或写脏用户库**，见 §11.7）：
    ① **模态对话框打桩** —— `QMessageBox/QInputDialog` 在离屏环境没有用户可点，
       一旦弹出就是**永久阻塞**（历史事故：一条"浏览模式下点添加应给提示"的断言
       直接让脚本挂死）。
    ② **更新检查打桩** —— `UpdateCheckerThread` 会请求 GitHub；测试不该依赖网络。
    ③ 结尾用 `os._exit()` —— 只要还有非守护 QThread 存活，解释器就不退出；
       而 `| Select-Object -Last N` 会**缓冲到进程结束**才显示 ⇒ 表现为"长时间无响应"。
+   ④ （v1.42 补）**异步回测也不许写真目录** —— 看到"只有几条真实数据类断言红"时，
+      先问"有没有东西正在写"：本脚本的 §7-A4 `_on_rerun()` 会真起一次回测，它在
+      **后面任意一段**转事件循环时才回包 ⇒ 策略库与自动存档都会写进真实
+      `~/.jian_data/`（实测红过两次，红不红取决于时机）。正解 = 路径重定向到临时目录
+      + 不把 `backtest_archive.auto` 还原成 True；后台下载同理（打桩 `download_hub.SyncWorker`）。
 """
 import os
 import sys
@@ -160,6 +165,19 @@ _rflow0.CalendarWorker = _StubCalendarWorker   # 两页起日历线程也不联�
 app = QApplication.instance() or QApplication([])
 win = JianMainWindow()
 view = win.page_backtest.single_view
+
+# ==========================================
+# 打桩 ④（v1.42 补）：**策略库与自动存档也不许写真实目录**
+#   §7-A4 的 `_on_rerun()` 会真起一次异步回测，而它在**后面任意一段**转事件循环时
+#   才回包 ⇒ `StrategyBridge.record()` 写真实 `backtest_strategies.json`；
+#   若那时 `backtest_archive.auto` 又被还原成 True，还会往真实 `backtest_results/`
+#   落一份快照。实测：收尾自检 2 红，且**红与不红取决于那次异步回测有没有在
+#   脚本结束前跑完** —— 竞态型污染（§11.5-79 同族：只有几条“真实数据类”断言红时，
+#   先问“有没有东西正在写”）。与 annotations / formula_library / watchlist 同处理：
+#   把落盘路径重定向到临时目录，断言口径不变。
+# ==========================================
+_GUARD_DIR = tempfile.mkdtemp(prefix="jian_guard_")
+view.store.path = os.path.join(_GUARD_DIR, "backtest_strategies.json")
 
 # ---- 合成一段行情 ----
 n = 200
@@ -2906,7 +2924,10 @@ try:
           'ZZZ001' in _brd6.lbl_empty.text()
           and '更新到最新交易日' in _brd6.btn_empty_action.text())
 
-    # ---- ② 补齐缺失：打桩 SyncWorker —— **绝不联网**（§11.5-20 离屏打桩铁律）----
+    # ---- ② 补齐缺失：★v1.43 任务**交给主窗口的后台队列**（§7-B11），
+    #      打桩队列里的 SyncWorker —— 绝不联网（§11.5-20 离屏打桩铁律）----
+    from ui import download_hub as _dhub6  # noqa: E402
+
     _fill_started = []
 
     class _StubSyncWorker6(_QObject):
@@ -2919,7 +2940,7 @@ try:
             super().__init__(parent)
             self._symbols = [str(s) for s in (symbols or [])]
             self.cancelled = False
-            _fill_started.append(self._symbols)
+            _fill_started.append(self)
 
         def start(self):
             pass                              # 打桩：不起线程
@@ -2927,41 +2948,61 @@ try:
         def cancel(self):
             self.cancelled = True
 
-    _orig_sync9 = _rf6.SyncWorker
-    _rf6.SyncWorker = _StubSyncWorker6
+    _orig_sync9 = _dhub6.SyncWorker
+    _dhub6.SyncWorker = _StubSyncWorker6
     _brd6._readiness.fill_missing()
-    check("★ 补齐缺失：只把**未下载的 2 只**交给同步门面（已就绪/历史不足的不折腾）",
-          _fill_started == [['ZZZ001', 'ZZZ002']] and _brd6._readiness._syncing
-          and '补齐中' in _brd6.lbl_empty.text())
+    _job6 = _brd6._readiness._sync_job
+    check("★ 补齐缺失：只把**未下载的 2 只**交给后台队列（已就绪/历史不足的不折腾）",
+          [w._symbols for w in _fill_started] == [['ZZZ001', 'ZZZ002']]
+          and _brd6._readiness._syncing and '补齐中' in _brd6.lbl_empty.text())
+    check("★ 任务归属在主窗口的队列里，不在页面里（切页/关窗都不影响它跑）",
+          win.downloads.get(_job6) is not None
+          and win.downloads.get(_job6).origin == 'breadth')
     check("补齐进行中按钮 = 「⏹ 停止补齐」（温柔抓取可中断）",
           _brd6.btn_empty_action.text() == '⏹ 停止补齐')
     _brd6._readiness.stop_fill()
-    check("停止补齐：cancel 置位 + 回执说明「已下载的保留」（断点续传）",
-          _brd6._readiness._sync.cancelled and '保留' in _brd6.lbl_receipt.text())
-    _rf6.SyncWorker = _orig_sync9
-    _brd6._readiness._syncing = False          # 恢复现场
+    check("停止补齐：worker.cancel 置位 + 回执说明「已下载的保留」（断点续传）",
+          _fill_started[-1].cancelled and '保留' in _brd6.lbl_receipt.text())
+    _fill_started[-1].finished.emit({'ok': 0, 'fail': 0, 'skipped': 0, 'added': 0,
+                                     'aborted': True, 'aborted_by': 'cancel',
+                                     'symbols_failed': []})          # 收尾：让队列回到空坑位
+    check("★ 中断回包后队列不卡死（页面回执说清原因，任务号不再挂在页面上）",
+          _brd6._readiness._sync_job is None
+          and win.downloads.current is None
+          and '已中断' in _brd6.lbl_receipt.text())
 
-    # ---- ②b 更新到最新（§7-B10 STEP 2 合并一键）：把**整批当前范围**交给同步门面 ----
+    # ---- ②b 更新到最新（§7-B10 STEP 2 合并一键）：把**整批当前范围**交给队列 ----
     _fill_started.clear()
-    _rf6.SyncWorker = _StubSyncWorker6
+    _brd6._readiness._syncing = False          # 恢复现场
     _brd6._readiness.update_latest()
-    check("★ 更新到最新：把整批当前范围（含已就绪的 7 只）都交给同步门面 —— 缺的补、旧的拉到最新",
-          _fill_started == [[str(s) for s in _syms9]]
+    check("★ 更新到最新：把整批当前范围（含已就绪的 7 只）都交给后台队列 —— 缺的补、旧的拉到最新",
+          [w._symbols for w in _fill_started] == [[str(s) for s in _syms9]]
           and _brd6._readiness._syncing and '更新中' in _brd6.lbl_empty.text())
     check("更新进行中按钮 = 「⏹ 停止更新」（可中断）",
           _brd6.btn_empty_action.text() == '⏹ 停止更新')
-    _brd6._readiness.stop_fill()
-    _rf6.SyncWorker = _orig_sync9
+    _fill_started[-1].progress.emit(3, 7, 'ZZZ001')
+    check("★ 页面进度条是队列的**投影**（只认自己那个任务号，进度真的落到页面上）",
+          _brd6.bar_progress.value() == 3 and '更新 3/7' in _brd6.lbl_receipt.text())
+    _fill_started[-1].finished.emit({'ok': 5, 'fail': 2, 'skipped': 0, 'added': 10,
+                                     'aborted': False, 'aborted_by': '',
+                                     'symbols_failed': ['ZZZ001', 'ZZZ002']})
+    check("★ 完成后回执说清成败（不弹窗打断 —— 用户可能正在别的页面做事）",
+          '成功 5' in _brd6.lbl_receipt.text() and '失败 2' in _brd6.lbl_receipt.text()
+          and _brd6._readiness._syncing is False)
+    _rep6b = _wait_probe6(_brd6._readiness)      # 完成会自动复检（两页口径仍只有一份）
+    check("★ 同步结束后自动复检就绪度（不拿旧报告骗用户）", _rep6b is not None)
+    _dhub6.SyncWorker = _orig_sync9
     _brd6._readiness._syncing = False          # 恢复现场
 
     # ---- ③ 范围切换后，旧体检回包**不得覆盖**新范围的提示（防串台）----
     _stale_job = _brd6._readiness._guard.next()
     _brd6._readiness._last_symbols = ['OLD999']
     _brd6._symbols = ['ONLY999']               # 用户已切走
+    _keep_receipt6 = _brd6.lbl_receipt.text()   # 上一段②b 的完成回执（属于扫描/同步，体检不许抢）
     _brd6._readiness._on_probed(_stale_job, _RReport6(total=1, ready=['OLD999']),
                                 ['OLD999'])    # 回调绑定"体检时自己的范围"（防穿透，v6.39）
     check("★ 迟到的旧范围体检被丢弃（回执不被覆盖，且不污染已有报告 —— §9-O5 精神同样成立）",
-          '保留' in _brd6.lbl_receipt.text()
+          _brd6.lbl_receipt.text() == _keep_receipt6
           and _brd6._readiness.report is not None
           and _brd6._readiness.report.gap_count == 2)
 
@@ -3373,7 +3414,10 @@ try:
     _pref_module.preferences.set("backtest_archive", {"auto": False})
     _sv5.flow._auto_archive(_res5)
     check("自动存档开关关掉时不再落盘", len(_hv.archive.list()) == _n_before + 1)
-    _pref_module.preferences.set("backtest_archive", {"auto": True})
+    # ★v1.42：上面那行 `auto=False` **故意不还原成 True** —— §7-A4 之后还有
+    #   `_on_rerun()` 真起异步回测，它在后面任意一段转事件循环时才回包
+    #   ⇒ 若此时开关是 True，就会把快照写进**真实** `~/.jian_data/backtest_results/`
+    #   （收尾自检会红，且红得飘忽：取决于那次异步回测跑不跑得完）。
     _bflow5.BacktestArchive = _orig_arc_cls     # 存档类已用完，尽早还原（后续段落不再打桩）
 
     # —— 复用参数 / 重跑 / 送行情页 ——
@@ -3529,6 +3573,340 @@ try:
           '补齐缺失' not in _layer_src11 and '更新到最新交易日' not in _layer_src11)
 except Exception as _e11:  # noqa: BLE001
     check(f"§7-B1/B2 补漏 入口完整性断言整段抛异常: {type(_e11).__name__}: {_e11}", False)
+
+# ==========================================
+# §10-9 还清 · 数值控件宽度：「间隔(秒)」不再被截成 "0"（v1.42 · 用户实测反馈驱动）
+#   现场：批量预下载弹窗预设 0.6，但控件被钉死在 64px ⇒ 原生上下箭头占掉 18~22px 后
+#   文本区只剩约 30px，用户只看得见 "0"；而数据管理页同一个控件是 82px
+#   ⇒ 同一件事两个尺寸，正是 §10-9「同类控件同一张脸 + 数值控件最小宽度 ≥ 72px」被破。
+#   修法：宽度收成 `custom_widgets.double_spin / int_spin` 唯一工厂（**只给下限、不钉死宽度**）。
+# ==========================================
+print("\n== §10-9 · 数值控件宽度工厂（v1.42）==")
+try:
+    import pathlib as _pl12
+
+    from ui.dialogs.bulk_download import BulkDownloadDialog as _BDD12  # noqa: E402
+    from ui.widgets.custom_widgets import SPIN_MIN_WIDTH as _SMW12  # noqa: E402
+    from ui.widgets.custom_widgets import double_spin as _dsp12, int_spin as _isp12
+
+    _dm12 = win.page_data
+    _dlg12 = _BDD12(win, parent=win)
+
+    # ---- ① 真判据：文本区**放得下 "0.6"**（不是"宽度看着顺眼"）----
+    for _tag12, _spin12 in (("弹窗 间隔(秒)", _dlg12.spin_interval),
+                            ("数据管理 同步间隔(秒)", _dm12.spin_interval)):
+        _spin12.resize(_spin12.sizeHint())
+        app.processEvents()
+        _need12 = _spin12.fontMetrics().horizontalAdvance("0.6")
+        _line12 = _spin12.lineEdit().geometry().width()
+        check(f"★ {_tag12}：文本区 {_line12}px 放得下 \"0.6\"（需 {_need12}px）"
+              f" —— 旧版只能看见 \"0\"", _line12 >= _need12)
+        check(f"★ {_tag12}：minimumWidth={_spin12.minimumWidth()} ≥ {_SMW12}"
+              f" 且宽度未被钉死（maximumWidth={_spin12.maximumWidth()}）",
+              _spin12.minimumWidth() >= _SMW12 and _spin12.maximumWidth() > 16_000_000)
+
+    # ---- ② 同类控件同一张脸：两页的间隔框出自同一工厂 ----
+    check("★ 两页的「同步间隔」是同一张脸（同类型 / 同最小宽 / 同高度）",
+          type(_dlg12.spin_interval) is type(_dm12.spin_interval)
+          and _dlg12.spin_interval.minimumWidth() == _dm12.spin_interval.minimumWidth()
+          and _dlg12.spin_interval.height() == _dm12.spin_interval.height())
+
+    # ---- ③ 只修宽度，**不许顺手改数值口径** ----
+    check("★ 默认值/范围/步长口径原样保留（0.6 起、0~10、步长 0.1）",
+          abs(_dlg12.spin_interval.value() - 0.6) < 1e-9
+          and (_dlg12.spin_interval.minimum(), _dlg12.spin_interval.maximum()) == (0.0, 10.0)
+          and abs(_dlg12.spin_interval.singleStep() - 0.1) < 1e-9
+          and abs(_dm12.spin_interval.value() - 0.6) < 1e-9
+          and abs(_dm12.spin_interval.singleStep() - 0.1) < 1e-9)
+    check("★ 熔断框默认 12（v1.38 的代理熔断另有独立阈值，不在这里）",
+          _dlg12.spin_breaker.value() == 12
+          and _dlg12.spin_breaker.minimumWidth() >= _SMW12)
+
+    # ---- ④ 工厂自身的契约（新页面误用也能被发现）----
+    _probe12 = _dsp12(value=1.0, lo=0.0, hi=9.9, decimals=1)
+    check("★ double_spin 步长跟着小数位（1 位→0.5 / 2 位→0.01 / 0 位→1），不写死",
+          abs(_probe12.singleStep() - 0.5) < 1e-9
+          and abs(_dsp12(decimals=2).singleStep() - 0.01) < 1e-9
+          and abs(_dsp12(decimals=0).singleStep() - 1.0) < 1e-9)
+    check("★ int_spin 与 double_spin 同一张脸（同 minimumWidth / 同高度）",
+          _isp12().minimumWidth() == _probe12.minimumWidth()
+          and _isp12().height() == _probe12.height())
+
+    # ---- ⑤ 源码级防漂移：全 ui/ 不许再出现钉死宽度的数值控件 ----
+    _ui_py12 = [p for p in _pl12.Path('ui').rglob('*.py')]
+    _bad12 = [str(p) for p in _ui_py12
+              if 'setFixedWidth(64)' in p.read_text(encoding='utf-8')]
+    check("★ 全 ui/ 不再出现 `setFixedWidth(64)`（这类钉死宽度就是本次截字的成因）",
+          not _bad12)
+    _spin_src12 = (_pl12.Path('ui/dialogs/bulk_download.py').read_text(encoding='utf-8')
+                   + _pl12.Path('ui/views/data_manager.py').read_text(encoding='utf-8'))
+    check("★ 两个下载入口的数值控件一律走工厂（不再直接实例化 + 不再就地钉宽度），"
+          "否则下次又会出现“这页 64、那页 82”",
+          'NoWheelDoubleSpinBox()' not in _spin_src12 and 'NoWheelSpinBox()' not in _spin_src12
+          and 'spin_interval.setFixedWidth' not in _spin_src12
+          and 'double_spin(' in _spin_src12 and 'int_spin(' in _spin_src12)
+    _dlg12.close()
+except Exception as _e12:  # noqa: BLE001
+    check(f"§10-9 数值控件宽度断言整段抛异常: {type(_e12).__name__}: {_e12}", False)
+
+# ==========================================
+# ★ §7-B11 · 后台下载队列 + 底部下载条 + 导航角标 + 非模态队列面板（v1.43）
+#   现场（用户实测）：批量预下载是**模态弹窗**，而且 `SyncWorker(parent=弹窗)` ⇒
+#   下载期间整个界面被冻住、窗口不能关，用户只能守着看进度。
+#   修法：任务归属搬到主窗口的 `DownloadHub`（串行 K=1），进度改成三个**投影**：
+#   底部下载条 / 导航角标 / 非模态队列面板。
+#   ⚠ 全程把 `download_hub.SyncWorker` 打桩为不 `start()` 的假线程（§11.5-71②）。
+# ==========================================
+print("\n== §7-B11 · 后台下载队列 / 下载条 / 角标 / 队列面板（v1.43）==")
+try:
+    import pathlib as _pl13
+    import re as _re13
+
+    from ui import download_hub as _dhub13  # noqa: E402
+    from ui.download_hub import (STATUS_DONE, STATUS_QUEUED, STATUS_RUNNING,  # noqa: E402
+                                DownloadHub)
+    from ui.widgets.download_bar import DownloadBar  # noqa: E402
+    from ui.widgets.download_queue_panel import DownloadQueuePanel  # noqa: E402
+
+    _made13 = []
+
+    class _StubWorker13(_QObject):
+        progress = _pyqtSignal(int, int, str)
+        failed = _pyqtSignal(str, str)
+        finished = _pyqtSignal(dict)
+
+        def __init__(self, symbols, zone=None, force_full=False, min_date=None,
+                     policy=None, parent=None):
+            super().__init__(parent)
+            self._symbols = [str(s) for s in (symbols or [])]
+            self.cancelled = False
+            _made13.append(self)
+
+        def start(self):
+            pass                              # 打桩：绝不真起线程（否则跑测试=真下载）
+
+        def cancel(self):
+            self.cancelled = True
+
+    _DONE = dict(ok=0, fail=0, skipped=0, added=0, aborted=False, aborted_by='',
+                 symbols_failed=[])
+    _orig13 = _dhub13.SyncWorker
+    _dhub13.SyncWorker = _StubWorker13
+    try:
+        hub = DownloadHub()
+        bar = DownloadBar(hub)
+        panel = DownloadQueuePanel(hub)
+
+        # ---- ① 空闲 ⇒ 不占界面 ----
+        check("★ 空闲时下载条隐藏（不新增一块常驻“皮”）", bar.isHidden())
+        check("★ 空面板不存任务数据（每次从队列现取）", panel.table.rowCount() == 0)
+
+        # ---- ② 串行 K=1 ----
+        j1 = hub.submit("全市场 A 股 日线", ["A", "B", "C"], origin="bulk")
+        j2 = hub.submit("中证500 成分股", ["X", "Y"], origin="scan")
+        check("★ 串行：只跑第一个，第二个停在排队中（与“宁可慢也不封 IP”一致）",
+              hub.current.id == j1 and hub.get(j2).status == STATUS_QUEUED
+              and len(_made13) == 1)
+        check("★ 下载条随提交自动出现，并说出当前任务名",
+              not bar.isHidden() and bar.lbl_name.text() == "全市场 A 股 日线")
+        _made13[0].progress.emit(1, 3, "A")
+        check("★ 进度广播到下载条（任务名/百分比/当前标的）",
+              bar.lbl_txt.text().startswith("1/3") and "A" in bar.lbl_txt.text()
+              and bar.bar.value() == 33)
+        check("★ 排队数也说出来（用户要知道后面还有多少）", bar.lbl_queue.text() == "· 排队 1")
+
+        # ---- ③ 完成 ⇒ 自动接跑下一个；回执说清成败 ----
+        _made13[0].failed.emit("B", "无行情数据（代码有误？或已退市/长期停牌）")
+        _made13[0].finished.emit(dict(_DONE, ok=2, fail=1, added=5,
+                                      symbols_failed=["B"]))
+        app.processEvents()
+        check("★ 任务 1 完成 ⇒ 队列自动接跑任务 2（串行不断链）",
+              hub.current is not None and hub.current.id == j2 and len(_made13) == 2)
+        check("★ 完成回执含“失败 1”，且原因走 `failure_hint` 单出口",
+              "失败 1" in hub.get(j1).receipt_text()
+              and "退市" in hub.get(j1).hint_text)
+        check("★ 任务状态标记正确（done / running）",
+              hub.get(j1).status == STATUS_DONE and hub.get(j2).status == STATUS_RUNNING)
+
+        # ---- ④ 防手残：同样的清单不重复入队 ----
+        j3 = hub.submit("重复提交", ["X", "Y"], origin="scan")
+        check("★ 同样的标的清单不重复入队（连点两下不会把 500 只抓两遍）",
+              j3 == j2 and len(_made13) == 2)
+
+        # ---- ⑤ 中断单个 / 重试失败 ----
+        hub.cancel(j2)
+        check("★ 中断只停当前任务（cancel 真的传到 worker）", _made13[1].cancelled)
+        _made13[1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+        check("★ 中断后状态=已中断，队列回到空坑位（不卡死）",
+              hub.get(j2).status == "cancelled" and hub.current is None)
+        j4 = hub.retry_failures(j1)
+        check("★ 只重试失败清单（旧版只能“复制清单”再来一遍）",
+              bool(j4) and hub.get(j4).symbols == ["B"])
+        _made13[-1].finished.emit(dict(_DONE, ok=1, added=3))
+        app.processEvents()
+        check("★ 全部跑完 ⇒ activity 归零（角标会随之收起）",
+              hub.is_busy() is False and hub.pending_count() == 0)
+
+        # ---- ⑥ 队列面板：非模态 + 列出全部（含已完成回看）----
+        panel.refresh()
+        check("★ 面板是非模态的（开着它照样能操作主界面）", panel.isModal() is False)
+        check("★ 面板列出全部任务（运行过的都能回看，不只当前那一个）",
+              panel.table.rowCount() == len(hub.jobs()))
+        check("★ 面板底部有「只重试失败 / 复制失败清单 / 全部中断」三件（旧能力搬出弹窗）",
+              all(hasattr(panel, n) for n in ('btn_retry', 'btn_copy', 'btn_stop')))
+        bar.dismiss()
+        check("★ 用户可以✕掉回执条（不是永久占位）", bar.isHidden())
+        # ✕ 只在回执态出现：任务在跑时它按不动（投影会立刻弹回来）⇒ 不该给假按钮
+        _q13 = hub.submit("进行中", ["Z9"], origin="bulk")
+        check("★ 任务在跑时「✕」不出现（免得按了收不起来 = 假按钮）",
+              not bar.btn_close.isVisible() and bar.btn_stop.isVisible())
+        hub.cancel(_q13)
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+        check("★ 跑完后「✕」回来（回执可收起）", bar.btn_close.isVisible())
+
+        # ---- ⑦ 不撑窗（§11.5-73：单行标签只放短状态）----
+        check("★ 下载条的长文本标签水平策略 Ignored ⇒ 可缩不可撑大窗口",
+              bar.lbl_txt.sizePolicy().horizontalPolicy()
+              == bar.lbl_txt.sizePolicy().Policy.Ignored)
+
+        # ---- ⑧ 主窗口接线：三处视图同一个真源 ----
+        check("★ 主窗口持有队列 + 底部条 + 角标（hub 与 engine 同级）",
+              isinstance(win.downloads, DownloadHub)
+              and win.download_bar._hub is win.downloads
+              and win.nav_badge.isHidden())
+        _rid13 = win.downloads.submit("角标测试", ["Q1", "Q2"], origin="bulk")
+        app.processEvents()
+        check("★ 真下载 ⇒ 导航角标亮起（任何页面瞥一眼就知道有活在跑）",
+              win.downloads.is_busy() and not win.nav_badge.isHidden())
+        win.show_download_queue()
+        check("★ 点角标/详情 ⇒ 打开队列面板（懒建，不开下载不多一个窗口）",
+              win._download_panel is not None and not win._download_panel.isHidden())
+        win.downloads.cancel(_rid13)
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+        check("★ 全部结束后角标不再显示（不会亮着骗人）",
+              win.downloads.current is None and win.nav_badge.isHidden())
+
+        # ---- ⑨ 数据管理页：提交即返回，不再锁整页 ----
+        _dm13 = win.page_data
+        _dm13._items = [{"name": "600519", "bytes": 1, "rows": 10, "first": "2024-01-02",
+                         "last": "2024-01-03"}]
+        _dm13._checked = {"600519"}
+        _dm13._current_zone = "kline_daily"
+        _before13 = (_dm13.btn_sync.isEnabled(), _dm13.btn_bulk.isEnabled(),
+                     _dm13.btn_rescan.isEnabled(), _dm13.btn_delete.isEnabled())
+        _dm13._sync_selected(False)
+        check("★ 提交后本页按钮状态**一个都没变**（旧版提交即把 8 个按钮锁到任务结束）",
+              (_dm13.btn_sync.isEnabled(), _dm13.btn_bulk.isEnabled(),
+               _dm13.btn_rescan.isEnabled(), _dm13.btn_delete.isEnabled()) == _before13)
+        check("★ 任务进了主窗口队列，回执说清“已提交后台”",
+              any(j.origin == "data_manager" for j in win.downloads.jobs())
+              and "已提交到后台" in _dm13.lbl_status.text())
+        win.downloads.cancel(None)
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+
+        # ---- ⑩ 源码级防漂移 ----
+        _bd13 = _pl13.Path('ui/dialogs/bulk_download.py').read_text(encoding='utf-8')
+        check("★ 旧版“关窗前硬等 15 秒”整套退役（线程不再属于弹窗 ⇒ 窗口随时可关）",
+              '_try_stop_worker' not in _bd13 and '_worker = SyncWorker(' not in _bd13)
+        _dm13s = _pl13.Path('ui/views/data_manager.py').read_text(encoding='utf-8')
+        check("★ 预下载不再用模态 `exec()` 打开（“强制置顶无法操作其它界面”的直接根因）",
+              '.exec()' not in _dm13s and '_set_busy' not in _dm13s)
+        _hub13s = _pl13.Path('ui/download_hub.py').read_text(encoding='utf-8')
+        check("★ 队列不自造 QThread（§2：`ui/workers.py` 仍是全 app 唯一 QThread 定义处）",
+              _re13.search(r'class\s+\w+\(QThread\)', _hub13s) is None)
+        check("★ 新鲜度注入仍只有一处（队列不重复实现§7-E5 的日历注入）",
+              'inject_expected_latest(' not in _hub13s)
+
+        # ---- ⑪ v1.43 收口：cancel(全部) 必须给**排队中**的任务也发 finished ----
+        #      漏发 ⇒ 消费方（M2/M3 的 _syncing、批量弹窗）永远收不到回包，页面卡在“进行中”。
+        hub2 = DownloadHub()
+        hub2.submit("跑着", ["1", "2"], origin="t")
+        _b2 = hub2.submit("排着", ["3"], origin="t")
+        _got2 = []
+        hub2.job_finished.connect(lambda jid, st: _got2.append(jid))
+        hub2.cancel(None)
+        check("★ 「全部中断」给排队中的任务也发完成回包（否则页面永久卡在“进行中”）",
+              _b2 in _got2 and hub2.get(_b2).status == "cancelled")
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+        check("★ 中断收尾后活动标记归零（角标不会一直亮着骗人）",
+              hub2.is_busy() is False and hub2.pending_count() == 0)
+
+        # ---- ⑫ 去重键必须认「起点 / 档力度」（否则第二个发起方的范围被静默忽略）----
+        from data.sync_service import ThrottlePolicy as _TP13  # noqa: E402
+
+        hub3 = DownloadHub()
+        _k1 = hub3.submit("更新到最新", ["600000"], origin="t", min_date=None)
+        _k2 = hub3.submit("从2016起", ["600000"], origin="t", min_date="20160101")
+        _k3 = hub3.submit("同参重复", ["600000"], origin="t", min_date=None)
+        _k4 = hub3.submit("同参但间隔不同", ["600000"], origin="t", min_date=None,
+                          policy=_TP13(interval=5.0))
+        check("★ 同样清单但**起点不同**不合并（否则第二方范围被静默忽略）", _k2 != _k1)
+        check("★ 档力度不同也不合并（特意调慢的那轮不该被并进快的那轮）", _k4 != _k1)
+        check("★ 完全同参的提交仍然合并（防手残不变）", _k3 == _k1)
+        hub3.cancel(None)
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+
+        # ---- ⑬ 下载条「中断」= 只停当前，排队的不动 ----
+        hub5 = DownloadHub()
+        bar5 = DownloadBar(hub5)
+        hub5.submit("跑", ["1"], origin="t")
+        _r2 = hub5.submit("排", ["2"], origin="t")
+        bar5._stop()
+        check("★ 下载条「中断」只停当前任务，排队的不动（全停留给面板「全部中断」）",
+              _made13[-1].cancelled and hub5.get(_r2).status == STATUS_QUEUED)
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+        hub5.cancel(None)
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+
+        # ---- ⑭ 单只互斥收敛成唯一公共件 SingleSyncGate ----
+        from ui.download_hub import SingleSyncGate  # noqa: E402
+
+        hub6 = DownloadHub()
+        hub6.submit("批量占住 600519", ["600519"], origin="t")
+
+        class _Owner13:
+            pass
+
+        _own = _Owner13()
+        _own.downloads = hub6
+        _g13 = SingleSyncGate(_own)
+        check("★ 单只互斥：批量任务里的标的被认出来（不再各页手写 token）",
+              _g13.blocked_by("600519", "kline_daily")
+              and not _g13.blocked_by("000001", "kline_daily"))
+        _g13.hold("000001", "kline_daily")
+        check("★ 占位生效（反向也成立：批量此时也认得出 000001 有人在抓）",
+              hub6.is_busy_for("000001", "kline_daily"))
+        _g13.release()
+        _g13.release()                     # 幂等：重复释放不报错
+        check("★ 释放幂等、占位清零（漏调/重复调都不会永久占住这只标的）",
+              not hub6.is_busy_for("000001", "kline_daily"))
+        check("★ 拿不到队列时是**空操作**（假页面 / 单测不会炸）",
+              not SingleSyncGate(None).blocked_by("600519"))
+        hub6.cancel(None)
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+
+        # ---- ⑮ 源码级防漂移：token 只剩一处实现；下载条不再拿 cancel(None) 当「中断」----
+        for _f13 in ('ui/widgets/desk_data.py', 'ui/widgets/backtest_flow.py',
+                     'ui/widgets/breadth_flow.py'):
+            _src13 = _pl13.Path(_f13).read_text(encoding='utf-8')
+            check(f"★ {_f13} 不再手写 note_single/release_single（收敛进 SingleSyncGate）",
+                  'note_single(' not in _src13 and 'release_single(' not in _src13)
+        _bar13src = _pl13.Path('ui/widgets/download_bar.py').read_text(encoding='utf-8')
+        check("★ 下载条不再用 cancel(None) 当「中断」（否则静默取消排队任务）",
+              'self._hub.cancel(None)' not in _bar13src)
+    finally:
+        _dhub13.SyncWorker = _orig13
+except Exception as _e13:  # noqa: BLE001
+    check(f"§7-B11 后台下载断言整段抛异常: {type(_e13).__name__}: {_e13}", False)
 
 # ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）

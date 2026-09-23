@@ -25,6 +25,7 @@ from core.utils import (MINUTE_DEPTH_DAYS, MINUTE_PERIODS, is_minute_period,
 from data.sync_service import (ADJUST_QFQ, ZONE_KLINE, ZONE_KLINE_RAW, ZONE_MIN,
                                adjust_label, friendly_fetch_message, minute_key,
                                zone_for_adjust)
+from ui.download_hub import SingleSyncGate
 from ui.workers import SingleSyncWorker
 
 # 一级周期档位：日/周/月/**分钟**（选"分钟"才出现二级档位 —— 参数只在有意义的档位出现，§10-10）
@@ -49,6 +50,8 @@ class DeskData:
         # 派生缓存（**可随时丢弃**，不是业务状态）：回执里的两段"体检结论"按标的算一次就够
         self._diff_cache: dict = {}
         self._health_cache: dict = {}
+        # ★v1.43 / §7-B11：单只同步与后台队列的互斥占位（唯一公共件，别再手写 token）
+        self._gate = SingleSyncGate(page)
 
     # ==========================================
     # 查询（UI 不发网络：统一走 SingleSyncWorker → MarketSyncService）
@@ -149,15 +152,23 @@ class DeskData:
         p.btn_sync.setEnabled(False)
         p.lbl_sync_status.setText("正在同步…")
         zone, _key = self._data_zone_and_key()
+        # ★v1.43 / §7-B11：单只同步**不进队列**（秒级、回包直接喂给当页渲染），
+        #   但要先问一句队列：这只标的正在批量下载时，重复抓它 = 白等 + 抢同一个文件。
+        if self._gate.blocked_by(p.current_symbol, zone):
+            p.btn_sync.setEnabled(True)
+            p.lbl_sync_status.setText("该标的正在后台下载队列里，稍后再试")
+            return
         period = p.current_period if is_minute_period(p.current_period) else None
         p.fetch_thread = SingleSyncWorker(
             p.current_symbol, zone=zone, force_full=False, parent=p, period=period)
         p.fetch_thread.finished.connect(p._on_sync_finished)
+        self._gate.hold(p.current_symbol, zone)   # 占位：单只跑完才会释放
         p.fetch_thread.start()
 
     def _on_sync_finished(self, result: dict):
         p = self.page
         p.btn_sync.setEnabled(True)
+        self._gate.release()                      # 幂等：正常/过期/失败三条路都释放
         symbol = str(result.get("symbol", p.current_symbol) or p.current_symbol)
 
         # 【竞态防护】拉取期间用户可能切了标的 / 周期 / 复权 —— 过期结果必须丢弃（§9-O5）。

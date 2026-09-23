@@ -79,6 +79,60 @@ class NoWheelDateTimeEdit(_NoWheelMixin, QDateTimeEdit):
 SPINBOX_QSS = ""
 
 # ==========================================
+# 数值控件工厂 (v1.42 · §10-9「最小宽度 72px / 同类控件同一张脸」)
+# ==========================================
+# 【为什么收成工厂 · 由用户实测倒逼】批量预下载弹窗的「间隔(秒)」预设是 0.6，
+# 但控件被 `setFixedWidth` 钉死在 **64px** —— 原生 QDoubleSpinBox 右侧要留约 18~22px 放
+# 上下箭头，64px 扣掉箭头与内边距后文本区只剩约 30px ⇒ **"0.6" 被截成 "0"**，
+# 用户以为预设值是 0（与真实值不符，且他无法确认自己设了多少）。
+# 对照：数据管理页同一个"同步间隔"用的是 82px —— 同一件事两个尺寸，
+# 正是 §10-9「同类控件必须同一张脸 + 数值控件最小宽度不得小于 72px」被破。
+# 【纪律】宽度只给 **minimumWidth**、**绝不 `setFixedWidth`**：让布局按内容自然给位，
+# 换字体/换数值长度都不会再截字。要美化必须写全四个子控件并收敛到本文件（见上方说明）。
+SPIN_MIN_WIDTH = 72
+
+
+def _spin_step(decimals: int) -> float:
+    """步长跟着**小数位**自适应（判据与 `backtest_panes.number_spin` v6.18 同源，勿各写一遍）。
+
+    0 位 -> 1；1 位 -> 0.5；>=2 位 -> 10^-decimals。
+    """
+    return 1.0 if decimals == 0 else (0.5 if decimals == 1 else 10.0 ** -decimals)
+
+
+def double_spin(*, value: float = 0.0, lo: float = 0.0, hi: float = 100.0,
+                decimals: int = 1, tooltip: str = "",
+                step: float | None = None) -> NoWheelDoubleSpinBox:
+    """全站通用的小数输入框（防滚轮误触 + 宽度不截字 + 样式原生）。"""
+    spin = NoWheelDoubleSpinBox()
+    spin.setRange(lo, hi)
+    spin.setDecimals(decimals)
+    spin.setValue(value)
+    spin.setSingleStep(step if step is not None else _spin_step(decimals))
+    spin.setMinimumWidth(SPIN_MIN_WIDTH)   # ★ 只给下限，不钉死宽度
+    spin.setFixedHeight(28)
+    if tooltip:
+        spin.setToolTip(tooltip)
+    spin.setStyleSheet(SPINBOX_QSS)
+    return spin
+
+
+def int_spin(*, value: int = 0, lo: int = 0, hi: int = 999,
+             tooltip: str = "", step: int = 1) -> NoWheelSpinBox:
+    """全站通用的整数输入框（与 `double_spin` 同一张脸，§10-9）。"""
+    spin = NoWheelSpinBox()
+    spin.setRange(lo, hi)
+    spin.setValue(value)
+    spin.setSingleStep(step)
+    spin.setMinimumWidth(SPIN_MIN_WIDTH)
+    spin.setFixedHeight(28)
+    if tooltip:
+        spin.setToolTip(tooltip)
+    spin.setStyleSheet(SPINBOX_QSS)
+    return spin
+
+
+# ==========================================
 # 复合控件「完整 QSS」契约 (v6.9 · §10-9)
 # ==========================================
 # 【为什么必须成对写】QComboBox / QDateEdit / QDateTimeEdit 都是 Qt「复合控件」：

@@ -31,11 +31,10 @@ from PyQt6.QtGui import QColor, QFont
 
 from data.market_db import DataLakeManager
 from data.sync_service import (MarketSyncService, ThrottlePolicy,
-                               ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX,
-                               abort_reason_text)
+                               ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX)
 from ui.dialogs.bulk_download import BulkDownloadDialog
-from ui.widgets.custom_widgets import NoWheelDoubleSpinBox
-from ui.workers import ScanWorker, SyncWorker
+from ui.widgets.custom_widgets import double_spin
+from ui.workers import ScanWorker
 
 # 分区中文名（顺序即左侧清单顺序）
 ZONE_ORDER = ["kline_daily", "kline_daily_raw", "index_daily", "kline_min", "macro_eco",
@@ -90,7 +89,11 @@ class DataManagerView(QWidget):
         self._current_zone = ZONE_KLINE
         self._checked: set[str] = set()   # 当前已勾选的标的名（跨过滤搜索保留勾选）
         self._scan_worker = None
-        self._sync_worker = None
+        # ★v1.43 / §7-B11：批量下载不再在本页开线程 —— 任务归主窗口的队列，
+        #   本页只是它的一个发起方 + 一个"跑完刷新清单"的订阅者。
+        self._bulk_dialog = None          # 非模态 ⇒ 复用同一个实例，不堆窗口
+        self._pending_rescan = False      # 后台任务完成时本页不在前台 ⇒ 切回来补刷
+        main_win.downloads.job_finished.connect(self._on_hub_finished)
 
         self._setup_ui()
         self._refresh_zones()
@@ -227,16 +230,12 @@ class DataManagerView(QWidget):
         ops.addWidget(self.lbl_selected)
         ops.addSpacing(10)
         ops.addWidget(self._minor("同步间隔(秒)"))
-        self.spin_interval = NoWheelDoubleSpinBox()
-        self.spin_interval.setRange(0.0, 10.0)
-        self.spin_interval.setDecimals(1)
-        self.spin_interval.setSingleStep(0.1)
-        self.spin_interval.setValue(0.6)
-        # 宽度留足：0.6~10.0 小数 + 上下箭头都要完整显示，不能被挤压成"…"
-        self.spin_interval.setFixedWidth(82)
-        self.spin_interval.setFixedHeight(28)
-        self.spin_interval.setToolTip("批量操作时每只之间的等待时间。\n"
-                                      "越大越不容易被行情源限流（防封 IP）。")
+        # ★v1.42 / §10-9：与批量预下载弹窗同一个工厂（旧版两页各钉一个宽度，
+        #   弹窗那个 64px 会把"0.6"截成"0"）
+        self.spin_interval = double_spin(
+            value=0.6, lo=0.0, hi=10.0, decimals=1, step=0.1,
+            tooltip="批量操作时每只之间的等待时间。\n"
+                    "越大越不容易被行情源限流（防封 IP）。")
         ops.addWidget(self.spin_interval)
         ops.addStretch()
 
@@ -502,7 +501,7 @@ class DataManagerView(QWidget):
             QMessageBox.warning(self, "部分失败", f"{total - ok_count} 项未能删除（可能被占用），请稍后重试。")
 
     # ==========================================
-    # 同步（更新到最新 / 重新全量下载）
+    # 同步（更新到最新 / 重新全量下载）—— v1.43：提交给主窗口的后台下载队列
     # ==========================================
     def _sync_selected(self, force_full: bool):
         names = self._checked_names()
@@ -521,45 +520,54 @@ class DataManagerView(QWidget):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        self._set_busy(True, f"正在{action} {len(names)} 只…")
-        self._sync_worker = SyncWorker(
-            names, zone=self._current_zone, force_full=force_full,
+        # ★v1.43：**不再一次性禁用整页按钮**（旧版提交后会把 8 个按钮锁到几十分钟
+        #   任务结束）—— 任务交给队列，进度看底部下载条，本页照常可用。
+        zone_label = ZONE_LABELS.get(self._current_zone, self._current_zone)
+        job_id = self.main_win.downloads.submit(
+            f"{action} · {zone_label}", names, zone=self._current_zone,
+            force_full=force_full,
             policy=ThrottlePolicy(interval=float(self.spin_interval.value())),
-            parent=self)
-        self._sync_worker.finished.connect(self._on_sync_finished)
-        self._sync_worker.start()
-
-    def _on_sync_finished(self, stats: dict):
-        self._set_busy(False, "")
-        # 中断原因必须说清（§7-E2）：代理全灭时只显示"已中断"，用户还是不知道该查代理
-        _why = abort_reason_text(stats)
-        tail = f"（{_why}）" if _why else ""
+            origin="data_manager")
         self.lbl_status.setText(
-            f"{tail}完成：成功 {stats.get('ok', 0)} · 跳过 {stats.get('skipped', 0)} · "
-            f"失败 {stats.get('fail', 0)} · 新增 {stats.get('added', 0)} 行")
-        self._rescan()
-        if stats.get("fail"):
-            QMessageBox.warning(
-                self, "部分失败",
-                f"{stats['fail']} 只未能同步。常见原因：\n"
-                f"① 代码输入有误；② 该股已退市/长期停牌，行情源不再提供（属正常现象）；\n"
-                f"③ 网络抖动或触发限流；④ 本机代理软件断连（表现为短时间每一只都失败）。\n\n"
-                f"失败标的：{', '.join(stats.get('symbols_failed', [])[:10])}"
-                f"{' …' if len(stats.get('symbols_failed', [])) > 10 else ''}")
-        self._sync_worker = None
+            f"已提交到后台（任务 #{job_id}，{len(names)} 只）—— "
+            f"进度见底部下载条与「详情」，本页可以继续勾选与浏览。"
+            if job_id else "没有可提交的任务（清单为空，或同样的任务已在队列里）。")
 
-    def _set_busy(self, busy: bool, text: str):
-        for btn in (self.btn_sync, self.btn_force, self.btn_delete,
-                    self.btn_clear, self.btn_bulk, self.btn_rescan,
-                    self.btn_select_all, self.btn_select_none):
-            btn.setEnabled(not busy)
-        if text:
-            self.lbl_status.setText(text)
+    def _on_hub_finished(self, job_id: int, stats: dict) -> None:
+        """本页发起的后台任务跑完 ⇒ 刷新分区清单。
+
+        ⚠ 后台完成**不再弹“部分失败”对话框** —— 那等于把用户当前正在做的事打断。
+          原因与失败清单去底部条（橙色 ⚠）与队列面板里看（文案单一出口：
+          `DownloadJob.receipt_text` + `sync_service.abort_reason_text`）。
+        """
+        job = self.main_win.downloads.get(job_id)
+        if job is None or job.origin != "data_manager":
+            return
+        if self.isVisible():
+            self._rescan()
+        else:
+            self._pending_rescan = True       # 切回本页时补刷（不丢更新）
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        if self._pending_rescan:
+            self._pending_rescan = False
+            self._rescan()
 
     # ==========================================
     # 预下载
     # ==========================================
     def _open_bulk(self):
-        dialog = BulkDownloadDialog(self.main_win, self)
-        dialog.exec()
-        self._rescan()
+        """批量预下载：**非模态**弹窗（v1.43）。
+
+        旧版靠 `QDialog` 的模态 `exec()` 打开 ⇒ 整个主界面被冻在弹窗后面；而且工作线程
+        的 parent 就是弹窗，所以窗口不能关。现在弹窗只负责收参数，任务交给队列。
+        """
+        if self._bulk_dialog is None:
+            # ⚠ parent 必须是**主窗口**而不是本页：非模态弹窗的意义就是"可以切到别的页
+            #   继续看盘、下载照跑"，挂在页面上会随页面隐藏一起消失（§7-B11）。
+            self._bulk_dialog = BulkDownloadDialog(self.main_win, self.main_win)
+        self._bulk_dialog.show()                # 可一直开着，也可以直接关掉
+        self._bulk_dialog.raise_()
+        self._bulk_dialog.activateWindow()
+

@@ -32,6 +32,7 @@ from data.akshare_feed import is_index_symbol, is_stock_code
 from data.backtest_archive import SOURCE_AUTO, SOURCE_MANUAL, BacktestArchive, build_record
 from data.sync_service import ZONE_INDEX, ZONE_KLINE, friendly_fetch_message
 from data.trade_calendar import latest_settled_trading_day
+from ui.download_hub import SingleSyncGate
 from ui.workers import BacktestRunWorker, CalendarWorker, SingleSyncWorker
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,10 @@ class BacktestFlow:
 
     def __init__(self, page):
         self.page = page
+        # ★v1.43 / §7-B11：单只同步与后台队列的互斥占位（指数 / 个股各一个）。
+        #   唯一公共件 —— 别再各存 `self._token` 手工释放（漏一条 return 路径就永久占住）。
+        self._index_gate = SingleSyncGate(page)
+        self._stock_gate = SingleSyncGate(page)
 
     # ==========================================
     # 选标的
@@ -230,15 +235,21 @@ class BacktestFlow:
         symbol = p._pending_index["symbol"]
         idx_df = p.data_lake.load_data(ZONE_INDEX, symbol)
         if idx_df.empty:
+            if self._index_gate.blocked_by(symbol, ZONE_INDEX):
+                # 同一个文件不能两个写者（§7-B11）：宁可不出结果，也不拿写了一半的数据回测
+                self._set_busy(False, f"指数 {symbol} 正在后台下载队列里，请稍后再跑。")
+                return
             self._set_busy(True, f"本地无指数 {symbol} 数据，正在联网同步...")
             p._index_thread = SingleSyncWorker(symbol, zone=ZONE_INDEX, parent=p)
             p._index_thread.finished.connect(self._on_index_synced)
+            self._index_gate.hold(symbol, ZONE_INDEX)
             p._index_thread.start()
         else:
             self._prepare_stock_then_run()
 
     def _on_index_synced(self, result: dict):
         p = self.page
+        self._index_gate.release()
         # 【竞态防护】同步期间用户可能改了指数代码，过期结果必须丢弃 (v5.12 · §9-O5)
         pending = getattr(p, '_pending_index', None) or {}
         if str(result.get("symbol", "")) != str(pending.get("symbol", "")):
@@ -261,15 +272,21 @@ class BacktestFlow:
         need = p.date_end.date()
         local_last = self._qdate_last(df)
         if df.empty or local_last is None or local_last < need:
+            if self._stock_gate.blocked_by(p.current_symbol, ZONE_KLINE):
+                # 这只标的正在批量下载 ⇒ 本地文件可能被另一个写者改着，不拿它跑回测
+                self._set_busy(False, f"{p.current_symbol} 正在后台下载队列里，请稍后再跑。")
+                return
             self._set_busy(True, f"本地日线未到 {need.toString('yyyy-MM-dd')}，正在联网补全...")
             p._sync_thread = SingleSyncWorker(p.current_symbol, zone=ZONE_KLINE, parent=p)
             p._sync_thread.finished.connect(self._on_synced)
+            self._stock_gate.hold(p.current_symbol, ZONE_KLINE)
             p._sync_thread.start()
         else:
             self._on_data_ready(df)
 
     def _on_synced(self, result: dict):
         p = self.page
+        self._stock_gate.release()
         symbol = str(result.get("symbol", p.current_symbol) or p.current_symbol)
         # 【竞态防护】拉取期间用户可能已切到别的标的，过期结果必须丢弃 (v5.12 · §9-O5)。
         # 与行情工作台 trading_desk._on_sync_finished 同一手法 —— 同类防护要做就做全套。

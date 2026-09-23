@@ -68,8 +68,26 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          _drop_stale_result 作废旧结果（ScanResult/BreadthResult.clear）+
 #          "已有结果"分支绝不调 set_empty + 坏文件补「去数据管理」入口；
 #          同批把 JIAN_RULES.md 从 99.1k 瘦身回 96.8k。smoke 817 / 566。
+#   1.42 = §10-9 还清「数值控件宽度」：用户实测「间隔(秒) 预设 0.6 但只看得见 0」——
+#          弹窗把控件钉死在 64px，原生上下箭头占掉 18~22px 后文本区只剩 ~30px。
+#          收成 custom_widgets.SPIN_MIN_WIDTH(72) + double_spin()/int_spin() 唯一工厂
+#          （只给 minimumWidth、绝不 setFixedWidth）；默认值/范围/步长不变。
+#          附带修冒烟脚本竞态污染（异步回测写脏真实策略库与存档目录）。smoke 817 / 577。
+#   1.43 = §7-B11 后台下载：任务归属从弹窗搬到主窗口（新 ui/download_hub.py，串行 K=1、
+#          不自造 QThread）+ 底部下载条 / 导航角标 / 非模态队列面板三处投影；
+#          批量预下载改非模态（旧版模态冻屏 + SyncWorker 挂在弹窗 ⇒ 只能守着）、
+#          数据管理页不再锁整页、M2/M3 交队列、单只同步登记互斥；
+#          后台完成不再弹“部分失败”模态框，原因文案收成 sync_service.failure_hint 单出口。
+#          smoke 817 / 611。
+#   1.43(收口轮) = §7-B11 收口（与 1.42 合成一个 commit）：
+#          ① cancel(全部) 漏给**排队中**任务发 job_finished ⇒ 页面永久卡在“进行中”（§11.5-82）；
+#          ② 下载条「中断」误用 cancel(None) ⇒ 静默取消排队任务，改为只停当前；
+#          ③ 单只互斥 token 由 4 处手写收成唯一公共件 download_hub.SingleSyncGate；
+#          ④ 去重键补 min_date/档力度；批量弹窗 parent 改主窗口；取件统一 hub_of；
+#          ⑤ 补「真 SyncWorker / 真 QThread」端到端探针 15 项（假线程测不出①）。
+#          smoke 817 / 627。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.41"
+APP_VERSION = "1.43"
 
 # ==========================================
 # 界面配置 (UI Settings)

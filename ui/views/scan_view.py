@@ -33,6 +33,8 @@ DEFAULT_FORMULA = ("DIFF := EMA(C,12) - EMA(C,26);\n"
 class ScanView(QWidget):
     """🌐 全市场筛选（M2）。挂载在 `backtest_module.tabs` 的第 2 个页签。"""
 
+    hub_origin = "scan"      # v1.43：提交到后台下载队列时的发起方标识（回执只回给本页）
+
     def __init__(self, main_win):
         super().__init__()
         self.main_win = main_win

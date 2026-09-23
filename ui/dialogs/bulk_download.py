@@ -16,8 +16,10 @@
      且这类失败**必须直说"去查代理"**（中断原因文案 = `sync_service.abort_reason_text`）。
   另外「跳过已最新」实现断点续传：中断后重跑不会重复劳动。
 
-本弹窗只做参数收集与进度展示，真正干活的是 ui/workers.SyncWorker
-→ data/sync_service.MarketSyncService。
+本弹窗只做参数收集与进度展示；真正干活的线程在 `ui/workers.SyncWorker`，
+而**任务归属**在主窗口的后台下载队列 `ui/download_hub.py`（v1.43 · §7-B11）。
+⇒ 本弹窗是**非模态**的（`data_manager._open_bulk` 用 `show()`）：提交后下载照跑，
+  窗口可以一直开着当监控器（进度是队列的**投影**），也可以直接关掉去做别的事。
 """
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -30,9 +32,9 @@ from data.sync_service import (ThrottlePolicy, ZONE_KLINE, ZONE_INDEX,
                                abort_reason_text, estimate_seconds, format_duration,
                                friendly_constituent_message)
 from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
-                                       NoWheelDoubleSpinBox, NoWheelSpinBox)
+                                       double_spin, int_spin)
 # 【架构纪律 v5.12 · §9-O2】线程一律用 ui/workers.py 的，弹窗不自造 QThread
-from ui.workers import ConstituentsWorker, JobGuard, SyncWorker
+from ui.workers import ConstituentsWorker, JobGuard
 
 # 成分股可选指数（代码 -> 展示名）
 CONSTITUENT_INDEXES = {
@@ -58,12 +60,19 @@ class BulkDownloadDialog(QDialog):
         self._symbols: list[str] = []
         self._failures: list[str] = []
         self._zone = ZONE_KLINE
-        self._worker: SyncWorker | None = None
+        # ★v1.43 / §7-B11：线程不再属于本弹窗（旧版 `SyncWorker(parent=self)` ⇒
+        #   “下载中不能关窗”与“关窗前硬等 15 秒”都是这一行带来的）。
+        #   现在只记自己提交的任务号，进度与回执全部从队列订阅而来。
+        self._job_id: int | None = None
         self._cons_worker: ConstituentsWorker | None = None
         # ★v1.38/§7-E2（P4 顺手项）：成分股的"只认最后一次"改用**公共件** JobGuard
         #   （原先这里是手写的 `_cons_token` 计数器，与 §9-O5 的公共判据重复 ——
         #    `ui/workers.py` 的 JobGuard docstring 里早就挂账"择机改用它"，本次还清）。
         self._cons_guard = JobGuard()
+        hub = main_win.downloads
+        hub.job_progress.connect(self._on_hub_progress)
+        hub.job_failed.connect(self._on_hub_failed)
+        hub.job_finished.connect(self._on_hub_finished)
 
         self.setWindowTitle("⬇ 批量预下载")
         self.resize(640, 620)
@@ -83,7 +92,8 @@ class BulkDownloadDialog(QDialog):
         root.addWidget(title)
 
         warn = QLabel("⚠️ 全市场下载会持续很久（默认间隔下约 50 分钟）。"
-                      "建议在网络空闲时段执行，随时可「中断」——已下载的部分会保留，下次自动跳过。")
+                      "建议在网络空闲时段执行。提交后任务在后台跑：界面照常可用，"
+                      "随时可「停止本任务」——已下载的部分会保留，下次自动跳过。")
         warn.setWordWrap(True)
         warn.setStyleSheet("font-size: 12px; color: #E65100; background: #FFF8E1; "
                            "border: 1px solid #FFE082; border-radius: 6px; padding: 8px 10px;")
@@ -179,14 +189,11 @@ class BulkDownloadDialog(QDialog):
         params.addWidget(self.date_start)
 
         params.addWidget(self._minor("间隔(秒)"))
-        self.spin_interval = NoWheelDoubleSpinBox()
-        self.spin_interval.setRange(0.0, 10.0)
-        self.spin_interval.setDecimals(1)
-        self.spin_interval.setSingleStep(0.1)
-        self.spin_interval.setValue(0.6)
-        self.spin_interval.setFixedWidth(64)
-        self.spin_interval.setFixedHeight(28)
-        self.spin_interval.setToolTip("每次请求前的等待时间。越慢越安全，建议不低于 0.4 秒")
+        # ★v1.42 / §10-9：宽度由 `custom_widgets.double_spin` 统一给下限（旧版把
+        #   控件钉死在 64px，会把"0.6"截成"0" —— 用户看不见预设值）
+        self.spin_interval = double_spin(
+            value=0.6, lo=0.0, hi=10.0, decimals=1, step=0.1,
+            tooltip="每次请求前的等待时间。越慢越安全，建议不低于 0.4 秒")
         params.addWidget(self.spin_interval)
 
         self.chk_jitter = QCheckBox("随机抖动")
@@ -209,12 +216,9 @@ class BulkDownloadDialog(QDialog):
         params2.addWidget(self.chk_force)
 
         params2.addWidget(self._minor("连续失败熔断"))
-        self.spin_breaker = NoWheelSpinBox()
-        self.spin_breaker.setRange(3, 999)
-        self.spin_breaker.setValue(12)
-        self.spin_breaker.setFixedWidth(64)
-        self.spin_breaker.setFixedHeight(28)
-        self.spin_breaker.setToolTip("连续失败达到该数量即认定为「疑似被限流」并自动停手，保护用户 IP")
+        self.spin_breaker = int_spin(
+            value=12, lo=3, hi=999,
+            tooltip="连续失败达到该数量即认定为「疑似被限流」并自动停手，保护用户 IP")
         params2.addWidget(self.spin_breaker)
         params2.addStretch()
         root.addLayout(params2)
@@ -247,10 +251,20 @@ class BulkDownloadDialog(QDialog):
         self.btn_copy.clicked.connect(self._copy_failures)
         self.btn_copy.setEnabled(False)
         btns.addWidget(self.btn_copy)
+
+        # ★v1.43：进度与失败清单已搬到全局队列面板（弹窗关了也不会丢），
+        #   这里给一个入口，不让用户自己找。按钮名只引用不拼写（§11.5-80）。
+        self.btn_queue = QPushButton("查看下载队列")
+        self.btn_queue.setStyleSheet(_FLAT_BTN)
+        self.btn_queue.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_queue.clicked.connect(self._open_queue)
+        btns.addWidget(self.btn_queue)
         btns.addStretch()
 
-        self.btn_cancel = QPushButton("中断")
+        self.btn_cancel = QPushButton("停止本任务")
         self.btn_cancel.setEnabled(False)
+        self.btn_cancel.setToolTip("只停本弹窗刚提交的那个任务；要停全部请到下载队列面板点「全部中断」。\n"
+                                   "已下载的部分会保留，下次重跑同范围会自动跳过。")
         self.btn_cancel.setStyleSheet(
             "QPushButton { color:#E65100; background:white; border:1px solid #FFB74D; "
             "border-radius:6px; padding:6px 18px; font-weight:bold; }"
@@ -259,6 +273,7 @@ class BulkDownloadDialog(QDialog):
         btns.addWidget(self.btn_cancel)
 
         self.btn_start = QPushButton("▶ 开始下载")
+        self.btn_start.setToolTip("提交给后台下载队列（不占用界面），并排队逐个执行。")
         self.btn_start.setStyleSheet(
             "QPushButton { background:#1976D2; color:white; font-weight:bold; "
             "padding:6px 22px; border:none; border-radius:6px; }"
@@ -269,8 +284,9 @@ class BulkDownloadDialog(QDialog):
         btns.addWidget(self.btn_start)
 
         self.btn_close = QPushButton("关闭")
+        self.btn_close.setToolTip("关闭本窗口不会停止已提交的后台下载。")
         self.btn_close.setStyleSheet(_FLAT_BTN)
-        self.btn_close.clicked.connect(self._on_close_clicked)
+        self.btn_close.clicked.connect(self.close)
         btns.addWidget(self.btn_close)
         root.addLayout(btns)
 
@@ -414,40 +430,64 @@ class BulkDownloadDialog(QDialog):
             reply = QMessageBox.question(
                 self, "确认",
                 f"即将下载 {len(symbols)} 只标的，耗时可能达到数十分钟。\n"
-                f"过程中可随时「中断」，已下载部分会保留。\n\n确定开始吗？",
+                f"提交后**不占用界面**，随时可「停止本任务」，已下载部分会保留。\n\n确定提交吗？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
         self.log.clear()
         self._failures = []
-        self.btn_start.setEnabled(False)
-        self.btn_cancel.setEnabled(True)
         self.btn_copy.setEnabled(False)
         self.progress.setMaximum(len(symbols))
         self.progress.setValue(0)
 
-        self._worker = SyncWorker(
-            symbols, zone=self._zone,
-            force_full=bool(self.chk_force.isChecked()),
-            min_date=self.date_start.date().toString("yyyyMMdd"),
-            policy=self._build_policy(), parent=self)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.failed.connect(self._on_failed)
-        self._worker.finished.connect(self._on_finished)
-        self._worker.start()
+        # ★v1.43 / §7-B11：**提交给主窗口的后台队列**，本弹窗不再持有线程。
+        #   ⇒ 窗口可以关、界面可以用，下载照在后台串行跑（一次只跑一批）。
+        hub = self.main_win.downloads
+        self._job_id = hub.submit(f"批量预下载 · {self._source_label()}", symbols,
+                                  zone=self._zone,
+                                  force_full=bool(self.chk_force.isChecked()),
+                                  min_date=self.date_start.date().toString("yyyyMMdd"),
+                                  policy=self._build_policy(), origin="bulk")
+        if not self._job_id:
+            # 去重命中（同样的标的清单已在跑/已排队）⇒ 诚实说清楚，不假装修了新任务
+            self.lbl_status.setText("同样的任务已经在队列里了 —— 进度见底部下载条。")
+            self.btn_cancel.setEnabled(False)
+            return
+        ahead = max(0, hub.pending_count() - 1)
+        self.btn_cancel.setEnabled(True)
+        self.lbl_status.setText(
+            f"已提交后台（任务 #{self._job_id}）· {len(symbols)} 只"
+            + (f" · 前面还排着 {ahead} 个" if ahead else "")
+            + "。本窗口可以一直开着看进度，也可以直接关掉去做别的事。")
 
-    def _on_progress(self, done, total, symbol):
+    def _source_label(self) -> str:
+        """任务名（出现在下载条与队列面板里，必须让用户认得出是谁提交的）。"""
+        return {"index_preset": "指数预设", "constituent": "指数成分股",
+                "paste": "粘贴代码列表", "all": "全市场 A 股"}.get(self._current_source(),
+                                                                    "批量")
+
+    # ==========================================
+    # 队列回包（本弹窗只是其中一个视图：只认自己提交的那个任务）
+    # ==========================================
+    def _on_hub_progress(self, job_id: int, done: int, total: int, symbol: str):
+        if job_id != self._job_id:
+            return
+        self.progress.setMaximum(max(1, total))
         self.progress.setValue(done)
         self.lbl_status.setText(f"({done}/{total}) 正在处理 {symbol} …")
 
-    def _on_failed(self, symbol, reason):
+    def _on_hub_failed(self, job_id: int, symbol: str, reason: str):
+        if job_id != self._job_id:
+            return
         self._failures.append(symbol)
         if self.log.count() < 500:
             self.log.addItem(f"✗ {symbol} —— {reason}")
 
-    def _on_finished(self, stats: dict):
-        self.btn_start.setEnabled(True)
+    def _on_hub_finished(self, job_id: int, stats: dict):
+        if job_id != self._job_id:
+            return
+        stats = stats or {}
         self.btn_cancel.setEnabled(False)
         self.btn_copy.setEnabled(bool(stats.get("symbols_failed")))
         # 中断原因必须说清（§7-E2）：代理全灭时只显示"已中断"，用户还是不知道该查代理
@@ -457,56 +497,29 @@ class BulkDownloadDialog(QDialog):
             f"{tail}完成：成功 {stats.get('ok', 0)} · 跳过 {stats.get('skipped', 0)} · "
             f"失败 {stats.get('fail', 0)} · 新增 {stats.get('added', 0)} 行")
         if stats.get("fail"):
-            # 代理类失败要**前置**说出来（§7-E2）：它是唯一"重试无用、必须先去查代理"的原因
-            proxy_line = ("④ 本机代理软件断连 —— 表现为短时间每一只都失败。"
-                          "这种情况请先检查代理软件，重试无用。\n"
-                          if stats.get("aborted_by") == "proxy" else "")
-            QMessageBox.warning(
-                self, "部分失败",
-                f"{stats['fail']} 只未下载成功。常见原因：\n"
-                f"① 代码输入有误；② 该股已退市 / 长期停牌，行情源不再提供（属正常现象）；\n"
-                f"③ 网络抖动或被限流。\n"
-                f"{proxy_line}\n"
-                f"失败清单可用左下角「复制失败清单」取出，稍后重试即可（已完成的不重复）。")
-        self._worker = None
+            # 后台任务的失败**不再弹窗打断**（用户可能正在别的页面做事）；
+            # 原因与清单留在本弹窗与队列面板里（文案单出口 `failure_hint`）。
+            job = self.main_win.downloads.get(job_id)
+            hint = job.hint_text if job is not None else ""
+            if hint:
+                self.lbl_status.setToolTip(hint)
+                self.log.addItem(f"—— {len(self._failures)} 只未下载成功。{hint}")
 
     # ==========================================
     # 其它
     # ==========================================
     def _cancel(self):
-        if self._worker is not None:
-            self._worker.cancel()
-            self.lbl_status.setText("正在中断…（等待当前这一只结束）")
+        if self._job_id:
+            self.main_win.downloads.cancel(self._job_id)
+            self.lbl_status.setText("正在停止本任务…（等待当前这一只结束）")
             self.btn_cancel.setEnabled(False)
+
+    def _open_queue(self):
+        """打开主窗口的下载队列面板（多任务与失败清单都在那里）。"""
+        self.main_win.show_download_queue()
 
     def _copy_failures(self):
         if not self._failures:
             return
         QApplication.clipboard().setText("\n".join(self._failures))
 
-    def _try_stop_worker(self) -> bool:
-        """中断并等待线程结束；返回是否已安全停止。
-
-        【为什么宁可等也不强关】QThread 若在销毁时仍在运行会导致程序崩溃，
-        而"正在下载时把窗口关掉"绝不应该把整个 App 带走。
-        等 15 秒后仍没停（网络挂死），就保持窗口存活并提示，等线程自己结束。
-        """
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait(15000)
-        return not (self._worker is not None and self._worker.isRunning())
-
-    def _on_close_clicked(self):
-        if self._try_stop_worker():
-            self.accept()
-
-    def closeEvent(self, event):  # noqa: N802
-        """右上角 X 同样走安全停线程逻辑，绝不带着活线程销毁对话框"""
-        if self._try_stop_worker():
-            event.accept()
-        else:
-            event.ignore()
-            QMessageBox.warning(
-                self, "下载仍在进行",
-                "有一个网络请求迟迟没有结束（可能网络挂起）。\n"
-                "已请求中断，请稍候片刻再点「关闭」；也可以点「中断」后等待。")

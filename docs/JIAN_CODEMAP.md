@@ -9,6 +9,7 @@
 >
 > ⚠ 行数口径 = **非空行**；只有 ≥400 行的文件才标数字（v6.16 用户拍板）。
 > ⚠ 本册随代码同步更新，**别在这里写"现状数字"以外的结论**（结论归 §5 / §10）。
+> ⚠ **下面树里的行数是"历史值"，可能滞后 —— 一律以 `JIAN_RULES.md` §4 体积红榜为准**（§10-14：行数只存那一处）。
 
 ---
 
@@ -147,12 +148,33 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 └── ui/                  # 【表现层：只做展示，禁 SQL/爬虫】(见 §3)
     ├── main_window.py   #     JianMainWindow：6页装配 + 弹窗调度 + render_all_data + CSV导出 + 漏月告警
     │                    #      + ★v6.11/P7 配方互送传话筒（send_formula_to_backtest/market + switch_to）
+    │                    #      + ★v1.43/§7-B11 **后台下载**：持有 `self.downloads`(DownloadHub) 与底部
+    │                    #        `download_bar`、导航角标 `nav_badge`（角标是按钮子件 ⇒ 事件不冒泡，
+    │                    #        btn_data 与角标**都要**装 eventFilter）、`show_download_queue()` 懒建面板、
+    │                    #        `closeEvent` 退出守卫（队列非空 ⇒ 确认 + `hub.shutdown()` 等线程真结束）
+    ├── download_hub.py  # ★v1.43/§7-B11 **全局后台下载队列**（`QObject` 调度件，**不自造 QThread**，
+    │                    #      只编排 `ui.workers.SyncWorker`）：`DownloadJob`（标签/清单/分区/进度/失败）
+    │                    #      + `submit`（**串行 K=1**、同样清单去重）/ `cancel(单个或全部)` /
+    │                    #      `retry_failures` / `snapshot`；信号 `jobs_changed/job_progress/job_failed/
+    │                    #      job_finished/activity_changed` = **进度唯一真源**（页面与弹窗只做投影）；
+    │                    #      + ★v1.43 收口 **`SingleSyncGate`**（单只同步互斥的**唯一实现**：
+    │                    #        `blocked_by()` 问一句 / `hold()` 幂等占位 / `release()` 可重复释放；
+    │                    #        四个调用点：`desk_data` / `backtest_flow`(指数+个股) / `breadth_flow`）
+    │                    #      + `is_busy_for` / `last_finished` / `_settle_activity`（取消后也要收角标）；
+    │                    #      回执文案走 `abort_reason_text` + `failure_hint`；
+    │                    #      `hub_of(page)` 统一取件（拿不到→None 降级）
     ├── workers.py       #     全 app 唯一的 QThread 定义处(v5.13)：ScanWorker(扫湖)/
     │                    #      SyncWorker(批量)/SingleSyncWorker(单只)/BacktestRunWorker(回测)/
     │                    #      ConstituentsWorker(成分股)/FuturesImportWorker(交割单)/
     │                    #      CrossSectionWorker(M2/M3：分块+进度+取消+job_id 回包)
     │                    #      + **JobGuard 竞态守卫**（只接受最新一次任务的回包，§9-O5）
     ├── widgets/         # custom_widgets.py(K线图元/NoWheel控件族/悬浮删除/SPINBOX_QSS
+    │                    #   + ★v1.42 **数值控件唯一工厂**：`SPIN_MIN_WIDTH=72` + `double_spin()/int_spin()`
+    │                    #     （只给 minimumWidth、**绝不 setFixedWidth** —— 钉死宽度会把"0.6"截成"0"）
+    │                    #   + ★v1.43 `download_bar.py`（底部下载条：空闲 hide、长文案进 tooltip、
+    │                    #     水平 Ignored 不撑窗 §11.5-73；文案全取 `DownloadJob`）与
+    │                    #     `download_queue_panel.py`（**非模态**队列面板：任务表 + 只重试失败 /
+    │                    #     复制失败清单 / 全部中断；不存任务数据，每次 `hub.snapshot()` 现取）
     │                    #   + ★v6.9 **复合控件完整 QSS 契约**：combo_qss()/date_edit_qss() 生成器
     │                    #     & 8 个具名常量 COMBO_QSS* / LINE_COMBO_QSS / DATEEDIT_QSS_WARN /
     │                    #     DIALOG_INPUT_QSS —— 全 app 唯一的控件样式来源，§10-9)
@@ -246,9 +268,11 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #         （家数/占比% + MA5 平滑 + 末点标记）+ 指数副图；ChartHost
     │                    #         x 联动 + `adaptive_axis` + 读数条 provider（§7-B6 同款）)
     │                    #     · breadth_result.py(35：空态/忙碌态；与 `scan_result` 同一套 API))
-    │                    #   / **readiness_flow.py(★v6.39 **就绪度体检 + ⬇补齐缺失的两页共用控制器**（D6：
+    │                    #   / **readiness_flow.py(★v6.39 **就绪度体检 + 「⬆ 更新到最新交易日」的两页共用控制器**（D6：
     │                    #     「就绪度模型只有一份」）—— `start()` 后台体检 → 回执一行 + 缺口可见 →
-    │                    #     `fill_missing()`（SyncWorker 温柔抓取可中断 + >50 只二次确认）→ 复检；
+    │                    #     `update_latest()` / `fill_missing()`（★v1.43：**提交给主窗口的下载队列**，
+    │                    #     不再自持 SyncWorker；温柔抓取可中断 + >50 只二次确认）→ 复检；
+    │                    #     页面进度条与回执 = **队列的投影**（只认自己那个 `job_id`）；
     │                    #     回调**绑定各自 scope**（旧范围迟到回包/进度一律丢弃，防覆盖新提示）；
     │                    #     `constituent_failure_text()` 成分股失败人话诊断唯一出口)
     │                    #   / backtest_result.py(432 ★1.22 结果区（L0 主角）：KPI 四卡 + K线控制行 +
@@ -281,7 +305,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #     · review_editor.py(310：当日清单 / 详情头 / 复盘保存 / 孤儿缝合)
     │                    #     · review_flow.py(197：月年切换 / 五个筛选 / 时间跳转 / 视图刷新)
     ├── dialogs/         # import_futures / manual_entry / list_manager
-    │                    #   / bulk_download(416 批量预下载；v6.10 成分股改走同步门面)
+    │                    #   / bulk_download(469 批量预下载：v6.10 成分股改走同步门面；
+    │                    #     ★v1.43 **非模态 + 任务交 `main_win.downloads`**（旧版模态冻屏且
+    │                    #     `SyncWorker(parent=弹窗)` ⇒ 关窗必须硬等；现在弹窗只是参数页 + 一个投影）
     │                    #   / formula_overlay.py(★v6.7 行情页公式编辑器：每段目标窗格+示例模板)
     │                    #   / fill_model_help.py(★v6.17 成交模型用户教学弹窗：三档口径 + T+1
     │                    #        用一套固定价格数字讲差别；**只读不写**，不改任何配置)
@@ -290,10 +316,10 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
                         #        月/年双模态 + 交易回放 + 资金K线 + 截图画廊；
                         #        行为分居 5 个 `ui/widgets/review_*.py`，本文件只持状态 + 同名薄壳；
                         #        宏观(日历·图表)/微观(清单·编辑) 改为**可拖竖向分栏**并记住上次)
-                         #   / trading_desk(**341** ★v6.12/P8 行情工作台——旧 market.py 661 已删除；
+                         #   / trading_desk(**499** ★v6.12/P8 行情工作台——旧 market.py 661 已删除；
                          #        ✅ **1.23 版式收口收官（§7-B6 STEP 0–6）**：顶栏两行（周期/复权分段控件
                          #        + 分钟档位 + "最近使用优先" chips）+ 图标轨/五页分页面板/可折起
-                         #        + 图表常驻读数条；**1375 → 345**（行为分居 `ui/widgets/desk_*.py`，
+                         #        + 图表常驻读数条；**1375 → 345 → 499**（行为分居 `ui/widgets/desk_*.py`，
                          #        本文件只持状态 + 同名薄壳，既有断言零改动）)
                          #   / backtest_module + backtest(787 ✅ 1.22 拆分收官：编辑卡片+抽屉 / 摘要条 /
                          #         结果区 / 导出 / 运行流程 / 策略库 六块各归其位，本页只做装配与接线；
@@ -308,5 +334,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
                          #   / **breadth_view(197 ★v6.38/§7-B1/B2 STEP 5：M3 广度统计页**——状态全在页面
                          #         + 同名薄壳；版式/流程/空态/图表分居 `ui/widgets/breadth_layout|flow|
                          #         result|chart`；与 M2 共用内核 + 会话缓存，一个引擎两种视图)
-                         #   / data_manager(473 🗄数据管理, v5.8)
+                         #   / data_manager(506 🗄数据管理, v5.8；★v1.43 同步类动作一律**提交后台队列**，
+                         #     不再 `_set_busy` 锁住整页按钮；完成时 `_on_hub_finished` 刷清单，
+                         #     不在前台则记 `_pending_rescan` 等 `showEvent` 补刷)
 ```

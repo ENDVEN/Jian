@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>§7-B11 后台下载 · UI 样式原型（1.43）</title>
+<style>
+  :root{
+    --blue:#1976D2; --blue-d:#1565C0; --ink:#1F2430; --gray:#8A94A6;
+    --line:#E4E9F0; --bg:#F5F6F8; --card:#FFFFFF; --green:#2E7D32; --red:#C62828;
+    --orange:#E65100;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);font-size:14px;}
+  .head{background:#fff;border-bottom:1px solid var(--line);padding:14px 20px;}
+  .head h1{margin:0;font-size:17px;}
+  .head p{margin:6px 0 0;color:var(--gray);font-size:12.5px;line-height:1.7;}
+  .switch{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+  .switch button{border:1px solid var(--line);background:#fff;border-radius:20px;
+    padding:5px 14px;font-size:12.5px;cursor:pointer;color:var(--ink);}
+  .switch button.on{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:bold;}
+
+  /* ---------- 假主窗口 ---------- */
+  .app{display:grid;grid-template-columns:190px 1fr;margin:18px 20px 0;border:1px solid var(--line);
+       border-radius:12px;overflow:hidden;background:#fff;height:520px;position:relative;}
+  .side{background:#fff;border-right:1px solid #E0E0E0;padding:16px 0;}
+  .nav{display:flex;align-items:center;gap:8px;padding:12px 18px;font-size:13.5px;color:#424242;
+       position:relative;}
+  .nav.on{background:#E3F2FD;color:var(--blue);font-weight:bold;}
+  .nav .dot{position:absolute;right:12px;top:50%;transform:translateY(-50%);
+    width:9px;height:9px;border-radius:50%;background:#FB8C00;box-shadow:0 0 0 3px #FFF3E0;
+    display:none;}
+  .nav .dot.on{display:block;}
+  .body{padding:16px 18px;overflow:auto;background:#FAFAFA;display:flex;flex-direction:column;}
+  .page-title{font-weight:bold;font-size:16px;margin-bottom:12px;}
+  .zone{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+        font-size:12.5px;color:#3A4150;line-height:2;}
+  .spacer{flex:1;}
+
+  /* ---------- 底部下载条（主角）---------- */
+  .bar{display:none;align-items:center;gap:10px;background:#fff;border-top:1px solid var(--line);
+       padding:7px 12px;font-size:12.5px;}
+  .bar.show{display:flex;}
+  .bar .ico{color:var(--blue);font-weight:bold;}
+  .bar .name{font-weight:bold;color:var(--ink);white-space:nowrap;}
+  .bar .prog{flex:1;min-width:120px;height:6px;border-radius:3px;background:#EDF1F6;overflow:hidden;}
+  .bar .prog i{display:block;height:100%;background:var(--blue);width:4%;}
+  .bar .txt{color:var(--gray);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+            min-width:0;flex:2;}
+  .bar .warn{color:var(--orange);font-weight:bold;cursor:help;}
+  .bar button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 10px;
+              font-size:12px;cursor:pointer;color:var(--blue);white-space:nowrap;}
+  .bar button.stop{color:var(--orange);border-color:#FFB74D;}
+  .bar.done .ico{color:var(--green);}
+  .bar.err .ico{color:var(--red);}
+  .bar .eta{color:var(--ink);font-weight:bold;white-space:nowrap;}
+
+  /* ---------- 队列面板（非模态）---------- */
+  .panel{position:absolute;right:18px;bottom:52px;width:490px;background:#fff;
+    border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(31,36,48,.16);
+    display:none;z-index:20;}
+  .panel.show{display:block;}
+  .panel h4{margin:0;padding:11px 14px;border-bottom:1px solid var(--line);font-size:13.5px;
+    display:flex;align-items:center;gap:8px;}
+  .panel h4 .sp{flex:1;}
+  .panel h4 .x{cursor:pointer;color:var(--gray);}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid #F0F3F7;white-space:nowrap;}
+  th{color:var(--gray);font-weight:normal;font-size:11.5px;}
+  td.p{width:120px;}
+  .mini{height:5px;border-radius:3px;background:#EDF1F6;overflow:hidden;}
+  .mini i{display:block;height:100%;background:var(--blue);}
+  .st{font-size:11.5px;padding:1px 7px;border-radius:8px;}
+  .st.run{background:#E3F2FD;color:var(--blue);}
+  .st.queue{background:#F0F2F5;color:var(--gray);}
+  .st.ok{background:#E8F5E9;color:var(--green);}
+  .st.part{background:#FFF3E0;color:var(--orange);}
+  .panel .foot{display:flex;gap:8px;padding:9px 12px;border-top:1px solid var(--line);
+    align-items:center;font-size:12px;color:var(--gray);}
+  .panel .foot button{border:1px solid var(--line);background:#fff;border-radius:6px;
+    padding:4px 10px;font-size:12px;cursor:pointer;color:var(--blue);}
+  .panel .foot .sp{flex:1;}
+
+  .callouts{margin:18px 20px 26px;display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .card h3{margin:0 0 8px;font-size:14px;}
+  .card ul{margin:0;padding-left:18px;line-height:1.95;font-size:12.5px;color:#3A4150;}
+  .card b{color:var(--ink);}
+  .note{grid-column:1/-1;background:#FFFDE7;border:1px solid #FFF59D;border-radius:10px;
+    padding:10px 14px;font-size:12.5px;color:#795548;line-height:1.9;}
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>§7-B11 · 后台下载（底部下载条 + 导航角标 + 非模态队列面板）</h1>
+  <p>现状问题：批量预下载是<b>模态弹窗</b>，而且工作线程的 parent 就是弹窗 ⇒ 下载期间整个界面被冻住、窗口不能关，用户只能守着看进度。<br>
+     本原型 = 把「任务归属」从弹窗搬到主窗口：提交即返回，进度改由全局三处呈现。配色沿用现状白卡 + <code>#1976D2</code>，深色主题仍按既定推迟。</p>
+  <div class="switch">
+    <button data-s="idle" class="on">① 空闲（下载条完全隐藏）</button>
+    <button data-s="run">② 下载中（批量 5849 只）</button>
+    <button data-s="queue">③ 多任务排队 + 面板</button>
+    <button data-s="done">④ 完成回执</button>
+    <button data-s="err">⑤ 失败（代理原因）</button>
+  </div>
+</div>
+
+<div class="app">
+  <div class="side">
+    <div class="nav">📊 资金与表现</div>
+    <div class="nav">📝 交易流水</div>
+    <div class="nav">💡 深度复盘</div>
+    <div class="nav">📈 市场行情</div>
+    <div class="nav">📐 市场回测</div>
+    <div class="nav on">🗄 数据管理<span class="dot" id="dot"></span></div>
+  </div>
+
+  <div class="body">
+    <div class="page-title">🗄 数据管理 <span style="font-weight:normal;color:var(--gray);font-size:12px">C:\Users\...\.jian_data\data_lake · 总占用 72.9 MB</span></div>
+    <div class="zone">
+      下载已提交到后台后，本页<b>照常可点</b>：切分区、勾选、删除、搜索过滤都不受影响 —— 旧版这里会被 <code>_set_busy(True)</code> 锁掉 7 个按钮。<br>
+      按钮文案从「更新到最新」短暂变成「已提交 ✓」，随后恢复可用。
+    </div>
+    <div class="spacer"></div>
+
+    <!-- 底部下载条 -->
+    <div class="bar" id="bar">
+      <span class="ico" id="barIco">⬇</span>
+      <span class="name" id="barName">更新到最新交易日</span>
+      <span class="prog"><i id="barFill"></i></span>
+      <span class="txt" id="barTxt">223/5849 · 正在处理 000622</span>
+      <span class="eta" id="barEta">约剩 31 分钟</span>
+      <span class="warn" id="barWarn" title="">⚠</span>
+      <span style="color:var(--gray)" id="barQueue"></span>
+      <button id="btnPanel">详情</button>
+      <button class="stop" id="btnStop">中断</button>
+    </div>
+
+    <!-- 队列面板 -->
+    <div class="panel" id="panel">
+      <h4>⬇ 下载队列 <span class="st run" id="pRun">运行中 1</span><span class="st queue" id="pQ">排队 1</span>
+        <span class="sp"></span><span class="x" id="pClose">✕</span></h4>
+      <table>
+        <thead><tr><th>任务</th><th>进度</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="pRows"></tbody>
+      </table>
+      <div class="foot">
+        <span id="pSum">失败 5 只（退市 / 停牌 / 源未收录，不是你的错）</span>
+        <span class="sp"></span>
+        <button>只重试失败</button><button>复制失败清单</button><button>全部中断</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="callouts">
+  <div class="card">
+    <h3>下载条的三态与「一句话说清」</h3>
+    <ul>
+      <li><b>运行中</b>：任务名 + 进度条 + <code>223/5849 · 正在处理 000622</code> + <b>约剩多久</b>（按"真正会联网的只数"算，不再一律报 50 分钟劝退）。</li>
+      <li><b>完成</b>：变一条<b>可点回执</b>「✅ 成功 218 · 已最新 5626 · 失败 5 · 查看详情」，几秒后自动收成角标。</li>
+      <li><b>失败/中断</b>：原因必须说人话 —— 代理类走 <code>abort_reason_text</code> 唯一出口（「疑似本机代理问题，请检查代理软件是否在运行」），<b>不写死端口</b>。</li>
+      <li>单行标签只放<b>短状态</b>，长说明进 tooltip；整条水平策略可缩，<b>绝不撑大窗口最小宽度</b>。</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>为什么还要导航角标</h3>
+    <ul>
+      <li>下载条在<b>底部</b>，用户在行情页看 K 线时视线不一定扫到 ⇒ <code>🗄 数据管理</code> 上一个小橙点，<b>任何页面瞟一眼</b>就知道有活在跑。</li>
+      <li>点角标 = 切到数据管理页并展开队列面板（一次点击到位）。</li>
+      <li>空闲时角标与下载条<b>同时隐藏</b>，界面回到今天的样子（不多一块常驻皮）。</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>队列面板能做什么（都是旧弹窗里已有能力，只是搬出来）</h3>
+    <ul>
+      <li>多任务列表：<b>运行中 / 排队中 / 完成 / 部分失败</b>，串行执行（一次只跑一批，与"宁可慢也不封 IP"一致）。</li>
+      <li>每个任务可单独<b>中断</b>；底部有<b>全部中断</b>。</li>
+      <li><b>只重试失败</b> / <b>复制失败清单</b>（旧版只能在弹窗里做，弹窗一关就没了）。</li>
+      <li>面板是<b>非模态</b>的：开着它照样能操作主界面，可以一直挂着当监控窗。</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>各入口怎么变</h3>
+    <ul>
+      <li><b>批量预下载弹窗</b>：只收集参数；点「▶ 开始下载」= 提交任务，<b>弹窗自动关闭</b>，进度去底部条。</li>
+      <li><b>数据管理</b>「更新到最新 / 重新全量下载」：提交即返回，不再锁住整页按钮。</li>
+      <li><b>M2 / M3</b>「⬆ 更新到最新交易日」：批量任务交队列；页面自己那条进度条改成<b>订阅底部条的投影</b>（进度真源只有一份）。按钮名与文字一律不变。</li>
+      <li><b>单只同步</b>（行情页 / 回测滞后补 / 指数补拉）：仍是当页秒级回执，但向队列<b>登记占位</b>，避免全市场下载中途重复抓同一只。</li>
+    </ul>
+  </div>
+  <div class="note">
+    <b>明确不做</b>：并发下载（K=1 串行；并发档另案待拍板）、任务落盘跨进程续传（「跳过已最新」本身就是断点续传）、系统托盘图标、下载中禁止切页（不再需要）。<br>
+    <b>一条硬约束</b>：退出软件时若队列非空 ⇒ 一次确认「还有 N 个任务在跑，退出会中断」—— 线程运行中被销毁会崩溃，这是 Qt 的既有教训。
+  </div>
+</div>
+
+<script>
+const STATES = {
+  idle:  {bar:'', panel:false, dot:false},
+  run:   {bar:'run', panel:false, dot:true},
+  queue: {bar:'run', panel:true, dot:true},
+  done:  {bar:'done', panel:true, dot:false},
+  err:   {bar:'err', panel:true, dot:false},
+};
+const BAR = {
+  run:  {ico:'⬇', name:'更新到最新交易日', fill:'4%', txt:'223/5849 · 正在处理 000622',
+         eta:'约剩 31 分钟', warn:'', q:'· 排队 1', cls:''},
+  done: {ico:'✅', name:'更新到最新交易日', fill:'100%', txt:'成功 218 · 已最新 5626 · 失败 5 · 点击查看',
+         eta:'', warn:'', q:'', cls:'done'},
+  err:  {ico:'⚠', name:'全市场 A 股 日线', fill:'7%', txt:'已中断：疑似本机代理问题，请检查代理软件是否在运行（可再点「⬆ 更新到最新交易日」续传）',
+         eta:'', warn:'', q:'', cls:'err'},
+};
+const ROWS = {
+  run:  [['全市场 A 股 日线 · 2016起','4%','run','运行中 · 223/5849','中断'],
+         ['中证500 成分股 日线','0%','queue','排队中 · 500 只','中断']],
+  done: [['全市场 A 股 日线 · 2016起','100%','part','部分失败 · 218/223','只重试失败'],
+         ['中证500 成分股 日线','0%','queue','排队中 · 500 只','中断']],
+  err:  [['全市场 A 股 日线 · 2016起','7%','part','已中断（代理）','重试']],
+};
+const bar=document.getElementById('bar'), panel=document.getElementById('panel'),
+      dot=document.getElementById('dot');
+function apply(k){
+  const s=STATES[k];
+  document.querySelectorAll('.switch button').forEach(b=>b.classList.toggle('on',b.dataset.s===k));
+  bar.className='bar'+(s.bar?' show':'')+(BAR[s.bar]?(' '+BAR[s.bar].cls):'');
+  if(s.bar){const b=BAR[s.bar];
+    bar.querySelector('#barIco').textContent=b.ico;
+    bar.querySelector('#barName').textContent=b.name;
+    bar.querySelector('#barFill').style.width=b.fill;
+    bar.querySelector('#barTxt').textContent=b.txt;
+    bar.querySelector('#barEta').textContent=b.eta;
+    bar.querySelector('#barQueue').textContent=b.q;
+    bar.querySelector('#barWarn').style.display=b.warn?'inline':'none';
+    bar.querySelector('#btnStop').style.display=(k==='run')?'block':'none';
+  }
+  dot.classList.toggle('on', s.dot);
+  panel.classList.toggle('show', s.panel);
+  if(s.panel){
+    document.getElementById('pRows').innerHTML=(ROWS[k]||ROWS.run).map(r=>
+      `<tr><td>${r[0]}</td><td class="p"><div class="mini"><i style="width:${r[1]}"></i></div></td>
+       <td><span class="st ${r[2]}">${r[3]}</span></td><td><span style="color:var(--blue);cursor:pointer">${r[4]}</span></td></tr>`).join('');
+  }
+}
+document.querySelectorAll('.switch button').forEach(b=>b.onclick=()=>apply(b.dataset.s));
+document.getElementById('btnPanel').onclick=()=>panel.classList.toggle('show');
+document.getElementById('pClose').onclick=()=>panel.classList.remove('show');
+apply('idle');
+</script>
+</body>
+</html>

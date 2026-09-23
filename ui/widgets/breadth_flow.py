@@ -30,6 +30,7 @@ from data.market_db import DataLakeManager
 from data.scan_store import kline_zone_dir
 from data.sync_service import ZONE_INDEX
 from data.watchlist_store import WatchlistStore
+from ui.download_hub import SingleSyncGate
 from ui.widgets.breadth_chart import DEFAULT_CHART_TYPE, DEFAULT_INDEX_STYLE
 from ui.widgets.breadth_layout import DEFAULT_INDEX_CODE, DEFAULT_RANGE, RANGE_PRESETS
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
@@ -57,6 +58,8 @@ class BreadthFlow:
 
     def __init__(self, page):
         self.page = page
+        # ★v1.43 / §7-B11：指数补拉与后台队列的互斥占位（唯一公共件，别再手写 token）
+        self._index_gate = SingleSyncGate(page)
         p = self.page
         p.cb_scope.currentIndexChanged.connect(self.on_scope_changed)
         p.cb_index.currentIndexChanged.connect(self.on_index_changed)
@@ -471,17 +474,25 @@ class BreadthFlow:
         if p._index_fetching == code:
             return                                        # 已经在拉了，别重复发车
         name = str(p._display_pane.cb_overlay_code.currentText()).split(' ')[0]
+        if self._index_gate.blocked_by(code, ZONE_INDEX):
+            # ★v1.43 / §7-B11：该指数已在后台队列里 ⇒ 不重复抓（同一个文件不能两个写者）；
+            #   副图缺数据不影响主图广度，所以这里只出声、不阻断。
+            p.lbl_receipt.setText(f'副图缺 {name} 日线 —— 该指数正在后台下载队列里，'
+                                  '等它跑完再重画（不影响主图广度）')
+            return
         p.lbl_receipt.setText(f'副图缺 {name} 日线 —— 后台拉取中…（失败不影响主图广度）')
         p._index_fetching = code
         job = p._index_guard.next()
         p._index_worker = SingleSyncWorker(code, zone=ZONE_INDEX, parent=p)
         p._index_worker.finished.connect(
             lambda _result, token=job, c=code: self._on_index_fetched(c, token))
+        self._index_gate.hold(code, ZONE_INDEX)
         p._index_worker.start()
 
     def _on_index_fetched(self, code: str, token: int) -> None:
         """拉取回包：过守卫 + 重读湖。拿到了就重画；拿不到就出声（绝不静默）。"""
         p = self.page
+        self._index_gate.release()                # 先释放占位，再判守卫（防泄漏）
         if not p._index_guard.accept(token):
             return
         p._index_fetching = ''

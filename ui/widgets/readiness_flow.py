@@ -12,8 +12,9 @@ M2（全市场筛选）与 M3（广度统计）的范围解析完成后各调一
     `friendly_constituent_message` 分类说清原因（网络 / 源未收录 / 代码有误）；
   ② 本控制器体检给出**名单里本地真正有多少**（就绪 N/M · 未下载 X · 历史不足 Y
     · 文件损坏 Z · 本地最新到几号）；
-  ③ 「更新到最新」把**未下载**的补齐（`SyncWorker` 走 `MarketSyncService`，
-    温柔抓取可中断）；「历史不足」多数补不齐（数据本来就只有这么多）——
+  ③ 「更新到最新」把**未下载**的补齐（★v1.43：提交给主窗口的**后台下载队列**
+    `ui/download_hub.py`，由它编排 `SyncWorker` 走 `MarketSyncService`，温柔抓取可中断）；
+    「历史不足」多数补不齐（数据本来就只有这么多）——
     只解释、不假装能修；「文件损坏」指去数据管理重新全量下载（D6-5 问题清单）。
 
 【不越权】体检结果**从不覆盖扫描回执**：扫描进行中 / 已有结果 / 范围已切换时，
@@ -33,8 +34,9 @@ from data.sync_service import (ZONE_KLINE, ThrottlePolicy, abort_reason_text,
                                estimate_seconds, format_duration,
                                friendly_constituent_message)
 from data.trade_calendar import latest_settled_trading_day, trading_days_between
+from ui.download_hub import hub_of
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
-from ui.workers import CalendarWorker, JobGuard, ReadinessWorker, SyncWorker
+from ui.workers import CalendarWorker, JobGuard, ReadinessWorker
 
 __all__ = ['ReadinessFlow', 'constituent_failure_text', 'constituent_snapshot_text']
 
@@ -78,11 +80,17 @@ class ReadinessFlow:
         self.page = page
         self.report: ReadinessReport | None = None
         self._guard = JobGuard()              # 体检回包守卫
-        self._sync_guard = JobGuard()         # 补齐回包守卫（与体检互不踢）
         self._probe = None
-        self._sync = None
+        # ★v1.43 / §7-B11：批量下载不再在本页起线程，只记自己提交的任务号；
+        #   进度/回执从主窗口的下载队列订阅（队列是唯一真源，本页是投影）。
+        self._sync_job: int | None = None
         self._syncing = False
         self._sync_label = '补齐'            # 当前后台同步的动词（补齐 / 更新），供回执文案
+        hub = hub_of(page)                    # 统一取件：拿不到就降级（假页面/单测不炸）
+        if hub is not None:
+            hub.job_progress.connect(self._on_fill_progress)
+            hub.job_failed.connect(self._on_fill_failed)
+            hub.job_finished.connect(self._on_fill_finished)
         self._last_symbols: list = []
         self._last_min_bars = None
         # 交易日历（§7-B10 STEP 3）：滞后判据与 M1 同源，拿不到则不提示滞后
@@ -273,7 +281,7 @@ class ReadinessFlow:
             self._render_readiness()          # 日历后到 ⇒ 把滞后提示补上
 
     # ==========================================
-    # ② 更新到最新 / 补齐数据（联网走 SyncWorker ⇒ MarketSyncService，§9-H）
+    # ② 更新到最新 / 补齐数据（★v1.43：提交给主窗口的后台下载队列）
     # ==========================================
     def update_latest(self) -> None:
         """一键「⬆ 更新到最新交易日」（§7-B10 STEP 2 · 用户拍板与"补齐"动作合并）：
@@ -324,7 +332,13 @@ class ReadinessFlow:
         return stale, estimate_seconds(n, ThrottlePolicy(), stale_count=stale)
 
     def _launch_sync(self, symbols, label: str, note: str = '') -> None:
-        """共享的后台增量启动（update_latest / fill_missing 都走它，勿各写一份）。"""
+        """共享的后台增量启动（update_latest / fill_missing 都走它，勿各写一份）。
+
+        ★v1.43 / §7-B11：任务**提交给主窗口的下载队列**，本页不再自己起线程 ——
+        旧版页面私有一个 `SyncWorker`（而且没给 parent），切页就看不见进度、
+        多个入口各自为政。现在进度真源在队列，本页的回执与进度条只是它的**投影**
+        （只认自己那个 `job_id`）。
+        """
         p = self.page
         self._sync_label = label
         n = len(symbols)
@@ -341,36 +355,54 @@ class ReadinessFlow:
             if answer != QMessageBox.StandardButton.Yes:
                 p.lbl_receipt.setText(f'已取消{label} —— 本地数据未动。')
                 return
+        hub = hub_of(p)
+        if hub is None:
+            p.lbl_receipt.setText('后台下载队列不可用 —— 无法提交下载任务。')
+            return
+        self._sync_job = hub.submit(self._job_name(label), symbols, zone=ZONE_KLINE,
+                                    origin=getattr(p, 'hub_origin', 'm2m3'))
+        if not self._sync_job:
+            # 去重命中 ⇒ 诚实说清楚（不假装又跑了一轮）
+            p.lbl_receipt.setText('同样的任务已经在队列里了 —— 进度见窗口底部的下载条。')
+            return
         self._syncing = True
-        self._sync_guard.next()
-        self._sync = SyncWorker(symbols, zone=ZONE_KLINE)
-        self._sync.progress.connect(self._on_fill_progress)
-        self._sync.failed.connect(self._on_fill_failed)
-        self._sync.finished.connect(self._on_fill_finished)
-        self._sync.start()
         p._result.set_empty(f'{label}中…（{n} 只 · 温柔抓取 {note}）',
                             f'⏹ 停止{label}', self.stop_fill)
-        p.lbl_receipt.setText(f'{label} 0/{n} · 准备中…')
+        p.lbl_receipt.setText(f'{label} 0/{n} · 已提交后台（任务 #{self._sync_job}）…')
+
+    def _job_name(self, label: str) -> str:
+        """任务名：带上当前统计范围，让用户在队列里认得出是谁提交的。"""
+        cmb = getattr(self.page, 'cb_scope', None)
+        tag = str(cmb.currentText() or '').strip() if cmb is not None else ''
+        return f'{label}数据 · {tag}' if tag else f'{label}数据'
 
     def stop_fill(self) -> None:
-        if self._sync is not None:
-            self._sync.cancel()
+        hub = hub_of(self.page)
+        if self._sync_job and hub is not None:
+            hub.cancel(self._sync_job)
             self.page.lbl_receipt.setText('中断中…（已下载的保留，断点续传）')
 
-    def _on_fill_progress(self, done: int, total: int, symbol: str) -> None:
+    def _on_fill_progress(self, job_id: int, done: int, total: int, symbol: str) -> None:
+        if job_id != self._sync_job:
+            return                                  # 别的任务不许抢本页回执（§9-O5 同族）
         p = self.page
         p.bar_progress.show()
         p.bar_progress.setRange(0, max(1, int(total)))
         p.bar_progress.setValue(int(done))
         p.lbl_receipt.setText(f'{self._sync_label} {done}/{total} · {symbol}')
 
-    def _on_fill_failed(self, symbol: str, reason: str) -> None:
-        """单只失败**出声不中断**（SyncWorker 自己有熔断）；明细进 tooltip（问题清单）。"""
+    def _on_fill_failed(self, job_id: int, symbol: str, reason: str) -> None:
+        """单只失败**出声不中断**（队列自己有熔断）；明细进 tooltip（问题清单）。"""
+        if job_id != self._sync_job:
+            return
         logger.warning(f"补齐数据失败 [{symbol}]: {reason}")
 
-    def _on_fill_finished(self, stats: dict) -> None:
+    def _on_fill_finished(self, job_id: int, stats: dict) -> None:
+        if job_id != self._sync_job:
+            return
         p = self.page
         self._syncing = False
+        self._sync_job = None
         p.bar_progress.hide()
         stats = stats or {}
         ok = int(stats.get('ok', 0))

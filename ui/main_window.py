@@ -2,9 +2,9 @@
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
                              QVBoxLayout, QPushButton, QFrame, QStackedWidget,
-                             QDialog, QMessageBox, QFileDialog)
+                             QDialog, QMessageBox, QFileDialog, QLabel)
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import Qt, QUrl
 
 from config import settings
 from core.analyzer import TradeAnalyzer
@@ -13,6 +13,9 @@ from core.updater import UpdateCheckerThread
 # P7：函数配方互送用的纯函数（把各种形态的"函数段"统一成页面各自要的形状）
 from data.formula_store import segments_as_texts, segments_as_tuples
 
+from ui.download_hub import DownloadHub
+from ui.widgets.download_bar import DownloadBar
+from ui.widgets.download_queue_panel import DownloadQueuePanel
 from ui.views.dashboard import DashboardView
 from ui.views.records import RecordsView
 from ui.views.review import ReviewView
@@ -42,6 +45,13 @@ class JianMainWindow(QMainWindow):
         
         self.engine = DataEngine()
 
+        # ★v1.43 / §7-B11：**后台下载队列**归主窗口（与 engine 同级）。
+        # 【为什么不能在弹窗里】旧版 `SyncWorker(parent=弹窗)` ⇒ 线程随弹窗生灭，
+        #   所以"下载中关窗"只能硬等 15 秒，用户被要求守在旁边。
+        #   任务归属搬到这一层后：弹窗只收集参数，下载与界面解绑，切页/关窗都不影响它。
+        # ⚠ 必须在各页面**构造之前**建好（页面构造期就可能取 `main_win.downloads`）。
+        self.downloads = DownloadHub(self)
+        
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
@@ -91,7 +101,30 @@ class JianMainWindow(QMainWindow):
         self.content_area.addWidget(self.page_data)
         
         main_layout.addWidget(sidebar)
-        main_layout.addWidget(self.content_area)
+        # --- 右侧 = 内容栈 + 底部下载条（下载条只在有任务时出现，平时零高度）---
+        self.download_bar = DownloadBar(self.downloads, self)
+        self.download_bar.sig_detail.connect(self.show_download_queue)
+        right = QWidget()
+        right_lay = QVBoxLayout(right)
+        right_lay.setContentsMargins(0, 0, 0, 0)
+        right_lay.setSpacing(0)
+        right_lay.addWidget(self.content_area, 1)
+        right_lay.addWidget(self.download_bar)
+        main_layout.addWidget(right)
+
+        # --- 导航角标：下载中在「🗄 数据管理」上亮一个小圆点 ---
+        # 【为什么要它】下载条在底部，用户在行情页看图时视线扫不到 ⇒
+        #   "有没有活在跑"必须一眼可瞥；点角标 = 切到数据管理页并展开队列面板。
+        self.nav_badge = QLabel("●", self.btn_data)
+        self.nav_badge.setObjectName("NavBadge")
+        self.nav_badge.setStyleSheet("QLabel#NavBadge { color:#FB8C00; font-size:11px; }")
+        self.nav_badge.setToolTip("有数据任务在后台下载 —— 点击打开下载队列")
+        self.nav_badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.nav_badge.hide()
+        # 角标是按钮的子件 ⇒ 子件的事件**不会**冒泡到父件的过滤器，两个都要装
+        self.btn_data.installEventFilter(self)     # Resize ⇒ 重摆角标
+        self.nav_badge.installEventFilter(self)    # 点击 ⇒ 切页 + 开队列面板
+        self.downloads.activity_changed.connect(self._on_download_activity)
         
         self.btn_overview.clicked.connect(lambda: self.content_area.setCurrentIndex(0))
         self.btn_records.clicked.connect(lambda: self.content_area.setCurrentIndex(1))
@@ -117,6 +150,67 @@ class JianMainWindow(QMainWindow):
         index = self._PAGE_INDEX.get(str(key))
         if index is not None:
             self.content_area.setCurrentIndex(index)
+
+    # ==========================================
+    # 后台下载（v1.43 · §7-B11）：队列属主窗口，界面只是它的三个视图
+    # ==========================================
+    # 下载条（底部）/ 导航角标（左侧）/ 队列面板（非模态）全部订阅同一个 hub，
+    # **任何一处都不存任务数据** —— 否则就是"三套进度各自为政"（§11.5-11）。
+    _download_panel = None
+
+    def show_download_queue(self) -> None:
+        """打开（或置顶）下载队列面板。懒建：不开下载就不该多一个窗口。"""
+        if self._download_panel is None:
+            self._download_panel = DownloadQueuePanel(self.downloads, self)
+        self._download_panel.refresh()
+        self._download_panel.show()               # 非模态 ⇒ 开着它照样能操作主界面
+        self._download_panel.raise_()
+        self._download_panel.activateWindow()
+
+    def _on_download_activity(self, busy: bool) -> None:
+        self.nav_badge.setVisible(bool(busy))
+        self._place_badge()
+
+    def _place_badge(self) -> None:
+        """角标贴在「数据管理」按钮右上角；按钮尺寸变了就得跟着重摆。"""
+        btn = self.btn_data
+        self.nav_badge.adjustSize()
+        self.nav_badge.move(btn.width() - self.nav_badge.width() - 8,
+                            max(2, (btn.height() - self.nav_badge.height()) // 2))
+        self.nav_badge.raise_()
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        """一个过滤器干两件事：按钮尺寸变化时重摆角标；点角标 = 切页 + 开队列面板。"""
+        if obj is self.btn_data and event.type() == event.Type.Resize:
+            self._place_badge()
+        elif obj is self.nav_badge and event.type() == event.Type.MouseButtonPress:
+            self.content_area.setCurrentIndex(5)
+            self.btn_data.setChecked(True)
+            self.show_download_queue()
+            return True                           # 吞掉：点角标不该只切页不开面板
+        return super().eventFilter(obj, event)
+
+    def closeEvent(self, event):  # noqa: N802
+        """退出守卫：队列非空时确认一次，然后**等线程真结束**再走。
+
+        ⚠ 【为什么必须等】QThread 运行中被销毁 = 崩溃。旧弹窗为这件事写过
+          "中断 + wait(15s)"（`bulk_download._try_stop_worker`）；任务搬到 hub 后，
+          同样的约束落在主窗口上（hub 是 worker 的 parent）。
+        """
+        if self.downloads.has_unfinished():
+            n = self.downloads.pending_count()
+            reply = QMessageBox.question(
+                self, "下载仍在进行",
+                f"还有 {n} 个下载任务在跑。\n\n"
+                "退出会中断它们（已下载的部分会保留，下次重跑同范围会自动跳过）。\n"
+                "确定现在退出吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+        self.downloads.shutdown()
+        super().closeEvent(event)
 
     def send_formula_to_backtest(self, segments, params_text: str = "") -> int:
         """行情页 → 回测页：把函数送进①函数段编辑区并切页，返回段数（0 = 内容为空）。
