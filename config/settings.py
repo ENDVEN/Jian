@@ -86,8 +86,20 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          ④ 去重键补 min_date/档力度；批量弹窗 parent 改主窗口；取件统一 hub_of；
 #          ⑤ 补「真 SyncWorker / 真 QThread」端到端探针 15 项（假线程测不出①）。
 #          smoke 817 / 627。
+#   1.44 = §7-B11 后续 · 下载性能档（§11.6 待拍板项落地，A+B 一次发版）：
+#          ① 批内并发池（SyncWorker 用 ThreadPoolExecutor 编排现成 refresh_one，数据层仍纯同步），
+#             配 **共享全局节流阀** RateGovernor ⇒ 聚合请求率不变、只靠网络往返重叠 ≈2×（不封 IP）；
+#             concurrency 字段默认 1（回滚开关），真实下载由 DownloadHub.submit 升到均衡档 3；
+#          ② 全市场当日快照秒补（spot_em 1 次请求）：只补“只差当天这一根”、只 15:05 定稿后、
+#             只 qfq 日线分区、不复权价仅追加当天不回填历史；缺口>1日/首次退回逐只；单位归一防 100×。
+#          真实联网端到端待用户实测。smoke 841 / 637。
+#   1.45 = §7-B11 后续（续）· 统一下载设置入口（用户：“预下载里调的间隔/并发，M2/M3/数据管理怎么同步？”）：
+#          ① 批量下载节流参数（间隔/抖动/熍断/跳过/并发）收进**一份全局偏好** preferences.download_prefs（唯一真源）；
+#          ② 新建 `ui/dialogs/download_settings.py` 统一点设置对话框（唯一编辑面），预下载弹窗/数据管理/队列面板三处入口都开它；
+#          ③ **删掉**预下载弹窗与数据管理页各自的间隔/抖动/熍断/跳过旋钮（防“两套值”漂移）；M2/M3 自动跟随全局；
+#          ④ `DownloadHub.submit` 无策略⇒走 `download_policy_from_prefs()`；有策略⇒完全尊重。smoke 848 / 636。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.43"
+APP_VERSION = "1.45"
 
 # ==========================================
 # 界面配置 (UI Settings)

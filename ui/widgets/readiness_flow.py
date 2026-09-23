@@ -30,11 +30,11 @@ from PyQt6.QtWidgets import QMessageBox
 
 from data.readiness import ReadinessReport, format_stale
 from data.scan_store import kline_zone_dir
-from data.sync_service import (ZONE_KLINE, ThrottlePolicy, abort_reason_text,
+from data.sync_service import (ZONE_KLINE, abort_reason_text,
                                estimate_seconds, format_duration,
                                friendly_constituent_message)
 from data.trade_calendar import latest_settled_trading_day, trading_days_between
-from ui.download_hub import hub_of
+from ui.download_hub import download_policy_from_prefs, hub_of
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.workers import CalendarWorker, JobGuard, ReadinessWorker
 
@@ -360,10 +360,10 @@ class ReadinessFlow:
         report = self.report
         target = self.trading_target
         if report is None or target is None or not report.lasts or n != report.total:
-            return n, estimate_seconds(n, ThrottlePolicy())
+            return n, estimate_seconds(n, download_policy_from_prefs())
         covered = report.coverage_at(target)          # 已到该日的只数（>= 目标日）
         stale = max(0, n - covered)
-        return stale, estimate_seconds(n, ThrottlePolicy(), stale_count=stale)
+        return stale, estimate_seconds(n, download_policy_from_prefs(), stale_count=stale)
 
     def _launch_sync(self, symbols, label: str, note: str = '') -> None:
         """共享的后台增量启动（update_latest / fill_missing 都走它，勿各写一份）。

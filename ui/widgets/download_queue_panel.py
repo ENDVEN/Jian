@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect,
                              QPushButton, QSizePolicy, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
+from ui.dialogs.download_settings import DownloadSettingsDialog
 from ui.download_hub import (STATUS_CANCELLED, STATUS_DONE, STATUS_LABELS,
                              STATUS_QUEUED, STATUS_RUNNING)
 from ui.widgets.backtest_panes import FLAT_QSS
@@ -130,6 +131,11 @@ class DownloadQueuePanel(QFrame):
         self.lbl_queued.setStyleSheet(pill_qss(STATUS_QUEUED))
         head_lay.addWidget(self.lbl_queued)
         head_lay.addStretch()
+        self.btn_settings = _ClickableLabel("⚙", self._open_settings, parent=head)
+        self.btn_settings.setObjectName("QueueX")
+        self.btn_settings.setToolTip(
+            "全局下载设置：间隔 / 抖动 / 熍断 / 跳过 / 并发（一处调、处处生效）")
+        head_lay.addWidget(self.btn_settings)
         self.btn_close = _ClickableLabel("✕", self.hide, parent=head)
         self.btn_close.setObjectName("QueueX")
         self.btn_close.setToolTip("收起面板（不会停止下载）")
@@ -337,3 +343,7 @@ class DownloadQueuePanel(QFrame):
     def _stop_all(self) -> None:
         self._hub.cancel(None)
         self.refresh()
+
+    def _open_settings(self) -> None:
+        """打开全局下载设置对话框（挂到主窗口，避免面板隐藏时变孤儿）。"""
+        DownloadSettingsDialog(self.window()).exec()

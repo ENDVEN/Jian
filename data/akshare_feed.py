@@ -34,6 +34,21 @@ KLINE_CN_RENAME = {
     '开盘价': 'open', '收盘价': 'close', '最高价': 'high', '最低价': 'low',
 }
 
+# ★v1.45 / §7-B11 后续：**全市场当日快照**（spot_em）→ 系统标准列的映射与裁剪。
+# 【单位归一是本路径的命门】§9-V / §7-E3 最怕的 100× 事故：
+#   · 成交量：东财 spot = **手** → 落库前 ×`EM_VOLUME_UNIT` 成「股」（与历史日线同分区一致）；
+#   · 换手率：东财 spot = **百分数**(0.93) → ÷100 成**小数**(0.0093)（对齐新浪 `turnover`）；
+#   · 成交额：元 → `amount`；流通市值：元 → `outstanding_share`（换手率/市值筛选下游所需）；
+#   · 最新价：收盘后 == 当天 `close`（spot 是**不复权**真实价，qfq 最新一根本就等于真实价，
+#     故**只追加当天这一根**自洽；⚠ 绝不用于回填历史复权段）。
+# 快照无"哪一天"列 ⇒ 本映射**不含 date**（"该算哪天"由上层用真交易日历决定）。
+SPOT_DAILY_RENAME = {
+    '代码': 'symbol', '今开': 'open', '最高': 'high', '最低': 'low', '最新价': 'close',
+    '成交量': 'volume', '成交额': 'amount', '换手率': 'turnover', '流通市值': 'outstanding_share',
+}
+SPOT_DAILY_KEEP = ('symbol', 'open', 'high', 'low', 'close', 'volume', 'amount',
+                   'turnover', 'outstanding_share')
+
 # 东财接口超时上限 (秒)：作为兜底源时不允许无限期挂起
 EM_TIMEOUT_SECONDS = 15
 
@@ -219,6 +234,41 @@ class AkShareFeed:
         except Exception as e:
             logging.error(f"拉取花名册失败: {str(e)}")
             return pd.DataFrame()
+
+    @staticmethod
+    def fetch_market_spot_daily() -> pd.DataFrame:
+        """★v1.45 / §7-B11 后续：**1 次请求**拿全市场"当天"日线快照（供秒补当天这一根）。
+
+        唯一入口 = `ak.stock_zh_a_spot_em()`（与花名册同源，本模块已在用，只是多取几列）。
+        返回标准列 `SPOT_DAILY_KEEP`（**不含 date**，"该算哪天"由上层用真交易日历决定）；
+        成交量已×`EM_VOLUME_UNIT`换算成股、换手率已÷100 归一为小数，非正价/缺价行已剔除。
+        ⚠ 本方只做"取数 + 单位归一"这一件事；能否落库/落到哪个分区/定稿与否全在上层。
+        失败（网络/接口变更）⇒ 回**空表**（上层据此诚实回退逐只，绝不上抛）。
+        """
+        try:
+            df = ak.stock_zh_a_spot_em()
+        except Exception as e:  # noqa: BLE001 —— 快照失败由上层诚实回退逐只，绝不上抛
+            logging.warning(f"全市场快照(spot_em)失败: {e}")
+            return pd.DataFrame(columns=list(SPOT_DAILY_KEEP))
+        if df is None or df.empty or '代码' not in df.columns:
+            return pd.DataFrame(columns=list(SPOT_DAILY_KEEP))
+        out = df.rename(columns=SPOT_DAILY_RENAME)
+        out = out[[c for c in SPOT_DAILY_KEEP if c in out.columns]].copy()
+        if out.empty:                                    # 一个受支持列都没映上 ⇒ 诚实回空
+            return pd.DataFrame(columns=list(SPOT_DAILY_KEEP))
+        # 只留 6 位数字代码（挡掉指数/异常行）
+        out = out[out['symbol'].astype(str).str.match(r'^\d{6}$')]
+        for col in ('open', 'high', 'low', 'close', 'volume', 'amount',
+                    'turnover', 'outstanding_share'):
+            if col in out.columns:
+                out[col] = pd.to_numeric(out[col], errors='coerce')
+        # 单位归一（命门，见模块常量注释）：只在列存在时做，绝不凭空造列
+        if 'volume' in out.columns:
+            out['volume'] = out['volume'] * EM_VOLUME_UNIT       # 手 → 股
+        if 'turnover' in out.columns:
+            out['turnover'] = out['turnover'] / 100.0            # 百分数 → 小数
+        out = drop_unusable_price_rows(out, "spot全市场快照")     # 同一道物理护栏
+        return out.reset_index(drop=True)
 
     # ==========================================
     # 交易日历 (Trading Calendar)  v6.45 / §7-B10

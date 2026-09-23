@@ -35,8 +35,10 @@ from typing import Iterable
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from data.sync_service import (ZONE_KLINE, ThrottlePolicy, abort_reason_text,
-                               failure_hint, format_duration)
+from core.preferences import preferences
+from data.sync_service import (DEFAULT_DOWNLOAD_CONCURRENCY, ZONE_KLINE,
+                               ThrottlePolicy, abort_reason_text, failure_hint,
+                               format_duration)
 from ui.workers import SyncWorker
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,43 @@ STATUS_LABELS = {STATUS_QUEUED: "排队中", STATUS_RUNNING: "下载中",
 FINISHED_STATUSES = (STATUS_DONE, STATUS_CANCELLED)
 
 KEEP_FINISHED = 20          # 面板里最多回看多少条已结束任务（纯内存，不落盘）
+
+
+def download_policy_from_prefs(prefs=None) -> ThrottlePolicy:
+    """★v1.45 / §7-B11 后续：从**全局下载偏好**构造节流策略（批量下载的唯一真源）。
+
+    所有批量 submit（数据管理 / 预下载弹窗 / M2/M3）均经 `DownloadHub.submit` 读同一份，
+    “一处调、处处生效”（编辑面 = `ui/dialogs/download_settings.py`）。
+    【字段映射】`jitter: bool`(勾) → float 0.3/0.0；`concurrency` 夹进 [1, 4]（K≤4，与
+    “宁可慢也不封 IP”一致）；其余逐项直读。
+    【容错】偏好缺键/脏值 ⇒ 逐项回落默认（“锦上添花”原则，绝不让偏好坏了阻断下载）。
+    :param prefs: 测试可注入带 `get()` 的对象；None ⇒ 用进程级 `preferences` 单例。
+    """
+    store = preferences if prefs is None else prefs
+    try:
+        d = store.get("download_prefs") or {}
+    except Exception:  # noqa: BLE001 —— 偏好不可用 ⇒ 全默认
+        d = {}
+    base = ThrottlePolicy()
+    try:
+        interval = float(d.get("interval", base.interval))
+    except (TypeError, ValueError):
+        interval = base.interval
+    try:
+        breaker = int(d.get("circuit_breaker", base.circuit_breaker))
+    except (TypeError, ValueError):
+        breaker = base.circuit_breaker
+    try:
+        conc = int(d.get("concurrency", DEFAULT_DOWNLOAD_CONCURRENCY))
+    except (TypeError, ValueError):
+        conc = DEFAULT_DOWNLOAD_CONCURRENCY
+    return ThrottlePolicy(
+        interval=interval,
+        jitter=0.3 if d.get("jitter", True) else 0.0,
+        circuit_breaker=max(1, breaker),
+        skip_fresh=bool(d.get("skip_fresh", True)),
+        concurrency=max(1, min(4, conc)),
+    )
 
 
 def hub_of(owner):
@@ -163,6 +202,9 @@ class DownloadJob:
         s = self.stats or {}
         base = (f"成功 {s.get('ok', 0)} · 已最新 {s.get('skipped', 0)}"
                 f" · 失败 {s.get('fail', 0)} · 新增 {s.get('added', 0)} 行")
+        spot = int(s.get('spot_hit', 0) or 0)      # ★v1.45：多少只走了 1 次全市场快照秒补
+        if spot:
+            base += f" · 其中 {spot} 只走快照秒补"
         why = abort_reason_text(s)
         if why:
             base = f"已中断：{why}（可再点「更新到最新」续传）· " + base
@@ -219,12 +261,16 @@ class DownloadHub(QObject):
         syms = [str(s).strip() for s in (symbols or []) if str(s).strip()]
         if not syms:
             return 0
+        # ★v1.45：未传策略 ⇒ 读全局下载偏好（间隔/抖动/熍断/跳过/并发均一处真源）；
+        #   传了策略（目前仅单测/去重验证会传）⇒ 完全尊重它，不再自动升档。
+        policy = policy if policy is not None else download_policy_from_prefs()
         dup = self._find_duplicate(syms, zone, force_full, min_date, policy)
         if dup is not None:
             logger.info(f"重复的下载任务被合并（已在 #{dup.id} {dup.status}）：{label}")
             return dup.id
         job = DownloadJob(id=self._next_id, label=label, symbols=syms, zone=zone,
-                          force_full=force_full, min_date=min_date, policy=policy,
+                          force_full=force_full, min_date=min_date,
+                          policy=policy,
                           origin=origin)
         self._next_id += 1
         self._jobs.append(job)

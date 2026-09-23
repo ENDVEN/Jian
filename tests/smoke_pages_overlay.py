@@ -3094,10 +3094,10 @@ try:
     # ---- ⑤ bulk_download「全市场扫描就绪」预设（D6-2）----
     _dlg9 = _BDD6(win)
     _dlg9._apply_scan_ready_preset()
-    check("★「全市场扫描就绪」一键预设：来源=全A · 起点 2016-01-01 · 跳过已最新 · 不全量重下",
+    check("★「全市场扫描就绪」一键预设：来源=全A · 起点 2016-01-01 · 不全量重下",
           _dlg9._radios['all'].isChecked()
           and _dlg9.date_start.date() == _QDate6(2016, 1, 1)
-          and _dlg9.chk_skip_fresh.isChecked() and not _dlg9.chk_force.isChecked())
+          and not _dlg9.chk_force.isChecked())
     _dlg9.deleteLater()
 except Exception as _e:  # noqa: BLE001
     check(f"就绪度体检/补齐断言整段抛异常: {type(_e).__name__}: {_e}", False)
@@ -3585,48 +3585,39 @@ except Exception as _e11:  # noqa: BLE001
 #   ⇒ 同一件事两个尺寸，正是 §10-9「同类控件同一张脸 + 数值控件最小宽度 ≥ 72px」被破。
 #   修法：宽度收成 `custom_widgets.double_spin / int_spin` 唯一工厂（**只给下限、不钉死宽度**）。
 # ==========================================
-print("\n== §10-9 · 数值控件宽度工厂（v1.42）==")
+print("\n== §10-9 · 数值控件宽度工厂（v1.42 · v1.45 已迁到下载设置对话框）==")
 try:
     import pathlib as _pl12
 
-    from ui.dialogs.bulk_download import BulkDownloadDialog as _BDD12  # noqa: E402
+    from ui.dialogs.download_settings import DownloadSettingsDialog as _DSD12  # noqa: E402
     from ui.widgets.custom_widgets import SPIN_MIN_WIDTH as _SMW12  # noqa: E402
     from ui.widgets.custom_widgets import double_spin as _dsp12, int_spin as _isp12
 
-    _dm12 = win.page_data
-    _dlg12 = _BDD12(win, parent=win)
+    # v1.45：间隔/熍断旋钮已从两页搬进全局下载设置对话框 —— 宽度断言改验它的控件。
+    _set12 = _DSD12()
 
-    # ---- ① 真判据：文本区**放得下 "0.6"**（不是"宽度看着顺眼"）----
-    for _tag12, _spin12 in (("弹窗 间隔(秒)", _dlg12.spin_interval),
-                            ("数据管理 同步间隔(秒)", _dm12.spin_interval)):
+    # ---- ① 真判据：文本区**放得下当前值**（不是"宽度看着顺眼"）----
+    for _tag12, _spin12 in (("下载设置 间隔(秒)", _set12.spin_interval),
+                            ("下载设置 连续失败熍断", _set12.spin_breaker)):
         _spin12.resize(_spin12.sizeHint())
         app.processEvents()
-        _need12 = _spin12.fontMetrics().horizontalAdvance("0.6")
+        _need12 = _spin12.fontMetrics().horizontalAdvance(_spin12.text())
         _line12 = _spin12.lineEdit().geometry().width()
-        check(f"★ {_tag12}：文本区 {_line12}px 放得下 \"0.6\"（需 {_need12}px）"
-              f" —— 旧版只能看见 \"0\"", _line12 >= _need12)
+        check(f"★ {_tag12}：文本区 {_line12}px 放得下 \"{_spin12.text()}\"（需 {_need12}px）",
+              _line12 >= _need12)
         check(f"★ {_tag12}：minimumWidth={_spin12.minimumWidth()} ≥ {_SMW12}"
               f" 且宽度未被钉死（maximumWidth={_spin12.maximumWidth()}）",
               _spin12.minimumWidth() >= _SMW12 and _spin12.maximumWidth() > 16_000_000)
 
-    # ---- ② 同类控件同一张脸：两页的间隔框出自同一工厂 ----
-    check("★ 两页的「同步间隔」是同一张脸（同类型 / 同最小宽 / 同高度）",
-          type(_dlg12.spin_interval) is type(_dm12.spin_interval)
-          and _dlg12.spin_interval.minimumWidth() == _dm12.spin_interval.minimumWidth()
-          and _dlg12.spin_interval.height() == _dm12.spin_interval.height())
+    # ---- ② 只修宽度，**不许顺手改数值口径**（从全局偏好预填）----
+    check("★ 间隔框默认 0.6、范围 0~10、步长 0.1（口径原样）",
+          abs(_set12.spin_interval.value() - 0.6) < 1e-9
+          and (_set12.spin_interval.minimum(), _set12.spin_interval.maximum()) == (0.0, 10.0)
+          and abs(_set12.spin_interval.singleStep() - 0.1) < 1e-9)
+    check("★ 并发框范围 1~4（K≤4，与不封 IP 取向一致）",
+          (_set12.spin_concurrency.minimum(), _set12.spin_concurrency.maximum()) == (1, 4))
 
-    # ---- ③ 只修宽度，**不许顺手改数值口径** ----
-    check("★ 默认值/范围/步长口径原样保留（0.6 起、0~10、步长 0.1）",
-          abs(_dlg12.spin_interval.value() - 0.6) < 1e-9
-          and (_dlg12.spin_interval.minimum(), _dlg12.spin_interval.maximum()) == (0.0, 10.0)
-          and abs(_dlg12.spin_interval.singleStep() - 0.1) < 1e-9
-          and abs(_dm12.spin_interval.value() - 0.6) < 1e-9
-          and abs(_dm12.spin_interval.singleStep() - 0.1) < 1e-9)
-    check("★ 熔断框默认 12（v1.38 的代理熔断另有独立阈值，不在这里）",
-          _dlg12.spin_breaker.value() == 12
-          and _dlg12.spin_breaker.minimumWidth() >= _SMW12)
-
-    # ---- ④ 工厂自身的契约（新页面误用也能被发现）----
+    # ---- ③ 工厂自身的契约（新页面误用也能被发现）----
     _probe12 = _dsp12(value=1.0, lo=0.0, hi=9.9, decimals=1)
     check("★ double_spin 步长跟着小数位（1 位→0.5 / 2 位→0.01 / 0 位→1），不写死",
           abs(_probe12.singleStep() - 0.5) < 1e-9
@@ -3636,20 +3627,22 @@ try:
           _isp12().minimumWidth() == _probe12.minimumWidth()
           and _isp12().height() == _probe12.height())
 
-    # ---- ⑤ 源码级防漂移：全 ui/ 不许再出现钉死宽度的数值控件 ----
+    # ---- ④ 源码级防漂移 ----
     _ui_py12 = [p for p in _pl12.Path('ui').rglob('*.py')]
     _bad12 = [str(p) for p in _ui_py12
               if 'setFixedWidth(64)' in p.read_text(encoding='utf-8')]
     check("★ 全 ui/ 不再出现 `setFixedWidth(64)`（这类钉死宽度就是本次截字的成因）",
           not _bad12)
-    _spin_src12 = (_pl12.Path('ui/dialogs/bulk_download.py').read_text(encoding='utf-8')
-                   + _pl12.Path('ui/views/data_manager.py').read_text(encoding='utf-8'))
-    check("★ 两个下载入口的数值控件一律走工厂（不再直接实例化 + 不再就地钉宽度），"
-          "否则下次又会出现“这页 64、那页 82”",
-          'NoWheelDoubleSpinBox()' not in _spin_src12 and 'NoWheelSpinBox()' not in _spin_src12
-          and 'spin_interval.setFixedWidth' not in _spin_src12
-          and 'double_spin(' in _spin_src12 and 'int_spin(' in _spin_src12)
-    _dlg12.close()
+    _bulk12 = _pl12.Path('ui/dialogs/bulk_download.py').read_text(encoding='utf-8')
+    _dm12b = _pl12.Path('ui/views/data_manager.py').read_text(encoding='utf-8')
+    _set12src = _pl12.Path('ui/dialogs/download_settings.py').read_text(encoding='utf-8')
+    check("★ 下载参数已收进设置对话框：bulk/data_manager 不再各自放间隔旋钮，"
+          "download_settings 走工厂、不钉死宽度（否则又会出现“这页 64、那页 82”）",
+          'spin_interval' not in _bulk12 and 'spin_interval' not in _dm12b
+          and 'double_spin(' in _set12src
+          and 'spin_interval.setFixedWidth' not in _set12src
+          and 'NoWheelDoubleSpinBox()' not in _set12src)
+    _set12.deleteLater()
 except Exception as _e12:  # noqa: BLE001
     check(f"§10-9 数值控件宽度断言整段抛异常: {type(_e12).__name__}: {_e12}", False)
 
@@ -3847,8 +3840,10 @@ try:
         check("★ 旧版“关窗前硬等 15 秒”整套退役（线程不再属于弹窗 ⇒ 窗口随时可关）",
               '_try_stop_worker' not in _bd13 and '_worker = SyncWorker(' not in _bd13)
         _dm13s = _pl13.Path('ui/views/data_manager.py').read_text(encoding='utf-8')
-        check("★ 预下载不再用模态 `exec()` 打开（“强制置顶无法操作其它界面”的直接根因）",
-              '.exec()' not in _dm13s and '_set_busy' not in _dm13s)
+        check("★ 预下载弹窗不再用模态 `exec()` 打开（“强制置顶无法操作其它界面”的直接根因；"
+              "v1.45 设置对话框仍可模态，故只钉住预下载弹窗 `_bulk_dialog`）",
+              '_bulk_dialog.exec' not in _dm13s and '.show()' in _dm13s
+              and '_set_busy' not in _dm13s)
         _hub13s = _pl13.Path('ui/download_hub.py').read_text(encoding='utf-8')
         check("★ 队列不自造 QThread（§2：`ui/workers.py` 仍是全 app 唯一 QThread 定义处）",
               _re13.search(r'class\s+\w+\(QThread\)', _hub13s) is None)

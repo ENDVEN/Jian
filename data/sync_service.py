@@ -36,7 +36,8 @@ from datetime import date, datetime
 import pandas as pd
 
 from core.utils import MINUTE_DEPTH_DAYS, MINUTE_PERIODS, normalize_period
-from data.akshare_feed import ADJUST_NONE, ADJUST_QFQ, AkShareFeed
+from data.akshare_feed import (ADJUST_NONE, ADJUST_QFQ, DAILY_KEEP_COLUMNS,
+                               AkShareFeed)
 from data.market_db import DataLakeManager
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ MINUTE_KEY_SEP = "@"
 __all__ = ["MarketSyncService", "ThrottlePolicy", "ADJUST_QFQ", "ADJUST_NONE",
            "ADJUST_CHOICES", "ADJUST_LABELS", "adjust_label", "zone_for_adjust",
            "ZONE_KLINE", "ZONE_KLINE_RAW", "ZONE_INDEX", "ZONE_MIN", "estimate_seconds",
-           "format_duration",
+           "format_duration", "DEFAULT_DOWNLOAD_CONCURRENCY",
            "short_fetch_reason", "friendly_fetch_message", "friendly_constituent_message",
            "looks_like_proxy_error", "abort_reason_text",
            "DEFAULT_MIN_DATE", "MINUTE_PERIODS", "MINUTE_DEPTH_DAYS",
@@ -103,6 +104,16 @@ def zone_for_adjust(adjust: str) -> str:
     否则"切了不复权却读了前复权分区"这类串档不会报错、只会静默显示错数据）。
     """
     return ZONE_KLINE if str(adjust or "").strip().lower() == ADJUST_QFQ else ZONE_KLINE_RAW
+
+# ★v1.44 / §7-B11 后续：真实批量下载的**默认并发档**（均衡档）。
+# 【为什么是 3、而不是各线程各睡 interval】提速**不靠加大请求率**（那才是封 IP 的根源），
+#   而是靠"等待与网络往返重叠"：并发池共享**一把全局节流阀**（见 ui/workers.RateGovernor），
+#   聚合请求发起间隔仍 == `ThrottlePolicy.interval`，只是把每只的 fetch 往返藏进别的等待里。
+#   → 相同请求率下约 2× 提速，封 IP 风险与今日串行**基本持平**。
+# ⚠ 上限 K<=4（与"宁可慢也不封 IP"取向一致）；把它调回 1 == 完全退回旧串行（可零风险回滚）。
+# ⚠ 这是**下载队列**（DownloadHub.submit）用的档位；`ThrottlePolicy.concurrency` 字段默认仍是 1
+#   （裸构造 / 单测 / 直接起 SyncWorker 一律串行，确定性不变）。
+DEFAULT_DOWNLOAD_CONCURRENCY = 3
 
 # 【数据起点】个股/指数的默认拉取起点 = 2010-01-01（全历史）。
 # 注意：它与"回测评估窗"(core/backtest.DEFAULT_START_DATE=2016) 是两回事 ——
@@ -179,8 +190,13 @@ class ThrottlePolicy:
     0.6s 间隔约需 50 分钟，这是"知情且可接受"的代价，UI 会提前把预计耗时显示出来。
     """
 
-    interval: float = 0.6        # 每次请求前的等待秒数
+    interval: float = 0.6        # 串行：每只请求前的等待秒数；并发：**全局**请求发起最小间隔（节流阀聚合口径，见下 concurrency）
     jitter: float = 0.3          # 间隔随机抖动比例（0.3 = ±30%）
+    # ★v1.44 / §7-B11 后续：批内并发度。**默认 1 = 完全等价旧串行**（裸构造 / 单测 /
+    #   直接起 SyncWorker 一律走这条，确定性逐字节不变，也是零风险回滚开关）。
+    #   真实下载队列会把它升到 `DEFAULT_DOWNLOAD_CONCURRENCY`；>1 时 `SyncWorker` 才建池，
+    #   并由**共享的全局节流阀**（`ui/workers.RateGovernor`）保证聚合发起间隔仍 == interval。
+    concurrency: int = 1
     max_retries: int = 3         # 单只最多重试次数（不含首次）
     backoff_base: float = 1.0    # 指数退避基数：1s → 2s → 4s
     circuit_breaker: int = 12    # 连续失败达到该数即熔断（**任意原因**）
@@ -284,6 +300,30 @@ class MarketSyncService:
         return result
 
     # ==========================================
+    # ★v1.45 / §7-B11 后续：全市场当日快照（秒补“只差当天”的批量入口）
+    # ==========================================
+    def fetch_spot_snapshot(self, symbols=None) -> dict:
+        """1 次请求拿全市场当天日线快照 → `{symbol: {open,high,low,close,volume,amount,turnover,outstanding_share}}`。
+
+        联网唯一出口（§9-H）：内部只调 `AkShareFeed.fetch_market_spot_daily()`（单位已在该层归一）。
+        失败/空 ⇒ 回 `{}`（调用方据此诚实回退逐只，**绝不因快照挂了而报错中断整批**）。
+        `symbols` 给定时只保留这些（全市场 5000+ 行，按范围裁剪省内存）。
+        """
+        want = None
+        if symbols is not None:
+            want = {str(s).strip() for s in symbols if str(s).strip()}
+        df = AkShareFeed.fetch_market_spot_daily()
+        if df is None or df.empty or 'symbol' not in df.columns:
+            return {}
+        out = {}
+        for rec in df.to_dict('records'):
+            sym = str(rec.get('symbol') or '').strip()
+            if not sym or (want is not None and sym not in want):
+                continue
+            out[sym] = rec
+        return out
+
+    # ==========================================
     # 状态查询
     # ==========================================
     def status(self, symbol: str, zone: str = ZONE_KLINE, period: str = None) -> dict:
@@ -308,7 +348,8 @@ class MarketSyncService:
     # ==========================================
     def refresh_one(self, symbol: str, zone: str = ZONE_KLINE, force_full: bool = False,
                     min_date: str = None, policy: ThrottlePolicy = None,
-                    sleep_fn=time.sleep, period: str = None) -> dict:
+                    sleep_fn=time.sleep, period: str = None,
+                    spot_bar=None, spot_prev=None) -> dict:
         """
         把单个标的同步到最新（或强制全量重拉）。
 
@@ -349,11 +390,13 @@ class MarketSyncService:
         old = pd.DataFrame() if force_full else self.lake.load_data(zone, key)
         old_rows = 0 if old.empty else len(old)
         start_date = min_date or DEFAULT_MIN_DATE
+        local_last = None                     # ★v1.45：本地末日（供 spot 秒补判定）
 
         if not old.empty and "date" in old.columns:
             try:
                 last = pd.to_datetime(old["date"], errors="coerce").max()
                 if pd.notna(last):
+                    local_last = last
                     # ⚠ 分钟**不做"已最新就跳过"**：它的"最新"精确到分钟（盘中每分钟都在变），
                     # 而 `_is_fresh` 只比到"天" ⇒ 盘中会把 10:00 的旧快照当成"已是今天=最新"。
                     # 分钟快照单只约 5 秒，宁可每次都真拉一次（用户点同步就是要最新）。
@@ -369,6 +412,14 @@ class MarketSyncService:
                     start_date = (last + pd.Timedelta(days=1)).strftime("%Y%m%d")
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"本地末日解析失败 [{symbol}]: {e}")
+
+        # ---- 1.5) ★v1.45 / §7-B11 后续：spot 秒补"只差当天这一根"（来自 1 次全市场快照）----
+        # 仅当本地恰好只缺 `policy.expected_latest` 这一根（末日 == `spot_prev`）才追加；
+        # 缺口 > 1 交易日 / 首次 / 非 qfq 日线分区 ⇒ 绝不拿 spot 造假（会留洞），自动退回网络增量。
+        spot_out = self._try_apply_spot(old, local_last, symbol, zone, key,
+                                        policy, spot_bar, spot_prev, result)
+        if spot_out is not None:
+            return spot_out
 
         # ---- 2) 拉取（温柔节流 + 指数退避重试）----
         # 增量模式（本地已有数据）下的"空返回"通常意味着：周末 / 节假日 / 当日 bar 尚未发布。
@@ -435,6 +486,43 @@ class MarketSyncService:
     # ==========================================
     # 内部实现
     # ==========================================
+    def _try_apply_spot(self, old, local_last, symbol, zone, key, policy,
+                        spot_bar, spot_prev, result):
+        """★v1.45 / §7-B11 后续：若本地“只差 `expected_latest` 这一根”，用全市场快照的当天行秒补。
+
+        命中即落库并返回 result（`reason="spot"`）；任何一条不满足 ⇒ 返回 None（交网络增量）。
+        【为什么这么窄】spot 只有“当天”一根，多日缺口/首次用了会留洞——那必须逐只真拉。
+        【复权自洽】qfq 最新一根 == 真实价，追加当天不漂移；但 spot **绝不**当历史复权修正通道。
+        """
+        if spot_bar is None or policy is None or spot_prev is None:
+            return None
+        if zone != ZONE_KLINE or policy.expected_latest is None:
+            return None
+        if old is None or old.empty or local_last is None:
+            return None                        # 首次/无历史 ⇒ 交逐只真拉多年历史
+        try:
+            if (pd.Timestamp(local_last).normalize().date()
+                    != pd.Timestamp(spot_prev).normalize().date()):
+                return None                    # 缺口 > 1 交易日 ⇒ 绝不造假（会留洞）
+        except (ValueError, TypeError):
+            return None
+        try:
+            row = {k: v for k, v in dict(spot_bar).items() if k in DAILY_KEEP_COLUMNS}
+            row['date'] = pd.Timestamp(policy.expected_latest).normalize()
+            row['symbol'] = symbol
+            new = pd.DataFrame([row])
+        except Exception:  # noqa: BLE001 —— 造行失败即退化网络路径
+            return None
+        merged = self._merge(old, new)
+        merged = _drop_unsettled_tail(merged)      # 二次防线（spot 本应定稿）
+        if merged is None or merged.empty or not self.lake.save_data(zone, key, merged):
+            return None
+        result.update(ok=True, rows=len(merged),
+                      added=max(0, len(merged) - len(old)),
+                      first=self._first_day(merged), last=self._last_day(merged),
+                      reason="spot", message="OK（当天行来自全市场快照秒补）")
+        return result
+
     @staticmethod
     def _fetch(symbol: str, zone: str, start_date: str, period: str = None) -> pd.DataFrame:
         if zone == ZONE_MIN:

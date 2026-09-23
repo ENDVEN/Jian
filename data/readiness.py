@@ -57,6 +57,10 @@ class ReadinessReport:
     unreadable: dict = field(default_factory=dict)     # 标的 → 打不开的原因（问题清单）
     latest: object = None                              # 本地日线全局最新日期（Timestamp | None）
     lasts: list = field(default_factory=list)          # 每只文件的最后日期（升序 Timestamp）——供覆盖率/代表日
+    # ★v1.45 / §7-B11 后续：`symbol -> 本地末日` 映射（与 `lasts` 同时算出，零额外 I/O）。
+    #   `lasts` 排序后丢了标的关联，只能数个数；本映射能按只判定“只差当天”⇒ 供二次确认
+    #   更准地估“多少只走快照秒补、多少只需真拉”（不阻塞主流程，缺时安全降级）。
+    last_by_symbol: dict = field(default_factory=dict)
     elapsed_ms: float = 0.0
 
     # ---------- 查询 ----------
@@ -176,6 +180,7 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
 
     latest = None
     lasts: list = []
+    last_by_symbol: dict = {}
     for k, sym in enumerate(symbols):
         if should_stop is not None and k % chunk == 0 and should_stop():
             raise ReadinessCancelled(f'体检已取消（已查 {k}/{len(symbols)} 只）')
@@ -191,6 +196,7 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
                     if latest is None or last > latest:
                         latest = last
                     lasts.append(last)          # 收集分布（供代表日/覆盖率）
+                    last_by_symbol[sym] = last  # ★v1.45：按只保留（供秒补估算）
                 if rows <= 0:
                     report.partial[sym] = rows        # 空文件 = 数据不足，不是"没下载"
                 elif min_bars is not None and rows < int(min_bars):
@@ -205,6 +211,7 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
 
     report.latest = latest
     report.lasts = sorted(lasts)
+    report.last_by_symbol = last_by_symbol
     report.elapsed_ms = (time.perf_counter() - t0) * 1000
     return report
 

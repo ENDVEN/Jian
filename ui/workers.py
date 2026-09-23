@@ -27,7 +27,11 @@
     （版本检测不是 UI 职责），不搬进 ui/。
 """
 import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import datetime
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -37,13 +41,17 @@ from data.market_db import DataLakeManager
 from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
-                               short_fetch_reason)
-from data.trade_calendar import latest_settled_trading_day, load_or_fetch
+                               is_daily_bar_settled, short_fetch_reason)
+from data.trade_calendar import (latest_settled_trading_day, load_or_fetch,
+                                 previous_trading_day)
 
 logger = logging.getLogger(__name__)
 
+# `inject_expected_latest` 的“日历未提供”哨兵（区别于“提供了但为 None”）。
+_CAL_UNSET = object()
 
-def inject_expected_latest(policy: ThrottlePolicy = None) -> ThrottlePolicy:
+
+def inject_expected_latest(policy: ThrottlePolicy = None, calendar=_CAL_UNSET) -> ThrottlePolicy:
     """★v1.40/§7-E5：把「最近一个已收盘定稿的交易日」注入节流策略（**每批只取一次**）。
 
     【为什么由 ui/workers 干这件事】`data/trade_calendar` 已依赖 `data/sync_service`
@@ -55,20 +63,35 @@ def inject_expected_latest(policy: ThrottlePolicy = None) -> ThrottlePolicy:
     （只是可能多跑一次空增量，与旧行为一模一样）。
 
     :param policy: 调用方策略；`None` 时用默认策略。调用方已显式注入时**尊重它**（便于测试打桩）。
+    :param calendar: ★v1.45：调用方已取好的日历（`SyncWorker` 一次取、inject 与 spot 共用）。
+        传入则**不再自己取**（保证“每批只取一次”）；默认哨兵 `_CAL_UNSET` 才回落到自己取。
     """
     if policy is None:
         policy = ThrottlePolicy()
     if getattr(policy, "expected_latest", None) is not None:
         return policy
     try:
-        calendar = load_or_fetch()
-        expected = latest_settled_trading_day(calendar=calendar)
+        cal = load_or_fetch() if calendar is _CAL_UNSET else calendar
+        expected = latest_settled_trading_day(calendar=cal)
     except Exception as e:  # noqa: BLE001 —— 日历故障绝不阻断下载（宁可退回旧判据）
         logger.warning("交易日历不可用，本次按旧判据判新鲜度（可能多跑空增量）: %s", e)
         return policy
     if expected is None:
         return policy
     return replace(policy, expected_latest=expected)
+
+
+def _load_calendar_safely():
+    """★v1.45：取**一次**交易日历（inject 与 spot 共用），失败 ⇒ None。
+
+    【为何单独一个函数】日历每批只能取一次（§7-E5 硬约束）；而 spot 秒补又要用同一份
+    日历算相邻交易日 ⇒ 在 `run()` 里取一次、分别喂给 inject（传入 calendar）与 spot。
+    """
+    try:
+        return load_or_fetch()
+    except Exception as e:  # noqa: BLE001 —— 日历故障绝不阻断下载（退回旧判据、不开秒补）
+        logger.warning("交易日历不可用，本次退回旧判据且不启用快照秒补: %s", e)
+        return None
 
 
 class ScanWorker(QThread):
@@ -92,8 +115,49 @@ class ScanWorker(QThread):
         self.result.emit(self._zone, items)
 
 
+class RateGovernor:
+    """★v1.44 / §7-B11 后续：**全局请求发起节流阀**（并发池的防封 IP 核心件）。
+
+    【为什么不是"各线程各睡 interval"】那样并发 K 路会把聚合请求率×K —— 那才是招封 IP 的根源。
+    本件让 K 个线程在**一条共享时间线**上各自预约一个 `duration` 宽的槽位，睡到自己的槽到点再放行；
+    锁只在"预约"一瞬持有、**睡眠在锁外** ⇒ 各线程的网络往返真正重叠。
+    结果：**聚合发起节奏 == 串行时的 interval（请求率不变 ⇒ 封 IP 风险持平）**，
+    提速全靠把每只的 fetch 往返藏进别的等待里（相同请求率下约 2×）。
+
+    当 `ThrottlePolicy.sleep(sleep_fn)` 被调用时，本件的 `throttle` 即充当 `sleep_fn`：
+      · 正常预抓取节流 → 传入含 jitter 的 interval；
+      · 失败指数退避 → 传入退避秒数（同样按全局排队，更温柔）。
+    时钟/睡眠器可注入（单测用假时钟断言"相邻发起间隔 ≥ interval"、不真等）。
+    """
+
+    def __init__(self, clock=time.monotonic, sleeper=time.sleep):
+        self._lock = threading.Lock()
+        self._next = 0.0
+        self._clock = clock
+        self._sleeper = sleeper
+
+    def reserve(self, duration: float) -> float:
+        """在共享时间线上预约一个宽 `duration` 的槽，返回该槽的**起始时刻**（不发呆）。"""
+        duration = max(0.0, float(duration or 0.0))
+        with self._lock:
+            now = self._clock()
+            start = now if now >= self._next else self._next
+            self._next = start + duration
+        return start
+
+    def throttle(self, duration: float) -> None:
+        """充当 `refresh_one` 的 `sleep_fn`：预约一个槽并睡到点（睡在锁外 ⇒ 允许重叠）。"""
+        duration = max(0.0, float(duration or 0.0))
+        if duration <= 0:
+            return
+        start = self.reserve(duration)
+        remaining = start - self._clock()
+        if remaining > 0:
+            self._sleeper(remaining)
+
+
 class SyncWorker(QThread):
-    """批量同步若干标的（数据管理页 / 预下载弹窗共用）
+    """批量同步若干标的（数据管理页 / 预下载弹窗 / M2-M3 更新共用）
 
     信号：
         progress(done, total, symbol)
@@ -101,6 +165,11 @@ class SyncWorker(QThread):
         finished(summary)   # {ok, fail, skipped, added, aborted, aborted_by, symbols_failed}
                             #   aborted_by ∈ ""/"cancel"/"proxy"/"circuit"（v1.38/§7-E2）
                             #   ⇒ 消费方用 `sync_service.abort_reason_text(stats)` 出人话，别各写一遍
+
+    ★v1.44 / §7-B11 后续：`policy.concurrency > 1` 时走**批内并发池**（本类内部用
+      `ThreadPoolExecutor` 编排现成的 `refresh_one`，数据层仍纯同步、零 Qt）；
+      并发只发生在**单个 job 内部**（任务级仍由 DownloadHub 串行 K=1）。`concurrency <= 1`
+      时逐字节走旧串行（裸构造 / 单测 / 回滚开关）。熔断与代理计数改为**跨线程共享**。
     """
 
     progress = pyqtSignal(int, int, str)
@@ -116,6 +185,7 @@ class SyncWorker(QThread):
         self._min_date = min_date
         self._policy = policy or ThrottlePolicy()
         self._cancel = False
+        self._spot_ctx = None                  # ★v1.45：循环外取好的全市场快照上下文（或 None）
 
     # 供 UI 的「中断」按钮调用
     def cancel(self):
@@ -123,11 +193,64 @@ class SyncWorker(QThread):
 
     def run(self):
         service = MarketSyncService()
-        # ★v1.40/§7-E5：整批共用一份"该到哪天"（日历只在循环外取一次）
-        policy = inject_expected_latest(self._policy)
-        stats = {"ok": 0, "fail": 0, "skipped": 0, "added": 0,
+        # ★v1.45：日历一次取，inject 与 spot 共用（保证“每批只取一次”，§7-E5）
+        calendar = _load_calendar_safely()
+        policy = inject_expected_latest(self._policy, calendar=calendar)
+        # ★v1.45 / §7-B11 后续：daily qfq job 且非盘中 ⇒ 1 次全市场快照，秒补“只差当天”那根
+        self._spot_ctx = self._build_spot_ctx(service, policy, calendar)
+        stats = {"ok": 0, "fail": 0, "skipped": 0, "added": 0, "spot_hit": 0,
                  "aborted": False, "aborted_by": "", "symbols_failed": [],
                  "total": len(self._symbols)}
+        if (policy.concurrency or 1) > 1:
+            self._run_pool(service, policy, stats)
+        else:
+            self._run_serial(service, policy, stats)
+        self.finished.emit(stats)
+
+    # ---- ★v1.45：全市场快照上下文（一次取、跨只复用；不满足安全前提 ⇒ None）----
+    def _build_spot_ctx(self, service, policy, calendar):
+        """daily qfq 且“无未定稿盘中会话”时，取 1 次全市场快照供逐只秒补当天。
+
+        任一安全前提不满足 ⇒ 返回 None（整批退回逐只网络增量，零风险）：
+          · 非 ZONE_KLINE（raw/分钟/指数）/ force_full ⇒ 不做；
+          · 无日历 / expected_latest 缺失 ⇒ 无法安全判“只缺一根” ⇒ 不做；
+          · 今天是交易日且未到定稿点（盘中）⇒ spot 是半截当日，写了脏 ⇒ 不做；
+          · 快照接口不存在（打桩）/ 拉回空 ⇒ 不做。
+        """
+        if self._zone != ZONE_KLINE or self._force_full:
+            return None
+        if policy is None or getattr(policy, "expected_latest", None) is None:
+            return None
+        if not calendar:
+            return None
+        snap_fn = getattr(service, "fetch_spot_snapshot", None)
+        if snap_fn is None:
+            return None
+        now = datetime.now()
+        today = now.date()
+        try:
+            if (today in set(calendar)) and not is_daily_bar_settled(today, now):
+                return None                    # 盘中：spot 是半截当日，绝不用
+            prev = previous_trading_day(policy.expected_latest, calendar)
+        except Exception:  # noqa: BLE001 —— 日历判定异常 ⇒ 保守不开秒补
+            return None
+        if prev is None:
+            return None
+        snap = snap_fn(self._symbols)
+        if not snap:
+            return None
+        return {"prev": prev, "snap": snap}
+
+    def _spot_kwargs(self, symbol):
+        """给 `refresh_one` 的 spot 透传参（无 ctx ⇒ 空 ⇒ 走网络增量）。"""
+        ctx = getattr(self, "_spot_ctx", None)
+        if not ctx:
+            return {}
+        return {"spot_bar": ctx["snap"].get(symbol), "spot_prev": ctx["prev"]}
+
+    # ---- 串行快路径（== v1.43 及以前的既有行为，零漂移）----
+    def _run_serial(self, service, policy, stats):
+        total = len(self._symbols)
         consecutive_fail = 0
         consecutive_proxy = 0
 
@@ -136,10 +259,10 @@ class SyncWorker(QThread):
                 stats.update(aborted=True, aborted_by="cancel")
                 break
 
-            self.progress.emit(index, len(self._symbols), symbol)
+            self.progress.emit(index, total, symbol)
             result = service.refresh_one(
                 symbol, zone=self._zone, force_full=self._force_full,
-                min_date=self._min_date, policy=policy)
+                min_date=self._min_date, policy=policy, **self._spot_kwargs(symbol))
 
             if result.get("skipped"):
                 stats["skipped"] += 1
@@ -148,6 +271,8 @@ class SyncWorker(QThread):
             elif result.get("ok"):
                 stats["ok"] += 1
                 stats["added"] += int(result.get("added", 0))
+                if result.get("reason") == "spot":
+                    stats["spot_hit"] = stats.get("spot_hit", 0) + 1
                 consecutive_fail = 0
                 consecutive_proxy = 0
             else:
@@ -162,7 +287,6 @@ class SyncWorker(QThread):
                 self.failed.emit(symbol, short_fetch_reason(result))
                 # ★【代理全灭 ⇒ 提前停手】§9.3 实测：本机代理瞬断时失败率是 100%，
                 #   按默认 12 连败熔断等于白等十几次超时；用户的正确动作是"立刻去查代理"。
-                #   所以这类失败用更小的阈值，并把原因带回 UI（`aborted_by`）。
                 if consecutive_proxy >= max(1, policy.proxy_circuit_breaker):
                     stats.update(aborted=True, aborted_by="proxy")
                     break
@@ -171,7 +295,66 @@ class SyncWorker(QThread):
                     stats.update(aborted=True, aborted_by="circuit")
                     break
 
-        self.finished.emit(stats)
+    # ---- 批内并发池（★v1.44 / §7-B11 后续）----
+    def _run_pool(self, service, policy, stats):
+        total = len(self._symbols)
+        governor = RateGovernor()
+        throttle = governor.throttle          # 作为共享 sleep_fn 注入 refresh_one
+        lock = threading.Lock()
+        stop = threading.Event()               # 熔断/取消 ⇒ 未启动的任务直接跳过
+        done = [0]                             # 已完成计数（锁内自增，跨线程单调）
+        consec = {"fail": 0, "proxy": 0}       # 连续失败计数（**跨线程共享**）
+        breaker = max(1, policy.circuit_breaker)
+        pbreaker = max(1, policy.proxy_circuit_breaker)
+
+        def one(symbol):
+            if stop.is_set() or self._cancel:
+                return                          # 已停 ⇒ 排队任务不再发请求（保留真实进度）
+            result = service.refresh_one(
+                symbol, zone=self._zone, force_full=self._force_full,
+                min_date=self._min_date, policy=policy, sleep_fn=throttle,
+                **self._spot_kwargs(symbol))
+            fail_reason = None
+            with lock:
+                done[0] += 1
+                d = done[0]
+                if result.get("skipped"):
+                    stats["skipped"] += 1
+                    consec["fail"] = consec["proxy"] = 0
+                elif result.get("ok"):
+                    stats["ok"] += 1
+                    stats["added"] += int(result.get("added", 0))
+                    if result.get("reason") == "spot":
+                        stats["spot_hit"] = stats.get("spot_hit", 0) + 1
+                    consec["fail"] = consec["proxy"] = 0
+                else:
+                    stats["fail"] += 1
+                    consec["fail"] += 1
+                    if str(result.get("reason") or "") == "proxy":
+                        consec["proxy"] += 1
+                    else:
+                        consec["proxy"] = 0
+                    stats["symbols_failed"].append(symbol)
+                    fail_reason = short_fetch_reason(result)
+                    trip_by = ""
+                    if consec["proxy"] >= pbreaker:
+                        trip_by = "proxy"
+                    elif consec["fail"] >= breaker:
+                        trip_by = "circuit"
+                    if trip_by:
+                        stats.update(aborted=True, aborted_by=trip_by)
+                        stop.set()               # 任一线程达阈 ⇒ 全体收手
+            self.progress.emit(d, total, symbol)
+            if fail_reason is not None:
+                self.failed.emit(symbol, fail_reason)
+
+        workers = max(1, min(int(policy.concurrency), 4, total or 1))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for symbol in self._symbols:
+                ex.submit(one, symbol)
+            # `with` 退出 = shutdown(wait=True)：在途那只自然跑完、排队的靠 stop/cancel 秒退
+        if self._cancel and not stats.get("aborted"):
+            stats.update(aborted=True, aborted_by="cancel")   # 与串行一致：用户中断单独归类
 
 
 class SingleSyncWorker(QThread):

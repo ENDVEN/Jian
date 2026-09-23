@@ -28,11 +28,12 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QMessageBox, QApplication, QFrame)
 
 from data.akshare_feed import INDEX_PRESETS
-from data.sync_service import (ThrottlePolicy, ZONE_KLINE, ZONE_INDEX,
-                               abort_reason_text, estimate_seconds, format_duration,
+from data.sync_service import (ZONE_KLINE, ZONE_INDEX, abort_reason_text,
+                               estimate_seconds, format_duration,
                                friendly_constituent_message)
-from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
-                                       double_spin, int_spin)
+from ui.dialogs.download_settings import DownloadSettingsDialog
+from ui.download_hub import download_policy_from_prefs
+from ui.widgets.custom_widgets import NoWheelComboBox, NoWheelDateEdit
 # 【架构纪律 v5.12 · §9-O2】线程一律用 ui/workers.py 的，弹窗不自造 QThread
 from ui.workers import ConstituentsWorker, JobGuard
 
@@ -98,6 +99,23 @@ class BulkDownloadDialog(QDialog):
         warn.setStyleSheet("font-size: 12px; color: #E65100; background: #FFF8E1; "
                            "border: 1px solid #FFE082; border-radius: 6px; padding: 8px 10px;")
         root.addWidget(warn)
+
+        # ---------- ⚙ 全局下载设置入口（v1.45：参数集中，一处调处处生效）----------
+        set_row = QHBoxLayout()
+        set_row.setSpacing(8)
+        self.btn_settings = QPushButton("⚙ 下载设置…")
+        self.btn_settings.setStyleSheet(_FLAT_BTN)
+        self.btn_settings.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_settings.setToolTip(
+            "间隔 / 抖动 / 连续失败熍断 / 跳过已最新 / 并发数 —— 全局统一，"
+            "改一次对所有下载入口生效（含数据管理、全市场筛选/广度统计）。")
+        self.btn_settings.clicked.connect(self._open_settings)
+        set_row.addWidget(self.btn_settings)
+        lbl_set = QLabel("间隔 / 抖动 / 熍断 / 跳过 / 并发已收进全局设置（不再逐页各调各的）")
+        lbl_set.setStyleSheet("font-size: 11.5px; color: #8A94A6;")
+        set_row.addWidget(lbl_set)
+        set_row.addStretch()
+        root.addLayout(set_row)
 
         # ---------- ⚡ 预设（§7-B1/B2 D6-2）：一键填好"全市场扫描就绪"底座 ----------
         preset_row = QHBoxLayout()
@@ -187,39 +205,16 @@ class BulkDownloadDialog(QDialog):
                                    "如需更早历史（个股可到 2010）可手动调早；"
                                    "已存在的数据按增量更新，不受此值影响")
         params.addWidget(self.date_start)
-
-        params.addWidget(self._minor("间隔(秒)"))
-        # ★v1.42 / §10-9：宽度由 `custom_widgets.double_spin` 统一给下限（旧版把
-        #   控件钉死在 64px，会把"0.6"截成"0" —— 用户看不见预设值）
-        self.spin_interval = double_spin(
-            value=0.6, lo=0.0, hi=10.0, decimals=1, step=0.1,
-            tooltip="每次请求前的等待时间。越慢越安全，建议不低于 0.4 秒")
-        params.addWidget(self.spin_interval)
-
-        self.chk_jitter = QCheckBox("随机抖动")
-        self.chk_jitter.setChecked(True)
-        self.chk_jitter.setToolTip("让间隔在 ±30% 内随机浮动，打散固定频率特征，降低被识别为机器人的风险")
-        params.addWidget(self.chk_jitter)
         params.addStretch()
         root.addLayout(params)
-
+        
         params2 = QHBoxLayout()
         params2.setSpacing(14)
-        self.chk_skip_fresh = QCheckBox("跳过已最新（断点续传）")
-        self.chk_skip_fresh.setChecked(True)
-        params2.addWidget(self.chk_skip_fresh)
-
         self.chk_force = QCheckBox("重新全量下载")
         self.chk_force.setToolTip(
             "忽略本地已有数据，从所选起点整段重新下载，耗时较长。\n"
-            "仅在怀疑数据被前复权修正搞坏 / 本地数据异常时才用；日常勾「跳过已最新」即可。")
+            "仅在怀疑数据被前复权修正搞坏 / 本地数据异常时才用；日常默认「跳过已最新」即可。")
         params2.addWidget(self.chk_force)
-
-        params2.addWidget(self._minor("连续失败熔断"))
-        self.spin_breaker = int_spin(
-            value=12, lo=3, hi=999,
-            tooltip="连续失败达到该数量即认定为「疑似被限流」并自动停手，保护用户 IP")
-        params2.addWidget(self.spin_breaker)
         params2.addStretch()
         root.addLayout(params2)
 
@@ -292,8 +287,6 @@ class BulkDownloadDialog(QDialog):
 
         for radio in self._radios.values():
             radio.toggled.connect(self._sync_source_ui)
-        for widget in (self.spin_interval, self.spin_breaker):
-            widget.valueChanged.connect(self._refresh_estimate)
 
     @staticmethod
     def _minor(text: str) -> QLabel:
@@ -314,7 +307,6 @@ class BulkDownloadDialog(QDialog):
         """「全市场扫描就绪」预设（D6-2）：只**填控件**，不替用户点开始 —— 下载永远手动发起。"""
         self._radios["all"].setChecked(True)
         self.date_start.setDate(QDate(2016, 1, 1))
-        self.chk_skip_fresh.setChecked(True)
         self.chk_force.setChecked(False)
         self.lbl_status.setText("已按「全市场扫描就绪」填好参数 —— 确认后点「▶ 开始下载」")
         self._refresh_estimate()
@@ -397,7 +389,7 @@ class BulkDownloadDialog(QDialog):
 
     def _refresh_estimate(self, *_):
         symbols = self._collect_symbols()
-        policy = self._build_policy()
+        policy = download_policy_from_prefs()
         if not symbols:
             self.lbl_estimate.setText(f"待下载：—（{self._empty_source_hint()}）")
             return
@@ -405,7 +397,7 @@ class BulkDownloadDialog(QDialog):
         self.lbl_estimate.setText(
             f"待下载：{len(symbols)} 只　·　区间 {self._zone}　·　"
             f"最多约 {format_duration(seconds)}（间隔 {policy.interval:.1f}s"
-            f"{' + 抖动' if self.chk_jitter.isChecked() else ''}）")
+            f"{' + 抖动' if policy.jitter else ''}）")
         # ★v1.40/§7-E5：这里**给不出**"真正要跑几只"（没体检过，逐只读 footer 反而要先花时间），
         # 所以数字只能是**上限**；把"已最新的会自动跳过"说清楚，用户才不会看到 50 分钟就放弃。
         self.lbl_estimate.setToolTip(
@@ -413,13 +405,10 @@ class BulkDownloadDialog(QDialog):
             "已是最新的标的（本地末日 >= 最近一个已收盘定稿的交易日）会被自动跳过、不发请求，\n"
             "所以实际通常明显更快 —— 周末 / 节假日 / 盘中批量同步几乎瞬时完成。")
 
-    def _build_policy(self) -> ThrottlePolicy:
-        return ThrottlePolicy(
-            interval=float(self.spin_interval.value()),
-            jitter=0.3 if self.chk_jitter.isChecked() else 0.0,
-            circuit_breaker=int(self.spin_breaker.value()),
-            skip_fresh=bool(self.chk_skip_fresh.isChecked()),
-        )
+    def _open_settings(self):
+        """打开全局下载设置对话框；关闭后刷新预估（间隔可能变了）。"""
+        DownloadSettingsDialog(self).exec()
+        self._refresh_estimate()
 
     def _start(self):
         symbols = self._collect_symbols()
@@ -448,7 +437,7 @@ class BulkDownloadDialog(QDialog):
                                   zone=self._zone,
                                   force_full=bool(self.chk_force.isChecked()),
                                   min_date=self.date_start.date().toString("yyyyMMdd"),
-                                  policy=self._build_policy(), origin="bulk")
+                                  origin="bulk")
         if not self._job_id:
             # 去重命中（同样的标的清单已在跑/已排队）⇒ 诚实说清楚，不假装修了新任务
             self.lbl_status.setText("同样的任务已经在队列里了 —— 进度见底部下载条。")

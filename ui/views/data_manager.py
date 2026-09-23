@@ -30,10 +30,10 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtGui import QColor, QFont
 
 from data.market_db import DataLakeManager
-from data.sync_service import (MarketSyncService, ThrottlePolicy,
-                               ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX)
+from data.sync_service import (MarketSyncService, ZONE_KLINE, ZONE_KLINE_RAW,
+                               ZONE_INDEX)
 from ui.dialogs.bulk_download import BulkDownloadDialog
-from ui.widgets.custom_widgets import double_spin
+from ui.dialogs.download_settings import DownloadSettingsDialog
 from ui.workers import ScanWorker
 
 # 分区中文名（顺序即左侧清单顺序）
@@ -229,14 +229,14 @@ class DataManagerView(QWidget):
         self.lbl_selected.setStyleSheet("font-size: 12px; color: #5B6472;")
         ops.addWidget(self.lbl_selected)
         ops.addSpacing(10)
-        ops.addWidget(self._minor("同步间隔(秒)"))
-        # ★v1.42 / §10-9：与批量预下载弹窗同一个工厂（旧版两页各钉一个宽度，
-        #   弹窗那个 64px 会把"0.6"截成"0"）
-        self.spin_interval = double_spin(
-            value=0.6, lo=0.0, hi=10.0, decimals=1, step=0.1,
-            tooltip="批量操作时每只之间的等待时间。\n"
-                    "越大越不容易被行情源限流（防封 IP）。")
-        ops.addWidget(self.spin_interval)
+        # ★v1.45：独立的“同步间隔”旋钮已去掉 —— 参数收进全局下载偏好（一处调、处处生效）。
+        self.btn_settings = QPushButton("⚙ 下载设置…")
+        self.btn_settings.setStyleSheet(_FLAT_QSS)
+        self.btn_settings.setToolTip(
+            "间隔 / 抖动 / 连续失败熍断 / 跳过已最新 / 并发数 —— 全局统一，"
+            "改一次对所有下载入口生效（含批量预下载、全市场筛选/广度统计）。")
+        self.btn_settings.clicked.connect(self._open_settings)
+        ops.addWidget(self.btn_settings)
         ops.addStretch()
 
         self.btn_sync = QPushButton("🔄 更新到最新")
@@ -525,13 +525,15 @@ class DataManagerView(QWidget):
         zone_label = ZONE_LABELS.get(self._current_zone, self._current_zone)
         job_id = self.main_win.downloads.submit(
             f"{action} · {zone_label}", names, zone=self._current_zone,
-            force_full=force_full,
-            policy=ThrottlePolicy(interval=float(self.spin_interval.value())),
-            origin="data_manager")
+            force_full=force_full, origin="data_manager")
         self.lbl_status.setText(
             f"已提交到后台（任务 #{job_id}，{len(names)} 只）—— "
             f"进度见底部下载条与「详情」，本页可以继续勾选与浏览。"
             if job_id else "没有可提交的任务（清单为空，或同样的任务已在队列里）。")
+
+    def _open_settings(self):
+        """打开全局下载设置对话框（间隔/并发等一处调、处处生效）。"""
+        DownloadSettingsDialog(self).exec()
 
     def _on_hub_finished(self, job_id: int, stats: dict) -> None:
         """本页发起的后台任务跑完 ⇒ 刷新分区清单。

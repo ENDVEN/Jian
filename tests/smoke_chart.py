@@ -4202,6 +4202,292 @@ try:
 except Exception as _e5:  # noqa: BLE001
     check(f"§7-E5 下载层新鲜度对齐断言整段抛异常: {type(_e5).__name__}: {_e5}", False)
 
+# ==========================================
+print("\n== §7-B11 后续 · 后台下载并发池（v1.44）==")
+# ==========================================
+try:
+    import ui.workers as _uw66
+    from data.sync_service import ThrottlePolicy as _TP66, DEFAULT_DOWNLOAD_CONCURRENCY
+    from ui.workers import RateGovernor as _RG66
+    from ui.download_hub import download_policy_from_prefs as _dpf66
+    from ui.download_hub import DownloadHub as _DH66
+
+    _orig_ms66 = _uw66.MarketSyncService
+    _orig_cal66 = _uw66.load_or_fetch
+    _uw66.load_or_fetch = lambda *a, **k: None   # 不联网、不写真实日历缓存
+
+    class _RecSvc66:
+        def __init__(self, reason=""):
+            self.reason = reason
+            self.calls = []
+            self.kws = []
+
+        def refresh_one(self, symbol, **kw):
+            self.calls.append(symbol)
+            self.kws.append(kw)
+            if self.reason:
+                return {"ok": False, "symbol": symbol, "reason": self.reason,
+                        "message": self.reason, "rows": 0, "skipped": False}
+            return {"ok": True, "symbol": symbol, "skipped": False, "added": 1}
+
+    def _run66(symbols, policy, reason=""):
+        stub = _RecSvc66(reason)
+        _uw66.MarketSyncService = lambda *a, **k: stub
+        try:
+            w = _uw66.SyncWorker(symbols, policy=policy)
+            out = []
+            w.finished.connect(lambda s: out.append(s))
+            w.run()
+            return (out[0] if out else {}), stub
+        finally:
+            _uw66.MarketSyncService = _orig_ms66
+
+    # ---- ① concurrency=1 ⇒ 逐字节串行（既有确定性断言的根 / 回滚开关）----
+    check("★ ThrottlePolicy.concurrency 字段默认 1 ⇒ 裸构造即纯串行",
+          _TP66().concurrency == 1)
+    _st1, _sv1 = _run66(["S1", "S2", "S3", "S4"], _TP66(interval=0, jitter=0))
+    check("★ 串行路径保持发起顺序（不建池、按输入序处理）",
+          _sv1.calls == ["S1", "S2", "S3", "S4"] and _st1.get("ok") == 4)
+    check("★ 串行路径**不注入** sleep_fn（走 time.sleep 原语义 ⇒ 与 v1.43 逐字节等价）",
+          all("sleep_fn" not in kw for kw in _sv1.kws))
+
+    # ---- ② 全局节流阀：共享时间线 ⇒ 聚合发起间隔 == interval（请求率不变）----
+    _clk = {"t": 0.0}
+    _g66 = _RG66(clock=lambda: _clk["t"], sleeper=lambda s: None)
+    _starts = [_g66.reserve(0.6) for _ in range(5)]
+    _gaps = [round(_starts[i + 1] - _starts[i], 6) for i in range(4)]
+    check("★ RateGovernor：并发下相邻请求发起间隔仍 == interval（提速只靠重叠、不加大请求率）",
+          _starts[0] == 0.0 and all(abs(gp - 0.6) < 1e-6 for gp in _gaps))
+    check("★ RateGovernor：预约时间线单调不减（多线程共用的前提）",
+          all(_starts[i] <= _starts[i + 1] for i in range(4)))
+
+    # ---- ③ 并发池路径：注入共享节流阀、全批处理完 ----
+    _st3, _sv3 = _run66(["A", "B", "C", "D", "E"],
+                        _TP66(interval=0, jitter=0, concurrency=3))
+    check("★ concurrency>1 ⇒ 走并发池（每只 refresh_one 都收到注入的 sleep_fn=全局节流阀）",
+          len(_sv3.calls) == 5 and all("sleep_fn" in kw for kw in _sv3.kws)
+          and _st3.get("ok") == 5)
+
+    # ---- ④ 并发下代理熔断【跨线程共享计数】⇒ 提前收手，不跑满全批 ----
+    _st4, _sv4 = _run66([f"P{i:02d}" for i in range(15)],
+                        _TP66(interval=0, jitter=0, concurrency=3, proxy_circuit_breaker=3),
+                        reason="proxy")
+    check("★ 并发池熔断【共享计数】：代理连败达阈即停手并带回 aborted_by=proxy",
+          _st4.get("aborted") and _st4.get("aborted_by") == "proxy")
+    check("★ 熔断后不跑满全批（共享 stop 生效：处理数 >= 阈值 3 且远小于 15）",
+          3 <= _st4.get("fail", 0) < 15)
+
+    # ---- ⑤ download_policy_from_prefs：全局偏好 → 节流策略（唯一真源）----
+    import ui.download_hub as _dh66
+
+    class _P66:
+        def __init__(self, d):
+            self._d = d
+
+        def get(self, key, default=None):
+            return self._d
+
+    _pp66 = _dpf66(_P66({"interval": 1.2, "jitter": False, "concurrency": 9,
+                        "circuit_breaker": 5, "skip_fresh": False}))
+    check("★ download_policy_from_prefs：逐项读全局（interval/熍断/跳过/jitter bool→float）",
+          abs(_pp66.interval - 1.2) < 1e-9 and _pp66.jitter == 0.0
+          and _pp66.circuit_breaker == 5 and _pp66.skip_fresh is False)
+    check("★ concurrency 越界夹进 [1,4]（K≤4：9→4、0→1）",
+          _dpf66(_P66({"concurrency": 9})).concurrency == 4
+          and _dpf66(_P66({"concurrency": 0})).concurrency == 1)
+    check("★ 空/缺键 ⇒ 回落默认（均衡档 3 / interval 0.6）",
+          _dpf66(_P66({})).concurrency == DEFAULT_DOWNLOAD_CONCURRENCY
+          and abs(_dpf66(_P66({})).interval - 0.6) < 1e-9)
+
+    # ---- ⑥ submit(policy=None) 读全局 ⇒ “改一处处处生效”端到端闭环 ----
+    _hub66 = _DH66()
+    _hub66._pump = lambda: None            # 离屏：绝不起真实下载线程（§11.5-20 铁律）
+    _orig_pref66 = _dh66.preferences
+    _dh66.preferences = _P66({"interval": 2.5, "concurrency": 4})
+    try:
+        _ja = _hub66.submit("批A", ["600000", "600001"])
+        _jb = _hub66.submit("批A重复", ["600000", "600001"])
+        _jc = _hub66.submit("批A显式快档", ["600000", "600001"], policy=_TP66(interval=0.1))
+        _jA = _hub66.get(_ja).policy
+        _jC = _hub66.get(_jc).policy
+    finally:
+        _dh66.preferences = _orig_pref66
+    check("★ submit 无策略 ⇒ 吃全局偏好（改 download_prefs 即处处生效）",
+          abs(_jA.interval - 2.5) < 1e-9 and _jA.concurrency == 4)
+    check("★ submit 传了策略 ⇒ 完全尊重（不自动改档）",
+          abs(_jC.interval - 0.1) < 1e-9 and _jC.concurrency == 1)
+    check("★ 同参去重仍成立（连点两下不重复入队）", _ja == _jb)
+    _uw66.load_or_fetch = _orig_cal66        # 最后一块：异常时留桩也无害（其后仅剩汇总）
+except Exception as _e66:  # noqa: BLE001
+    check(f"§7-B11 后续 并发池断言整段抛异常: {type(_e66).__name__}: {_e66}", False)
+
+# ==========================================
+print("\n== §7-B11 后续 · 全市场快照秒补（v1.45）==")
+# ==========================================
+try:
+    import datetime as _dt7
+    import pandas as _pd7
+    import data.akshare_feed as _af7
+    from data.akshare_feed import AkShareFeed as _AF7, SPOT_DAILY_KEEP as _SDK7, EM_VOLUME_UNIT as _EMU7
+    from data.sync_service import (MarketSyncService as _MSS7, ThrottlePolicy as _TP7,
+                                   ZONE_KLINE as _ZK7, ZONE_KLINE_RAW as _ZKR7)
+
+    _today7 = _dt7.date(2026, 9, 22)          # 已定稿的交易日（当天）
+    _prev7 = _dt7.date(2026, 9, 21)           # 上一交易日
+
+    # ---- ① fetch_market_spot_daily 单位归一（命门）----
+    _real_ak7 = _af7.ak
+
+    class _FakeAk7:
+        @staticmethod
+        def stock_zh_a_spot_em():
+            return _pd7.DataFrame({
+                '代码': ['600000', '000001', '600999'],
+                '名称': ['浦发银行', '平安银行', '停牌股'],
+                '今开': [10.0, 11.0, float('nan')],
+                '最高': [10.5, 11.5, float('nan')],
+                '最低': [9.8, 10.8, float('nan')],
+                '最新价': [10.2, 11.2, float('nan')],
+                '成交量': [12345.0, 20000.0, 0.0],        # 东财=手
+                '成交额': [1.28e8, 2.3e8, 0.0],            # 元
+                '换手率': [0.93, 1.55, 0.0],               # 百分数
+                '流通市值': [1.9e10, 2.1e10, 0.0],        # 元
+            })
+
+    _af7.ak = _FakeAk7
+    try:
+        _snap7 = _AF7.fetch_market_spot_daily()
+    finally:
+        _af7.ak = _real_ak7
+    _r7 = _snap7.set_index('symbol') if not _snap7.empty else _snap7
+    check("★ spot 列集合 ⊆ 白名单且不含 date（‘该算哪天’由上层定）",
+          not _snap7.empty and set(_snap7.columns) <= set(_SDK7) and 'date' not in _snap7.columns)
+    check("★ 换手率单位归一：东财百分数 0.93 → 小数 0.0093（防 §9-V 的 100× 事故）",
+          abs(float(_r7.loc['600000', 'turnover']) - 0.0093) < 1e-9)
+    check("★ 成交量单位归一：手 ×EM_VOLUME_UNIT(100) → 股",
+          abs(float(_r7.loc['600000', 'volume']) - 12345.0 * _EMU7) < 1e-6)
+    check("★ 最新价 → close、成交额 → amount、流通市值 → outstanding_share",
+          abs(float(_r7.loc['600000', 'close']) - 10.2) < 1e-9
+          and abs(float(_r7.loc['600000', 'amount']) - 1.28e8) < 1e-2
+          and abs(float(_r7.loc['600000', 'outstanding_share']) - 1.9e10) < 1e-2)
+    check("★ 停牌行（最新价缺）被拦下、不进快照（同一道物理护栏）",
+          '600999' not in _r7.index)
+
+    # ---- ② refresh_one 的 spot 快路径（只补当天 / 不造假 / 幂等 / 分区限定）----
+    class _MemLake7:
+        def __init__(self):
+            self.store = {}
+
+        def exists(self, zone, key):
+            return key in self.store
+
+        def load_data(self, zone, key):
+            return self.store.get(key, _pd7.DataFrame())
+
+        def save_data(self, zone, key, df):
+            self.store[key] = df.copy()
+            return True
+
+    _fetch_calls7 = []
+
+    def _fake_fetch7(symbol, zone, start_date, period=None):
+        _fetch_calls7.append(symbol)
+        return _pd7.DataFrame()
+
+    _real_fetch7 = _MSS7._fetch
+    _MSS7._fetch = staticmethod(_fake_fetch7)
+
+    def _seed(sym, up_to):
+        svc = _MSS7()
+        svc.lake = _MemLake7()
+        svc.lake.store[sym] = _pd7.DataFrame({
+            'date': _pd7.to_datetime([_dt7.date(2026, 9, 18), _dt7.date(2026, 9, 19), up_to]),
+            'open': [9.0, 9.5, 10.0], 'high': [9.2, 9.7, 10.5],
+            'low': [8.8, 9.3, 9.8], 'close': [9.1, 9.6, 10.2],
+            'volume': [1000.0, 1100.0, 1234500.0], 'symbol': sym})
+        return svc
+
+    _bar7 = {'open': 10.0, 'high': 10.5, 'low': 9.8, 'close': 10.2,
+             'volume': 1234500.0, 'amount': 1.28e8, 'turnover': 0.0093,
+             'outstanding_share': 1.9e10}
+    _no_sleep7 = (lambda _s: None)
+    try:
+        # (a) 本地末日 == 上一交易日 ⇒ 秒补当天，不发网络
+        _sv = _seed('600000', _prev7)
+        _pol7 = _TP7(interval=0, jitter=0, expected_latest=_today7)
+        _res7 = _sv.refresh_one('600000', zone=_ZK7, policy=_pol7,
+                                sleep_fn=_no_sleep7, spot_bar=_bar7, spot_prev=_prev7)
+        _saved7 = _sv.lake.store['600000']
+        check("★ 只缺当天 → reason=spot、不发逐只请求（fetch 未被调用）",
+              _res7.get('ok') and _res7.get('reason') == 'spot' and not _fetch_calls7)
+        check("★ 秒补后本地末日 == 当天，且历史逐根不动（行数 +1、旧 close 不变）",
+              str(_pd7.to_datetime(_saved7['date']).max().date()) == str(_today7)
+              and len(_saved7) == 4 and abs(float(_saved7['close'].iloc[0]) - 9.1) < 1e-9)
+        check("★ 追加行用 spot 真实价、与 qfq 当天自洽（close==spot close、不重标历史）",
+              abs(float(_saved7['close'].iloc[-1]) - 10.2) < 1e-9)
+        # (b) 幂等：再跑一次 → 已新鲜（末日>=当天）⇒ 跳过不重复加行
+        _res7b = _sv.refresh_one('600000', zone=_ZK7, policy=_TP7(interval=0, jitter=0,
+                                                                  expected_latest=_today7),
+                                 sleep_fn=_no_sleep7, spot_bar=_bar7, spot_prev=_prev7)
+        check("★ 重复跑幂等：第二天已新鲜→skip，行数不变",
+              _res7b.get('skipped') and len(_sv.lake.store['600000']) == 4)
+        # (c) 多日缺口（末日早于上一交易日）⇒ spot 不造假，退回网络
+        _sv2 = _seed('600001', _dt7.date(2026, 9, 18))
+        _fetch_calls7.clear()
+        _res2 = _sv2.refresh_one('600001', zone=_ZK7, policy=_TP7(interval=0, jitter=0,
+                                                                  expected_latest=_today7),
+                                 sleep_fn=_no_sleep7, spot_bar=_bar7, spot_prev=_prev7)
+        check("★ 缺口 > 1 交易日 → spot 绝不造假（会留洞），退回逐只真拉",
+              '600001' in _fetch_calls7 and _res2.get('reason') != 'spot')
+        # (d) 非 qfq 日线分区（不复权 raw）⇒ 不走 spot
+        _sv3 = _seed('600002', _prev7)
+        _fetch_calls7.clear()
+        _sv3.refresh_one('600002', zone=_ZKR7, policy=_TP7(interval=0, jitter=0,
+                                                           expected_latest=_today7),
+                         sleep_fn=_no_sleep7, spot_bar=_bar7, spot_prev=_prev7)
+        check("★ 不复权/分钟/指数分区永不走 spot（只有 qfq 日线分区可）",
+              '600002' in _fetch_calls7)
+    finally:
+        _MSS7._fetch = _real_fetch7
+except Exception as _e7:  # noqa: BLE001
+    check(f"§7-B11 后续 快照秒补断言整段抛异常: {type(_e7).__name__}: {_e7}", False)
+
+# ==========================================
+print("\n== §7-B11 后续 · 统一下载设置入口（v1.45）==")
+# ==========================================
+try:
+    from data.sync_service import DEFAULT_DOWNLOAD_CONCURRENCY as _DDC8
+
+    def _src8(*parts):
+        with open(os.path.join(ROOT, *parts), encoding="utf-8") as f:
+            return f.read()
+
+    from core.preferences import DEFAULTS as _DEF8
+
+    _dp = _DEF8.get("download_prefs")
+    check("★ 全局下载偏好 download_prefs 存在且五项齐全（唯一真源的默认）",
+          isinstance(_dp, dict) and {"interval", "jitter", "circuit_breaker",
+                                     "skip_fresh", "concurrency"} <= set(_dp))
+    check("★ 默认并发=均衡档 3 / interval=0.6（与实际生效一致）",
+          _dp.get("concurrency") == _DDC8 and abs(float(_dp.get("interval")) - 0.6) < 1e-9)
+
+    _bulk8 = _src8("ui", "dialogs", "bulk_download.py")
+    _dm8 = _src8("ui", "views", "data_manager.py")
+    _set8 = _src8("ui", "dialogs", "download_settings.py")
+    _qp8 = _src8("ui", "widgets", "download_queue_panel.py")
+    check("★ 预下载弹窗已去掉私有旋钮：不再构造 ThrottlePolicy / 不再有 spin_interval",
+          "ThrottlePolicy(" not in _bulk8 and "spin_interval" not in _bulk8)
+    check("★ 数据管理页已去掉独立间隔旋钮（防两套值漂移）",
+          "spin_interval" not in _dm8 and "ThrottlePolicy(" not in _dm8)
+    check("★ 三处入口打开同一个 DownloadSettingsDialog（不各存一份编辑面）",
+          all("DownloadSettingsDialog" in t for t in (_bulk8, _dm8, _qp8)))
+    check("★ 设置对话框写盘键形正确（preferences.set('download_prefs', {5 项})）",
+          'preferences.set("download_prefs"' in _set8
+          and all(f'"{k}"' in _set8 for k in
+                  ("interval", "jitter", "circuit_breaker", "skip_fresh", "concurrency")))
+except Exception as _e8:  # noqa: BLE001
+    check(f"§7-B11 后续 统一下载设置入口断言整段抛异常: {type(_e8).__name__}: {_e8}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)
