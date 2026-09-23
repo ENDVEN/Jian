@@ -3509,14 +3509,18 @@ try:
 
     # ---- ② 接线：点常驻按钮 ⇒ 走就绪度控制器的 update_latest（打桩，绝不联网）----
     _hit11 = []
-    _orig_upd11 = _m3_11._readiness.update_latest
+    _orig_upd11_m3 = _m3_11._readiness.update_latest
+    _orig_upd11_m2 = _m2_11._readiness.update_latest
     _m3_11._readiness.update_latest = lambda: _hit11.append(1)
     try:
         _m2_11._readiness.update_latest = lambda: _hit11.append(2)
         _m3_11.btn_sync.click()
         _m2_11.btn_sync.click()
     finally:
-        _m3_11._readiness.update_latest = _orig_upd11
+        # ⚠ 两页都要还原：只还原一半 = M2 永久留着桩函数，
+        #   后面所有针对 M2 `update_latest` 的断言都在测桩（本批真实踩到）
+        _m3_11._readiness.update_latest = _orig_upd11_m3
+        _m2_11._readiness.update_latest = _orig_upd11_m2
     check("★ 两页的常驻按钮都真的接到 `update_latest`（按钮存在但没接线 = 假入口）",
           _hit11 == [1, 2])
 
@@ -3665,6 +3669,10 @@ try:
     from ui import download_hub as _dhub13  # noqa: E402
     from ui.download_hub import (STATUS_DONE, STATUS_QUEUED, STATUS_RUNNING,  # noqa: E402
                                 DownloadHub)
+    from PyQt6.QtWidgets import (QDialog as _QDialog13,  # noqa: E402
+                                 QLabel as _QLabel13,
+                                 QProgressBar as _QProgressBar13,
+                                 QPushButton as _QPushButton13)
     from ui.widgets.download_bar import DownloadBar  # noqa: E402
     from ui.widgets.download_queue_panel import DownloadQueuePanel  # noqa: E402
 
@@ -3748,13 +3756,36 @@ try:
         check("★ 全部跑完 ⇒ activity 归零（角标会随之收起）",
               hub.is_busy() is False and hub.pending_count() == 0)
 
-        # ---- ⑥ 队列面板：非模态 + 列出全部（含已完成回看）----
+        # ---- ⑥ 队列面板：浮层形态 + 按样板呈现 + 列出全部（含已完成回看）----
         panel.refresh()
-        check("★ 面板是非模态的（开着它照样能操作主界面）", panel.isModal() is False)
+        check("★ 面板是**主窗口内的浮层**（不是 `_QDialog13` 独立窗口 ⇒ 不抢焦点/不进任务栏/拖不走）",
+              not isinstance(panel, _QDialog13))
         check("★ 面板列出全部任务（运行过的都能回看，不只当前那一个）",
               panel.table.rowCount() == len(hub.jobs()))
         check("★ 面板底部有「只重试失败 / 复制失败清单 / 全部中断」三件（旧能力搬出弹窗）",
               all(hasattr(panel, n) for n in ('btn_retry', 'btn_copy', 'btn_stop')))
+        # 按样板验收：头部统计胶囊 / 表内迷你进度条 + 状态胶囊 + 每行操作
+        check("★ 头部有「运行中 N / 排队 N」统计胶囊（样板同款）",
+              panel.lbl_run.text().startswith("运行中")
+              and panel.lbl_queued.text().startswith("排队"))
+        check("★ 表内进度是**迷你进度条**、状态是**彩色胶囊**（样板同款，不是纯文本）",
+              panel.table.cellWidget(0, 1) is not None
+              and panel.table.cellWidget(0, 1).findChild(_QProgressBar13) is not None
+              and panel.table.cellWidget(0, 2) is not None
+              and panel.table.cellWidget(0, 2).findChild(_QLabel13) is not None
+              and 'background:' in panel.table.cellWidget(0, 2).findChild(_QLabel13).styleSheet())
+        check("★ 每行都有操作按钮（运行中=中断 / 有失败=只重试失败）",
+              panel.table.cellWidget(0, 3) is not None
+              and panel.table.cellWidget(0, 3).findChild(_QPushButton13) is not None)
+        # ★v1.43 收口二次（用户实测：贴顶直条 / 整格色块）——单元格内容必须**居中且不撑满**
+        _ph83 = panel.table.cellWidget(0, 1).findChild(_QProgressBar13)
+        _pill83 = panel.table.cellWidget(0, 2).findChild(_QLabel13)
+        check("★ 进度条：高 6、宽 100（< 列宽 120）⇒ 两端圆弧 + 不铺满整格",
+              _ph83.minimumHeight() == 6 and _ph83.maximumHeight() == 6
+              and _ph83.minimumWidth() == 100)
+        check("★ 状态是**圆角气泡**（radius 10 + 只有内容那么大，不是整格色块填充）",
+              'border-radius:10px' in _pill83.styleSheet()
+              and _pill83.sizeHint().width() < 104)
         bar.dismiss()
         check("★ 用户可以✕掉回执条（不是永久占位）", bar.isHidden())
         # ✕ 只在回执态出现：任务在跑时它按不动（投影会立刻弹回来）⇒ 不该给假按钮
@@ -3781,8 +3812,11 @@ try:
         check("★ 真下载 ⇒ 导航角标亮起（任何页面瞥一眼就知道有活在跑）",
               win.downloads.is_busy() and not win.nav_badge.isHidden())
         win.show_download_queue()
-        check("★ 点角标/详情 ⇒ 打开队列面板（懒建，不开下载不多一个窗口）",
+        check("★ 点角标/详情 ⇒ 打开队列面板（懒建，不开下载不多一块界面）",
               win._download_panel is not None and not win._download_panel.isHidden())
+        check("★ 浮层挂在**主窗口内容区**上、且钉在右下角（落在浮动下载条上方）",
+              win._download_panel.parent() is win._right_panel
+              and win._download_panel.x() >= 0 and win._download_panel.y() >= 0)
         win.downloads.cancel(_rid13)
         _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
         app.processEvents()
@@ -3903,6 +3937,42 @@ try:
         _bar13src = _pl13.Path('ui/widgets/download_bar.py').read_text(encoding='utf-8')
         check("★ 下载条不再用 cancel(None) 当「中断」（否则静默取消排队任务）",
               'self._hub.cancel(None)' not in _bar13src)
+
+        # ---- ⑯ 后台下载在跑时**换统计范围**：新范围就绪度必须照样渲染（§11.5-83）----
+        #   用户实测复现：点「更新到最新」挂后台 → 换到另一个范围 → 整页一直停在
+        #   「正在体检本地数据就绪度…」，那个"更新到最新"的空态入口永远不出现，
+        #   必须等下载跑完/中断才恢复（旧 `_busy_elsewhere()` 把 `_syncing` 也算进守卫）。
+        from data.readiness import ReadinessReport as _RRep83  # noqa: E402
+        from ui.widgets.custom_widgets import SYNC_ACTION_LABEL as _SAL83  # noqa: E402
+
+        _m2_83 = win.page_backtest.page_scan
+        _rd83 = _m2_83._readiness
+        _m2_83._outcome = None
+        _m2_83._symbols = ['NEW1', 'NEW2']
+        _rd83._last_symbols = ['NEW1', 'NEW2']
+        _rd83._syncing = True                      # 模拟"旧那一批正在后台跑"
+        _rd83._sync_scope = ('OLD1',)
+        _rd83._sync_label = '更新'
+        _m2_83._result.set_empty('范围就绪（2 只）—— 正在体检本地数据就绪度…')
+        _rep83 = _RRep83(total=2, ready=['NEW1'], missing=['NEW2'])
+        _rd83._on_probed(_rd83._guard.next(), _rep83, ['NEW1', 'NEW2'])
+        _txt83 = _m2_83.lbl_empty.text()
+        check("★ 后台下载在跑时换范围 ⇒ 新范围就绪度**照样渲染**（不再卡在“正在体检…”）",
+              '正在体检' not in _txt83 and '未下载 1' in _txt83)
+        check("★ 入口同时给出：范围已换 ⇒ 空态按钮是「⬆ 更新到最新交易日」而不是“停止”",
+              _m2_83.btn_empty_action.text() == _SAL83)
+        _before83 = len(win.downloads.jobs())
+        _rd83.update_latest()
+        check("★ 范围已换 ⇒ 再点它是**把新范围交队列**（不误停旧那一批）",
+              len(win.downloads.jobs()) == _before83 + 1
+              and win.downloads.get(_rd83._sync_job) is not None
+              and _rd83._same_batch(_m2_83._symbols))
+        _rd83.stop_fill()                          # 同一批再点 = 中断（原语义保留）
+        _made13[-1].finished.emit(dict(_DONE, aborted=True, aborted_by="cancel"))
+        app.processEvents()
+        check("★ 同一批再点仍是“中断”语义（原行为不被破坏）",
+              _rd83._syncing is False and _rd83._sync_job is None)
+        _rd83._syncing = False                     # 恢复现场
     finally:
         _dhub13.SyncWorker = _orig13
 except Exception as _e13:  # noqa: BLE001

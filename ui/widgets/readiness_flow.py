@@ -86,6 +86,9 @@ class ReadinessFlow:
         self._sync_job: int | None = None
         self._syncing = False
         self._sync_label = '补齐'            # 当前后台同步的动词（补齐 / 更新），供回执文案
+        # ★v1.43 收口：记下"在跑的那批**是哪批标的**" —— 决定"再点一次"是"中断"还是
+        #   "换范围后另开一批"（否则换范围后点它只会把旧那批停掉，用户想更新的新范围永远轮不到）。
+        self._sync_scope: tuple | None = None
         hub = hub_of(page)                    # 统一取件：拿不到就降级（假页面/单测不炸）
         if hub is not None:
             hub.job_progress.connect(self._on_fill_progress)
@@ -123,21 +126,29 @@ class ReadinessFlow:
         """这份体检/进度是否已过时（页面当前的范围 ≠ 它体检时的范围）。"""
         return [str(s) for s in (self.page._symbols or [])] != [str(s) for s in scope]
 
-    def _busy_elsewhere(self) -> bool:
-        """扫描 / 补齐进行中 ⇒ 回执区属于它们，体检不许打扰。"""
-        p = self.page
-        worker = p._worker
-        return self._syncing or (worker is not None and worker.isRunning())
+    def _scan_running(self) -> bool:
+        """**扫描**进行中 ⇒ 回执/结果区属于它，体检一律不打扰。
+
+        ⚠ 【v1.43 收口 · §11.5-83】这里**绝不能把"本页的批量下载在跑"也算进来** ——
+          旧写法是 `self._syncing or worker.isRunning()`，而 `_syncing` 从提交那一刻起
+          一直为真（全市场要几十分钟）⇒ 用户**换个统计范围**后，新范围的就绪度回包被
+          整份丢弃 ⇒ 空态永远停在「正在体检本地数据就绪度…」、那个"更新到最新"的
+          **空态入口永远不出现**，必须等下载跑完或中断才恢复（换了个触发源的 §11.5-66）。
+          后台下载的进度**本来就归底部下载条**（全局唯一真源），它只需"别覆盖回执行"这一条约束
+          —— 见 `_render_readiness` 里的 `quiet`。
+        """
+        worker = getattr(self.page, '_worker', None)
+        return worker is not None and worker.isRunning()
 
     def _on_probe_progress(self, done: int, total: int, note: str, scope: list) -> None:
         p = self.page
-        if self._busy_elsewhere() or total <= 0 or done >= total:
+        if self._scan_running() or total <= 0 or done >= total:
             return
         if self._current_scope_changed(scope):
             return          # 旧范围的体检进度 —— 范围已切换，闭嘴
-        if p._outcome is not None:
-            # 已有扫描结果 ⇒ 回执区属于扫描；但占位文案里的"正在体检"要跟着动，
-            # 否则用户盯着一句永远不完成的"正在体检…"以为软件卡死（v6.42）
+        if p._outcome is not None or self._syncing:
+            # 回执区此刻属于扫描 / 后台下载的投影；但**占位文案必须跟着动** ——
+            # 否则用户盯着一句永远不完成的"正在体检…"以为软件卡死（v6.42 / §11.5-83）
             if '正在体检' in p.lbl_empty.text():
                 p.lbl_empty.setText(f'正在体检本地数据就绪度… {done}/{total}')
             return
@@ -155,8 +166,8 @@ class ReadinessFlow:
             return
         self.report = report
         self._calibrate_asof_date(report)               # 基准日默认值 = 本地最新交易日（v6.42）
-        if self._busy_elsewhere():
-            return          # 扫描/补齐进行中 ⇒ 回执区属于它们，体检不许打扰
+        if self._scan_running():
+            return          # 扫描进行中 ⇒ 结果区属于它，体检不许打扰
         self._render_readiness()
 
     def _render_readiness(self) -> None:
@@ -188,11 +199,16 @@ class ReadinessFlow:
                             f' —— 多数标的未更新到该日，先「{SYNC_ACTION_LABEL}」或把基准日往前挪')
                 need_action = True
         if p._outcome is None:
-            # 顶部单行只留“短状态 + 待更新标记”；滞后/覆盖长说明走 tooltip 与结果区（可换行），
-            # 不把单行标签撑长 → 窄屏不会被顶宽窗口（§11.5 窄屏不撑窗原则）。
-            p.lbl_receipt.setText(line + (' · ⚠ 待更新' if need_action else ''))
-            tip = '\n'.join(x for x in (stale, cov_hint, r.detail_text()) if x)
-            p.lbl_receipt.setToolTip(tip)
+            # ★v1.43 收口（§11.5-83）：后台下载在跑（`_syncing`）时**只让回执行** ——
+            #   它此时显示的正是"更新 x/y · symbol"这份投影；但**空态与入口必须照常渲染**，
+            #   否则换范围后会永远卡在「正在体检…」且"更新到最新"入口不出现（用户实测）。
+            quiet = self._syncing
+            if not quiet:
+                # 顶部单行只留“短状态 + 待更新标记”；滞后/覆盖长说明走 tooltip 与结果区（可换行），
+                # 不把单行标签撑长 → 窄屏不会被顶宽窗口（§11.5 窄屏不撑窗原则）。
+                p.lbl_receipt.setText(line + (' · ⚠ 待更新' if need_action else ''))
+                tip = '\n'.join(x for x in (stale, cov_hint, r.detail_text()) if x)
+                p.lbl_receipt.setToolTip(tip)
             if need_action:
                 body = line + '\n' + r.gap_preview()
                 if stale:
@@ -201,7 +217,12 @@ class ReadinessFlow:
                     body += '\n' + cov_hint
                 if r.unreadable:
                     body += '\n文件损坏的标的请到「🗄 数据管理」重新全量下载。'
-                p._result.set_empty(body, SYNC_ACTION_LABEL, self.update_latest)
+                if self._syncing and self._same_batch(getattr(p, '_symbols', None)):
+                    # 这一批正在更新 ⇒ 主按钮仍是"停止"（同一批再点 = 中断，别把停止入口藏掉）
+                    p._result.set_empty(body, f'⏹ 停止{self._sync_label}', self.stop_fill)
+                else:
+                    # 范围已换 / 没在跑 ⇒ 入口就该是"更新到最新"（哪怕旧那批还在后台排队）
+                    p._result.set_empty(body, SYNC_ACTION_LABEL, self.update_latest)
             elif r.unreadable:
                 # ★v1.41 / §11.5-80：**有坏文件也是"需要动作"** —— 旧版只给一句话
                 # （"请到数据管理重新全量下载"）却**不给入口**，用户只能自己找路。
@@ -277,7 +298,7 @@ class ReadinessFlow:
     def _on_calendar(self, calendar) -> None:
         self._calendar = calendar or None
         self.trading_target = latest_settled_trading_day(calendar=calendar)
-        if self.report is not None and not self._busy_elsewhere():
+        if self.report is not None and not self._scan_running():
             self._render_readiness()          # 日历后到 ⇒ 把滞后提示补上
 
     # ==========================================
@@ -286,12 +307,17 @@ class ReadinessFlow:
     def update_latest(self) -> None:
         """一键「⬆ 更新到最新交易日」（§7-B10 STEP 2 · 用户拍板与"补齐"动作合并）：
         对**整批当前范围**跑增量 —— 没下过的补、下过但滞后的拉到最近交易日；
-        已新鲜的被 _is_fresh 自然 skipped。中断/断点续传/二次确认同补齐。"""
+        已新鲜的被 _is_fresh 自然 skipped。中断/断点续传/二次确认同补齐。
+
+        ★v1.43 收口（§11.5-83）：**"再点一次 = 中断"只对"同一批标的"成立**。
+        用户换了统计范围后再点，语义应当是"把新范围也交后台"（串行排队），
+        而不是把旧那批停掉 —— 否则新范围永远轮不到更新。
+        """
         p = self.page
-        if self._syncing:
-            self.stop_fill()
-            return
         symbols = [str(s) for s in (self._last_symbols or []) if str(s).strip()]
+        if self._syncing and self._same_batch(symbols):
+            self.stop_fill()                  # 同一批再点一次 = 中断
+            return
         if not symbols:
             p.lbl_receipt.setText('范围还是空的 —— 先选好统计范围。')
             return
@@ -300,14 +326,22 @@ class ReadinessFlow:
     def fill_missing(self) -> None:
         """只补 missing（保留方法；空态主入口已合并到 update_latest）。"""
         p = self.page
-        if self._syncing:                     # 再点一次 = 中断（断点续传，已下载的保留）
-            self.stop_fill()
-            return
         report = self.report
         if report is None or not report.gap_count:
             p.lbl_receipt.setText('没有可补的缺口 —— 本地数据是齐的。')
             return
-        self._launch_sync(report.gap_symbols(), '补齐')
+        gaps = report.gap_symbols()
+        if self._syncing and self._same_batch(gaps):
+            self.stop_fill()                  # 同一批再点一次 = 中断
+            return
+        self._launch_sync(gaps, '补齐')
+
+    def _same_batch(self, symbols) -> bool:
+        """这些标的是不是**正在后台跑的那一批**？（决定"再点一次"是中断还是另开一批）"""
+        if self._sync_scope is None:
+            return False
+        want = tuple(str(s) for s in (symbols or []) if str(s).strip())
+        return bool(want) and self._sync_scope == want
 
     def _estimate_stale(self, n: int):
         """估算「真正需要联网」的只数与耗时（★v1.40/§7-E5）。
@@ -366,6 +400,7 @@ class ReadinessFlow:
             p.lbl_receipt.setText('同样的任务已经在队列里了 —— 进度见窗口底部的下载条。')
             return
         self._syncing = True
+        self._sync_scope = tuple(str(s) for s in symbols)   # 记住"跑的是哪一批"（§11.5-83）
         p._result.set_empty(f'{label}中…（{n} 只 · 温柔抓取 {note}）',
                             f'⏹ 停止{label}', self.stop_fill)
         p.lbl_receipt.setText(f'{label} 0/{n} · 已提交后台（任务 #{self._sync_job}）…')
@@ -403,6 +438,7 @@ class ReadinessFlow:
         p = self.page
         self._syncing = False
         self._sync_job = None
+        self._sync_scope = None
         p.bar_progress.hide()
         stats = stats or {}
         ok = int(stats.get('ok', 0))

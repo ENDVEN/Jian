@@ -15,7 +15,9 @@ from data.formula_store import segments_as_texts, segments_as_tuples
 
 from ui.download_hub import DownloadHub
 from ui.widgets.download_bar import DownloadBar
-from ui.widgets.download_queue_panel import DownloadQueuePanel
+from ui.widgets.download_queue_panel import (DOWNLOAD_PANEL_GAP_BOTTOM,
+                                             DOWNLOAD_PANEL_GAP_RIGHT,
+                                             DownloadQueuePanel)
 from ui.views.dashboard import DashboardView
 from ui.views.records import RecordsView
 from ui.views.review import ReviewView
@@ -111,13 +113,20 @@ class JianMainWindow(QMainWindow):
         right_lay.addWidget(self.content_area, 1)
         right_lay.addWidget(self.download_bar)
         main_layout.addWidget(right)
+        # 下载队列浮层的宿主（样板把它钉在内容区右下角，见 `_place_download_panel`）
+        self._right_panel = right
+        self.downloads.jobs_changed.connect(self._place_download_panel)
 
         # --- 导航角标：下载中在「🗄 数据管理」上亮一个小圆点 ---
         # 【为什么要它】下载条在底部，用户在行情页看图时视线扫不到 ⇒
         #   "有没有活在跑"必须一眼可瞥；点角标 = 切到数据管理页并展开队列面板。
-        self.nav_badge = QLabel("●", self.btn_data)
+        self.nav_badge = QLabel(self.btn_data)
         self.nav_badge.setObjectName("NavBadge")
-        self.nav_badge.setStyleSheet("QLabel#NavBadge { color:#FB8C00; font-size:11px; }")
+        # 样板：9px 橙点 + 3px 浅橙光晕，贴在导航项**右侧竖居中**
+        self.nav_badge.setFixedSize(15, 15)
+        self.nav_badge.setStyleSheet(
+            "QLabel#NavBadge { background:#FB8C00; border:3px solid #FFF3E0;"
+            " border-radius:7px; }")
         self.nav_badge.setToolTip("有数据任务在后台下载 —— 点击打开下载队列")
         self.nav_badge.setCursor(Qt.CursorShape.PointingHandCursor)
         self.nav_badge.hide()
@@ -159,24 +168,45 @@ class JianMainWindow(QMainWindow):
     _download_panel = None
 
     def show_download_queue(self) -> None:
-        """打开（或置顶）下载队列面板。懒建：不开下载就不该多一个窗口。"""
+        """打开（或置顶）下载队列**浮层**。懒建：不开下载就不多一块界面。
+
+        ⚠ 形态按样板：**主窗口内的浮层**（不是 `QDialog`）—— 它天生不抢焦点、
+          不进任务栏、不能被拖到主窗口外面，也不会盖住整个界面。
+        """
         if self._download_panel is None:
-            self._download_panel = DownloadQueuePanel(self.downloads, self)
+            self._download_panel = DownloadQueuePanel(self.downloads, self._right_panel)
         self._download_panel.refresh()
-        self._download_panel.show()               # 非模态 ⇒ 开着它照样能操作主界面
+        self._place_download_panel()
+        self._download_panel.show()
         self._download_panel.raise_()
-        self._download_panel.activateWindow()
+
+    def _place_download_panel(self) -> None:
+        """把浮层钉在**内容区右下角**（样板 `right:18 / bottom:52`，正好落在下载条上方）。
+
+        主窗口缩放、或队列增删导致面板高度变化时都要重算（`jobs_changed` 已挂）。
+        """
+        panel = getattr(self, '_download_panel', None)
+        host = getattr(self, '_right_panel', None)
+        if panel is None or host is None:
+            return
+        panel.adjustSize()
+        x = max(0, host.width() - panel.width() - DOWNLOAD_PANEL_GAP_RIGHT)
+        y = max(0, host.height() - panel.height() - DOWNLOAD_PANEL_GAP_BOTTOM)
+        panel.move(x, y)
+
+    def resizeEvent(self, event):  # noqa: N802 —— Qt 命名
+        super().resizeEvent(event)
+        self._place_download_panel()
 
     def _on_download_activity(self, busy: bool) -> None:
         self.nav_badge.setVisible(bool(busy))
         self._place_badge()
 
     def _place_badge(self) -> None:
-        """角标贴在「数据管理」按钮右上角；按钮尺寸变了就得跟着重摆。"""
+        """角标贴在「数据管理」按钮**右侧竖居中**（样板位置）；按钮尺寸变了就得跟着重摆。"""
         btn = self.btn_data
-        self.nav_badge.adjustSize()
         self.nav_badge.move(btn.width() - self.nav_badge.width() - 8,
-                            max(2, (btn.height() - self.nav_badge.height()) // 2))
+                            max(0, (btn.height() - self.nav_badge.height()) // 2))
         self.nav_badge.raise_()
 
     def eventFilter(self, obj, event):  # noqa: N802

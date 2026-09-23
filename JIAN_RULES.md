@@ -157,7 +157,8 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   ⚠ `ui/widgets/desk_data.py` **448** > ⚠ `ui/widgets/scan_flow.py` **437**（日期控件三件套可抽伴生件）>
   `core/database.py` **435** > ⚠ `data/backtest_archive.py` **431** > ⚠ `ui/widgets/desk_formula.py` **422** >
   ⚠ `ui/widgets/backtest_panes.py` **419**（★v1.43 纠偏：旧写"395 在线内"已越线）>
-  ⚠ `ui/widgets/backtest_flow.py` **433**（再长把"存档接线"抽成伴生件）。
+  ⚠ `ui/widgets/backtest_flow.py` **433**（再长把"存档接线"抽成伴生件）>
+  ⚠ `ui/widgets/readiness_flow.py` **418**（★v1.43 收口二次越线；再长按「体检渲染 / 下载编排」拆）。
   ✅ 未越线但曾经很长的：`ui/widgets/annotation_shapes.py` 296（v6.29 拆出 `annotation_layouts.py`）、
   `adaptive_axis.py` 396、`ui/workers.py` 380（v1.40/v1.43 涨上来，**仍是唯一 QThread 处**）。
 - **验收脚本不参与"业务文件瘦身"**：`tests/smoke_chart.py`、`tests/smoke_pages_overlay.py`（总行数现测
@@ -1204,7 +1205,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
    - **11.5-82** 【v1.43 收口 · §7-B11】**"批量任务的收尾"必须有且只有一个出口 —— 漏一条分支 = 页面永久卡死**：
    ① **取消也要"发全回包"**：`cancel(全部)` 早先把排队中的任务只标状态、**不发 `job_finished`**，
       而消费方（M2/M3 的 `_syncing`、批量弹窗）**只靠它收尾** ⇒ 那页永远停在"进行中"：
-      回执冻结、`_busy_elsewhere()` 恒真、再点「更新到最新」只会去执行"停止"（只能重启应用）。
+      回执冻结、`_syncing` 恒真 ⇒ 守卫恒真、再点「更新到最新」只会去执行"停止"（只能重启应用）。
       **判据**：任何"把任务从在途集合里移除"的路径（取消 / 淘汰 / 退出）都要问一句
       ——**它的订阅者还等得到回包吗？**（本次由"真线程端到端探针 + 新断言"一起钉住。）
    ② **同一个"按钮语义"不许有两套动作**：下载条的「中断」原先是 `cancel(None)`（停当前 + **清空排队**），
@@ -1218,6 +1219,19 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
    ⑤ **"跑得通"分三层，缺一层就不算测过**：纯组件冒烟（打桩线程）/ 页面级冒烟（离屏主窗口）/
       **真线程探针**（真 QThread + 真跨线程信号，只掐外部副作用）。本次前两层全绿时，
       第①条那个 bug 依然活着 —— 因为假线程永远按时回包。
+   - **11.5-83** 【v1.43 收口二次 · 用户实测复现】**"本页自己在跑的后台任务"不算"回执区被占用"**：
+     早退守卫把 `self._syncing` 也算进 `_busy_elsewhere()`，而它从提交起一直为真（几十分钟）⇒
+     **换个统计范围**后，新范围的就绪度回包被**整份丢弃** ⇒ 空态永远停在「正在体检…」、
+     那个"更新到最新"入口永不出现（必须等下载跑完/中断）。正解 = 拆成 `_scan_running()`：
+     只有**扫描**独占回执；后台下载只要求"别覆盖回执行"（`quiet` 那一支）。
+     附带：`update_latest` 的"再点一次=中断"必须**只对同一批标的**成立，否则换了范围再点
+     只会把旧那批停掉、新范围永远轮不到（`_same_batch` 比对）。§11.5-66 同族，换了个触发源。
+   - **11.5-84** 【v1.43 收口二次 · 测试基建】打桩**必须成对还原**：v1.41 段把 M2 的 `update_latest`
+     换成桩，`finally` 只还原了 M3 ⇒ **M2 永久留着桩**，此后所有 M2 断言其实在测桩（且全绿）。
+     判据：`finally` 的还原条数 == 打桩条数（跨段落共享同一对象时尤其要数）。
+   - **11.5-85** 【v1.43 收口二次 · 流程】`design/` 样板是**验收标准，不是示意图**：样板里的形态
+     （浮层 vs 独立窗口 / 状态胶囊 / 迷你进度条 / 每行操作 / 三态配色）必须**逐条变成本批的验收项**，
+     否则"照样板做"会写成"用现成控件拼一个能用的" —— 用户一眼就看出"跟样板完全是两回事"。
 
 
 
@@ -1240,7 +1254,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 > 用户拍板"走收口、不回撤、合成一个 commit"，并要求顺带查"还缺什么"。
 > 本轮**不改规格**，只堵窟窿（每项都能独立回滚）：
 > · **真 bug ①**：`cancel(全部)` 漏给**排队中**的任务发 `job_finished` ⇒ 该页永久卡在"进行中"
->   （回执冻结、`_busy_elsewhere()` 恒真、再点「更新到最新」只会去"停止"，只能重启）。
+>   （回执冻结、`_syncing` 恒真 ⇒ 守卫恒真、再点「更新到最新」只会去"停止"，只能重启）。
 > · **真 bug ②**：下载条「中断」= `cancel(None)`（停当前 + 清空排队），与 tooltip 的"停止当前任务"
 >   不同义 ⇒ 静默干掉还排着的任务。改为只停当前，全留面板。
 > · **收敛**：单只互斥 token 由 4 处手写（desk_data / backtest_flow×2 / breadth_flow）收成
@@ -1282,15 +1296,15 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       **项目 Releases 页**（正式发版时才需要换成具体版本的下载直链）。
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
 - [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**817 项**，纯组件、离屏）
-- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**627 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
+- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**637 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
       并在其收尾的防污染自检名单里**加上任何新写的 `~/.jian_data/*.json`**（现在有 annotations /
       formula_library / watchlist / backtest_strategies / **preferences（1.23 起）** / **backtest_results（1.37 起）** 六个）
 - [ ] **改了复盘页（`ui/views/review.py`）/ `ui/widgets/review_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**627 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
+      `py tests/smoke_pages_overlay.py`（**637 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
       公共面被改名、**把薄壳写成空函数**、宏观/微观**分栏退化成写死的 5:4 平铺**、
       分栏高度不落 `review_ui.v_sizes`，都会立刻红）
 - [ ] **改了全市场筛选页（`ui/views/scan_view.py`）/ `ui/widgets/scan_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**627 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
+      `py tests/smoke_pages_overlay.py`（**637 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
       ⚠ 六条最容易顺手改坏的：① **常驻行必须 ≤3**（粗筛阈值收在抽屉里，别往结果区上方加行）；
       ② **阈值"内核 ⇄ 界面"换算只许在 `ScanFilterPane` 一处**（界面亿元/% ⇄ 内核元/小数，
       换手率/市值**关闭时必须是 None**，变成 0 = 误杀一片）；
@@ -1301,7 +1315,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ⑥ **缺数据闸门不许删**（`_confirm_scan_with_gaps`：体检有缺口/未完成 ⇒ 二次确认才能扫，
         选「否」不得启动任何线程；本地齐了不打扰）
 - [ ] **改了广度统计页（`ui/views/breadth_view.py`）/ `ui/widgets/breadth_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**627 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
+      `py tests/smoke_pages_overlay.py`（**637 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
       ⚠ 七条最容易顺手改坏的：① **常驻行必须 ≤3**（⚡/⟳ 收在摘要条，别往结果区上方加行）；
       ② **双窗格必须 x 联动**（`ChartHost` 编排，禁止页面自己 `addPlot` 拼副图，§10-12）；
       ③ **广度占比的分母 = 有效样本**（命中+未命中）—— 换成"全市场只数" = 系统性压低且看不出来；
@@ -1349,7 +1363,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] **改了 `QComboBox` / `QDateEdit` / `QDateTimeEdit` 的样式吗？**
       → 只能用 `custom_widgets` 的常量（`::drop-down` 与 `::down-arrow` 必须成对，否则箭头消失）；
       改完跑 `py tests/smoke_chart.py` 看**箭头像素断言**（§11.5-17）
-- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**627 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；四条离屏打桩见 §11.5-20 与 §11.5-79（★第④条 v1.42 补：**异步回测与后台下载也不许写真目录** —— 看到"只有几条真实数据类断言红"先问“有没有东西正在写”），**别删**）
+- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**637 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；四条离屏打桩见 §11.5-20 与 §11.5-79（★第④条 v1.42 补：**异步回测与后台下载也不许写真目录** —— 看到"只有几条真实数据类断言红"先问“有没有东西正在写”），**别删**）
 - [ ] **新加了"往用户数据目录写文件"的功能吗？** → ① 用 `tmp + os.replace` 原子写；② 给 `tests/smoke_pages_overlay.py` 的收尾自检加一行文件名（§11.7 上一条）；③ 单条坏数据必须**跳过自己**而不是拖垮整库；
       ④ ⚠ 若它会**自动落盘**（"记住上次"类偏好，如 `backtest_ui` / `desk_ui`）→ **必须在冒烟脚本里
       把偏好单例的 `path` 重定向到临时目录**（只给 `Preferences.save` 打桩**实测不够**，仍被写脏过一次），
@@ -1360,7 +1374,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ③ 关键概念有没有**示例弹窗**？④ 术语有没有换成**用户量纲**（"1 跳"→"0.01 元"、
       "当根"→"当天"）？参数是否只在**有意义的档位**才出现？
       （§10-10 追加条款 / §11.5-22；参考 `fill_mode_oneliner` + `ui/dialogs/fill_model_help.py`）
-- [ ] **改了后台下载（`ui/download_hub.py` / `ui/widgets/download_bar.py` / `download_queue_panel.py`）或四个下载入口（`bulk_download` / `data_manager` / `readiness_flow` / `main_window.downloads`）吗？** → 跑 `py tests/smoke_pages_overlay.py`（**627 项**，含「§7-B11 后台下载」段）。⚠ 四条红线：
+- [ ] **改了后台下载（`ui/download_hub.py` / `ui/widgets/download_bar.py` / `download_queue_panel.py`）或四个下载入口（`bulk_download` / `data_manager` / `readiness_flow` / `main_window.downloads`）吗？** → 跑 `py tests/smoke_pages_overlay.py`（**637 项**，含「§7-B11 后台下载」段）。⚠ 四条红线：
   ① **测前必须把 `download_hub.SyncWorker` 打桩为不 `start()`**（否则跑测试 = 真下载，写脏数据湖并撞 §11.5-79）；
   ② **进度真源只能在 hub**，页面/弹窗/下载条都是投影（只认自己那个 `job_id`）；
   ③ **弹窗与页面不得自己持有 `SyncWorker`**（旧版 `_try_stop_worker` 已退役，有源码级断言盯着）；
