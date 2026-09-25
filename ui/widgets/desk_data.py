@@ -48,13 +48,30 @@ class DeskData:
     #   主板 10%，ST 5%）⇒ 命中只可能是"除权后前复权历史没重算"或源端异常跳变。
     HEALTH_PRICE_SEAM_RATIO = 0.25
 
+    # ★v6.67（用户拍板）：**「云端同步」一次点齐两个口径** —— "必须同时下载前复权与不复权的数据"。
+    #   两份数据**互推不出来**（前复权随除权整体漂移、不复权不动）⇒ 只同步一份，另一口径永远空着。
+    SYNC_ZONES = (ZONE_KLINE, ZONE_KLINE_RAW)
+    SYNC_ZONE_LABELS = {ZONE_KLINE: "前复权", ZONE_KLINE_RAW: "不复权",
+                        ZONE_MIN: "分钟（真实成交价）"}
+
     def __init__(self, page):
         self.page = page
         # 派生缓存（**可随时丢弃**，不是业务状态）：回执里的两段"体检结论"按标的算一次就够
         self._diff_cache: dict = {}
         self._health_cache: dict = {}
-        # ★v1.43 / §7-B11：单只同步与后台队列的互斥占位（唯一公共件，别再手写 token）
-        self._gate = SingleSyncGate(page)
+        # ★v1.43 / §7-B11：单只同步与后台队列的互斥占位（唯一公共件，别再手写 token）。
+        # ★v6.67：**按分区各一个实例** —— `SingleSyncGate` 是**单占位**设计（`hold()` 会先释放旧的），
+        #   而"一次点齐前复权 + 不复权"必须**同时**占住两个分区（与 `backtest_flow` 的
+        #   指数 / 个股两个 gate 同一手法）。`self._gate` = 前复权那一份（兼容旧引用）。
+        self._gates: dict = {ZONE_KLINE: SingleSyncGate(page)}
+        self._gate = self._gates[ZONE_KLINE]
+
+    def _gate_for(self, zone: str) -> SingleSyncGate:
+        """按分区取互斥占位件（惰性创建；`ZONE_KLINE` 那份就是 `self._gate`）。"""
+        gate = self._gates.get(zone)
+        if gate is None:
+            gate = self._gates[zone] = SingleSyncGate(self.page)
+        return gate
 
     # ==========================================
     # 查询（UI 不发网络：统一走 SingleSyncWorker → MarketSyncService）
@@ -143,84 +160,112 @@ class DeskData:
         return self._reload_for_current_view()
 
     def sync_cloud(self):
-        """把当前标的同步到最新（日线：本地有=增量 / 没有=全量；**分钟：整段快照**）。
+        """把当前标的同步到最新 —— ★v6.67：**一次点齐两个口径**（前复权 + 不复权）。
 
+        【为什么改】用户拍板："这个按钮必须要求按下后同时下载前复权与不复权的数据"。
+          两份数据**互推不出来**（前复权随除权整体漂移、不复权不动）⇒ 只同步当前那一份，
+          用户切到另一口径时永远是空的、只能现取。
+        【分钟视图】分钟只有一种口径（真实成交价）⇒ 目标退化为 `kline_min` 一个。
         【为什么名字不叫 force_sync】它**不是**强制全量（§9-O4 的历史教训）：
-        全量重下统一放在「🗄 数据管理」页，避免误触把 2010 起的整段重下一遍。
+          全量重下统一放在「🗄 数据管理」页，避免误触把 2010 起的整段重下一遍。
+        【互斥】每个分区**各自**问一句队列、各自占位（`SingleSyncGate` 是单占位设计 ⇒
+          两个口径必须用两个实例，见 `_gate_for`）。
         """
         p = self.page
         if not p.current_symbol:
             QMessageBox.information(p, "提示", "请先搜索并选中一个标的，再进行云端同步。")
             return
+        symbol = p.current_symbol
+        zones = [ZONE_MIN] if is_minute_period(p.current_period) else list(self.SYNC_ZONES)
+        # 先问一句队列：这只标的正在批量下载时，重复抓它 = 白等 + 抢同一个文件
+        targets = [z for z in zones if not self._gate_for(z).blocked_by(symbol, z)]
         p.btn_sync.setEnabled(False)
-        zone, _key = self._data_zone_and_key()
-        # ★v6.66：把"在同步哪一份"写在进度上（旧版只写"正在同步…" ⇒ 用户分不清抓的是前复权还是不复权）
-        p.lbl_sync_status.setText(
-            f"正在同步 {adjust_label(p.current_adjust)}（{zone}）…")
-        # ★v1.43 / §7-B11：单只同步**不进队列**（秒级、回包直接喂给当页渲染），
-        #   但要先问一句队列：这只标的正在批量下载时，重复抓它 = 白等 + 抢同一个文件。
-        if self._gate.blocked_by(p.current_symbol, zone):
+        if not targets:
             p.btn_sync.setEnabled(True)
             p.lbl_sync_status.setText("该标的正在后台下载队列里，稍后再试")
             return
+        p.lbl_sync_status.setText(
+            "正在同步 " + "、".join(self.SYNC_ZONE_LABELS.get(z, z) for z in targets) + " …")
         period = p.current_period if is_minute_period(p.current_period) else None
-        p.fetch_thread = SingleSyncWorker(
-            p.current_symbol, zone=zone, force_full=False, parent=p, period=period)
-        p.fetch_thread.finished.connect(p._on_sync_finished)
-        self._gate.hold(p.current_symbol, zone)   # 占位：单只跑完才会释放
-        p.fetch_thread.start()
+        # 本批状态留在页面（本模块只承载行为）：收齐才收尾
+        p._sync_zones = tuple(targets)
+        p._sync_done = {}
+        p._sync_seen = 0
+        p.fetch_threads = []
+        for zone in targets:
+            worker = SingleSyncWorker(symbol, zone=zone, force_full=False,
+                                      parent=p, period=period)
+            worker.finished.connect(lambda res, _z=zone: self._on_sync_finished(res, _z))
+            self._gate_for(zone).hold(symbol, zone)   # 占位：这一份跑完才释放
+            p.fetch_threads.append(worker)
+        for worker in p.fetch_threads:
+            worker.start()
 
-    def _on_sync_finished(self, result: dict):
+    def _on_sync_finished(self, result: dict, zone_done: str = ""):
+        """**单个口径**的取数回包 —— ★v6.67：一次同步会来两次，收齐才收尾。
+
+        【竞态防护】只认**本批发起**的那几个分区 + 标的仍是当前标的，其余丢弃（§9-O5）。
+          ⚠ 按钮恢复用 `_sync_seen` 计数（**含被丢弃的回包**）—— 否则竞态丢弃会让它永久禁用。
+        """
         p = self.page
-        p.btn_sync.setEnabled(True)
-        self._gate.release()                      # 幂等：正常/过期/失败三条路都释放
         symbol = str(result.get("symbol", p.current_symbol) or p.current_symbol)
-
-        # 【竞态防护】拉取期间用户可能切了标的 / 周期 / 复权 —— 过期结果必须丢弃（§9-O5）。
-        # 判据 = 标的 + 分区 + 档位**三者同时吻合**（只看标的会漏掉"切了周期"这种过期）。
-        zone, key = self._data_zone_and_key()
-        expected_period = p.current_period if is_minute_period(p.current_period) else ""
-        if (symbol != p.current_symbol
-                or str(result.get("zone") or "") != zone
-                or str(result.get("period") or "") != expected_period):
-            p.lbl_sync_status.setText("")
+        done_zone = str(result.get("zone") or zone_done or "")
+        batch = tuple(getattr(p, "_sync_zones", ()) or ())
+        p._sync_seen = int(getattr(p, "_sync_seen", 0) or 0) + 1
+        if p._sync_seen >= max(1, len(batch)):
+            p.btn_sync.setEnabled(True)
+        if symbol != p.current_symbol or done_zone not in batch:
+            if done_zone:
+                self._gate_for(done_zone).release()      # 幂等：防占位泄漏
             return
+        self._gate_for(done_zone).release()
+        done = getattr(p, "_sync_done", None)
+        if done is None:
+            done = p._sync_done = {}
+        done[done_zone] = dict(result or {})
+        if len(done) < len(batch):
+            return                                       # 还有一份在路上
 
-        if not result.get("ok"):
-            p.lbl_sync_status.setText("同步失败")
-            # ★v1.46：失败必须**退出"正在取数"态** —— 旧版只改这一行小字，口径回执会永远挂着
-            #   "正在从云端取这一份…" ⇒ 用户看到的是"切了口径没反应"（2026-09-25 实测反馈）。
+        # ---- 汇总回执（两份各一段，失败也点名是哪一份）----
+        parts, failed = [], []
+        for zone in batch:
+            res = done.get(zone) or {}
+            label = self.SYNC_ZONE_LABELS.get(zone, zone)
+            if not res.get("ok"):
+                failed.append((label, zone, res))
+                parts.append(f"{label} ✗")
+            elif res.get("rescaled"):
+                # ★v1.46：检测到除权 ⇒ 本次不是普通增量，而是**整段历史已重算**，必须说出来
+                parts.append(f"{label} 已重算整段（除权）")
+            elif res.get("skipped"):
+                parts.append(f"{label} 已最新")
+            else:
+                added = int(res.get("added", 0) or 0)
+                parts.append(f"{label} +{added} 行" if added else f"{label} 已更新")
+        p.lbl_sync_status.setText("同步完成：" + " · ".join(parts))
+
+        zone_now, key_now = self._data_zone_and_key()
+        if zone_now in batch and (done.get(zone_now) or {}).get("ok"):
+            df = p.data_lake.load_data(zone_now, key_now)
+            if df.empty:
+                p._refresh_adjust_hint(failed=True)
+                QMessageBox.critical(p, "错误", f"{symbol} 行情拉取失败（未取得数据）。")
+                return
+            p.current_df = df
+            p.render_charts()
+            p._refresh_adjust_hint(loaded_from_lake=True)
+            # ★v6.24（§7-B8 R3）：这一只的数据刚更新过 ⇒ 组合涨跌快照必须失效，
+            #   否则缓存 TTL 内会拿"同步前的旧读数"当今天（见 data/watchlist_change）
+            invalidate = getattr(p, "invalidate_change_cache", None)
+            if callable(invalidate):
+                invalidate()
+            return
+        if failed:
+            # 失败必须**退出"正在取数"态**（★v1.46），并优先为**当前口径**指名原因
             p._refresh_adjust_hint(failed=True)
-            QMessageBox.warning(p, "行情同步失败", friendly_fetch_message(symbol, result))
-            return
-
-        if result.get("skipped"):
-            p.lbl_sync_status.setText("已是最新，无需更新")
-        elif result.get("rescaled"):
-            # ★v1.46：检测到除权 ⇒ 本次不是普通增量，而是**整段前复权历史已重算**，必须说出来
-            p.lbl_sync_status.setText("已重算整段前复权历史（检测到除权/除息）")
-        else:
-            added = int(result.get("added", 0) or 0)
-            unit = "根" if expected_period else "行"
-            # ★v6.66：回执带上口径 —— 用户据此确认"抓的确实是我要的那一份"
-            _caliber = f"（{adjust_label(p.current_adjust)}）"
-            p.lbl_sync_status.setText(
-                (f"已更新，新增 {added} {unit}{_caliber}" if added > 0
-                 else f"已更新{_caliber}"))
-
-        df = p.data_lake.load_data(zone, key)
-        if df.empty:
-            p._refresh_adjust_hint(failed=True)
-            QMessageBox.critical(p, "错误", f"{symbol} 行情拉取失败（未取得数据）。")
-            return
-        p.current_df = df
-        p.render_charts()
-        p._refresh_adjust_hint(loaded_from_lake=True)
-        # ★v6.24（§7-B8 R3）：这一只的数据刚更新过 ⇒ 组合涨跌快照必须失效，
-        #   否则缓存 TTL 内会拿"同步前的旧读数"当今天（见 data/watchlist_change）
-        invalidate = getattr(p, "invalidate_change_cache", None)
-        if callable(invalidate):
-            invalidate()
+            label, _zone, res = next((f for f in failed if f[1] == zone_now), failed[0])
+            QMessageBox.warning(p, "行情同步失败",
+                                f"{label}：" + friendly_fetch_message(symbol, res))
 
     # ==========================================
     # 周期（★STEP 3b：一级档位 + 分钟二级档位；UI 与测试走**同一个入口**）
@@ -296,16 +341,17 @@ class DeskData:
             "**前复权**（默认）：看长期趋势 / 算指标用它；**不复权**：看当年的真实价位。\n"
             "两份数据**各存一个分区**，来回切换不覆盖、也不会重复下载。")
         p.lbl_caliber_note.setText("分钟：真实成交价口径（不含复权）" if minute_mode else "")
-        # ★v6.66（用户 2026-09-25 反馈"切了口径点云端同步，抓的不是我要的那份"）：
-        #   「☁️ 云端同步」抓的就是**当前口径**那一份 —— 这件事必须**看得见**：
-        #   鼠标一悬停就知道"现在按这个按钮会把哪一份写进哪个分区"，不必猜。
-        _zone_now = self._data_zone_and_key()[0]
+        # ★v6.67（用户拍板）：本按钮**一次点齐两份**（前复权 + 不复权）—— tooltip 必须说清，
+        #   否则用户还会以为"只抓我当前看的那一份"（v6.66 的旧文案正是那么写的）。
+        if minute_mode:
+            _targets_note = "分钟只有一种口径（真实成交价）⇒ 本次只同步当前这一档。"
+        else:
+            _targets_note = ("⚠ 本次会**同时同步两份**：前复权（`kline_daily`）+ "
+                             "不复权（`kline_daily_raw`）—— 两份互推不出来，一次点齐省得来回切。")
         p.btn_sync.setToolTip(
             "本地有数据 → 只补缺失的最新几天（快）；本地没数据 → 直接整段抓取。\n\n"
-            f"⚠ 本次同步目标 = **当前口径**：{adjust_label(p.current_adjust)}"
-            f"（分区 `{_zone_now}`）。\n"
-            "前复权与不复权是**两份独立数据**（互推不出来）—— 要看另一份，先切口径再点同步，"
-            "或到「🗄 数据管理」按分区单独补（那里可一次补两套：口径选「两个都下」）。\n\n"
+            + _targets_note + "\n"
+            "（除权/除息当天，前复权那份会自动**整段重算**，并在回执里说明。）\n\n"
             "需要「丢弃本地重新整段下载」时，请到「🗄 数据管理」页用「重新全量下载」。")
 
     # ==========================================

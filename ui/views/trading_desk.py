@@ -418,8 +418,8 @@ class TradingDeskView(QWidget):
     def sync_cloud(self):
         return self._data.sync_cloud()
 
-    def _on_sync_finished(self, result: dict):
-        return self._data._on_sync_finished(result)
+    def _on_sync_finished(self, result: dict, zone_done: str = ""):
+        return self._data._on_sync_finished(result, zone_done)
 
     def select_period_group(self, group: str) -> None:
         return self._data.select_period_group(group)

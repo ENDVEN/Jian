@@ -551,6 +551,38 @@ class MarketSyncService:
         return result
 
     @staticmethod
+    def _spot_prev_close_ok(old: pd.DataFrame, spot_bar: dict,
+                            tol: float = 1e-3) -> bool:
+        """快照"昨收"与本地最后一根收盘是否一致 —— **"今天有没有除权/除息"的现场判据**（只此一处）。
+
+        【为什么用它】除权日的"昨收"是**除权调整后**的昨收（行情商通行约定，否则当日涨跌幅会显示
+          成除权造成的 -30% 假跌）。所以：
+            · 相等（≤ `tol` 相对差）⇒ 今天没除权 ⇒ 秒补当天这一根**自洽**；
+            · 不等（> `tol`）⇒ 今天除权/除息 ⇒ 前复权因子变了、历史需要整段重算 ⇒ **秒补必须让路**；
+            · 判据缺失（快照没带昨收 / 非数值 / 本地非正价）⇒ 返回 False（**宁可多跑一次真请求**，
+              也不抄近路 —— 正确性优先于省流量）。
+        【为什么是 0.1%】同源同口径下"没除权"时两者应当**完全相等**（分价位），0.1% 已很宽松；
+          而最小的除权/除息（小额分红）也在这之上，所以不会漏。
+        """
+        try:
+            _raw = (spot_bar or {}).get("prev_close")
+            if _raw is None:
+                return False
+            prev_close = float(_raw)
+            if "close" not in old.columns:
+                return False
+            closes = pd.to_numeric(old["close"], errors="coerce").dropna()
+            if closes.empty:
+                return False
+            last_close = float(closes.iloc[-1])
+            if not (prev_close > 0 and last_close > 0):
+                return False
+            return abs(prev_close - last_close) / last_close <= tol
+        except Exception as e:  # noqa: BLE001 —— 判据坏了就当"没有判据"，拒绝抄近路
+            logger.debug(f"昨收判据失败: {e}")
+            return False
+
+    @staticmethod
     def _qfq_factor_drifted(old: pd.DataFrame, new: pd.DataFrame,
                             tol: float = 0.005) -> bool:
         """**重叠日期**上价格对不上 ⇒ 前复权的复权因子变了（除权/除息）。**只此一处判据**。
@@ -591,6 +623,13 @@ class MarketSyncService:
         命中即落库并返回 result（`reason="spot"`）；任何一条不满足 ⇒ 返回 None（交网络增量）。
         【为什么这么窄】spot 只有“当天”一根，多日缺口/首次用了会留洞——那必须逐只真拉。
         【复权自洽】qfq 最新一根 == 真实价，追加当天不漂移；但 spot **绝不**当历史复权修正通道。
+        ★v6.67（用户 2026-09-25 实测："当天转赠/分红的股票，M1/M2/M3 更新到最新后拿到的都是不复权"）：
+          **除权/除息闸门** —— 本函数是 `refresh_one` 主路径之外的**旁路**（命中即 return），
+          所以它**绕过**了主路径第 3 步的"复权因子漂移 ⇒ 整段重拉"（v1.47 刚加的自愈）。
+          而除权当天恰好就是"本地末日 == 上一交易日"这个 spot 最容易命中的形态 ⇒ 只追加当天那根、
+          **历史仍按旧因子缩放** ⇒ 图上/回测里看到的就是"不复权"的样子。判据见 `_spot_prev_close_ok`
+          （零额外请求）：快照"昨收" vs 本地最后一根收盘 —— 不等即今天除权，让路给网络增量
+          （带重叠窗口 ⇒ 漂移判据命中 ⇒ 整段重算）。
         """
         if spot_bar is None or policy is None or spot_prev is None:
             return None
@@ -604,6 +643,8 @@ class MarketSyncService:
                 return None                    # 缺口 > 1 交易日 ⇒ 绝不造假（会留洞）
         except (ValueError, TypeError):
             return None
+        if not self._spot_prev_close_ok(old, spot_bar):
+            return None                        # ★v6.67：今天除权/除息（或判据缺失）⇒ 秒补让路
         try:
             row = {k: v for k, v in dict(spot_bar).items() if k in DAILY_KEEP_COLUMNS}
             row['date'] = pd.Timestamp(policy.expected_latest).normalize()

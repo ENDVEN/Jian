@@ -4435,7 +4435,9 @@ try:
 
     _bar7 = {'open': 10.0, 'high': 10.5, 'low': 9.8, 'close': 10.2,
              'volume': 1234500.0, 'amount': 1.28e8, 'turnover': 0.0093,
-             'outstanding_share': 1.9e10}
+             'outstanding_share': 1.9e10,
+             # ★v6.67：**昨收** = 除权闸门的判据（与本地最后一根收盘一致 ⇒ 今天没除权）
+             'prev_close': 10.2}
     _no_sleep7 = (lambda _s: None)
     try:
         # (a) 本地末日 == 上一交易日 ⇒ 秒补当天，不发网络
@@ -4473,6 +4475,31 @@ try:
                          sleep_fn=_no_sleep7, spot_bar=_bar7, spot_prev=_prev7)
         check("★ 不复权/分钟/指数分区永不走 spot（只有 qfq 日线分区可）",
               '600002' in _fetch_calls7)
+
+        # ---- ★v6.67：**除权/除息闸门**（用户实测："当天转赠/分红的股票，更新到最新后拿到的
+        #   都是不复权"）—— spot 是"命中即 return"的旁路 ⇒ 它会**绕过**主路径的复权因子漂移
+        #   检测；而除权当天恰好是最容易命中 spot 的形态（本地末日 == 上一交易日）⇒
+        #   只追加当天那根、历史仍按旧因子缩放 = 用户看到的现象。判据 = 快照昨收 vs 本地末根收盘。
+        _old7 = _sv.lake.store['600000'].iloc[:-1]        # 本地"除权前"的历史（末日=上一交易日）
+        check("★ 昨收判据：与本地末根收盘一致 ⇒ 今天没除权（放行秒补）",
+              _MSS7._spot_prev_close_ok(_old7, _bar7) is True)
+        _drift_bar7 = dict(_bar7, prev_close=7.0)         # 除权参考价 ⇒ 昨收被调整过
+        check("★ 昨收判据：差 31%（10.2 → 7.0）⇒ 判定**今天除权/除息**（秒补必须让路）",
+              _MSS7._spot_prev_close_ok(_old7, _drift_bar7) is False)
+        _noprev_bar7 = {k: v for k, v in _bar7.items() if k != 'prev_close'}
+        check("★ 昨收判据缺失（快照没带昨收）⇒ **拒绝秒补**（没有判据就别抄近路）",
+              _MSS7._spot_prev_close_ok(_old7, _noprev_bar7) is False
+              and _MSS7._spot_prev_close_ok(_old7, {}) is False)
+        # 端到端：除权日命中 spot 形态，但必须**退回网络增量**（由漂移判据去整段重算）
+        _sv4 = _seed('600003', _prev7)
+        _fetch_calls7.clear()
+        _res4 = _sv4.refresh_one('600003', zone=_ZK7, policy=_TP7(interval=0, jitter=0,
+                                                                  expected_latest=_today7),
+                                 sleep_fn=_no_sleep7, spot_bar=_drift_bar7, spot_prev=_prev7)
+        check("★★ v6.67：除权日**不走 spot 秒补**（否则历史不重算 = 用户看到的\"不复权\"）",
+              '600003' in _fetch_calls7 and _res4.get('reason') != 'spot')
+        check("★ v6.67：判据列只当闸门、**永不落盘**（`prev_close` 进 SPOT_DAILY_KEEP，不进湖白名单）",
+              'prev_close' in _SDK7 and 'prev_close' not in _af7.DAILY_KEEP_COLUMNS)
     finally:
         _MSS7._fetch = _real_fetch7
 except Exception as _e7:  # noqa: BLE001

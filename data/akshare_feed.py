@@ -45,9 +45,14 @@ KLINE_CN_RENAME = {
 SPOT_DAILY_RENAME = {
     '代码': 'symbol', '今开': 'open', '最高': 'high', '最低': 'low', '最新价': 'close',
     '成交量': 'volume', '成交额': 'amount', '换手率': 'turnover', '流通市值': 'outstanding_share',
+    # ★v6.67：**昨收** —— 只当"今天有没有除权/除息"的**闸门**用（见 sync_service._try_apply_spot）：
+    #   除权日的"昨收"是**除权调整后**的昨收（行情商的通行约定，否则当日涨跌幅会显示成 -30%），
+    #   所以"快照昨收 != 本地最后一根收盘" ⇒ 今天发生除权 ⇒ **spot 秒补必须让路**。
+    #   ⚠ 它**不在** `DAILY_KEEP_COLUMNS` 里 ⇒ 永远不会被写进数据湖（只是判据，不是数据）。
+    '昨收': 'prev_close',
 }
 SPOT_DAILY_KEEP = ('symbol', 'open', 'high', 'low', 'close', 'volume', 'amount',
-                   'turnover', 'outstanding_share')
+                   'turnover', 'outstanding_share', 'prev_close')
 
 # ★P5 / §7-B12：全市场**当前估值快照**（供 M2 结果表 B 层列）——与日线秒补同一 spot_em 接口，
 #   但只取非价量的估值字段，**绝不进 kline_daily**（那不是 bar）。都是"当前值"，上层仅在
@@ -265,7 +270,7 @@ class AkShareFeed:
         # 只留 6 位数字代码（挡掉指数/异常行）
         out = out[out['symbol'].astype(str).str.match(r'^\d{6}$')]
         for col in ('open', 'high', 'low', 'close', 'volume', 'amount',
-                    'turnover', 'outstanding_share'):
+                    'turnover', 'outstanding_share', 'prev_close'):
             if col in out.columns:
                 out[col] = pd.to_numeric(out[col], errors='coerce')
         # 单位归一（命门，见模块常量注释）：只在列存在时做，绝不凭空造列

@@ -3852,13 +3852,14 @@ try:
     mkt.current_adjust = _AN16
     mkt._sync_period_widgets()
     _tt_raw16 = mkt.btn_sync.toolTip()
-    check("★ v6.66：切到不复权 ⇒「云端同步」tooltip 明说目标 = **不复权 · kline_daily_raw**",
+    check("★ v6.66：切到不复权 ⇒「云端同步」tooltip 明说目标含 **不复权 · kline_daily_raw**",
           "不复权" in _tt_raw16 and "kline_daily_raw" in _tt_raw16)
     mkt.current_adjust = _AQ16
     mkt._sync_period_widgets()
-    check("★ v6.66：切回前复权 ⇒ tooltip 跟着改（同一条按钮两种口径，说明必须实时算）",
-          "前复权" in mkt.btn_sync.toolTip()
-          and "kline_daily_raw" not in mkt.btn_sync.toolTip())
+    # ★v6.67（用户拍板）**取代** v6.66 的"tooltip 随口径变"：这条按钮现在**恒**同步两份，
+    #   所以两个口径下的说明必须**一致**（口径不再是它的差异点）—— 断言跟着改口径，不是放宽。
+    check("★ v6.67：两个口径下 tooltip **都写\"同时同步两份\"**（取代 v6.66 的\"随口径变\"）",
+          "同时同步两份" in _tt_raw16 and "同时同步两份" in mkt.btn_sync.toolTip())
     mkt.current_adjust = _adj_back16
     mkt.current_period = _per_back16
     mkt._sync_period_widgets()
@@ -3874,6 +3875,62 @@ try:
           _rf16.SYNC_CALIBER_LABEL == '前复权日线'
           and '口径 {SYNC_CALIBER_LABEL}' in _pl16b.Path(
               "ui/widgets/readiness_flow.py").read_text(encoding="utf-8"))
+
+    # ---- ★v6.67（用户拍板）：一次点「云端同步」必须**同时下载前复权与不复权** ----
+    from PyQt6.QtCore import QObject as _QO67, pyqtSignal as _PS67  # noqa: E402
+
+    import ui.widgets.desk_data as _dd67  # noqa: E402
+
+    _started67: list = []
+
+    class _FakeWorker67(_QO67):
+        finished = _PS67(dict)
+
+        def __init__(self, symbol, zone=None, force_full=False, parent=None, period=None):
+            super().__init__(parent)
+            _started67.append(zone)
+
+        def start(self):
+            pass
+
+    _orig_w67 = _dd67.SingleSyncWorker
+    _dd67.SingleSyncWorker = _FakeWorker67
+    try:
+        mkt.current_symbol = 'sh600000'
+        mkt.current_adjust = _AQ16
+        mkt.current_period = "D"
+        _started67.clear()
+        # ⚠ 前面的分节把 `mkt.sync_cloud` 换成了 lambda（实例属性会遮蔽类方法）⇒ 直接调行为模块
+        mkt._data.sync_cloud()
+        check("★★ v6.67：一次点「云端同步」⇒ **两个口径各起一次取数**（前复权 + 不复权）",
+              _started67 == [_ZK16, _ZKR16])
+        check("★ v6.67：进度回执点名两份（旧版只写\"正在同步…\"）",
+              '前复权' in mkt.lbl_sync_status.text()
+              and '不复权' in mkt.lbl_sync_status.text())
+        check("★ v6.67：按分区**各一个**互斥件（`SingleSyncGate` 单占位 ⇒ 两个口径必须两个实例）",
+              len(mkt._data._gates) >= 2
+              and mkt._data._gates[_ZK16] is not mkt._data._gates[_ZKR16])
+        # 只回来一份 ⇒ 不收尾（否则汇总回执会缺一份、按钮提前恢复）
+        mkt._on_sync_finished({'ok': True, 'symbol': 'sh600000', 'zone': _ZKR16,
+                               'period': '', 'skipped': True, 'added': 0}, _ZKR16)
+        check("★ v6.67：一份回来**不收尾**（按钮仍禁用、回执不写\"同步完成\"）",
+              not mkt.btn_sync.isEnabled()
+              and '同步完成' not in mkt.lbl_sync_status.text())
+        mkt._on_sync_finished({'ok': True, 'symbol': 'sh600000', 'zone': _ZK16,
+                               'period': '', 'added': 12, 'rescaled': True}, _ZK16)
+        _sum67 = mkt.lbl_sync_status.text()
+        check("★ v6.67：两份收齐才收尾，汇总回执分别点名两份（含\"已重算整段\"）",
+              mkt.btn_sync.isEnabled() and '同步完成' in _sum67
+              and '前复权' in _sum67 and '不复权' in _sum67 and '已重算整段' in _sum67)
+        check("★ v6.67：tooltip 改成\"同时同步两份\"（旧文案写的是\"当前口径那一份\"）",
+              '同时同步两份' in mkt.btn_sync.toolTip())
+    finally:
+        _dd67.SingleSyncWorker = _orig_w67
+        mkt._data._gate_for(_ZK16).release()
+        mkt._data._gate_for(_ZKR16).release()
+        mkt.current_adjust = _adj_back16
+        mkt.current_period = _per_back16
+        mkt._sync_period_widgets()
 except Exception as _e16:  # noqa: BLE001
     check(f"v6.66 不复权下载入口断言整段抛异常: {type(_e16).__name__}: {_e16}", False)
 
