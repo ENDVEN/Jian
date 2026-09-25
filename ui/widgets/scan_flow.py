@@ -22,14 +22,19 @@ from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import QMessageBox
 
 from core.cross_section import ScanThresholds
+from core.preferences import preferences
 from core.utils import parse_params_text
+from data.backtest_archive import KIND_M2, SOURCE_AUTO, BacktestArchive, build_scan_record
+from data.industry_store import get_industry_store
 from data.scan_store import kline_zone_dir
 from data.sync_service import MarketSyncService
 from data.watchlist_store import WatchlistStore
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.widgets.readiness_flow import (constituent_failure_text,
-                                       constituent_snapshot_text)
-from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard
+                                       constituent_snapshot_text, mark_archived,
+                                       scope_snapshot)
+from ui.workers import (ConstituentsWorker, CrossSectionWorker, IndustryMapWorker,
+                        JobGuard, SpotValuationWorker)
 
 __all__ = ['ScanFlow', 'SCAN_UI_KEY']
 
@@ -78,7 +83,12 @@ class ScanFlow:
         p.btn_latest_day.clicked.connect(self.jump_latest)
         p.date_asof.dateChanged.connect(self._on_date_changed)
         p.table.itemDoubleClicked.connect(self.on_row_double_clicked)
+        p.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)   # ★P1 点表头排序
+        p.table.horizontalHeader().sectionMoved.connect(self._on_section_moved)     # ★P7 拖拽换列序→持久化
         p._filter_pane.btn_reset.clicked.connect(self.reset_thresholds)
+        # ★v1.46：历史页「重跑」用 —— 等名单 + 体检都就绪再自动开扫（见 request_run）
+        self._pending_run = False
+        self._probe_done = False
 
     # ==========================================
     # 范围（自选 / 指数成分 / 全 A）
@@ -160,6 +170,7 @@ class ScanFlow:
             p._result.set_empty(f'范围就绪（{len(p._symbols)} 只）—— 正在体检本地数据就绪度…')
             p._readiness.start(p._symbols,
                                min_bars=p._filter_pane.to_thresholds().min_bars)
+        self._maybe_run_pending()          # ★v1.46：重跑等的是"名单 + 体检都就绪"
 
     def _on_constituents(self, result, token: int) -> None:
         p = self.page
@@ -198,6 +209,7 @@ class ScanFlow:
             f'—— 正在体检本地数据就绪度…')
         p._readiness.start(p._symbols,
                            min_bars=p._filter_pane.to_thresholds().min_bars)
+        self._maybe_run_pending()          # ★v1.46：成分股是异步解析的，重跑在此接着走
 
     def _refresh_chips(self) -> None:
         p = self.page
@@ -327,12 +339,51 @@ class ScanFlow:
         p._worker = CrossSectionWorker(
             job, kline_zone_dir('kline_daily'), formula, symbols=list(p._symbols),
             params=params, thresholds=p._thresholds, asof=asof,
-            names=dict(p._names), snapshot_columns=('close', 'amount', 'turnover'),
+            names=dict(p._names), snapshot_columns=('close', 'amount', 'turnover',
+                                                     'volume', 'outstanding_share'),
             store=p._store)
         p._worker.progress.connect(self._on_progress)
         p._worker.finished.connect(self._on_finished)
         p._worker.failed.connect(self._on_failed)
         p._worker.start()
+
+    # ==========================================
+    # ★v1.46：历史页「重跑」—— 等名单 + 体检都就绪再自动开扫
+    # ==========================================
+    def request_run(self) -> None:
+        """外部（运行历史页「▶ 重跑」）请求"复用参数后立刻扫一次"。
+
+        【为什么不能直接 `start_scan()`】旧版是 `apply_config()` + `start_scan()` 连招，两头都坏：
+          ① 「指数成分」范围是**异步**解析的，`p._symbols` 此刻还是空 ⇒ `on_run_clicked`
+             早退（回执"范围是空的"），用户点了重跑什么都没发生；
+          ② 同步范围虽能起跑，但 `resolve_scope` 刚把体检报告清空 ⇒ 必弹
+             "就绪度体检还没完成"的闸门框（重跑不该被自己的体检拦下）。
+        这里改成：置一个"待跑"标记，等**名单到位**且**体检结束**后由 `_maybe_run_pending()`
+        接手；**闸门照常生效**（真缺数据时仍会二次确认 —— 不绕过安全阀）。
+        """
+        p = self.page
+        self._pending_run = True
+        self._probe_done = False
+        p._readiness.on_probe_done = self._on_probe_done_for_run
+        p.lbl_receipt.setText('已复用参数 —— 正在解析范围 / 体检本地数据，就绪后自动开始扫描…')
+        self._maybe_run_pending()
+
+    def _on_probe_done_for_run(self) -> None:
+        self._probe_done = True
+        self._maybe_run_pending()
+
+    def _maybe_run_pending(self) -> None:
+        """名单 + 体检都就绪 ⇒ 真正开跑；否则等下一次回调。"""
+        if not self._pending_run:
+            return
+        p = self.page
+        if not p._symbols:
+            return                              # 成分股还在异步解析
+        if p._readiness.report is None and not self._probe_done:
+            return                              # 体检还没结束
+        self._pending_run = False
+        p._readiness.on_probe_done = None
+        self.on_run_clicked()
 
     def _on_progress(self, done: int, total: int, note: str) -> None:
         p = self.page
@@ -385,7 +436,101 @@ class ScanFlow:
         p.lbl_receipt.setText(text)
         p.lbl_receipt.setToolTip(tip)
         self._refresh_chips()
-        self.refresh()
+        self.refresh(resize=True)          # ★新扫描 ⇒ 重测一次列宽（排序/切日期不再重测）
+        self._auto_archive(outcome)         # ★P4：非缓存的新扫描落一份 kind=M2 快照
+        self._maybe_fetch_valuation(outcome)  # ★P5：看的是最新交易日时，后台拉当前估值填 B 层列
+        self._maybe_fetch_industry()        # ★P6：行业映射为空时后台抓一次（持久缓存）
+
+    def _auto_archive(self, outcome) -> None:
+        """扫描完成落一份 `kind=M2` 不可变快照（§7-B12 P4 · v1.46 重做）。
+
+        受「每次回测 / 扫描自动存档」开关（`backtest_archive.auto`）控制；
+        **缓存命中不重复落**（没新东西）；成功后补一行**可见回执**（旧版纯静默，
+       用户根本不知道存了）；存档失败只记日志，**绝不拖挂扫描回执**（与 M1 同款容错）。
+        """
+        p = self.page
+        if outcome is None or outcome.cached:
+            return
+        if not bool((preferences.get('backtest_archive') or {}).get('auto', True)):
+            return
+        try:
+            counts = outcome.counts_on(outcome.asof)
+            label, code = scope_snapshot(p, counts.get('total', 0))   # ★带指数名（旧版会丢）
+            rid = BacktestArchive().save(build_scan_record(
+                p.current_config(), kind=KIND_M2, scope_label=label, scope_code=code,
+                counts=counts, asof=outcome.asof, source=SOURCE_AUTO))
+            if rid:
+                p._last_archive_id = rid
+                mark_archived(p, label)
+        except Exception as e:  # noqa: BLE001
+            logger.warning('M2 自动存档失败（忽略）: %s', e)
+
+    # ==========================================
+    # ★P5 B 层估值（当前值：仅基准日==数据最新交易日才取/才显，否则 '—'）
+    # ==========================================
+    def _valuation_for(self, stamp):
+        """当前查看日与已取估值对应日一致才回估值（否则 None ⇒ 那三列 '—'）。"""
+        p = self.page
+        if not p._valuation or p._valuation_date is None:
+            return None
+        return p._valuation if pd.Timestamp(stamp).normalize() == p._valuation_date else None
+
+    def _maybe_fetch_valuation(self, outcome) -> None:
+        """新扫描且看的就是数据最新交易日 ⇒ 后台拉一次全市场当前估值（非阻塞、不连累扫描）。"""
+        p = self.page
+        dates = getattr(outcome.result, 'dates', None)
+        if dates is None or len(dates) == 0:
+            return
+        latest = pd.Timestamp(dates[-1]).normalize()
+        if outcome.asof is None or pd.Timestamp(outcome.asof).normalize() != latest:
+            p._valuation, p._valuation_date = None, None   # 历史基准日：不取、不显
+            return
+        if p._valuation_date == latest:                     # 这份最新日已取过，不重复请求
+            return
+        if p._valuation_worker is not None and p._valuation_worker.isRunning():
+            return
+        job = p._valuation_guard.next()
+        p._valuation_worker = SpotValuationWorker(parent=p)
+        p._valuation_worker.finished.connect(
+            lambda data, token=job: self._on_valuation_ready(data, token))
+        p._valuation_worker.start()
+
+    def _on_valuation_ready(self, data, token: int) -> None:
+        """估值回包：过守卫后存下并重画（带上 B 层列）；None ⇒ 诚实留 '—'。"""
+        p = self.page
+        if not p._valuation_guard.accept(token):
+            return                                          # 迟到的旧回包丢弃
+        if data:
+            dates = getattr(p._outcome.result, 'dates', None) if p._outcome else None
+            p._valuation = data
+            p._valuation_date = (pd.Timestamp(dates[-1]).normalize()
+                                 if dates is not None and len(dates) else None)
+            self.refresh()                                  # 重画带上估值（不重测列宽）
+
+    # ==========================================
+    # ★P6 细分行业（本地缓存 industry_map.json；为空时后台抓一次，扫描只读缓存）
+    # ==========================================
+    def _maybe_fetch_industry(self) -> None:
+        """行业映射为空 ⇒ 后台抓一次全市场行业（~80+ 请求，一次性、持久缓存）；已有则跳过。"""
+        p = self.page
+        if get_industry_store().is_loaded():
+            return
+        if p._industry_worker is not None and p._industry_worker.isRunning():
+            return
+        job = p._industry_guard.next()
+        p._industry_worker = IndustryMapWorker(parent=p)
+        p._industry_worker.finished.connect(
+            lambda data, token=job: self._on_industry_ready(data, token))
+        p._industry_worker.start()
+
+    def _on_industry_ready(self, data, token: int) -> None:
+        """行业映射回包：过守卫 → 存盘 + 重画（带上行业列）；None ⇒ 那列继续 '—'。"""
+        p = self.page
+        if not p._industry_guard.accept(token):
+            return
+        if data:
+            get_industry_store().replace(data)
+            self.refresh()
 
     def _on_failed(self, job_id: int, reason: str) -> None:
         p = self.page
@@ -400,7 +545,7 @@ class ScanFlow:
     # ==========================================
     # 结果刷新（含**切日期零成本**）
     # ==========================================
-    def refresh(self) -> None:
+    def refresh(self, resize: bool = False) -> None:
         p = self.page
         outcome = p._outcome
         if outcome is None:
@@ -417,7 +562,9 @@ class ScanFlow:
             detail=outcome.result.detail if same_day else None,
             snapshot=outcome.result.snapshot if same_day else None,
             names=p._names, elapsed_ms=outcome.elapsed_ms, cached=outcome.cached,
-            date_label=str(stamp.date()), scope_label=p.cb_scope.currentText().replace('…', ''))
+            date_label=str(stamp.date()), scope_label=p.cb_scope.currentText().replace('…', ''),
+            valuation=self._valuation_for(stamp), industry=get_industry_store().as_map(),
+            resize=resize)
         p.lbl_day.setText(str(stamp.date()))
         p.lbl_cached.setText('缓存命中（未重算）' if outcome.cached else '')
         p.lbl_day.setToolTip('在交易日轴上 ◀ ▶ 移动是**零成本**的（读缓存矩阵，D3）。\n'
@@ -464,15 +611,105 @@ class ScanFlow:
         p.save_scan_ui()
         p.lbl_receipt.setText('已恢复默认粗筛 —— 点「▶ 开始扫描」生效。')
 
+    # ==========================================
+    # ★P3 配置打包 / 还原（供筛选方案库与偏好加载共用 —— 单一事实源）
+    # ==========================================
+    def current_config(self) -> dict:
+        """把当前筛选配置打包成可持久化快照（与 scan_ui 偏好同形，另加 adjust）。"""
+        p = self.page
+        return {
+            'scope': p.cb_scope.currentIndex(),
+            'index_code': str(p.cb_index.currentData() or ''),
+            'formula': p._formula_pane.txt_formula.toPlainText(),
+            'params': p._formula_pane.txt_params.text(),
+            'thresholds': p._filter_pane.to_thresholds().to_dict(),
+            'adjust': 'qfq',
+        }
+
+    def apply_config(self, cfg: dict) -> None:
+        """把一份配置快照整体还原进页面（缺字段逐个回落默认；与 `_load_scan_ui` 共用同一口径）。
+
+        还原后手动触发一次 `resolve_scope`（范围/指数可能变了 ⇒ 重新解析名单与体检）。
+        """
+        cfg = cfg or {}
+        p = self.page
+        p._ui_restoring = True
+        try:
+            try:
+                index = int(cfg.get('scope') or 0)
+            except (TypeError, ValueError):
+                index = 0
+            p.cb_scope.setCurrentIndex(index if 0 <= index < p.cb_scope.count() else 0)
+            p.cb_index.setVisible(p.cb_scope.currentIndex() == 1)
+            code = str(cfg.get('index_code') or '')
+            if code:
+                idx = p.cb_index.findData(code)
+                if idx >= 0:
+                    p.cb_index.setCurrentIndex(idx)
+            p._formula_pane.txt_formula.setPlainText(str(cfg.get('formula') or ''))
+            p._formula_pane.txt_params.setText(str(cfg.get('params') or ''))
+            thresholds = ScanThresholds.from_dict(cfg.get('thresholds'))
+            p._thresholds = thresholds
+            p._filter_pane.from_thresholds(thresholds)
+        finally:
+            p._ui_restoring = False
+        p.resolve_scope()
+
+    def on_header_clicked(self, col: int) -> None:
+        """★P1 点表头 → 切换排序态后重画（排序是展示层，四态计数仍走 `tally_status` 唯一口径）。
+
+        默认命中置顶；点数值/文本列 = 全局排序；点状态列 = 复位。未扫描（无结果）时不响应。
+        ★P7：拖拽换列序后 visual≠logical，sectionClicked 传的是**视觉列号**，需转回逻辑列号。
+        """
+        p = self.page
+        if p._outcome is None:
+            return
+        logical = p.table.horizontalHeader().logicalIndex(col)
+        if p._result.toggle_sort(logical):
+            self.refresh()
+
+    # ==========================================
+    # ★P7 列顺序拖拽自定义（visual→logical 持久化到 scan_ui）
+    # ==========================================
+    def current_column_order(self) -> list:
+        """当前列视觉顺序（每个视觉位上的 logical 索引），供 scan_ui 持久化。"""
+        header = self.page.table.horizontalHeader()
+        return [header.logicalIndex(v) for v in range(self.page.table.columnCount())]
+
+    def apply_column_order(self, order) -> None:
+        """恢复列序（visual→logical）。非法/长度不符（旧档）→ 保持默认不动。"""
+        p = self.page
+        header = p.table.horizontalHeader()
+        n = p.table.columnCount()
+        if not order or len(order) != n or sorted(order) != list(range(n)):
+            return
+        p._restoring_order = True
+        try:
+            for visual, logical in enumerate(order):
+                if header.logicalIndex(visual) != logical:
+                    header.moveSection(header.visualIndex(logical), visual)
+        finally:
+            p._restoring_order = False
+
+    def _on_section_moved(self, *_a) -> None:
+        """拖拽换列序后持久化（加载期抑制，避免恢复时回写）。"""
+        p = self.page
+        if getattr(p, '_restoring_order', False):
+            return
+        p.save_scan_ui()
+
     def on_row_double_clicked(self, item) -> None:
-        """双击结果行 → 行情工作台打开该股（E 节：**不另做看图器**）。"""
+        """双击结果行 → 行情工作台打开该股（E 节：**不另做看图器**）。
+
+        ⚠ 首列 `#` 行号入表后，代码/名称列索引各 +1（代码=1、名称=2）。
+        """
         p = self.page
         row = item.row()
-        sym_item = p.table.item(row, 0)
+        sym_item = p.table.item(row, 1)
         if sym_item is None:
             return
         symbol = str(sym_item.text())
-        name = str(p.table.item(row, 1).text()) if p.table.item(row, 1) else ''
+        name = str(p.table.item(row, 2).text()) if p.table.item(row, 2) else ''
         if not symbol:
             return
         p.main_win.page_market.load_symbol(symbol, name)

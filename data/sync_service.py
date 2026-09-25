@@ -135,6 +135,43 @@ DAILY_SETTLE_HHMM = 1505
 DAILY_ZONES = (ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX)
 
 
+def _num_or_none(v):
+    """安全转 float；None/NaN/非数 → None（估值缺值诚实留空，不拿 0 冒充）。"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if f != f else f
+
+
+def spot_valuation_map() -> dict:
+    """★P5：全市场当前估值快照 → `{symbol: {pe, pb, total_mktcap}}`（供 M2 B 层列）。
+
+    走本门面（§9-H：任何联网抓取必须经此，ui/ 不出现 AkShareFeed 符号）。
+    失败/空 ⇒ 返回 `{}`（上层诚实留 '—'）。**当前值**，上层仅在基准日==数据最新交易日才用。
+    """
+    df = AkShareFeed.fetch_market_spot_valuation()
+    if df is None or df.empty or 'symbol' not in df.columns:
+        return {}
+    out: dict = {}
+    for row in df.itertuples(index=False):
+        sym = str(getattr(row, 'symbol', '') or '')
+        if not sym:
+            continue
+        out[sym] = {'pe': _num_or_none(getattr(row, 'pe', None)),
+                    'pb': _num_or_none(getattr(row, 'pb', None)),
+                    'total_mktcap': _num_or_none(getattr(row, 'total_mktcap', None))}
+    return out
+
+
+def fetch_industry_map() -> dict:
+    """★P6：全市场「代码→细分行业」映射门面（§9-H：ui 不直连行情源，抓取经此）。
+
+    成本高（~80+ 次请求）⇒ 调用方（后台 worker）抓一次后存进 `industry_store`，扫描只读缓存。
+    """
+    return AkShareFeed.fetch_industry_map()
+
+
 def is_daily_bar_settled(bar_date, now=None, settle_hhmm: int = DAILY_SETTLE_HHMM) -> bool:
     """某根日线 bar 是否已"收盘定稿"（纯函数 · 零 Qt · 零网络）。
 

@@ -49,6 +49,12 @@ SPOT_DAILY_RENAME = {
 SPOT_DAILY_KEEP = ('symbol', 'open', 'high', 'low', 'close', 'volume', 'amount',
                    'turnover', 'outstanding_share')
 
+# ★P5 / §7-B12：全市场**当前估值快照**（供 M2 结果表 B 层列）——与日线秒补同一 spot_em 接口，
+#   但只取非价量的估值字段，**绝不进 kline_daily**（那不是 bar）。都是"当前值"，上层仅在
+#   基准日==数据最新交易日时才用，否则显 '—'（诚实口径，§5.3 / 三态铁律同源）。
+SPOT_VALUATION_RENAME = {'代码': 'symbol', '市盈率-动态': 'pe', '市净率': 'pb', '总市值': 'total_mktcap'}
+SPOT_VALUATION_KEEP = ('symbol', 'pe', 'pb', 'total_mktcap')
+
 # 东财接口超时上限 (秒)：作为兜底源时不允许无限期挂起
 EM_TIMEOUT_SECONDS = 15
 
@@ -269,6 +275,60 @@ class AkShareFeed:
             out['turnover'] = out['turnover'] / 100.0            # 百分数 → 小数
         out = drop_unusable_price_rows(out, "spot全市场快照")     # 同一道物理护栏
         return out.reset_index(drop=True)
+
+    @staticmethod
+    def fetch_market_spot_valuation() -> pd.DataFrame:
+        """★P5：1 次请求拿全市场**当前估值快照**（市盈率-动态/市净率/总市值），供 M2 B 层列。
+
+        返回列 `SPOT_VALUATION_KEEP`（symbol + pe + pb + total_mktcap，元）。**这是"当前值"、
+        不是历史** ⇒ 上层只在基准日==数据最新交易日时才用，否则 '—'。
+        ⚠ 不进 kline_daily（非价量 bar）；失败（网络/接口变更）⇒ 回**空表**（上层诚实留空）。
+        """
+        try:
+            df = ak.stock_zh_a_spot_em()
+        except Exception as e:  # noqa: BLE001 —— 估值快照失败由上层诚实留空，绝不上抛
+            logging.warning(f"全市场估值快照(spot_em)失败: {e}")
+            return pd.DataFrame(columns=list(SPOT_VALUATION_KEEP))
+        if df is None or df.empty or '代码' not in df.columns:
+            return pd.DataFrame(columns=list(SPOT_VALUATION_KEEP))
+        out = df.rename(columns=SPOT_VALUATION_RENAME)
+        out = out[[c for c in SPOT_VALUATION_KEEP if c in out.columns]].copy()
+        if 'symbol' not in out.columns or out.empty:
+            return pd.DataFrame(columns=list(SPOT_VALUATION_KEEP))
+        out = out[out['symbol'].astype(str).str.match(r'^\d{6}$')]
+        for col in ('pe', 'pb', 'total_mktcap'):
+            if col in out.columns:
+                out[col] = pd.to_numeric(out[col], errors='coerce')
+        return out.reset_index(drop=True)
+
+    @staticmethod
+    def fetch_industry_map() -> dict:
+        """★P6：抓全市场「代码→细分行业」映射（东财行业板块成分，~80+ 次请求，一次性）。
+
+        返回 `{symbol: 板块名}`。任一板块失败 ⇒ 跳过该板块（不毁整表）；全失败回 `{}`。
+        ⚠ 成本高 ⇒ 上层缓存进 `industry_map.json`、后台刷新，**扫描时只读缓存不联网**。
+        """
+        try:
+            boards = ak.stock_board_industry_name_em()
+        except Exception as e:  # noqa: BLE001
+            logging.warning(f"行业板块列表拉取失败: {e}")
+            return {}
+        if boards is None or boards.empty or '板块名称' not in boards.columns:
+            return {}
+        out: dict = {}
+        for name in boards['板块名称'].astype(str).tolist():
+            try:
+                cons = ak.stock_board_industry_cons_em(symbol=name)
+            except Exception as e:  # noqa: BLE001 —— 单板块失败不影响其余
+                logging.warning(f"行业成分拉取失败[{name}]: {e}")
+                continue
+            if cons is None or cons.empty or '代码' not in cons.columns:
+                continue
+            for code in cons['代码'].astype(str).tolist():
+                code = code.strip()
+                if len(code) == 6 and code.isdigit():
+                    out[code] = name
+        return out
 
     # ==========================================
     # 交易日历 (Trading Calendar)  v6.45 / §7-B10

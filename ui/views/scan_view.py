@@ -22,6 +22,7 @@ from ui.widgets.readiness_flow import ReadinessFlow
 from ui.widgets.scan_flow import SCAN_UI_KEY, ScanFlow
 from ui.widgets.scan_layout import (DRAWER_MAX_WIDTH, DRAWER_MIN_WIDTH, ScanLayout)
 from ui.widgets.scan_result import ScanResult
+from ui.widgets.scan_strategy_bridge import ScanStrategyBridge
 from ui.workers import JobGuard
 
 # 出厂示例：与主案 B2/P3 用的同一句（用户一进来就有可跑的东西，而不是一个空框）
@@ -54,6 +55,14 @@ class ScanView(QWidget):
         self._open_key = None                        # 当前展开的抽屉卡片
         self._last_pane = 'fn'                       # 「⚙ 配置」的落点
         self._ui_restoring = False                   # 恢复偏好期间不回写
+        self._sort_col = None                         # ★P1 结果表排序列（None = 默认命中置顶）
+        self._sort_desc = False
+        self._valuation = None                         # ★P5 全市场当前估值快照 {symbol:{pe,pb,total_mktcap}}
+        self._valuation_date = None                    # 这份估值对应的基准日（= 数据最新交易日）
+        self._valuation_worker = None                  # 后台估值拉取线程
+        self._valuation_guard = JobGuard()             # 估值回包竞态守卫（与扫描互不干扰）
+        self._industry_worker = None                   # ★P6 后台行业映射拉取线程
+        self._industry_guard = JobGuard()
 
         # ---------------- 装配 ----------------
         self._layout = ScanLayout(self)
@@ -61,6 +70,11 @@ class ScanView(QWidget):
         self._result = ScanResult(self)
         self._flow = ScanFlow(self)
         self._readiness = ReadinessFlow(self)        # 就绪度体检 + 更新到最新/滞后（D6/§7-B10，两页共用）
+        # ★v1.46 / §7-B12 P3：筛选方案库桥接（载入/存为/管理；与 M3 共享一份方案池）
+        self._strategy = ScanStrategyBridge(self)
+        self.btn_load.clicked.connect(self._strategy.load)
+        self.btn_save.clicked.connect(self._strategy.save)
+        self.btn_manage.clicked.connect(self._strategy.manage)
         self._load_scan_ui()
         self._result.set_empty('还没有扫描结果 —— 选好统计范围与条件，点「▶ 开始扫描」。')
         self._readiness.start_calendar_fetch()       # 后台拉一次交易日历，喂滞后提示（§7-B10 STEP 3）
@@ -133,6 +147,10 @@ class ScanView(QWidget):
     def start_scan(self):
         self._flow.on_run_clicked()
 
+    def request_run(self):
+        """★v1.46：供「🗂 运行历史 → ▶ 重跑」调用 —— 等名单/体检就绪后再开扫（不弹空跑）。"""
+        self._flow.request_run()
+
     def cancel_scan(self):
         if self._worker is not None and self._worker.isRunning():
             self._worker.cancel()
@@ -153,6 +171,13 @@ class ScanView(QWidget):
     def reset_thresholds(self):
         self._flow.reset_thresholds()
 
+    # ★P3 筛选方案库需要的两个接口（委托 flow；桥接只认这两个 + lbl_receipt）
+    def current_config(self) -> dict:
+        return self._flow.current_config()
+
+    def apply_config(self, cfg: dict) -> None:
+        self._flow.apply_config(cfg)
+
     def current_counts(self) -> dict:
         """当前基准日的四态计数（冒烟 / 上层用；口径与 scan 同源）。"""
         if self._outcome is None:
@@ -163,30 +188,13 @@ class ScanView(QWidget):
     # 偏好（记住上次；坏数据逐字段回落，§9-D）
     # ==========================================
     def _load_scan_ui(self):
+        """启动时恢复上次配置 —— 走与筛选方案载入**同一口径** `apply_config`（单一事实源）。"""
         raw = preferences.get(SCAN_UI_KEY)
         data = dict(raw) if isinstance(raw, dict) else {}
-        self._ui_restoring = True
-        try:
-            scope = data.get('scope', 0)
-            try:
-                index = int(scope or 0)
-            except (TypeError, ValueError):
-                index = 0
-            self.cb_scope.setCurrentIndex(index if 0 <= index < self.cb_scope.count() else 0)
-            code = str(data.get('index_code') or '')
-            if code:
-                idx = self.cb_index.findData(code)
-                if idx >= 0:
-                    self.cb_index.setCurrentIndex(idx)
-            text = str(data.get('formula') or '').strip()
-            self._formula_pane.txt_formula.setPlainText(text or DEFAULT_FORMULA)
-            self._formula_pane.txt_params.setText(str(data.get('params') or ''))
-            thresholds = ScanThresholds.from_dict(data.get('thresholds'))
-            self._thresholds = thresholds
-            self._filter_pane.from_thresholds(thresholds)
-        finally:
-            self._ui_restoring = False
-        self.resolve_scope()                          # 手动触发一次范围解析
+        if not str(data.get('formula') or '').strip():
+            data['formula'] = DEFAULT_FORMULA      # 出厂示例（一进来就有可跑的东西）
+        self._flow.apply_config(data)
+        self._flow.apply_column_order(data.get('col_order'))   # ★P7 恢复列拖拽顺序
 
     def save_scan_ui(self, **_):
         """「记住上次」。⚠ 只存**轻量配置**，绝不存扫描结果（结果只进会话缓存，D3）。"""
@@ -198,4 +206,5 @@ class ScanView(QWidget):
             'formula': self._formula_pane.txt_formula.toPlainText(),
             'params': self._formula_pane.txt_params.text(),
             'thresholds': self._filter_pane.to_thresholds().to_dict(),
+            'col_order': self._flow.current_column_order(),   # ★P7 列拖拽顺序（visual→logical）
         })

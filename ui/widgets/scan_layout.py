@@ -36,8 +36,10 @@ __all__ = ['ScanLayout', 'ScanFormulaPane', 'ScanFilterPane',
 DRAWER_MIN_WIDTH = 420
 DRAWER_MAX_WIDTH = 560
 
-# 结果表列（顺序即列序；"说明"列放"为什么没进样本 / 为什么数据不足"）
-TABLE_COLUMNS = ('代码', '名称', '收盘', '成交额(万)', '换手率%', '状态', '说明')
+# 结果表列（顺序即列序；首列 `#` = 随显示顺序重算的行号；★P2 涨幅/量/市值、★P5 估值、★P6 行业）
+TABLE_COLUMNS = ('#', '代码', '名称', '行业', '收盘', '当日%', '当月%', '当年%',
+                 '成交额(万)', '成交量(万手)', '换手率%',
+                 '市盈率', '市净率', '总市值(亿)', '流通市值(亿)', '状态', '说明')
 
 # KPI 顺序（E 节：三态 + 有效样本 + 用时；**数据不足必须显式**，绝不并进"未命中"）
 KPI_KEYS = ('hit', 'miss', 'insufficient', 'filtered', 'valid', 'elapsed')
@@ -276,6 +278,19 @@ class ScanLayout:
         p.chip_scope = _chip('🌐 范围 —', '统计范围（标的域与只数）')
         for chip in (p.chip_formula, p.chip_filter, p.chip_scope):
             lay.addWidget(chip)
+
+        # ★v1.46 / §7-B12 P3：筛选方案「载入 / 存为 / 管理」（与 M1 策略库同构、独立库）。
+        #   放左侧配置 chips 旁（它们是"对配置的操作"），短标签不撑窗；行为在 ScanStrategyBridge。
+        p.btn_load = QPushButton('📚 载入')
+        p.btn_save = QPushButton('💾 存为')
+        p.btn_manage = QPushButton('管理')
+        for _b, _tip in ((p.btn_load, '载入已保存的筛选方案（函数/参数/粗筛/范围）；M2 与 M3 共用一份方案库'),
+                         (p.btn_save, '把当前筛选配置存成命名方案（同名覆盖），下次一键载入'),
+                         (p.btn_manage, '管理（删除）已保存的筛选方案')):
+            _b.setStyleSheet(FLAT_QSS)
+            _b.setCursor(Qt.CursorShape.PointingHandCursor)
+            _b.setToolTip(_tip)
+            lay.addWidget(_b)
         lay.addStretch()
 
         p.lbl_receipt = QLabel('还没有扫描过 —— 选好范围与条件后点「▶ 开始扫描」')
@@ -367,10 +382,14 @@ class ScanLayout:
         # ⚠ 列宽模式用 Interactive（可手动拖）而**不是 ResizeToContents**：后者是动态测宽，
         #   每插一格都全表重测 —— 全 A 5000+ 行直接把 UI 线程冻死（v6.42 卡死根因）。
         #   宽度由 `scan_result._render_table` 填完数据后**一次性** resizeColumnsToContents 算出。
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for col in range(2, len(TABLE_COLUMNS)):
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)   # # 行号（窄）
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)   # 代码
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)       # 名称（吃剩余宽）
+        for col in range(3, len(TABLE_COLUMNS)):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        # ★P7 / §7-B12：表头可拖拽换列序（**只改视觉顺序，逻辑列序不变** ⇒ item(r,逻辑列) 仍成立）。
+        #   拖完由 scan_flow 把 visual→logical 顺序存进 scan_ui，下次启动恢复。
+        header.setSectionsMovable(True)
         p.table.setStyleSheet(
             "QTableWidget { gridline-color:#EEF1F5; font-size:12px; }"
             "QHeaderView::section { background:#F7F9FC; border:none;"

@@ -435,6 +435,42 @@ def _as_signal(raw) -> np.ndarray:
     return (numeric != 0) & ~np.isnan(numeric)
 
 
+def _derived_metrics(frame: pd.DataFrame, i: int) -> dict:
+    """★P2：从该标的日线序列就地算涨幅/流通市值（任意基准日都真、零新网络）。
+
+    口径与常识一致：
+      · 当日涨幅 = 今收/昨收 - 1；
+      · 当月/当年涨幅 = 以**上一期最后一个交易日收盘**为基准（本期起点-1）；
+      · 流通市值 = 收盘 × 流通股本。
+    缺前值 / 无上期基准（数据从本期起算）/ 缺列 ⇒ 该字段 None（**诚实，绝不硬凑 0**）。
+    """
+    out = {'day_pct': None, 'month_pct': None, 'year_pct': None, 'float_mktcap': None}
+    if frame is None or 'close' not in frame.columns or 'date' not in frame.columns:
+        return out
+    close = pd.to_numeric(frame['close'], errors='coerce').to_numpy(dtype=float)
+    n = len(close)
+    if i < 0 or i >= n or not np.isfinite(close[i]):
+        return out
+    cur = close[i]
+    if i >= 1 and np.isfinite(close[i - 1]) and close[i - 1] != 0:
+        out['day_pct'] = cur / close[i - 1] - 1.0
+    dates = pd.to_datetime(frame['date']).to_numpy()
+    for key, unit in (('month_pct', 'datetime64[M]'), ('year_pct', 'datetime64[Y]')):
+        try:
+            keys = dates.astype(unit)
+            start = int(np.searchsorted(keys, keys[i], side='left'))   # 本期首个交易日
+        except (TypeError, ValueError):
+            continue
+        base = start - 1                                                # 上期末个交易日
+        if base >= 0 and np.isfinite(close[base]) and close[base] != 0:
+            out[key] = cur / close[base] - 1.0
+    if 'outstanding_share' in frame.columns:
+        share = pd.to_numeric(frame['outstanding_share'], errors='coerce').to_numpy(dtype=float)
+        if i < len(share) and np.isfinite(share[i]):
+            out['float_mktcap'] = cur * share[i]
+    return out
+
+
 def signal_names(formula: str) -> list[str]:
     """这段筛选条件里可当"判定变量"的名字（界面下拉用；按声明顺序）"""
     return parse_program(formula).output_names
@@ -703,6 +739,7 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
             for col in snapshot_columns:
                 value = frame[col].iloc[i] if col in frame.columns else None
                 record[col] = None if value is None or pd.isna(value) else float(value)
+            record.update(_derived_metrics(frame, i))   # ★P2 派生涨幅/市值（仅 M2 取快照时算）
             snapshot[sym] = record
 
         # 【进度】每 chunk 只报一次 + 收尾必报（否则进度条永远差最后一格）

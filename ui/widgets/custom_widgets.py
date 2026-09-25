@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDateEdit, QDateTimeEdit,
                              QListWidget, QPushButton, QScrollArea, QSizePolicy,
                              QSpinBox, QVBoxLayout, QWidget)
 from PyQt6.QtCore import QPoint, QRect, Qt, QSize, pyqtSignal
+from PyQt6.QtGui import QFont, QFontInfo
 
 from config import settings
 
@@ -20,6 +21,81 @@ from config import settings
 #   不会成环。⚠ `core/` 与 `data/` **不许** import UI 常量（分层），
 #   所以它们的提示语里**不写按钮名**，只说"页面的下载入口"。
 SYNC_ACTION_LABEL = '⬆ 更新到最新交易日'
+
+
+# ==========================================
+# 界面字体：**开源 / 免费商用优先**的字体栈（v1.46 · §10-9「字体只此一处」）
+# ==========================================
+# 【为什么必须有这一条】本项目**从来没设过全局字体** ⇒ 走 Qt 平台默认，Windows 上中文
+#   会回落到宋体（笔画细、带衬线感），同一个页面在"装了黑体 / 没装"两台机器上观感完全不同
+#   —— 用户 2026-09-25 实测点出"字体层面的设计没做到"。
+#
+# 【版权纪律（用户 2026-09-25 拍板 · 撤销"照抄样板字体名"的上一版方案）】
+#   **一律只点名开源 / 免费商用字体**，并在注释里标明许可：
+#   · 思源黑体 Source Han Sans（Adobe + Google，**SIL OFL 1.1**）＝ Noto Sans CJK
+#   · Noto Sans SC / Noto Sans Mono（Google，**SIL OFL 1.1**）
+#   · JetBrains Mono（**SIL OFL 1.1**）· Cascadia Code（**SIL OFL 1.1**）
+#   · 更纱黑体 Sarasa Mono（**SIL OFL 1.1**）· 思源等宽 Source Han Mono（**SIL OFL 1.1**）
+#   · HarmonyOS Sans（华为，**免费商用**）· MiSans（小米，**免费商用**）
+#   · 阿里巴巴普惠体 Alibaba PuHuiTi（阿里，**免费商用**）
+#   ⚠ **禁止**在 QSS / `QFont` 里点名微软雅黑、宋体、Consolas 等**系统专有字体** ——
+#     即使用户本机装了也不写进代码：截图、分发、跨平台都可能构成风险（商业侵权）。
+#
+# 【为什么"只点菜、不捆绑"】本栈只**请求**列表里第一个**系统里已装好**的字体，
+#   不随包分发任何字体文件（避免体积与再分发许可问题）；一款都没装 ⇒ Qt 自然回落
+#   系统默认（行为与旧版一致，**不报错、不显方框**）。想让观感与设计样板一致，
+#   装「思源黑体 / Noto Sans CJK SC」（免费、可商用、OFL）即可，页面无需改一行。
+#   本机实测结果见启动日志（`ui_font_status()`）。
+UI_FONT_STACK = (
+    "Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans SC", "思源黑体",
+    "Source Han Sans CN", "HarmonyOS Sans SC", "MiSans", "Alibaba PuHuiTi 3.0",
+)
+# 等宽栈（代码块 / 公式块）：全 OFL，末尾 "Monospace" 是 Qt 的**通用族**（非某款字体）
+UI_MONO_STACK = (
+    "JetBrains Mono", "Cascadia Code", "Sarasa Mono SC", "Source Han Mono SC",
+    "Noto Sans Mono", "Monospace",
+)
+UI_FONT_SIZE_PX = 13          # 界面基准字号（与 §7-B12 P8 样板 body 同值）
+
+
+def mono_font_css() -> str:
+    """等宽字体栈的 **QSS 片段**（`font-family:…;`）—— 代码块一律用它，不写字面字体名。"""
+    return 'font-family:' + ', '.join(f'"{f}"' for f in UI_MONO_STACK) + ';'
+
+
+def ui_font(size_px: int = UI_FONT_SIZE_PX, bold: bool = False) -> QFont:
+    """造一个**开源字体栈**优先的 `QFont`（需要单独设字体的地方一律用它）。"""
+    font = QFont()
+    font.setFamilies(list(UI_FONT_STACK))
+    font.setPixelSize(int(size_px))
+    font.setBold(bool(bold))
+    return font
+
+
+def apply_ui_font(widget, size_px: int = UI_FONT_SIZE_PX) -> None:
+    """把开源字体栈**钉到整棵控件树**（Qt 字体向下继承 ⇒ 在页面根调一次即可）。
+
+    ⚠ 为什么不能只写 QSS：页面里多处 QSS 只覆盖了 `font-size`，**字体族靠继承** ——
+      在页面根 `setFont` 一次，它们就一起跟着走；反过来若只写 QSS，会漏掉所有
+      "没写 QSS 的原生控件"（表格单元格 / 下拉弹层 / 复选框 / 滚动条）。
+    """
+    font = QFont(widget.font())
+    font.setFamilies(list(UI_FONT_STACK))
+    font.setPixelSize(int(size_px))
+    widget.setFont(font)
+
+
+def ui_font_status() -> str:
+    """**实测**当前真正用上的字体族 —— 诚实报告"命中了开源栈 / 回落了系统默认"。
+
+    给启动日志用：用户反馈"字体不对"时，第一眼就能确认本机到底装没装开源中文字体。
+    """
+    fam = str(QFontInfo(ui_font()).family() or "")
+    low = fam.lower()
+    if any(name.lower() in low or low in name.lower() for name in UI_FONT_STACK):
+        return f"界面字体：{fam}（开源字体 · 与设计样板一致）"
+    return (f"界面字体：{fam}（本机未装开源中文字体 ⇒ 回落系统默认；"
+            "装「思源黑体 / Noto Sans CJK SC」（免费可商用）即可还原设计观感）")
 
 
 # ==========================================
@@ -604,6 +680,8 @@ class FlowLayout(QLayout):
     def minimumSize(self):                      # noqa: N802
         size = QSize()
         for item in self._items:
+            if item.isEmpty():                  # ★v1.46：隐藏的子件不占位（见 _do_layout）
+                continue
             size = size.expandedTo(item.minimumSize())
         margins = self.contentsMargins()
         return size + QSize(margins.left() + margins.right(),
@@ -614,6 +692,11 @@ class FlowLayout(QLayout):
         area = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
         x, y, line_height = area.x(), area.y(), 0
         for item in self._items:
+            # ★v1.46：**隐藏的子件必须跳过** —— 标准 `QBoxLayout` 靠 `isEmpty()` 自动跳过
+            #   隐藏控件，本自定义布局早期漏了这一步 ⇒ `setVisible(False)` 的按钮照样
+            #   占一格、把动作行撑出空档（"运行历史"的按 kind 显隐动作按钮时立刻显形）。
+            if item.isEmpty():
+                continue
             hint = item.sizeHint()
             next_x = x + hint.width() + self.spacing()
             if next_x - self.spacing() > area.right() and line_height > 0:

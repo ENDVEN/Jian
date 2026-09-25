@@ -497,6 +497,12 @@ class DownloadHub(QObject):
         if worker is not None and worker.isRunning():
             worker.wait(wait_ms)
 
-    @property
     def has_unfinished(self) -> bool:
+        """是否还有未完成（排队或在跑）的任务 —— 主窗口 closeEvent 的退出守卫用。
+
+        ⚠ 普通方法、不是 @property（与 `pending_count()`/`is_busy()` 同形）：
+          调用方写的是 `has_unfinished()`，若定义成 property 会返回 bool 再被 `()` 调 →
+          `TypeError: 'bool' object is not callable`，且会在 `shutdown()` 之前抛 →
+          线程没等就销毁（QThread destroyed while running）。
+        """
         return self.pending_count() > 0

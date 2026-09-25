@@ -2847,6 +2847,23 @@ try:
     check("④ 快照只给**基准日真有行**的标的（不许拿上一交易日的值冒充当日）",
           set(_res.snapshot) == {'UP', 'DOWN', 'NEW', 'NOAMT', 'PENNY'}
           and abs(_res.snapshot['UP']['close'] - 20.0) < 1e-9)
+
+    # ★P2 派生指标：当日/当月/当年涨幅与市值口径（就地算、缺基准返 None、不硬凑 0）
+    _dm = pd.DataFrame({
+        'date': pd.to_datetime(['2023-12-29', '2024-05-31', '2024-06-25', '2024-06-26', '2024-06-28']),
+        'close': [10.0, 11.0, 12.0, 13.0, 14.0],
+        'outstanding_share': [1e8] * 5})
+    _d4 = _cs._derived_metrics(_dm, 4)          # 2024-06-28 收盘 14
+    check("★ P2 当日涨幅 = 今收/昨收-1", abs(_d4['day_pct'] - (14 / 13 - 1)) < 1e-9)
+    check("★ P2 当月涨幅基准 = 上月末(5/31=11)，非昨收", abs(_d4['month_pct'] - (14 / 11 - 1)) < 1e-9)
+    check("★ P2 当年涨幅基准 = 上年末(2023-12-29=10)", abs(_d4['year_pct'] - (14 / 10 - 1)) < 1e-9)
+    check("★ P2 流通市值 = 收盘×流通股本", abs(_d4['float_mktcap'] - 14 * 1e8) < 1e-3)
+    _d0 = _cs._derived_metrics(_dm, 0)          # 首日：无昨收/无上期基准
+    check("★ P2 首日无上期基准 ⇒ 三项涨幅均 None（诚实不拿 0 冒充）",
+          _d0['day_pct'] is None and _d0['month_pct'] is None and _d0['year_pct'] is None)
+    _dno = _cs._derived_metrics(_dm.drop(columns=['outstanding_share']), 4)
+    check("★ P2 缺流通股本列 ⇒ float_mktcap None（不抛、不假造）", _dno['float_mktcap'] is None)
+
     check("④ asof 缺省 = **全市场最新交易日**（不是每个标的自己的最后一天）",
           _cs.scan(_groups, _FORMULA).asof == _asof)
 
@@ -3154,6 +3171,15 @@ try:
                                     asof=_live_day, force=True).result.status
         check("★★ 真实分区：**缓存切片 == 强制重扫**（逐位一致）—— 缓存不许悄悄改变结果",
               _live2.status_on(_live_day) == _by_force)
+
+        # ★回归：显式扫**更早基准日** ⇒ 不吃旧快照缓存（否则 M2 选历史日+开始扫描 数值全 '—'）
+        _early = _live2.result.dates[0]
+        _live_early = _ss.scan_cached(_lake_dir2, _live_f, snapshot_columns=('close',), asof=_early)
+        check("★ 回归：显式扫更早基准日 ⇒ 重扫（cached=False、result.asof=更早日、快照非空），"
+              "否则用户选历史日+开始扫描会数值全 '—'（缓存命中短路旧快照的 bug）",
+              _live_early.cached is False
+              and pd.Timestamp(_live_early.result.asof) == pd.Timestamp(_early)
+              and bool(_live_early.result.snapshot))
 
     _shutil.rmtree(_zone, ignore_errors=True)
     check("假数据湖已删除（临时探针用完即删，§10-13）", not os.path.isdir(_zone))
@@ -3695,7 +3721,7 @@ try:
     from data.backtest_archive import (BacktestArchive, build_record, record_to_result,
                                        sample_equity, PER_SYMBOL_CAP, TOTAL_CAP,
                                        MAX_FILE_BYTES, EQUITY_MAX_POINTS, KIND_M1,
-                                       RESERVED_KINDS, SOURCE_MANUAL)
+                                       KIND_M2, KIND_M3, SOURCE_MANUAL)
 
     def _mk_result(symbol='600000'):
         dates = _pd4.to_datetime(['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'])
@@ -3720,8 +3746,8 @@ try:
     check("存档上限常量：每标的20 / 总量500 / 单份2MB / 净值≤250点",
           PER_SYMBOL_CAP == 20 and TOTAL_CAP == 500
           and MAX_FILE_BYTES == 2 * 1024 * 1024 and EQUITY_MAX_POINTS == 250)
-    check("kind 预留 M2/M3、本轮只写 M1",
-          KIND_M1 == 'M1' and tuple(RESERVED_KINDS) == ('M2', 'M3'))
+    check("★ v1.46：三种 kind 都已启用（M2/M3 不再是『预留』）",
+          (KIND_M1, KIND_M2, KIND_M3) == ('M1', 'M2', 'M3'))
     check("上限说明 caps() 与常量同源",
           BacktestArchive.caps()['per_symbol'] == PER_SYMBOL_CAP
           and BacktestArchive.caps()['total'] == TOTAL_CAP)

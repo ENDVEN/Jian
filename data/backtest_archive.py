@@ -26,8 +26,12 @@
   · 单文件 > 2 MB 拒存（防体积炸弹）；每标的 ≤20、总量 ≤500 滚动淘汰（防 bug 恶性堆积）。
   · `load` 只反序列化，绝不执行任何内容。
 
-【kind 预留】记录带 `kind`（本轮只写 'M1'）；list/淘汰键按 kind 分叉，
-M2/M3 后续增量接入**不改架构**（`KIND_*` / `KIND_LABELS` 已就位）。
+【kind】记录带 `kind`（M1 单股回测 / M2 全市场筛选 / M3 广度统计，三种都已启用）：
+  · M1 记录 = `meta` + `kpi` + `trades` + `equity`（旧形状，保持不变）；
+  · M2/M3 记录 = **显式分组** `scope` / `condition` / `counts` + `day` / `range_start`
+    （★v1.46 重做：旧版把命中数塞进 `total_trades`、命中率塞进 `win_rate` —— 一套键两种
+    含义，任何按 `win_rate` 的排序/汇总都会混进横截面数据）。
+  两种形状统一由 `_entry_of()` **规范化**成索引项 ⇒ 列表/预览层不必再 `if kind`。
 """
 from __future__ import annotations
 
@@ -54,19 +58,19 @@ MAX_FILE_BYTES = 2 * 1024 * 1024   # 单文件 2 MB 上限
 EQUITY_MAX_POINTS = 250    # 净值抽稀上限（预览用）
 
 KIND_M1 = "M1"
-KIND_M2 = "M2"             # 预留：全市场筛选
-KIND_M3 = "M3"             # 预留：广度统计
+KIND_M2 = "M2"             # 全市场筛选
+KIND_M3 = "M3"             # 广度统计
 KIND_LABELS = {KIND_M1: "M1 单股回测", KIND_M2: "M2 全市场筛选", KIND_M3: "M3 广度统计"}
-RESERVED_KINDS = (KIND_M2, KIND_M3)
 
 SOURCE_AUTO = "auto"
 SOURCE_MANUAL = "manual"
 SOURCE_LABELS = {SOURCE_AUTO: "自动", SOURCE_MANUAL: "手动"}
 
 __all__ = [
-    "BacktestArchive", "build_record", "record_to_result", "sample_equity",
+    "BacktestArchive", "build_record", "build_scan_record", "record_to_result", "sample_equity",
+    "formula_summary",
     "ARCHIVE_DIR", "PER_SYMBOL_CAP", "TOTAL_CAP", "MAX_FILE_BYTES", "EQUITY_MAX_POINTS",
-    "KIND_M1", "KIND_M2", "KIND_M3", "KIND_LABELS", "RESERVED_KINDS",
+    "KIND_M1", "KIND_M2", "KIND_M3", "KIND_LABELS",
     "SOURCE_AUTO", "SOURCE_MANUAL", "SOURCE_LABELS",
 ]
 
@@ -188,6 +192,61 @@ def build_record(result, meta: dict, config: dict = None, kind: str = KIND_M1,
         "kpi": result.summary(),
         "trades": trades,
         "equity": sample_equity(result),
+    }
+
+
+def formula_summary(formula: str, n_segments: int = 1) -> str:
+    """公式 → 列表「条件」列的**一行摘要**：`首行（截断） · N段`。
+
+    【为什么需要】旧版把整段公式的第一行截 40 字当"策略名"，用户看不出
+    "函数到底有没有整段存下来"。摘要只负责"够指认"，**全文在预览里给**（可复制）。
+    """
+    first = next((ln.strip() for ln in str(formula or '').splitlines() if ln.strip()), '')
+    if len(first) > 34:
+        first = first[:34] + '…'
+    return f'{first or "（无条件）"} · {max(1, int(n_segments or 1))}段'
+
+
+def build_scan_record(config: dict, *, kind: str, scope_label: str = '',
+                      scope_code: str = '', counts: dict = None, asof=None,
+                      range_label: str = '', condition_label: str = '',
+                      source: str = SOURCE_AUTO) -> dict:
+    """M2/M3 一次扫描的不可变快照（§7-B12 P4 · v1.46 重做）。
+
+    与 M1 不同：**无逐笔、无净值**（横截面/广度没有这些概念）。
+    · `config` = 页面 `current_config()`（可被 `apply_config` 还原 → 复用/重跑）；
+    · `counts` = 四态计数 `{total,hit,miss,insufficient,filtered,valid}`；
+    · `scope_label` / `scope_code` = 范围名与指数代码（★v1.46：旧版只存「指数成分 300只」，
+      **丢掉了是哪个指数** —— 列表/预览/搜索全都没法辨认）；
+    · 记录**显式分组**（不再借 M1 的 `meta`/`kpi` 键），规范化交给 `_entry_of()`。
+    """
+    config = config or {}
+    counts = dict(counts or {})
+    formula = str(config.get('formula') or '')
+    segments = [formula] if formula.strip() else []
+    if not condition_label:
+        condition_label = formula_summary(formula, len(segments))
+    hit = int(counts.get('hit') or 0)
+    valid = int(counts.get('valid') or 0)
+    counts.update({
+        'total': int(counts.get('total') or 0), 'hit': hit, 'valid': valid,
+        'miss': counts.get('miss'), 'insufficient': counts.get('insufficient'),
+        'filtered': counts.get('filtered'),
+        'hit_rate': (hit / valid) if valid else None,
+    })
+    return {
+        'id': '', 'kind': kind,
+        'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'seq': time.time_ns(), 'pinned': False, 'source': source,
+        'scope': {'label': str(scope_label or ''), 'code': str(scope_code or '')},
+        'condition': {'label': condition_label, 'formula': formula,
+                      'params': str(config.get('params') or ''),
+                      'segments': segments,
+                      'thresholds': dict(config.get('thresholds') or {})},
+        'day': _date_key(asof) or '',
+        'range_start': _date_key(range_label) or '',
+        'counts': counts,
+        'config': config,
     }
 
 
@@ -315,9 +374,13 @@ class BacktestArchive:
         return removed
 
     # ---------------- 读 ----------------
-    def list(self, kind: str = None, symbol: str = None, keyword: str = None,
-             only_pinned: bool = False) -> list:
-        """按条件过滤的**元数据**列表（时间倒序）。读路径，绝不写盘。"""
+    def list(self, kind: str = None, symbol: str = None, scope: str = None,
+             keyword: str = None, only_pinned: bool = False) -> list:
+        """按条件过滤的**元数据**列表（时间倒序）。读路径，绝不写盘。
+
+        `symbol` 过滤 M1 标的；`scope` 过滤 M2/M3 范围（键 = `scope_code or scope_label`）；
+        关键词覆盖 标的/名称/策略/范围/条件 —— 两页共用同一套搜索框。
+        """
         out = []
         kw = (keyword or "").strip().lower()
         for e in self._read_index():          # _read_index 已剔除"文件已消失"的僵尸项
@@ -325,22 +388,35 @@ class BacktestArchive:
                 continue
             if symbol and e.get("symbol") != symbol:
                 continue
+            if scope and (e.get("scope_code") or e.get("scope_label")) != scope:
+                continue
             if only_pinned and not e.get("pinned"):
                 continue
-            if kw and kw not in (f"{e.get('symbol','')} {e.get('name','')} "
-                                 f"{e.get('strategy_name','')}").lower():
-                continue
+            if kw:
+                hay = " ".join(str(e.get(k) or "") for k in (
+                    "symbol", "name", "strategy_name", "scope_label", "condition_label"))
+                if kw not in hay.lower():
+                    continue
             out.append(e)
         out.sort(key=lambda e: (self._seq(e), str(e.get("created_at") or "")), reverse=True)
         return out
 
-    def symbols(self, kind: str = None) -> list:
-        """出现过的标的（`[(symbol, name)]`，按名称排序）—— 供"标的"过滤下拉。"""
+    def filter_options(self, kind: str = None) -> list:
+        """过滤下拉的选项 `[(值, 显示名)]`（按显示名排序）。
+
+        M1 = 出现过的**标的**；M2/M3 = 出现过的**范围**（键优先 `scope_code`）。
+        ⚠ 旧版对 M2/M3 复用 `symbols()`，而它们 `symbol` 恒为空 ⇒ 下拉永远只有一个
+        「全部」——成了不会说话的摆设（v1.46 修）。
+        """
         seen = {}
         for e in self.list(kind=kind):
-            sym = e.get("symbol")
-            if sym and sym not in seen:
-                seen[sym] = e.get("name") or sym
+            if e.get("kind") == KIND_M1:
+                key, label = e.get("symbol"), e.get("name") or e.get("symbol")
+            else:
+                key = e.get("scope_code") or e.get("scope_label")
+                label = e.get("scope_label") or key
+            if key and key not in seen:
+                seen[key] = label
         return sorted(seen.items(), key=lambda kv: str(kv[1]))
 
     def load(self, rid: str):
@@ -387,20 +463,51 @@ class BacktestArchive:
 
     @staticmethod
     def _entry_of(record: dict) -> dict:
-        meta = record.get("meta") or {}
-        kpi = record.get("kpi") or {}
-        return {
-            "id": record.get("id"), "kind": record.get("kind", KIND_M1),
+        """一条记录 → **规范化索引项**（列表/预览只认它，不再 `if kind`）。
+
+        ⚠ 两种记录形状在这里收敛：M1 读 `meta`/`kpi`；M2/M3 读 `scope`/`condition`/`counts`。
+        """
+        kind = record.get("kind", KIND_M1)
+        entry = {
+            "id": record.get("id"), "kind": kind,
             "created_at": record.get("created_at"),
             "pinned": bool(record.get("pinned")),
-            "symbol": meta.get("symbol"), "name": meta.get("name"),
-            "strategy_name": meta.get("strategy_name"),
-            "start_date": meta.get("start_date"), "end_date": meta.get("end_date"),
             "source": record.get("source", SOURCE_AUTO),
             "seq": record.get("seq", 0),
-            "total_trades": kpi.get("total_trades"), "win_rate": kpi.get("win_rate"),
-            "cumulative_return": kpi.get("cumulative_return"),
         }
+        if kind == KIND_M1:
+            meta = record.get("meta") or {}
+            kpi = record.get("kpi") or {}
+            entry.update({
+                "symbol": meta.get("symbol"), "name": meta.get("name"),
+                "strategy_name": meta.get("strategy_name"),
+                "start_date": meta.get("start_date"), "end_date": meta.get("end_date"),
+                "total_trades": kpi.get("total_trades"), "win_rate": kpi.get("win_rate"),
+                "cumulative_return": kpi.get("cumulative_return"),
+            })
+            return entry
+        scope = record.get("scope") or {}
+        cond = record.get("condition") or {}
+        counts = record.get("counts") or {}
+        segments = cond.get("segments") or []
+        label = scope.get("label") or ""
+        entry.update({
+            "scope_label": label, "scope_code": scope.get("code") or "",
+            "name": label,                       # 通用列（搜索/排序）沿用 name
+            "condition_label": (cond.get("label")
+                                or formula_summary(str(cond.get("formula") or ""),
+                                                   len(segments))),
+            "n_segments": len(segments),
+            "day": record.get("day") or "",
+            "range_start": record.get("range_start") or "",
+            "start_date": record.get("range_start") or record.get("day") or "",
+            "end_date": record.get("day") or "",
+            "hit": counts.get("hit"), "miss": counts.get("miss"),
+            "insufficient": counts.get("insufficient"), "filtered": counts.get("filtered"),
+            "valid": counts.get("valid"), "total": counts.get("total"),
+            "hit_rate": counts.get("hit_rate"),
+        })
+        return entry
 
     def _read_index(self, prune_missing: bool = True) -> list:
         """读索引；索引缺失/损坏 → 从各存档文件**重建（只读，不写盘）**。
@@ -449,10 +556,14 @@ class BacktestArchive:
         index = self._read_index()
         doomed: set = set()
 
-        # ① 分标的：非重点按新→旧保留 PER_SYMBOL_CAP 份
+        # ① 分标的/范围：非重点按新→旧保留 PER_SYMBOL_CAP 份
+        #   ★v1.46：M2/M3 没有 symbol ⇒ 旧版按 (kind, '') 分组，**所有范围共用一个配额**
+        #   （300 只的沪深300 与 12 只的自选互相挤掉），改用 scope 做分组键。
         groups: dict = {}
         for e in index:
-            groups.setdefault((e.get("kind"), e.get("symbol")), []).append(e)
+            facet = (e.get("symbol") if e.get("kind") == KIND_M1
+                     else (e.get("scope_code") or e.get("scope_label")))
+            groups.setdefault((e.get("kind"), facet), []).append(e)
         for rows in groups.values():
             rows.sort(key=lambda e: self._seq(e), reverse=True)
             kept = 0

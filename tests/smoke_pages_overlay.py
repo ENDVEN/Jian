@@ -123,10 +123,16 @@ _pref_module.preferences.path = os.path.join(
     tempfile.mkdtemp(prefix="_tmp_pref_"), "preferences.json")
 _pref_module.Preferences.save = lambda self: True
 
-# 现在 set() 只改内存、save 已被 stub（写临时库）⇒ 用默认序覆盖内存里的用户 sub_order。
+# 现在 set() 只改内存、save 已被 stub（写临时库）⇒ 把**用户态**的行情页视图键抹平，让窗口以默认形态起来。
+# ★v6.64：除 `sub_order` 外**还必须抹 `layer_enabled`** —— 真实用过的用户库里会留着
+#   **他自己钉的公式图层**（v6.64 实测：`["draft", "formula:0c701b24"]`），只抹 sub_order
+#   会让行情页凭空多出窗格/图元 ⇒ 下面那些**假设默认形态**的老断言
+#   （「窗格 = main/vol」「统一图元 = 3 内置 + 1 公式」…）**整片假红**，而且多出的公式层
+#   会让该段中途卡死（实测跑不完、连汇总行都出不来）。
+#   ⇒ 与本节 ③ 的初衷同族：**测试不许依赖用户真实偏好**（§11.6）。
 _du = _pref_module.preferences.get("desk_ui")
-if isinstance(_du, dict) and _du.get("sub_order"):
-    _pref_module.preferences.set("desk_ui", {**_du, "sub_order": []})
+if isinstance(_du, dict):
+    _pref_module.preferences.set("desk_ui", {**_du, "sub_order": [], "layer_enabled": []})
 
 # §7-A4：构造前关掉自动存档，避免任何测试回测写脏真实 ~/.jian_data/backtest_results/。
 # （存档接线在下方用临时 root 直接测；真实目录仅可能被读，不会被写。）
@@ -2334,6 +2340,23 @@ try:
 
     _scan = win.page_backtest.page_scan
 
+    # ★P5：M2 扫描完成会后台拉估值快照（联网）⇒ 测试必须打桩为不 start，守 §11.5-20 离线。
+    from ui.widgets import scan_flow as _sflow4
+    from PyQt6.QtCore import QObject as _QObjectV, pyqtSignal as _pyqtSignalV
+
+    class _StubValWorker(_QObjectV):
+        finished = _pyqtSignalV(object)
+
+        def start(self):
+            pass                              # 不联网、不回包 ⇒ 估值列保持 '—'
+
+        def isRunning(self):
+            return False                      # 非真线程：永远不在跑（不阻后续发车判定）
+
+    _orig_val_worker = _sflow4.SpotValuationWorker
+    _sflow4.SpotValuationWorker = _StubValWorker
+    _sflow4.IndustryMapWorker = _StubValWorker          # ★P6：行业映射 worker 同样打桩不联网
+
     # ---- ① 挂载与公共面（迁移护栏：改名 / 删除 / 把薄壳写成空函数 ⇒ 立刻红）----
     check("M2 已换掉 `_ComingSoonPage` 占位（`page_scan` = ScanView）", isinstance(_scan, ScanView))
     check("M2 仍挂在回测模块的页签上（`backtest_module` 的壳一字未动，F-2）",
@@ -2366,10 +2389,14 @@ try:
     # ---- ② 版式与口径不变量 ----
     check("★ 常驻行 ≤3（§10-14：L1 操作轴 + L2 摘要条 + L0 结果区；抽屉是**覆盖层**不占布局）",
           _scan.layout().count() == 3)
-    check("结果表 7 列 = 代码/名称/收盘/成交额(万)/换手率%/状态/说明（**用户量纲**，§10-10）",
-          _scan.table.columnCount() == 7
-          and _scan.table.horizontalHeaderItem(3).text() == '成交额(万)'
-          and _scan.table.horizontalHeaderItem(4).text() == '换手率%')
+    check("结果表 17 列 = #/代码/名称/行业/收盘/当日%/当月%/当年%/成交额(万)/成交量(万手)/换手率%/市盈率/市净率/总市值(亿)/流通市值(亿)/状态/说明（★P2 富字段 + ★P5 估值 + ★P6 行业；**用户量纲**，§10-10）",
+          _scan.table.columnCount() == 17
+          and _scan.table.horizontalHeaderItem(0).text() == '#'
+          and _scan.table.horizontalHeaderItem(3).text() == '行业'
+          and _scan.table.horizontalHeaderItem(5).text() == '当日%'
+          and _scan.table.horizontalHeaderItem(8).text() == '成交额(万)'
+          and _scan.table.horizontalHeaderItem(11).text() == '市盈率'
+          and _scan.table.horizontalHeaderItem(14).text() == '流通市值(亿)')
     check("抽屉两张卡：ƒ 筛选条件 + 🎚 粗筛（含「↺ 恢复默认」）；出厂示例已填好（不是空框）",
           [pane.key for pane in _scan._panes] == ['fn', 'filter']
           and hasattr(_scan._filter_pane, 'btn_reset')
@@ -2387,7 +2414,7 @@ try:
           '2024-05-10' in _scan.lbl_receipt.text() and '开始扫描' in _scan.lbl_receipt.text())
     check("★ 结果表列宽**不是** ResizeToContents（v6.42 卡死根因：动态测宽 × 全 A 行数 = 平方级冻死 UI）",
           all(_scan.table.horizontalHeader().sectionResizeMode(i)
-              != _QHeader4.ResizeMode.ResizeToContents for i in range(7)))
+              != _QHeader4.ResizeMode.ResizeToContents for i in range(17)))
 
     # ---- ③ 粗筛阈值「内核 → 界面 → 内核」往返零漂移（唯一换算处：亿元 / %）----
     _defaults = ScanThresholds()
@@ -2474,8 +2501,78 @@ try:
               and _counts4['valid'] == _counts4['hit'] + _counts4['miss']
               and _counts4['total'] == len(_probe))
         check("扫描基准日有**数值快照**（收盘列不是全 '—'）",
-              any(_scan.table.item(r, 2) is not None and _scan.table.item(r, 2).text() not in ('', '—')
+              any(_scan.table.item(r, 4) is not None and _scan.table.item(r, 4).text() not in ('', '—')
                   for r in range(_scan.table.rowCount())))
+
+        # ---- ★P1 行号 + 全局排序（命中置顶默认 / 点列全局排 / 点状态列复位）----
+        _nrow = min(3, _scan.table.rowCount())
+        check("★ P1 首列行号随显示顺序连续（1,2,3…）",
+              [_scan.table.item(r, 0).text() for r in range(_nrow)] == [str(i) for i in range(1, _nrow + 1)])
+        _scan._flow.on_header_clicked(10)               # 点「换手率%」列 → 命中置顶 + 组内降序
+        _st = [_scan.table.item(r, 15).text() for r in range(_scan.table.rowCount())]
+        _tv = [_scan.table.item(r, 10).text() for r in range(_scan.table.rowCount())]
+        _first_nonhit = next((i for i, s in enumerate(_st) if s != '命中'), len(_st))
+        _hit_turn = [float(x.replace(',', '')) for x, s in zip(_tv, _st)
+                     if s == '命中' and x not in ('', '—')]
+        check("★ P1 点数值列 → 命中永远置顶（分组不被打散）+ 命中组内按该列降序",
+              _scan._sort_col == 10 and _scan._sort_desc is True
+              and not any(s == '命中' for s in _st[_first_nonhit:])
+              and _hit_turn == sorted(_hit_turn, reverse=True))
+        _scan._flow.on_header_clicked(10)               # 再点同列 → 组内升序
+        _st2 = [_scan.table.item(r, 15).text() for r in range(_scan.table.rowCount())]
+        _tv2 = [_scan.table.item(r, 10).text() for r in range(_scan.table.rowCount())]
+        _hit_turn2 = [float(x.replace(',', '')) for x, s in zip(_tv2, _st2)
+                      if s == '命中' and x not in ('', '—')]
+        check("★ P1 再点同列 → 命中组内切升序（仍命中置顶）",
+              _scan._sort_desc is False and _hit_turn2 == sorted(_hit_turn2))
+        _scan._flow.on_header_clicked(15)               # 点「状态」列 → 复位（组内回到按代码）
+        check("★ P1 点状态列 → 复位 _sort_col=None（命中置顶·组内按代码）",
+              _scan._sort_col is None and _scan._sort_desc is False)
+
+        # ---- ★P5：B 层估值列（当前值，仅基准日==最新定稿日填；喂假快照验渲染+诚实空值）----
+        _scan._valuation = {s: {'pe': 30.0, 'pb': 2.0, 'total_mktcap': 1e10} for s in _probe}
+        _scan._valuation_date = pd.Timestamp(_outcome4.result.asof).normalize()
+        _scan.refresh()
+        check("★ P5：喂入估值快照后 市盈率/市净率/总市值 列出数（表头在 11/12/13 列）",
+              _scan.table.horizontalHeaderItem(11).text() == '市盈率'
+              and _scan.table.horizontalHeaderItem(13).text() == '总市值(亿)'
+              and _scan.table.item(0, 11).text() not in ('', '—')
+              and _scan.table.item(0, 13).text() == '100')
+        _scan._valuation, _scan._valuation_date = None, None   # 清场（模拟历史基准日/未取）
+        _scan.refresh()
+        check("★ P5：无估值（历史基准日/未取）⇒ 估值列诚实留 '—'（不拿 0 冒充）",
+              all(_scan.table.item(r, 11).text() == '—' for r in range(_scan.table.rowCount())))
+
+        # ---- ★P6：细分行业列（本地缓存；喂映射→出数，清空→'—'不瞎猜）----
+        from data.industry_store import get_industry_store as _gis6
+        _istore6 = _gis6()
+        _saved6 = dict(_istore6._map)
+        _istore6._map = {s: '半导体' for s in _probe}
+        _scan.refresh()
+        check("★ P6：喂入行业映射后 行业列(第3列)出数",
+              _scan.table.horizontalHeaderItem(3).text() == '行业'
+              and _scan.table.item(0, 3).text() == '半导体')
+        _istore6._map = {}
+        _scan.refresh()
+        check("★ P6：无行业映射 ⇒ 行业列诚实留 '—'（不瞎猜板块）",
+              all(_scan.table.item(r, 3).text() == '—' for r in range(_scan.table.rowCount())))
+        _istore6._map = _saved6                          # 还原单例，不污染真实缓存
+
+        # ---- ★P7：列拖拽换序（只改视觉序，逻辑 item(r,c) 不变）+ 持久化 + 非法拒绝 ----
+        _n7 = _scan.table.columnCount()
+        _scan._flow.apply_column_order(list(reversed(range(_n7))))     # 完全倒序
+        check("★ P7：换序后视觉位 0 的逻辑列=末列，而 item(r,逻辑列) 数据定位不变",
+              _scan.table.horizontalHeader().logicalIndex(0) == _n7 - 1
+              and _scan._flow.current_column_order() == list(reversed(range(_n7))))
+        _scan._flow.apply_column_order(list(range(_n7)))               # 复位默认
+        check("★ P7：复位后 current_column_order 回到自然序",
+              _scan._flow.current_column_order() == list(range(_n7)))
+        _scan._flow.apply_column_order([1, 2])                         # 非法/旧长度
+        check("★ P7：非法列序被拒（保持当前序、不崩）",
+              _scan._flow.current_column_order() == list(range(_n7)))
+        _scan.save_scan_ui()
+        check("★ P7：col_order 进 scan_ui（拖拽顺序持久化）",
+              'col_order' in (preferences.get('scan_ui') or {}))
 
         # ---- ⑥ 切日期**零成本** + 不冒充 ----
         _dates4 = _outcome4.result.dates
@@ -2488,14 +2585,14 @@ try:
                   _scan.lbl_day.text() == _other_day and _scan._worker.isFinished()
                   and get_scan_store().entries() == 1)
             check("★★ 非**扫描基准日** ⇒ 数值列是 '—'（**绝不拿旧日期的快照冒充当日**，D3 纪律）",
-                  all(_scan.table.item(r, 2) is not None and _scan.table.item(r, 2).text() == '—'
+                  all(_scan.table.item(r, 4) is not None and _scan.table.item(r, 4).text() == '—'
                       for r in range(_scan.table.rowCount()))
                   and '只显示状态' in _scan.lbl_foot.text())
             _scan.jump_latest()
             check("「最新」回跳 = 扫描基准日（数值快照随之回来）",
                   _scan.lbl_day.text() == str(pd.Timestamp(_outcome4.result.asof).date())
-                  and any(_scan.table.item(r, 2) is not None
-                          and _scan.table.item(r, 2).text() != '—'
+                  and any(_scan.table.item(r, 4) is not None
+                          and _scan.table.item(r, 4).text() != '—'
                           for r in range(_scan.table.rowCount())))
             # —— v6.42：日期控件 = 切日期的正路（选轴外日子 ⇒ 就近、零成本、出声）
             _axis_set = set(_dates4)
@@ -2527,11 +2624,13 @@ try:
     # ---- ⑧ 偏好「记住上次」：只存轻量配置，**绝不存扫描结果** ----
     _scan.save_scan_ui()
     _scan_ui = preferences.get('scan_ui')
-    check("scan_ui 偏好只含 scope / 指数 / 条件 / 参数 / 阈值（结果只进会话缓存，D3）",
+    check("scan_ui 偏好只含 scope / 指数 / 条件 / 参数 / 阈值 / 列序（结果只进会话缓存，D3）",
           isinstance(_scan_ui, dict)
-          and set(_scan_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds'}
+          and set(_scan_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds', 'col_order'}
           and str(_scan_ui.get('formula') or '').strip() != ''
           and isinstance(_scan_ui.get('thresholds'), dict))
+    # ★P5：故意**不还原** SpotValuationWorker 打桩 —— 后续 readiness 等段还会扫 M2，
+    #   若用真 worker 会联网（违反 §11.5-20）；没有测试需要真估值线程，全程留桩最稳。
 except Exception as _e:  # noqa: BLE001
     check(f"M2 全市场筛选页断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
@@ -2625,12 +2724,14 @@ try:
         _brd._display_pane.chk_ratio.setChecked(False)         # 家数口径（非占比）
         _overlay_code = str(_brd._display_pane.cb_overlay_code.currentData() or 'sh000001')
         _brd._index_code = _overlay_code
+        # ★v1.46/方案A：合成指数拉到远未来（periods=1200 ⇒ 末日≈ 2030）——
+        #   保证它**不落后于**真实广度轴 ⇒ ③ 段不会触发自动补拉（端到端必须离线，§11.5-20）。
         _brd._index_df = pd.DataFrame({
-            'date': pd.bdate_range('2025-09-01', periods=300),
-            'close': np.linspace(3000.0, 3300.0, 300),
-            'open': np.linspace(2995.0, 3295.0, 300),
-            'high': np.linspace(3010.0, 3310.0, 300),
-            'low': np.linspace(2985.0, 3285.0, 300)})
+            'date': pd.bdate_range('2025-09-01', periods=1200),
+            'close': np.linspace(3000.0, 3300.0, 1200),
+            'open': np.linspace(2995.0, 3295.0, 1200),
+            'high': np.linspace(3010.0, 3310.0, 1200),
+            'low': np.linspace(2985.0, 3285.0, 1200)})
         get_scan_store().clear()
         _brd._formula_pane.txt_formula.setPlainText('COND := C > MA(C, 20);')  # 与 M2 的键错开
         _t05 = _now4()
@@ -2848,6 +2949,26 @@ try:
         _brd._flow._ensure_index()
         check("指数补拉**不重复发车**（同一只还在拉 ⇒ 再调也不发第二枪）",
               _started_idx == [_overlay_code])
+
+        # ---- ⑦b ★v1.46/方案A：有数据但**落后于主图** ⇒ 也自动补拉（副图不再停旧日子）----
+        _brd._index_code = _overlay_code
+        _brd._index_df = pd.DataFrame(
+            {'date': pd.bdate_range('2019-01-01', periods=50),
+             'close': np.linspace(3000.0, 3100.0, 50)})   # 末日远早于广度轴 ⇒ 落后
+        _brd._index_fetching = ''
+        _brd._flow._index_synced_to = None
+        _brd._flow._index_gate.release()
+        _started_idx.clear()
+        _brd._flow._ensure_index()
+        check("★ 指数副图落后于主图：**也自动补拉**（旧版只在完全没数据时补 ⇒ 副图永远停旧日子）",
+              _started_idx == [_overlay_code]
+              and '落后于主图' in _brd.lbl_receipt.text()
+              and '不影响主图' in _brd.lbl_receipt.text())
+        _brd._index_df = None
+        _brd._index_code = ''
+        _brd._index_fetching = ''
+        _brd._flow._index_synced_to = None
+        _brd._flow._index_gate.release()
         _bflow.SingleSyncWorker = _orig_idx_worker
         _brd._lake = _real_lake3
 
@@ -2991,6 +3112,50 @@ try:
           and _brd6._readiness._syncing is False)
     _rep6b = _wait_probe6(_brd6._readiness)      # 完成会自动复检（两页口径仍只有一份）
     check("★ 同步结束后自动复检就绪度（不拿旧报告骗用户）", _rep6b is not None)
+
+    # ---- ②c ★v1.46 修复（用户 2026-09-25 实测）：**已有扫描结果时**更新不得把结果区
+    #      换成"更新中…"占位 —— 那会 `empty_box.show() + table.hide()` 把刚扫出来的表藏起来，
+    #      而下载结束后的体检分支只换「正在体检」占位、**不会恢复它** ⇒ 永久卡在"更新中…" ----
+    _keep_empty6 = _brd6.lbl_empty.text()
+    _keep_outcome6 = _brd6._outcome
+    _brd6._outcome = object()                 # 模拟"已经扫过一次、结果区正在展示结果"
+    _fill_started.clear()
+    _brd6._readiness._syncing = False         # 恢复现场
+    _brd6._readiness.update_latest()
+    check("★ 已有结果时更新：结果区**不被换成「更新中」占位**（否则下载结束后无处恢复 ⇒ 永久卡住）",
+          '更新中' not in _brd6.lbl_empty.text()
+          and _brd6.lbl_empty.text() == _keep_empty6
+          and _brd6._readiness._syncing)
+    check("★ 已有结果时更新：进度仍在回执行可见（结果区归结果、进度归回执/下载条）",
+          '已提交后台' in _brd6.lbl_receipt.text())
+    _fill_started[-1].finished.emit({'ok': 7, 'fail': 0, 'skipped': 0, 'added': 20,
+                                     'aborted': False, 'aborted_by': '',
+                                     'symbols_failed': []})
+    check("★ 已有结果时更新完成：明说结果表仍是旧数据、给出刷新动作（不静默假装已刷新）",
+          '成功 7' in _brd6.lbl_receipt.text()
+          and '旧数据' in _brd6.lbl_receipt.text()
+          and '开始扫描' in _brd6.lbl_receipt.text())
+    _wait_probe6(_brd6._readiness)             # 收尾：等自动复检线程结束，别留半个线程给后段
+    _brd6._readiness._syncing = False
+    _brd6._outcome = _keep_outcome6            # 恢复现场
+
+    # ---- ②d ★历史不足（partial）必须"看得见地"解释（用户 2026-09-25 实测：沪深300 每次
+    #      都有 1 只"历史不足"、更新后依旧 —— 那是次新股，数据源没有更早行情，补不齐不是缺陷）----
+    _keep_report6 = _brd6._readiness.report
+    _keep_names6 = _brd6._names
+    _brd6._outcome = None
+    _brd6._readiness.report = _RReport6(total=3, ready=['AAA', 'BBB'],
+                                        partial={'001280': 199}, missing=[],
+                                        latest=pd.Timestamp('2026-09-24'))
+    _brd6._names = {'001280': '示例新材'}
+    _brd6._readiness._render_readiness()
+    _txt6 = _brd6.lbl_empty.text()
+    check("★ 历史不足：空态**看得见地**说清（点名标的 + 行数 + 补不齐 + 不是缺陷），不只藏在 tooltip（§10-10）",
+          '001280' in _txt6 and '199' in _txt6 and '补不齐' in _txt6 and '不是缺陷' in _txt6)
+    _brd6._readiness.report = _keep_report6    # 恢复现场（后段 ③ 还要用它的 gap_count）
+    _brd6._names = _keep_names6
+    _brd6._outcome = None
+
     _dhub6.SyncWorker = _orig_sync9
     _brd6._readiness._syncing = False          # 恢复现场
 
@@ -3299,11 +3464,19 @@ try:
     check("市场回测页第4子页 = 运行历史（index 3）",
           _hv is not None and win.page_backtest.tabs.indexOf(_hv) == 3)
 
-    # —— 版式护栏：kind 过滤 M2/M3 置灰"预留"；数字着色走 delegate（选中行不叠色）——
+    def _settle5(seconds=0.4):
+        """等防抖 / 事件循环跑完（★v1.46：搜索框起 220ms 防抖，不再每敲一字重读索引）。"""
+        import time as _t5
+        deadline = _t5.time() + seconds
+        while _t5.time() < deadline:
+            app.processEvents()
+            _t5.sleep(0.02)
+
+    # —— 版式护栏：kind 过滤 M1/M2/M3 都可选（★P4 已解禁）；数字着色走 delegate（选中行不叠色）——
     _kmodel = _hv.cmb_kind.model()
-    check("kind 过滤：M1 可选、M2/M3 置灰不可选（预留而非空列表）",
-          _hv.cmb_kind.count() == 3 and _kmodel.item(0).isEnabled()
-          and not _kmodel.item(1).isEnabled() and not _kmodel.item(2).isEnabled())
+    check("kind 过滤：M1/M2/M3 都可选（★P4 已解禁，不再置灰“预留”）",
+          _hv.cmb_kind.count() == 3 and all(_kmodel.item(i).isEnabled() for i in range(3))
+          and '（预留）' not in _hv.cmb_kind.itemText(1))
     check("列表数字着色走 delegate（修『点一下就变色』）",
           isinstance(_hv.table.itemDelegate(), _SignedValueDelegate))
     check("版式分层：过滤条 + 列表/预览分栏 + 页脚设置",
@@ -3357,13 +3530,15 @@ try:
           or _hv.table.item(1, COL_PIN).text() == '★')
     check("pin 后记录 pinned=True + 按钮变『取消重点』",
           _hv.archive.load(_rid5)['pinned'] is True
-          and '取消' in _hv.preview.btn_pin.text())
+          and '取消' in _hv.preview.action_button('pin').text())
     _hv.chk_pinned.setChecked(True)
     check("『只看重点』过滤生效（2 行 → 1 行）", _hv.table.rowCount() == 1)
     _hv.chk_pinned.setChecked(False)
     _hv.ed_search.setText('平安')
+    _settle5(0.5)                             # ★v1.46：搜索防抖 220ms ⇒ 等它落地
     check("搜索过滤生效（按策略/标的）", _hv.table.rowCount() == 1)
     _hv.ed_search.setText('')
+    _settle5(0.5)
 
     # —— 载入查看 = 只读回放：不改写现场 / 禁导出 / 有横幅 / 净值曲线带买卖点 ——
     _prior = _BR5('000002', 'B', 'S', '2023-01-01', '2023-01-31', trades=[], equity=_eq5)
@@ -3451,6 +3626,98 @@ try:
     _hv.refresh()
     check("刷新后行数与存档数一致",
           _hv.table.rowCount() == len(_hv.archive.list()))
+
+    # ★P4 / v1.46：M2 扫描快照落档 → kind 声明表驱动列表 → 四态占比条预览 → 复用路由
+    from data.backtest_archive import (KIND_M1 as _K1, KIND_M2 as _K2, KIND_M3 as _K3,
+                                       build_scan_record as _bsr4)
+    from ui.widgets.history_kinds import KIND_SPECS as _KS4, spec_of as _spec4
+    _cfg4 = {'scope': 0, 'index_code': '', 'formula': 'COND := C > MA(C,20);',
+             'params': 'N=20', 'thresholds': {'min_amount': 5e7, 'min_bars': 250,
+                                              'exclude_st': True}, 'adjust': 'qfq'}
+    _counts4 = {'total': 300, 'hit': 64, 'miss': 232, 'insufficient': 3, 'filtered': 1, 'valid': 296}
+    _rid4 = _hv.archive.save(_bsr4(
+        _cfg4, kind=_K2, scope_label='沪深300 · 300只', scope_code='sh000300',
+        counts=_counts4, asof=_d5[1]))
+    _e4 = next((e for e in _hv.archive.list(kind=_K2) if e['id'] == _rid4), None)
+    check("★ P4：M2 扫描快照落档、list(kind=M2) 可查、hit/valid 进索引",
+          bool(_rid4) and _e4 is not None and _e4.get('hit') == 64 and _e4.get('valid') == 296)
+    check("★★ v1.46：范围名**带指数名 + 指数代码**（旧版只存「指数成分 300只」⇒ 认不出是哪个指数）",
+          _e4.get('scope_label') == '沪深300 · 300只' and _e4.get('scope_code') == 'sh000300'
+          and _e4.get('condition_label', '').endswith('1段'))
+    check("★ v1.46：M2/M3 不再借 M1 的键（total_trades / win_rate / cumulative_return 一律 None）",
+          _e4.get('total_trades') is None and _e4.get('win_rate') is None
+          and _e4.get('cumulative_return') is None)
+    check("★ v1.46：kind 声明表三种齐全、列数一致、未知 kind 安全回落 M1",
+          set(_KS4) == {_K1, _K2, _K3} and len(_KS4[_K2].columns) == 9
+          and _spec4('M9').kind == _K1)
+    _hv.cmb_kind.setCurrentIndex(
+        [_hv.cmb_kind.itemData(i) for i in range(_hv.cmb_kind.count())].index(_K2))
+    check("★ P4：切到 M2 后表头变（范围/命中率/命中/数据不足）且只剩 M2 行",
+          _hv.table.horizontalHeaderItem(2).text() == '范围'
+          and _hv.table.horizontalHeaderItem(5).text() == '命中率'
+          and _hv.table.horizontalHeaderItem(7).text() == '数据不足'
+          and _hv.table.rowCount() == 1)
+    check("★ v1.46：过滤轴对 M2/M3 换成「范围」并列出出现过的范围（旧版写死'标的'、且永远只有'全部'）",
+          _hv.filter_bar.lbl_facet.text() == '范围'
+          and _hv.cmb_facet.findData('sh000300') >= 0)
+    _hv.table.select_by_id(_rid4)
+    _sel4 = _hv.preview
+    check("★ v1.46：M2 预览走**四态占比条**（不再照抄 M1 的累计/胜率/成交/平均单笔胶囊）",
+          _sel4.statbar.isVisibleTo(_sel4) and not _sel4.chart.isVisibleTo(_sel4)
+          and not _sel4.pills_row.isVisibleTo(_sel4)
+          and '有效样本 296 / 300' in _sel4.statbar.lbl_head.text()
+          and '命中 64' in _sel4.statbar.lbl_legend.text())
+    check("★ v1.46（用户拍板）：M2/M3 动作集 = 复用/重跑/重点/删除 —— **无「载入查看」**"
+          "（横截面无净值可回放）且**无「送行情页」**（统计口径不针对个股）",
+          not _sel4.action_button('view').isEnabled()
+          and _sel4.action_button('reuse').isEnabled()
+          and _sel4.action_button('rerun').isEnabled()
+          and _sel4.action_button('pin').isEnabled()
+          and not _sel4.action_button('send').isEnabled()
+          and not _sel4.action_button('send').isVisibleTo(_sel4))
+    check("★ v1.46：运行历史页钉**开源字体栈** + 代码块走**开源等宽栈**"
+          "（§10-15 字体版权纪律；**禁止点名专有字体**）",
+          any('Source Han Sans' in f for f in _hv.font().families())
+          and any('Noto Sans' in f for f in _hv.font().families())
+          and 'JetBrains Mono' in _sel4.txt_formula.styleSheet()
+          and 'Consolas' not in _sel4.txt_formula.styleSheet())
+    check("★ v1.46：M2 条件**全文**在预览里（可直接复制）+ 粗筛摘要 —— 回答『到底有没有存函数』",
+          'MA(C,20)' in _sel4.txt_formula.toPlainText()
+          and '1 段' in _sel4.sect_condition.lbl_meta.text()
+          and '成交额 ≥ 5000 万元' in _sel4.lbl_filter.text())
+    _hv._on_view()
+    check("★ v1.46：动作层自己校验 kind —— 拿 M2 存档点「载入查看」不进 M1 只读回放（不靠按钮灰）",
+          _sv5._preview_mode is False and '横截面' in _hv.settings.lbl_receipt.text())
+    _sent4b = {}
+    _orig_send4b = win.send_formula_to_market
+    win.send_formula_to_market = (lambda segs, params='':
+                                  _sent4b.update(n=len(segs)) or len(segs))
+    try:
+        _hv._on_send_to_market()
+    finally:
+        win.send_formula_to_market = _orig_send4b
+    check("★ v1.46（用户拍板）：拿 M2 存档点「送行情页」**被动作层拒掉**（不靠按钮隐藏）"
+          "+ 诚实回执『不针对个股』",
+          'n' not in _sent4b and '不针对个股' in _hv.settings.lbl_receipt.text())
+    _rerun4 = {}
+    _orig_req4 = _scan.request_run
+    _scan.request_run = lambda: _rerun4.update(called=True)
+    try:
+        _hv.table.select_by_id(_rid4)
+        _hv._on_rerun()
+    finally:
+        _scan.request_run = _orig_req4
+    check("★★ v1.46：M2「重跑」走 `request_run`（等名单+体检就绪再扫 —— 旧版直接 start_scan "
+          "对指数成分必空跑、对同步范围必弹'体检未完成'闸门框）",
+          _rerun4.get('called') is True
+          and 'MA(C,20)' in _scan._formula_pane.txt_formula.toPlainText())
+    check("★ v1.46：M2 页真的有 `request_run` 薄壳（不靠测试打桩才发现没实现）",
+          callable(getattr(win.page_backtest.page_breadth, 'request_run', None)))
+    _scan._formula_pane.txt_formula.setPlainText('清空占位')
+    _hv._on_reuse()
+    check("★ P4：M2 存档「复用参数」路由到 M2 页并 apply_config（formula 落地）",
+          'MA(C,20)' in _scan._formula_pane.txt_formula.toPlainText())
+    _hv.cmb_kind.setCurrentIndex(0)          # 还原 M1，不影响后续
 
     _bflow5.BacktestArchive = _orig_arc_cls
     _sh5.rmtree(_root5, ignore_errors=True)
@@ -3589,6 +3856,8 @@ print("\n== §10-9 · 数值控件宽度工厂（v1.42 · v1.45 已迁到下载�
 try:
     import pathlib as _pl12
 
+    from core.preferences import DEFAULTS as _PDEF12  # noqa: E402
+    from core.preferences import preferences as _prefs12  # noqa: E402
     from ui.dialogs.download_settings import DownloadSettingsDialog as _DSD12  # noqa: E402
     from ui.widgets.custom_widgets import SPIN_MIN_WIDTH as _SMW12  # noqa: E402
     from ui.widgets.custom_widgets import double_spin as _dsp12, int_spin as _isp12
@@ -3610,10 +3879,15 @@ try:
               _spin12.minimumWidth() >= _SMW12 and _spin12.maximumWidth() > 16_000_000)
 
     # ---- ② 只修宽度，**不许顺手改数值口径**（从全局偏好预填）----
-    check("★ 间隔框默认 0.6、范围 0~10、步长 0.1（口径原样）",
-          abs(_set12.spin_interval.value() - 0.6) < 1e-9
+    #   ⚠ 隔离（v1.45 隐患修正）：默认值锁在**规格常量** `DEFAULTS`，实框只验
+    #     「预填 == 当前已存偏好」。旧写法直接钉 `value()==0.6` ⇒ 用户一旦在下载设置里
+    #     改过间隔就**假红**（非产品 bug：规格与用户数据混在了同一条断言里）。
+    _cur_int12 = float((_prefs12.get("download_prefs") or {}).get("interval", 0.6))
+    check("★ 间隔默认 0.6（规格常量）、范围 0~10、步长 0.1、预填==已存偏好（口径原样+隔离）",
+          abs(float(_PDEF12["download_prefs"]["interval"]) - 0.6) < 1e-9
           and (_set12.spin_interval.minimum(), _set12.spin_interval.maximum()) == (0.0, 10.0)
-          and abs(_set12.spin_interval.singleStep() - 0.1) < 1e-9)
+          and abs(_set12.spin_interval.singleStep() - 0.1) < 1e-9
+          and abs(_set12.spin_interval.value() - _cur_int12) < 1e-9)
     check("★ 并发框范围 1~4（K≤4，与不封 IP 取向一致）",
           (_set12.spin_concurrency.minimum(), _set12.spin_concurrency.maximum()) == (1, 4))
 
@@ -3795,6 +4069,12 @@ try:
               bar.lbl_txt.sizePolicy().horizontalPolicy()
               == bar.lbl_txt.sizePolicy().Policy.Ignored)
 
+        # ---- ★回归：closeEvent 守卫 has_unfinished 必须是普通方法（曾误设 @property）----
+        from ui.download_hub import DownloadHub as _DH13g  # noqa: E402
+        check("★ has_unfinished 可当方法调用（主窗口 closeEvent 写的是 has_unfinished()；"
+              "若退回 @property 会 'bool' object is not callable 且跳过 shutdown）",
+              callable(_DH13g.has_unfinished))
+
         # ---- ⑧ 主窗口接线：三处视图同一个真源 ----
         check("★ 主窗口持有队列 + 底部条 + 角标（hub 与 engine 同级）",
               isinstance(win.downloads, DownloadHub)
@@ -3974,13 +4254,79 @@ except Exception as _e13:  # noqa: BLE001
     check(f"§7-B11 后台下载断言整段抛异常: {type(_e13).__name__}: {_e13}", False)
 
 # ==========================================
+# §7-B12 P3 · 筛选方案库（ScanStrategyStore CRUD + M2 配置打包/还原往返）
+# ==========================================
+print("\n== §7-B12 P3 · 筛选方案库 ==")
+try:
+    import tempfile as _tmp_p3
+    from data.scan_strategy_store import ScanStrategyStore as _SSSp3
+    from data.scan_strategy_store import get_scan_strategy_store as _gsp3
+
+    _store_p3 = _SSSp3()
+    _store_p3.path = os.path.join(_tmp_p3.mkdtemp(prefix="jian_scanstrat_"),
+                                  "scan_strategies.json")   # 临时库，绝不写真实目录
+    _store_p3.data = {"strategies": []}
+    _id1 = _store_p3.upsert({"name": "方案甲", "scope": 1, "index_code": "sh000300",
+                             "formula": "COND := C > MA(C,20);", "params": "N=20",
+                             "thresholds": {"min_amount": 50000000.0}, "adjust": "qfq"})
+    _store_p3.upsert({"name": "方案甲", "scope": 2, "index_code": "",
+                      "formula": "COND := C > MA(C,60);", "params": "",
+                      "thresholds": {}, "adjust": "qfq"})   # 同名覆盖
+    check("★ 同名 upsert 只留一条、内容被覆盖（不重复堆积）",
+          len(_store_p3.list_strategies()) == 1
+          and _store_p3.get(_id1)["config"]["formula"].endswith("MA(C,60);")
+          and _store_p3.get(_id1)["config"]["scope"] == 2)
+    _store_p3.upsert({"name": "方案乙", "formula": "X:=1;", "scope": 0})
+    check("★ 不同名各存一条、列表按名字排序",
+          [s["name"] for s in _store_p3.list_strategies()] == ["方案乙", "方案甲"])
+    _reloaded = _SSSp3()
+    _reloaded.path = _store_p3.path
+    _reloaded.load()
+    check("★ 落盘可重载（原子写 tmp+replace 后 JSON 完整）",
+          len(_reloaded.list_strategies()) == 2)
+    check("★ delete 按 id 生效",
+          _store_p3.delete(_id1) is True and len(_store_p3.list_strategies()) == 1)
+
+    # M2 配置打包/还原往返（scope 先置 0=自选 ⇒ resolve_scope 走本地不联网）
+    _scan.cb_scope.setCurrentIndex(0)
+    _scan._formula_pane.txt_formula.setPlainText("COND := C > MA(C, 99);")
+    _scan._formula_pane.txt_params.setText("P=9")
+    _cfg_p3 = _scan.current_config()
+    check("★ current_config 打包出六件套（scope/index/formula/params/thresholds/adjust）",
+          set(_cfg_p3) >= {"scope", "index_code", "formula", "params", "thresholds", "adjust"}
+          and "MA(C, 99)" in _cfg_p3["formula"] and _cfg_p3["params"] == "P=9")
+    _scan._formula_pane.txt_formula.setPlainText("")          # 打乱
+    _scan._formula_pane.txt_params.setText("")
+    _scan.apply_config(_cfg_p3)                                # 还原
+    check("★ apply_config 往返无损（formula/params 复原）",
+          "MA(C, 99)" in _scan._formula_pane.txt_formula.toPlainText()
+          and _scan._formula_pane.txt_params.text() == "P=9")
+    check("★ M2/M3 桥接共用 get_scan_strategy_store 单例（一份池跨页可见）",
+          _scan._strategy.store is _gsp3() and _brd._strategy.store is _gsp3())
+
+    # ★P6：行业映射缓存 store CRUD（临时路径，不碰真实 industry_map.json）
+    from data.industry_store import IndustryStore as _IS6
+    _ist6 = _IS6(path=os.path.join(_tmp_p3.mkdtemp(prefix="jian_ind_"), "industry_map.json"))
+    check("★ P6：空表 is_loaded=False、get 返回 ''", _ist6.is_loaded() is False and _ist6.get('600000') == '')
+    _ist6.replace({'600000': '银行', '600519': '白酒', 'BAD': ''})
+    check("★ P6：replace 落盘并过滤空值；get/as_map/coverage 一致",
+          _ist6.get('600000') == '银行' and _ist6.coverage() == 2
+          and _ist6.as_map() == {'600000': '银行', '600519': '白酒'} and _ist6.is_loaded())
+    _ist6b = _IS6(path=_ist6.path)
+    check("★ P6：从磁盘重载得到同样映射（原子写 JSON 完整）", _ist6b.get('600519') == '白酒')
+    _ist6b.replace({})                                     # 抓空不动旧表
+    check("★ P6：replace 传空不清好数据（抓失败保留旧映射）", _ist6b.get('600000') == '银行')
+except Exception as _e_p3:  # noqa: BLE001
+    check(f"§7-B12 P3 筛选方案库断言整段抛异常: {type(_e_p3).__name__}: {_e_p3}", False)
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402
 
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
               "backtest_strategies.json", "preferences.json", "trade_calendar.json",
-              "backtest_results"):
+              "scan_strategies.json", "industry_map.json", "backtest_results"):
     _path = os.path.join(settings.USER_DATA_DIR, _name)
     _untouched = (not os.path.exists(_path)) or os.path.getmtime(_path) < RUN_STARTED_AT
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)

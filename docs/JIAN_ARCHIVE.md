@@ -1401,6 +1401,227 @@ R10/R11 画线类型（无搜索栏、32 种全平铺）；R12 数据页本轮�
 - ❌ 不做“自动定时同步”（那是独立功能，本案只给**手动**更新入口 + 检测提示）。
 
 
+### §7-A 半成品闭环（A1/A2/A3/A4 已 ✅ · v1.46 从主文件搬入 · 数字冻结）
+
+### A 类 · 半成品闭环（有代码入口/雏形，缺最后一公里 —— 建议优先）
+- **A1 [x] 行情涂鸦板持久化（✅ v6.10 由 §7-B3 的 P6 吸收并升级完成）**：
+  旧的"内存趋势线"（`drawn_lines` 随重渲染清空、无落盘）已被
+  `data/annotations.py` + `ui/widgets/annotation_layer.py` 取代 —— 三类标注、
+  按 `(标的, 周期)` 持久化、**逐个独立删除**、坐标按日期锚定（不漂移）。
+  复盘页复用（回放图上标注）属 P8 之后的事：API 已按 `(symbol, period, id)` 解耦，**只换调用方**。
+- **A2 [x] 回测结果导出（✅ v1.36 图表能力补齐）** `ui/views/backtest.py` + `ui/widgets/backtest_export.py` + `ui/widgets/backtest_xlsx.py`：
+  ✅ 导出菜单三项：📄 CSV 明细（**参数快照 + 逐笔成交**，不写逐日净值——看图靠 xlsx）、🖼 PNG 报告图、📊 **xlsx 内嵌真正的净值曲线图 + 买卖点标记**（openpyxl，打开即见图）。
+  xlsx 三 sheet：「回测明细」+ 可见「净值曲线」（只放图）+ **隐藏「净值数据」**（逐日全量放隐藏表，主表不刷屏）；共同数据源 `build_daily_series(result)`（买卖点用成交日净值定位）。
+  **明确不做**：结果删除 —— 用户判断"当前没有显式保存、结果会被覆盖，删除没有对象可删"。
+  `StrategyStore.record_result` 仍是自动归档的缩略指标（同股对比用），不属于"可管理的结果集"。
+- **A4 [x] 回测结果历史存档（✅ v1.37 落地 · v6.49 复核重做）** `data/backtest_archive.py` + `ui/widgets/backtest_history_ui.py`（版式/渲染）+ `ui/views/backtest_history.py`（薄壳，市场回测页第 4 子页「运行历史」）：
+  每次回测默认**自动**落一份**不可变快照**（~/.jian_data/backtest_results/，每份一个 `<时间戳_uuid>.json` + 轻量索引）：配置快照(可复用/重跑) + KPI + 逐笔全量 + 净值抽稀≤250（**端点保底 + 并入全部成交日**，留档）。载入查看=**只读回放**（保存/恢复现场 + 预览期禁导出 + 横幅「退出预览」；净值曲线补画买卖点）、复用参数=灌回编辑器、重跑=走 §7-B10 滞后自动补、**送行情页**=经主窗口转交函数段。★重点用户手标、豁免淘汰（pin 就地更新一行，**保住选中**）。上限：每标的 20 / 总量 500 滚动淘汰（重点仍计入 500）；防注入：文件名 uuid、用户文本只进 JSON 字段、单文件≤2MB；**读路径不写盘**。导出菜单另有「💾 存为历史快照」作手动兜底。schema 带 kind 预留 M2/M3（本轮只 M1，列表里置灰标"预留"）。
+
+- **[x] A3 P0 数据管理页（v5.8 已完成）**：`DataLakeManager` 补删除/清点原语 +
+  第 6 导航页 `ui/views/data_manager.py` + 批量预下载弹窗 `ui/dialogs/bulk_download.py` +
+  同步门面 `data/sync_service.py`。
+  **遗留（属 B1，非 A3 欠账）**：`scan_cache` zone 仍不存在 —— M2 横截面筛选落地时再建。
+
+
+
+### §7-E 施工队列（E1–E5 已闭环 · v1.46 从主文件搬入 · 数字冻结）
+
+### §7-E 施工队列（v6.51 定稿 · 用户 2026-09-23 拍板 · **按序施工，一项一 commit，独立可回滚**）
+> **✅ 队列已闭环（2026-09-23）**：E1 ✅ 提交 `c969112`（1.37）→ E2 ✅ 落地并提交 `0e080c0`（1.38）→
+> E3 ✅ 落地并提交 `96abc3f`（1.39）→ E4 ⛔ **闸门不过 ⇒ 就地结案**（零代码变更，见下）。
+> **➕ 追加 E5 ✅ 落地 `1.40`**（用户实测反馈驱动："大池子每天更新到最新很影响体验"）——
+> 见下方 **E5**；它的**后续性能档**（并发 / 批量快照通道）仍待拍板。
+> **push 仍待用户执行**（本地领先远端 6）。
+
+> 四项均已勘察到**代码落点**（不是设想）。关联账目：E2 → §9.3 待修清单；E3 → §9.1「可修的小债」；E4 → §7-D4。
+> 拍板记录见本节末尾「E. 拍板」。
+
+#### E1 · 提交推送 1.37（收尾 · 非功能 · ✅ **已提交 `c969112`；push 待用户**）
+- **现状**：`APP_VERSION` / `version.json` 均 `1.37`；已提交 **17 文件 / +2983 −722**（含 5 个新文件：
+  `data/backtest_archive.py`、`ui/views/backtest_history.py`、`ui/widgets/backtest_history_ui.py`、
+  `docs/JIAN_CODEMAP.md`、`design/1.37-backtest-history/index.html`）；本地领先远端 **3**（1.35/1.36/1.37 未推）。
+- **STEP**：① `git add -A` ✅ → ② commit 首词 `1.37` ✅ → ③ **push 由用户执行**（会一次带上 1.35/1.36）。
+- ⚠ push 的两个**设计内**副作用：① 所有 ≤1.36 用户开机弹「✨ 发现新版本」（`version.json` 的 `notes` 就是弹窗文案）；② 点「是」打开 Releases **列表页**（现阶段不制作 Release，§9-A）。
+
+#### E2 · 代理失败"说人话" + 熔断提前（→ 1.38 · ✅ **已落地 v1.38**）
+**已核实落点**：`_classify_error`（`data/sync_service.py:478`，关键词表**已含** `proxy` ⇒ 现归 `network`）· 三个文案出口 `short_fetch_reason:486` / `friendly_fetch_message:496` / `friendly_constituent_message:518` · **熔断真正执行处 = `ui/workers.py:123`** `SyncWorker.run()`（`consecutive_fail >= policy.circuit_breaker`，默认 12）。
+- **STEP 1 纯函数层**：`_classify_error` 增加 **`"proxy"`**（**优先级高于 `network`**）+ 可复用 `looks_like_proxy_error(text)`。断言：`ProxyError` → proxy、普通断网 → network、**互不误伤**。
+- **STEP 2 三出口文案**：`proxy` 分支 =「疑似**本机代理问题**：请检查代理软件（Clash / V2Ray 等）是否在运行，或切换节点后重试；国内行情源通常可直连」。
+  ⚠ **绝不把 `127.0.0.1:7897` 写进用户文案** —— 那是**本机**诊断记录（§9.3），写死等于对新用户撒谎；端口只留在 §9.3 的历史记录里。
+- **STEP 3 熔断提前**：`ThrottlePolicy` 加 `proxy_circuit_breaker: int = 3`；`SyncWorker` 另计 `consecutive_proxy`，达阈值即停，`finished` 回包带 `aborted_by="proxy"`；回执改「疑似代理问题，已提前停手以免白等」。断言：连给 3 次 proxy 失败 ⇒ **提前停 + 标记**（现在要白等 12 次超时）。
+- **STEP 4 顺手项（P4）**：`ui/dialogs/bulk_download.py` 的 `_cons_token` 手写判据 → 公共件 `JobGuard`（`workers.py:257` 已挂账"择机改用它"）。
+- **STEP 5 文档 + 版本**：§9.3 三条打勾；§11.5 加新坑（**批量同错 + `ProxyError` ⇒ 先查代理，别怀疑行情源、别加重试**）；§8 加 1.38；三处版本号。
+- **不做**：❌ 加重试（只让代理全灭更慢）❌ 自动改 `trust_env` ❌ 主动探测代理端口 ❌ 「不走系统代理」开关（见 P5）。
+
+#### E3 · 日线落盘列白名单（→ 1.39 · ✅ **已落地 v1.39**）
+**根因（已核实）**：`_normalize_ohlcv`（`data/akshare_feed.py`）**只 rename 不裁列** ⇒ 三类杂列进湖：
+① 新浪源透传 `turnover` / `outstanding_share`；② 东财兜底的中文列；③ 期货列 `持仓量` / `动态结算价`。
+**对照**：分钟路径**有**显式裁剪（`fetch_a_share_minute` 的 `keep`）⇒ **日线/分钟不对称**。
+**依赖盘点（已全仓 grep）**：`_BASE_COLUMNS`（`core/cross_section.py`）= `date/open/high/low/close/volume/amount`；另加 `turnover` / `outstanding_share`（`columns_for` / 逐行判定）；**`持仓量` / `动态结算价` 全仓 0 次引用 ⇒ 纯噪声**。落盘侧 `data/market_db.py: save_data` **不做任何列校验**。
+- **STEP 1 ✅ 实测（只读 parquet footer；探针跑完即删）**：
+
+  | 分区 | 文件 | 体积 | 列集合（v1.39 实测） |
+  |---|---|---|---|
+  | `kline_daily` | **420** | 48.7 MB | OHLCV+`symbol` = 100% · `amount`/`turnover`/`outstanding_share` = **98.6%（414）** · `持仓量`/`动态结算价` = 5 · 东财中文六列 = **1** |
+  | `kline_daily_raw` | 1 | 0.2 MB | 10 列标准（**干净**） |
+  | `index_daily` | 29 | 3.1 MB | OHLCV+`symbol`（**无 `amount`**） |
+  | `kline_min` | 3 | 0.1 MB | **只有 6 列 OHLCV（无 `symbol`）** |
+
+  **结论**：① 没有"第四类"未发现的杂列（§9.1 记载的三类就是全部）；
+  ② 杂列只涉及 **6 个文件** ⇒ **本项收益不是省空间，而是"消除隐性依赖 + 让列集合由一处说了算"**；
+  ③ `index_daily` 无 `amount`、`kline_min` 无 `symbol` ⇒ **必须 apply-if-present**（require 就会砍坏），
+  这两处是实测给出的硬证据（不是推理）。
+- **STEP 2 白名单 + 落盘裁剪**：`akshare_feed` 新增**模块级** `DAILY_KEEP_COLUMNS = OHLCV_COLUMNS + ('symbol', 'amount', 'turnover', 'outstanding_share')`；`_normalize_ohlcv` 末尾按 **apply-if-present**（只留"存在且在白名单里"的列）⇒ `index_daily`（无 amount）/ 期货（无 turnover）**不会被砍坏**。
+- **STEP 3 ✅ 断言**（`smoke_chart` **+7 项**）：① 白名单 ⊇ OHLCV + `symbol`/`amount`/`turnover`/`outstanding_share`，且**不含任何杂列**；
+  ② **★★ 白名单 ⊇ 横截面内核所需的全部列**（`_BASE_COLUMNS` ∪ `columns_for(启用换手率 + 市值)`）
+  —— 这条是防"将来裁列让筛选**静默失效**"的**交叉护栏**（§9.1 的核心警告）；
+  ③ 脏数据（**照实测的三类杂列构造**）清洗后只剩白名单列；④ **apply-if-present**：只有 OHLCV 也不报错、不凭空造列；
+  ⑤ 受支持列 `amount`/`turnover`/`outstanding_share` **不被裁掉**；⑥ 分钟路径行为不变（白名单含 `symbol`，但分钟随后仍裁回 6 列）。
+  ⚠ **原计划第 ④ 条预判有误，如实修正**：原以为"存量杂列会被清掉 ⇒ 旧断言『缺列的票落数据不足』前提消失、变成**假绿**"，
+  但实测显示**存量 parquet 不动** ⇒ 那条断言前提**依然成立**，**保留不动**（它测的三态诚实仍有效）。
+  **教训**：涉及"存量数据"的推断，**必须等探针跑完再下结论**。
+- **STEP 4 ✅ 存量数据**：白名单**只对新落盘生效**，湖里已有杂列**不动**（数据主权）；想瘦身用「重新全量下载」。**不做自动迁移**。
+  ⚠ **本轮不做**："在数据管理页加一句'重新下载可瘦身'说明" —— 收益边际（只涉 6 个文件、且用户不可见），
+  而该页有 6 条护栏不变量，不值得为一句话动它；诚实登记为**不做**（不假装做了）。
+- **STEP 5 ✅ 文档 + 版本**：§9.1 改写为「**现行**：白名单已上」+ 实测表；§11.4 加行「改数据湖允许存在哪些列 → `DAILY_KEEP_COLUMNS` **一处**」；
+  §4 红榜更新 `akshare_feed` 行数（462 → 487）；§8 加 1.39；三处版本号。
+- **不做**：❌ **不给东财兜底源补 `成交额→amount` / `换手率→turnover` 映射** —— 东财 `换手率` 是**百分数**(0.93)、新浪 `turnover` 是**小数**(0.0093)，直接映射会把 **100× 口径**混进同一列（正是 §9-V 最怕的事故）；要做得先定换算 + 断言，**登记为后续项**。❌ 不动 `OHLCV_COLUMNS` 常量本身（被 `_PRICE_COLUMNS` 与分钟 `keep` 依赖）。❌ 不动存量 parquet。
+- **验收**：`smoke_chart` **796 → 803 项** / `smoke_pages_overlay` **566 项**（当时值；历史数字冻结）全绿 + 全仓 compileall。
+
+#### E4 · 时点成分股（治幸存者偏差）→ **⛔ 闸门不过 ⇒ 已就地结案（2026-09-23 · 零代码变更 · 拍板 P3）**
+
+**闸门结论（两关都实测过，跑完即删）**：
+- **第一关 · akshare 侧：无历史日期入口（决定性）**。`akshare 1.18.60` 里 5 个成分股候选接口
+  **全部只有 `symbol` 一个参数**：`index_stock_cons_csindex` / `index_stock_cons` /
+  `index_stock_cons_sina` / `index_stock_cons_weight_csindex`，外加 `index_stock_info()`（无参、非成分）、
+  `index_component_sw` / `sw_index_third_cons`（申万行业，同样只有 `symbol`）。
+  ⇒ **"按历史日期取成分股"在 akshare 侧根本不存在这条路**（不是"没试出来"，是签名里没有）。
+- **第二关 · 官方渠道：网络可达，但没有可用的"带生效日"数据端点**。实测
+  `csindex.com.cn` 首页 **HTTP 200**（网络通）、`sse.com.cn` 指数页 **403**（反爬）；
+  连试 5 个候选 REST 端点（`/csindex-home/search/notice-list`、`/index/notice`、`/news/news-list`、
+  `/index/sample-adjust`、`/index/cons-download`）**全部 404**（后端是 Spring Boot 服务，路径得从
+  站点前端 JS 里挖，**猜不到**）。官网的历史调样以**公告 PDF/Excel**形式发布 ⇒ 即便找到真实端点，
+  仍要**自建解析器 + 长期随格式变更维护**。
+- **旁证 · 现有快照接口的列**：`index_stock_cons_csindex('000300')` → 300 行，列为
+  `日期/指数代码/指数名称/成分券代码/成分券名称/…`，其中「日期」= **快照日（2026-09-22）**，
+  **没有入选日、没有退出日** ⇒ 与 v6.43 的结论一致。
+
+**⇒ 按拍板 P3 结案**：**不发版、不写 UI、不引入任何"看着支持"的假能力**；
+保留现有两处**诚实提示**（`constituent_snapshot_text` 报快照日 + 两页"区间早于快照 ⇒ 幸存者偏差"警告），
+并在 §7-D4 记明"实测不可得 + 将来若要做的复活路径"。
+
+**将来若要复活（须先与用户对齐投入）**：唯一可行路径是**用浏览器打开 csindex.com.cn，从 Network
+面板抓到"公告/调样"的真实端点**（或直接取公告文件），再按 §7-E4 原 STEP 2–5 施工：
+建 `~/.jian_data/constituent_history.json`（指数 → 按生效日排序的调入/调出事件流）→
+`constituents_at(index_code, asof)` 事件流回放 → `fetch_index_constituents(code, asof=None)`
+（⚠ `asof` **只进参数、不进缓存键**，与 `scan_store` 同款纪律）。**这是一项"数天 + 长期维护"的投入**，
+不是一个顺手的补丁。
+
+---
+
+<details>
+<summary>原方案（保留备查 · 闸门通过时才施工）</summary>
+
+> ⚠ **本项成败不取决于代码量，而取决于"有没有带生效日的历史调样数据源"**（v6.43 已实测：三个候选接口都**没有**调入/调出日期）。**闸门不过 ⇒ 就地结案，不发版、不写 UI** —— 绝不允许出现"界面看着支持、名单是假的"。
+**已核实**：现有缓解已做（`constituent_snapshot_text` `readiness_flow.py:49` + 两页各自的"区间早于快照 ⇒ 幸存者偏差"提示）；名单链路 = `ConstituentsWorker` → `MarketSyncService.fetch_index_constituents:215` → `AkShareFeed.fetch_index_constituents:409`（中证官网优先）；**返回只有 `symbol` + `snapshot_date`（`:480`）⇒ 天生做不出时点**。落点建议 `~/.jian_data/constituent_history.json`（指数 → 按生效日排序的调入/调出事件流）。
+- **STEP 1 可行性探针（⛔ 闸门 · 跑完即删）**：① **`index_stock_cons_weight_csindex` 等接口是否接受历史日期参数**（接受 ⇒ 最优解：直接时点查询）；② 中证官网 `csindex.com.cn` 的调样公告页 / 样本调整文件（半年/季度）是否可取、格式是否稳定；③ 遍历 `dir(ak)` 找成分股的历史版接口。产出「候选源 / 能否取到生效日 / 覆盖年数 / 稳定性 / 请求次数」表。**拿不到 ⇒ 回写 §7-D4 结案。**
+- **STEP 2 数据件**（仅闸门通过后）：`data/constituent_history.py`（纯 Python 零 Qt）：`load_or_build(index_code)` 当日 JSON 缓存 + `constituents_at(index_code, asof)` **事件流回放** + 拿不到时回退"当前快照并标注"。断言：给定事件流回放任意日期得正确名单（**调出后不再出现**）。
+- **STEP 3 接线**：`fetch_index_constituents(code, asof=None)` —— ⚠ **`asof` 只进参数、不进缓存键**（与 `scan_store` 同款纪律，§11.5-59）；M2/M3 的 `resolve_scope` 把基准日 / 区间起点传下去；`ConstituentsWorker` 加 `asof` 透传。
+- **STEP 4 UI 诚实化**：能取到时点名单 ⇒ 把"⚠ 幸存者偏差"换成"✓ 时点名单（YYYY-MM-DD 生效）"；**取不到就保持现有警告**（不假装）。
+- **STEP 5 文档 + 版本**（含 §7-D4 状态改写）。
+- **不做**：❌ 花名册名称的"历史 ST 可追溯"（D5 同款，范围外）❌ 全历史全部指数的自动回补（只按需拉当前要用的那个）。
+
+</details>
+
+#### E5 · 下载层新鲜度对齐真交易日历 → ✅ **已落地 v1.40**（用户实测反馈驱动）
+
+> **来源**：用户提问"下载最新数据的速度 —— 大池子每天更新到最新很影响体验"。
+> **先量再改**（§11.5-58）：量出的结论是"**节流 sleep ≈ 全部耗时**，本地 parquet 读写只占 2–5%"
+> ⇒ 明确**不去优化读写/存储格式**（那是白费力气）。
+
+**已落地（v1.40）**
+- `data/sync_service.py`：`ThrottlePolicy.expected_latest`（注入式"该到哪天"= 最近一个**已收盘定稿**
+  的交易日）+ `_is_fresh(last, within_days, expected_latest)` —— 给了 expected 就判 `last >= expected`，
+  没给则**完全保持旧语义**（"末日 == 今天"）。
+- `ui/workers.py`：新增 `inject_expected_latest(policy)` —— **每批只取一次日历**并注入；
+  `SyncWorker.run()` / `SingleSyncWorker.run()` 都走。拿不到日历 ⇒ **原样返回同一对象** ⇒ 回落旧判据。
+- 预估修正：`estimate_seconds(count, policy, stale_count=None)` + 新 `format_duration`（唯一展示出口）；
+  M2/M3 二次确认用体检报告的 `coverage_at` 报"其中约 N 只真正联网、约 X 分钟，其余自动跳过"；
+  批量弹窗改口"最多约…（已最新的自动跳过）"。
+
+**效果（按 5400 只估）**
+
+| 场景 | 旧行为 | v1.40 |
+|---|---|---|
+| 周末 / 法定节假日 / 盘中点「更新到最新」 | ≈50 分钟，**零变化** | **≈0**（只读本地判据即跳过） |
+| 盘后首次（真该补当天） | 必须跑（本来就是真活） | **不变**（必须跑） |
+| 盘后第二次点（已同步过） | 已会跳过 | 不变 |
+| 界面预估 | 永远"约 50 分钟"（劝退） | 按真正联网只数算；批量弹窗注明"最多约" |
+
+**后续性能档 → ✅ 已落地 v1.44 / §7-B11 后续**：① 批内并发（全局节流阀，聚合请求率不变）② 全市场
+快照秒补（只补当天/定稿后/qfq自洽，三硬边界）均已实现——口径与实现见 §7-B11 后续与 §11.6 顶部；
+③ 单纯降 `interval` 仍不做（封 IP 风险）。
+
+#### E. 拍板（2026-09-23）
+
+| # | 议题 | 结论 |
+|---|---|---|
+| P1 | 文档瘦身（v6.50）与 §7-E 是否**并进 1.37 同一个 commit** | ✅ **并进**（不为纯文档单抬一个版本号） |
+| P2 | E3 白名单是否保留 `turnover` / `outstanding_share` | ✅ **保留** —— 砍掉会让 M2/M3 换手率/市值筛选**当场全变「数据不足」**，正是 §9.1 警告的静默失效 |
+| P3 | E4 闸门不过是否**就地结案** | ✅ **就地结案**（不留永远做不成的条目） |
+| P4 | 顺手把 `bulk_download._cons_token` 改用公共件 `JobGuard` | ✅ **做**（`workers.py:257` 已挂账，<$1h 防坑）→ 并入 E2 同批 |
+| P5 | E2「设置里加『行情拉取不走系统代理』开关」本轮是否做 | ❌ **本轮不做** —— app **目前没有设置页**（`ui/dialogs/` 9 个弹窗无设置项、`main_window.py` 连 `preferences` 都没引用，偏好全是各页面自己写）；要加这个开关须先定"设置入口放哪"，**属独立话题**，登记为 backlog |
+
+**顺序**：**E1 → E2 → E3 → E4**（不变）。理由：E2/E3 是"确定性能在本轮出结论"的工作；E4 的探针可能需要用户配合（联网环境 / 代理状态），放最后不会卡住前三项。
+
+---
+
+### §7-B12 主案规格：M2/M3 结果表增强 + 配置资产化 + 接入运行历史（v1.46 立项 → **`1.46` 收官 ✅** · v6.64 从 `JIAN_RULES.md` 搬入 · **数字冻结**）
+### B12 · ⭐M2/M3 结果表增强 + 配置资产化 + 接入运行历史（v1.46 立项 · 用户 2026-09-25 拍板）
+
+> **一句话**：把 M2 结果表做厚（行号/排序/富字段/列序自定义）+ 给 M2/M3 一套命名配置保存（对齐 M1）+ 把 M2/M3 扫描接入已预留的「运行历史」。**七阶段，一阶段一 commit、独立可回滚**。
+
+**拍板（2026-09-25）**：① 排序=默认命中置顶 + 表头点击**全局排序**（可切）；② B 层估值列**做**（守诚实口径）；③ 配置走**独立新库**（不并入 `strategy_store`，边界干净、留重构空间）；④ 细分行业**做**；⑤ 内盘/外盘**不做**（历史无值、实时逐只 N 请求、对复盘无意义）；⑥ 列顺序自定义（拖拽换列序）纳入。
+
+**数据三层（决定各列可行性与口径，改前必读）**：
+- **A 层｜数据湖就地算、任意基准日都真、零新网络**：当日/当月/当年涨幅、总成交量、流通市值(=收盘×`outstanding_share`)、换手率。
+- **B 层｜只有"今天"的快照值**（`spot_em` 一次带回 市盈率-动态/市净率/总市值/涨跌幅/年初至今）：**仅当基准日==最新定稿日**才填，否则显 `—` 并脚注"当前值"——**绝不拿今日 PE 冒充历史某天**（§5.3 / 三态铁律同源）。
+- **C 层｜无源、不做/独立立项**：历史 PE/PB/股息率（`valuation`/`fin_report` 是空占位分区）、内盘/外盘（实时盘口独有）。细分行业走**新映射缓存**（见 P6）。
+
+**七阶段（P1–P8 全部完成，逐阶段叙事见 `JIAN_RULES.md` §11.6 与 `docs/JIAN_HISTORY.md`）**：
+- **P1–P7 [x] ✅（v1.46 全部落地）**：结果表 `#` 行号 + 表头排序（命中置顶 + 组内排序、
+  点状态列复位；**不用** `setSortingEnabled`）· A 层富字段列（当日/当月/当年涨幅 · 量 · 流通市值，
+  `core/cross_section._derived_metrics` 就地算、缺基准返 None）· 独立方案库
+  `data/scan_strategy_store.py`（M2/M3 共享一份池）· 接入运行历史（kind=M2/M3）· B 层估值列
+  （仅基准日==最新定稿日才显，"当前值"绝不冒充历史）· 细分行业列（`data/industry_store.py`）·
+  列拖拽自定义（Qt 原生 section 拖拽：只改视觉序、逻辑列序不变）。
+- **P8 [x] 🗂 运行历史重做（★v1.46 续 · 用户实测"M2/M3 照抄 M1 是灾难"）**：
+  ① **kind 差异收成声明式注册表** `ui/widgets/history_kinds.py`（列 / 过滤轴 / 可用动作，
+  一行一种 kind）⇒ 列表·预览·动作层的 `if kind` 归零；② M2/M3 **专属预览形态**
+  （`ScanStatBar` 四态占比条 + 条件全文可复制 + 粗筛摘要，**不放净值图**）；③ 存档**显式分组**
+  （`scope`/`condition`/`counts`，不再借 M1 的 `total_trades`/`win_rate` 键）+ **范围名带指数名
+  与代码**（旧版只存"指数成分 300只"，认不出是哪个指数）；④ 修三处真 bug：**重跑**对指数成分
+  必空跑（改 `request_run` 等名单 + 体检）、动作层**无 kind 守卫**（改动作入口自校验）、自动
+  存档**纯静默**（补一行回执）；⑤ 版式：预览栏最小宽 **612 → 220**（旧版 6 按钮挤一行 ⇒ 挤掉
+  左列表，即用户说的"遮挡"）。样板 `design/1.46-run-history-ui/`。
+  ⚠ **旧 M2/M3 存档已按用户拍板直接删除、不做兼容**（新存档才带新分组）。
+- **P8 续 [x] ✅（v6.64 · 三条用户实测反馈）**：⑥ **撤掉 M2/M3 的「📤 送行情页」** —— 用户拍板："m2/m3
+  是**统计学层面**的回测、不是针对个股的，放一个完全没必要"（**撤销本阶段早先"公式完整就顺手开放"的做法**：
+  声明表去 `ACC_SEND` + 动作层自校验 kind + 诚实回执）；⑦ **界面字体**（用户先要"连字体照抄样板"、随即
+  **自行撤销**"想到字体还有版权问题"）⇒ 建 **§10-15 字体版权纪律** + `custom_widgets` 开源字体栈**唯一出口**
+  （`UI_FONT_STACK`/`UI_MONO_STACK`/`apply_ui_font()`/`mono_font_css()`/`ui_font_status()`）；⑧ **M1 净值图
+  留白 + 描边**（样板 `.minichart`：白底浅边框圆角卡 + 卡片内下边距 10px + 段间距 8→12px）。
+  - **[ ] 遗留（下次顺手还）**：全站仍有 **5 处 QSS** 点名专有等宽字体 `Consolas`
+    （`ui/widgets/scan_layout.py` 公式框 · `function_segments.py` 编辑器 · `formula_library.py` 预览 ·
+    `condition_gate.py` DSL 预览）⇒ 按 §10-15 换成 `custom_widgets.mono_font_css()`。
+    **本批故意不改**：那几页的字宽/行高要另行实测复核，避免"顺手改样式"引入未验证的版式漂移。
+
+**必须守的铁律**：新库独立文件、别并进 `backtest_strategies.json`；加列仍守性能铁律（关更新→逐格填→一次性测宽→开更新，禁 `ResizeToContents`，tooltip 只给必要列，v6.42 卡死教训）；排序是展示层，四态计数只走 `tally_status` 唯一口径；B 层"当前值"的诚实标注不许省。
+
+**落点索引**：`ui/widgets/scan_result.py`（表/排序/列）· `core/cross_section.py`（snapshot 计算）· `data/akshare_feed.py`（spot 扩列 / 行业源）· `data/scan_strategy_store.py`（新）· `data/industry_store.py`（新）· `data/backtest_archive.py`（kind=M2/M3）· `ui/widgets/scan_layout.py`+`breadth_layout.py`（存为/载入按钮）· `ui/widgets/history_kinds.py`+`backtest_history_ui.py`+`ui/views/backtest_history.py`（运行历史）。
+
+
+
 ## 二、历史审计发现与复查产出（原 §9 的版本子节）
 
 
@@ -2857,6 +3078,30 @@ store 侧 `reorder_group(group, symbols)` 三条语义：**只接受该组现有
 > · **1.38 §7-E2** `_classify_error` 新增 `proxy` 档（**先判文本指纹再退回 isinstance**）+ 代理熔断 3 次提前停手（坑 §11.5-76）
 > · **1.39 §7-E3** 日线落盘列白名单 `DAILY_KEEP_COLUMNS`（**apply-if-present**；白名单 ⊇ 横截面内核所需列有交叉断言，坑 §11.5-77）
 >
+
+### v1.46 早期更新块（v6.64 从 `JIAN_RULES.md` §11.6 搬入 · **数字冻结**）
+
+> ✅ **已落地（v1.46 续 · M2/M3 两处体验缺陷修复 · 2026-09-25 用户实测反馈驱动）**
+> ① **「⬆ 更新到最新」卡在"更新中…"**：根因 = `readiness_flow._launch_sync` **无条件** `_result.set_empty`
+>   （内含 `empty_box.show()+table.hide()`）把**已有扫描结果**藏起来换成占位，而 `_on_fill_finished` 后的
+>   `_render_readiness` "已有结果"分支只换「正在体检」占位、**不恢复它** ⇒ 页面永久卡住。修法 = **有结果就不碰
+>   结果区**（进度看回执/进度条/下载条），完成时明说"结果仍是旧数据、点「▶ 开始扫描」可刷新"。
+> ② **「历史不足」说不清**：`readiness_flow._partial_note()` 在空态**看得见地**点名标的 + 行数 + "数据源没有
+>   更早行情、更新补不齐、不是缺陷" + 调小「🎚 粗筛 → 上市 ≥」的出路。实测根因 = 沪深300 恒有的那 1 只 =
+>   次新股 `001280 中国铀业`（本地 199 个交易日、末日已是 2026-09-24）—— **不是 bug、是上市时间短**。坑 = §11.5-88。
+> 断言 `smoke_pages_overlay` **667 → 671**（+3 已过扫描时更新不覆盖结果区 / +1 历史不足可见说明）；
+> `smoke_chart` **855** 不变（`data/readiness.py` 口径未动）。
+
+> ✅ **已落地（v1.46 · M3 指数副图自动补到最新 + 计算按钮文案收口 · 2026-09-25 用户实测反馈驱动）**
+> ① **方案A**：`breadth_flow._ensure_index` 旧版只在 `index_daily` **完全没数据**时补拉一次 ⇒ 用户更了成分股却没更指数时，副图停在旧日子、主图已到最新（两图错位）。现在把“**有数据但末日 < 主图广度轴最新交易日**”也视为待补 ⇒ 自动 `SingleSyncWorker` 增量拉到最新；同一 `(指数代码, 目标日)` 只补一次（`_index_synced_to`），补不动（离线/当天未发布）保留旧副图 + 出声、**绝不空转刷网络**；失败仍不连累主图。坑：端到端测试喂的合成指数必须拉到**远未来**（否则会被新逻辑判“落后”而去联网补拉，违反 §11.5-20）。
+> ② **文案**：`⚡ 增量到最新` → **`⚡ 只补新交易日`**（与「▶ 开始扫描＝整段历史重算」「⟳ 全量重算＝无视缓存」拉开语义；三者终点都“到最新”，区别在“历史动不动”）；`btn_run` 补 tooltip。控件名 `btn_incr` 未动（迁移护栏不红）。
+> 断言 `smoke_pages_overlay` **636 → 637**（新增 ⑦b「落后也补拉」）；`smoke_chart` 848 不变（vline 拖动为已知 flaky，重跑即绿）。
+> ➕ **同批 v1.46 续 · §7-B12 P1/P2 已落地**：M2 结果表加 `#` 行号 + 表头点击排序（**命中永远置顶 + 组内按列排**、点状态列复位；不用 setSortingEnabled；列宽仅新扫描时测一次防跳动）；另修一个**退出崩溃 bug**：`DownloadHub.has_unfinished` 曾是 @property 但 closeEvent 当方法调 `()` ⇒ `TypeError: 'bool' object is not callable` 且跳过 `shutdown()` ⇒ QThread 未等就销毁（改回普通方法 + 加回归断言）。**P2**：`cross_section._derived_metrics` 就地算 当日/当月/当年涨幅 + 成交量 + 流通市值（零新网络、缺基准返 None），结果表 8→13 列。**并修一个真 bug**：`scan_cached` 旧版只要配置不变就吃缓存直接回包，而缓存里的**数值快照只属于上次扫的那天** ⇒ 用户选历史基准日 + 开始扫描 = 缓存命中→数值列全 '—'（连收盘都空）；修后：显式扫一个**与缓存快照日不同**的基准日 ⇒ 不吃旧快照、往下重扫那天的数值（同一天/切日期导航仍零成本）。smoke_pages_overlay **637 → 642**、smoke_chart **848 → 855**（+6 派生口径 +1 缓存快照回归）。
+> ➕ **§7-B12 P3 已落地**：新建独立库 `data/scan_strategy_store.py`（`scan_strategies.json`，不并入 strategy_store）+ `ui/widgets/scan_strategy_bridge.py`（载入/存为/管理）；M2/M3 共享 `get_scan_strategy_store()` 单例（一份方案池跨页可见）；页面 `current_config()/apply_config()`，M2 `_load_scan_ui` 改走 apply_config（单一还原口径）；摘要条左侧加 载入/存为/管理 三钮。smoke_pages_overlay **642 → 650**（+7 P3 +1 scan_strategies 防污染）。
+> ➕ **§7-B12 P4 已落地**：`build_scan_record` 造 M2/M3 快照（无逐笔/净值）→ 扫描完成 `_auto_archive`（受 auto 开关、缓存命中不重落）→ 运行历史页**解禁 M2/M3** + kind-aware 表头/预览 + 复用/重跑按 kind 路由到对应扫描页。smoke_pages_overlay **650 → 654**。
+> ➕ **§7-B12 P5 已落地**：B 层估值列（市盈率/市净率/总市值）——新增 `fetch_market_spot_valuation`+`spot_valuation_map` 门面+`SpotValuationWorker`（后台非阻塞、失败不连累）；仅基准日==数据最新交易日才取才显，否则 '—'（当前值不冒充历史）；结果表 13→16 列。smoke_pages_overlay **654 → 656**（测试全程打桩估值 worker 不联网）。
+> ➕ **§7-B12 P6 已落地**：细分行业列——新缓存 `data/industry_store.py`（industry_map.json）+ `fetch_industry_map` 门面 + `IndustryMapWorker`（缓存为空才后台抓一次、扫描只读缓存）；结果表 16→17 列（行业插在名称后，缺则 '—'）。smoke_pages_overlay **656 → 663**（+7 P6）。
+> ➕ **§7-B12 P7 已落地（七阶段收官）**：列拖拽自定义——Qt 原生 `setSectionsMovable`（只改视觉序、逻辑列序不变→item(r,逻辑)不破）；sectionClicked 视→逻转换；sectionMoved 存 `col_order` 到 scan_ui、启动 apply_column_order 恢复（非法拒绝）。**§7-B12 全部 ✅，待用户实测 + push（未推送）**。smoke_pages_overlay **663 → 667**。
 
 ### v6.58 更新块（v6.59 从 `JIAN_RULES.md` §11.6 搬入 · **数字冻结**）
 

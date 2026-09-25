@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>1.46 运行历史 · 重设计样板（M1/M2/M3 分型）</title>
+<style>
+  :root{
+    --bg:#F5F6F8; --card:#fff; --line:#E4E9F0; --line2:#EDF0F5;
+    --text:#1F2430; --muted:#8A94A6; --muted2:#B4BECB; --accent:#1976D2; --accent-d:#1565C0;
+    --hit:#2E7D32; --hit-bg:#E8F5E9; --miss:#5A6474; --miss-bg:#F5F6F8;
+    --ins:#E65100; --ins-bg:#FFF3E0; --flt:#8A94A6; --flt-bg:#F0F3F8;
+    --profit:#1B7F3B; --loss:#B3261E;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:13px/1.5 "Microsoft YaHei","PingFang SC",Segoe UI,sans-serif;}
+  code,pre{font-family:Consolas,"Courier New",monospace;}
+
+  /* ---------- 演示外壳（真实 app 里没有这块） ---------- */
+  .demo{background:#0E1626;color:#DCE6F5;padding:10px 16px;display:flex;
+        gap:18px;align-items:center;flex-wrap:wrap;font-size:12.5px}
+  .demo b{color:#fff}
+  .demo .seg{display:flex;border:1px solid #33456A;border-radius:8px;overflow:hidden}
+  .demo .seg button{background:transparent;color:#9FB3D0;border:0;padding:5px 14px;
+        font-size:12.5px;cursor:pointer;font-weight:bold}
+  .demo .seg button.on{background:var(--accent);color:#fff}
+  .demo input[type=range]{width:180px}
+  .demo .hint{color:#7C8DA8}
+
+  /* ---------- 页面 ---------- */
+  .app{width:1400px;max-width:100%;margin:16px auto;background:var(--bg);transition:width .12s ease}
+  .page{display:flex;flex-direction:column;gap:10px;padding:10px}
+
+  /* L1 过滤条 */
+  .filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .filter .title{font-size:15px;font-weight:bold}
+  .ctl{border:1px solid var(--line);background:#fff;border-radius:8px;padding:5px 10px;
+       font-size:12.5px;color:var(--text);display:inline-flex;align-items:center;gap:6px}
+  .ctl.muted{color:var(--muted)}
+  .pin-chk{color:var(--muted);font-size:12px;display:inline-flex;align-items:center;gap:5px}
+  .grow{flex:1}
+
+  /* L0 主体 */
+  .split{display:flex;gap:10px;align-items:stretch;min-height:430px}
+  .listcard{flex:3 1 0;min-width:340px;background:var(--card);border:1px solid var(--line);
+            border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+  .preview{flex:2 1 0;min-width:330px;background:var(--card);border:1px solid var(--line);
+           border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  thead th{background:#F4F6FA;color:#5B6472;font-weight:bold;text-align:left;
+           padding:8px 8px;border-bottom:1px solid var(--line2);white-space:nowrap}
+  tbody td{padding:8px 8px;border-bottom:1px solid var(--line2);white-space:nowrap}
+  tbody tr:nth-child(even){background:#F7F9FC}
+  tbody tr.sel{background:#E3F2FD!important}
+  tbody tr{cursor:pointer}
+  td.c{text-align:center}
+  td.pos{color:var(--profit);font-weight:bold}
+  td.neg{color:var(--loss);font-weight:bold}
+  .star{color:#E6A700}
+  .colname{color:var(--text)}
+  .colsub{color:var(--muted);font-size:11.5px}
+
+  /* 右预览 */
+  .pv{padding:14px 14px 12px;display:flex;flex-direction:column;gap:12px;flex:1;overflow:auto}
+  .pv-head{border-bottom:1px dashed var(--line);padding-bottom:10px}
+  .pv-title{font-size:13.5px;font-weight:bold}
+  .pv-sub{font-size:12px;color:var(--muted);margin-top:3px}
+  .idx-chip{display:inline-block;background:#E8F1FF;color:var(--accent);border-radius:6px;
+            padding:1px 7px;font-size:11.5px;font-weight:bold;margin-left:6px}
+
+  /* 四态占比条 */
+  .statbar{display:flex;flex-direction:column;gap:7px}
+  .statbar .row1{display:flex;align-items:baseline;gap:10px;font-size:12px}
+  .statbar .row1 .rate{color:var(--accent);font-weight:bold}
+  .bar{display:flex;height:22px;border-radius:6px;overflow:hidden;background:var(--miss-bg);
+       border:1px solid var(--line2)}
+  .seg{display:flex;align-items:center;justify-content:center;color:#fff;font-size:11.5px;
+       font-weight:bold;overflow:hidden;white-space:nowrap}
+  .seg.hit{background:var(--hit)} .seg.miss{background:#9AA3B2}
+  .seg.ins{background:#FB8C00} .seg.flt{background:#C9D2DE}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text)}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+  i.hit{background:var(--hit)} i.miss{background:#9AA3B2}
+  i.ins{background:#FB8C00} i.flt{background:#C9D2DE}
+
+  /* 区块 */
+  .sect{border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+  .sect-h{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#FAFBFD;
+          border-bottom:1px solid var(--line2);font-size:12.5px}
+  .sect-h b{font-size:12.5px}
+  .sect-h .grow{flex:1}
+  .sect-b{padding:9px 10px;font-size:12px;color:#3A4150}
+  pre.code{margin:0;padding:10px;background:#1E2633;color:#D7E2F2;font-size:11.5px;
+           line-height:1.65;overflow:auto;max-height:150px;white-space:pre}
+  .mini{border:0;background:#EEF3FB;color:var(--accent);border-radius:6px;padding:3px 9px;
+        font-size:11.5px;font-weight:bold;cursor:pointer}
+  .kv{color:#3A4150}
+  .kv .muted{color:var(--muted)}
+
+  /* M1 胶囊 + 迷你图 */
+  .pills{display:flex;gap:8px}
+  .pill{flex:1;background:var(--miss-bg);border-radius:8px;padding:8px 10px;font-size:12px;
+        color:var(--muted);text-align:center;white-space:nowrap}
+  .pill.good{color:var(--profit);font-weight:bold;background:#EAF6EE}
+  .pill.bad{color:var(--loss);font-weight:bold;background:#FDECEA}
+  .minichart{border:1px solid var(--line2);border-radius:8px;background:#fff}
+
+  /* 动作行（★关键：flex-wrap，窄栏自动换行，不再撑出 612px 最小宽） */
+  .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+           border-top:1px solid var(--line2);padding-top:12px;margin-top:auto}
+  .actions .sp{flex:1;min-width:0}
+  button.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 13px;
+             font-size:12.5px;color:var(--text);cursor:pointer;white-space:nowrap}
+  button.btn:hover{background:#F3F8FE;border-color:#BBDEFB;color:var(--accent)}
+  button.btn.primary{background:var(--accent);color:#fff;border:0;font-weight:bold}
+  button.btn.primary:hover{background:var(--accent-d);color:#fff}
+  button.btn:disabled{color:#C3CBD8;background:#F7F8FA;border-color:#EDF0F5;cursor:not-allowed}
+  button.btn.danger{color:#B3261E;border-color:#F0DAD7}
+  button.btn.danger:hover{background:#FDECEA;color:#B3261E;border-color:#F0DAD7}
+
+  /* 页脚 */
+  .footer{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted)}
+  .footer .grow{flex:1}
+
+  /* 说明面板 */
+  details.note{margin:16px;background:#fff;border:1px solid var(--line);border-radius:10px;
+               padding:12px 14px}
+  details.note summary{cursor:pointer;font-weight:bold;font-size:13.5px;color:var(--accent)}
+  details.note h4{margin:14px 0 6px;font-size:13px}
+  details.note ul{margin:6px 0 6px 18px;padding:0}
+  details.note li{margin:4px 0}
+  .ba{display:flex;gap:12px;flex-wrap:wrap}
+  .ba>div{flex:1 1 320px;border:1px solid var(--line2);border-radius:8px;padding:10px;background:#FAFBFD}
+  .tag-before{color:var(--loss);font-weight:bold;font-size:12px}
+  .tag-after{color:var(--profit);font-weight:bold;font-size:12px}
+</style>
+</head>
+<body>
+
+<!-- ===================== 演示外壳 ===================== -->
+<div class="demo">
+  <b>1.46 运行历史 · 重设计样板</b>
+  <span class="hint">类型</span>
+  <span class="seg" id="kindSeg">
+    <button data-kind="M1" class="on">📈 M1 单股回测</button>
+    <button data-kind="M2">🌐 M2 全市场筛选</button>
+    <button data-kind="M3">📊 M3 广度统计</button>
+  </span>
+  <span class="hint">窗口宽度</span>
+  <input type="range" id="wRange" min="860" max="1500" value="1400" step="20">
+  <span class="hint" id="wLabel">1400 px</span>
+  <span class="hint">（往左拖 → 看右栏动作行换行、列表不被遮挡）</span>
+</div>
+
+<!-- ===================== 页面 ===================== -->
+<div class="app" id="app">
+  <div class="page">
+
+    <!-- L1 过滤条 -->
+    <div class="filter">
+      <span class="title">🗂 运行历史</span>
+      <span class="ctl" id="kindCtl">📈 M1 单股回测 ▾</span>
+      <span class="pin-chk"><input type="checkbox"> 只看重点 ★</span>
+      <span class="ctl muted" id="scopeCtl">全部范围 ▾</span>
+      <span class="ctl muted">按 范围 / 条件 搜索</span>
+      <span class="grow"></span>
+      <button class="btn">↻ 刷新</button>
+    </div>
+
+    <!-- L0 主体 -->
+    <div class="split">
+      <div class="listcard">
+        <table>
+          <thead id="thead"></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="preview" id="preview"></div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="footer">
+      <span><input type="checkbox" checked> 每次回测 / 扫描自动存档</span>
+      <span class="grow"></span>
+      <span>上限 每标的 20 份 / 共 500 份 · 重点豁免淘汰 · 单份 ≤2MB · 当前 37 份（重点 3 份）</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 设计说明 ===================== -->
+<details class="note">
+  <summary>▸ 设计说明（我第 3 条到底是什么 / 与你看到的旧版对照）</summary>
+
+  <h4>先说结论：不是"换配色"，是把 M2/M3 从"套 M1 壳"改成"按横截面设计"</h4>
+  <ul>
+    <li><b>旧版</b>：M2/M3 的预览栏直接照抄 M1 —— 4 个胶囊写着「累计 / 胜率 / 成交 / 平均单笔」（横截面没有这些概念），
+        下面还留着一块 132px 高、画不出东西的"迷你净值图"，整栏大半是空白；动作行 6 个按钮挤一行，
+        实测<b>最小宽度 612px</b>，窗口一窄就把左侧列表挤到横向滚动/被裁（你说的"遮挡"）。</li>
+    <li><b>新版</b>：给 M2/M3 一套<b>专属形态</b> —— 四态占比条 + 条件全文（可复制）+ 粗筛摘要；
+        动作行允许换行、删除按钮隔离到最右；列表列也按 kind 定义（含"范围"带指数名）。</li>
+  </ul>
+
+  <div class="ba">
+    <div>
+      <div class="tag-before">旧（照抄 M1）</div>
+      <pre class="code" style="margin-top:8px">[ 累计 — ][ 胜率 — ][ 成交 — ][ 平均单笔 — ]
+┌──────────────────────────────┐
+│   （空白：横截面无净值曲线）    │  132px
+└──────────────────────────────┘
+▸ 参数详情
+基准日：2026-09-24
+范围：指数成分 300只        ← 丢了"沪深300"
+参数：N=20
+[👁载入查看(灰)][↺复用][▶重跑][📤送行情(灰)][☆重点][🗑删除]  ← 挤一行 → 最小宽 612px</pre>
+    </div>
+    <div>
+      <div class="tag-after">新（按横截面设计）</div>
+      <pre class="code" style="margin-top:8px">沪深300 · 300只   [sh000300]
+基准日 2026-09-24 · 存档于 2026-09-25 20:15
+有效样本 44 / 300      命中率 18.2%   用时 4.90s
+[██8██][████36████][██████████ 数据不足 256 ██████████][剔除 0]
+● 命中8  ● 未命中36  ● 数据不足256  ● 被粗筛剔除0
+
+▸ 筛选条件   3 段 · 42 行           [复制]
+  DIFF := EMA(C,12) - EMA(C,26);   ← 全文等宽可复制
+  DEA  := EMA(DIFF,9);
+  COND := CROSS(DIFF, DEA) AND C > MA(C,20);
+
+▸ 粗筛漏斗    5 项开启
+  成交额≥5000万 · 价格≥2元 · 上市≥250日 · 剔停牌/ST/一字板
+[↺复用参数][▶重跑][📤送行情页][☆重点]      ……      [🗑 删除]  ← 自动换行</pre>
+    </div>
+  </div>
+
+  <h4>这一版结构上改了什么（对应我上一条消息的 6 点）</h4>
+  <ul>
+    <li><b>① 范围名带指数</b>：存档写入 <code>scope_label="沪深300 · 300只"</code> + <code>scope_code=sh000300</code>（已按你的拍板）。</li>
+    <li><b>② 送行情页对 M2/M3 开放</b>（已按你的拍板）：M2/M3 的 <code>config.formula</code> 就是完整公式，直接可用。</li>
+    <li><b>③ 预览分型</b>：就是上面这张对照 —— 四态占比条替 4 个胶囊；条件全文替截断首行；M2/M3 不放净值图。</li>
+    <li><b>④ 动作行换行</b>：<code>flex-wrap</code> + 删除隔离（危险动作，§10-10），窄窗不再撑出 612px。</li>
+    <li><b>⑤ 列表列按 kind</b>：M2「范围｜条件｜基准日｜命中率｜命中｜数据不足」；M3 把"基准日"换"区间"。</li>
+    <li><b>⑥ 声明式注册表</b>：<code>HistoryKindSpec</code> 一行一种 kind（列 / 胶囊 / 预览体 / 可用动作），
+        列表·预览·动作三处不再写 <code>if kind</code>。</li>
+  </ul>
+
+  <h4>待你确认的小点</h4>
+  <ul>
+    <li>四态占比条：颜色沿用现有语义色（命中绿 / 未命中灰 / 数据不足橙 / 剔除浅灰）—— 可接受吗？</li>
+    <li>"条件"列在列表里显示 <code>MACD金叉 · 3段</code> 这类摘要，全文放预览里 —— 还是列表就直接铺首行？</li>
+    <li>M2/M3 是否需要「👁 载入查看」（只读回放）？当前方案是<b>不提供</b>（横截面没有可回放的净值/逐笔），
+        只保留 复用/重跑/送行情/重点/删除。</li>
+  </ul>
+</details>
+
+<script>
+/* ============================================================
+   样例数据（纯前端演示，与真实存档结构一一对应）
+   ============================================================ */
+const DATA = {
+  M1: {
+    label: '📈 M1 单股回测',
+    scope: '全部标的 ▾',
+    columns: ['★','时间','标的','策略','区间','胜率','累计','笔数','来源'],
+    rows: [
+      {pin:'★', time:'09-25 20:12', name:'浦发银行 600000', sub:'', strat:'MACD金叉策略',
+       range:'16-01-01~26-09-24', win:'56%', winSign:1, cum:'+23.4%', cumSign:1, n:'48', src:'手动'},
+      {pin:'', time:'09-24 15:03', name:'长江电力 600900', sub:'', strat:'均线多头',
+       range:'20-01-01~26-09-24', win:'61%', winSign:1, cum:'+8.7%', cumSign:1, n:'31', src:'自动'},
+      {pin:'', time:'09-23 21:40', name:'万科A 000002', sub:'', strat:'突破回踩',
+       range:'18-06-01~26-09-24', win:'43%', winSign:-1, cum:'-11.2%', cumSign:-1, n:'105', src:'自动'}
+    ]
+  },
+  M2: {
+    label: '🌐 M2 全市场筛选',
+    scope: '全部范围 ▾',
+    columns: ['★','时间','范围','条件','基准日','命中率','命中','数据不足','来源'],
+    rows: [
+      {pin:'★', time:'09-25 20:15', name:'沪深300 · 300只', sub:'sh000300', strat:'MACD金叉 · 3段',
+       range:'2026-09-24', win:'18%', cum:null, n:'8', extra:'256', src:'自动'},
+      {pin:'', time:'09-25 19:48', name:'我的自选 · 12只', sub:'', strat:'放量突破 · 2段',
+       range:'2026-09-24', win:'33%', cum:null, n:'4', extra:'1', src:'自动'},
+      {pin:'', time:'09-24 15:10', name:'中证500 · 500只', sub:'sh000905', strat:'MACD金叉 · 3段',
+       range:'2026-09-23', win:'11%', cum:null, n:'41', extra:'310', src:'自动'}
+    ]
+  },
+  M3: {
+    label: '📊 M3 广度统计',
+    scope: '全部范围 ▾',
+    columns: ['★','时间','范围','条件','区间','命中率','命中','数据不足','来源'],
+    rows: [
+      {pin:'★', time:'09-25 20:22', name:'沪深300 · 300只', sub:'sh000300', strat:'MACD金叉 · 3段',
+       range:'25-09-01~26-09-24', win:'18%', cum:null, n:'12', extra:'248', src:'自动'},
+      {pin:'', time:'09-25 20:20', name:'全 A 花名册 · 5402只', sub:'', strat:'放量突破 · 2段',
+       range:'25-09-01~26-09-24', win:'9%', cum:null, n:'486', extra:'3902', src:'自动'}
+    ]
+  }
+};
+
+const pv = {
+  M1: `
+    <div class="pv-head">
+      <div class="pv-title">浦发银行 600000 <span class="star">· ★重点</span></div>
+      <div class="pv-sub">策略：MACD金叉策略 · 存档于 2026-09-25 20:12:41</div>
+    </div>
+    <div class="pills">
+      <span class="pill good">累计 +23.4%</span>
+      <span class="pill good">胜率 56%</span>
+      <span class="pill">成交 48 笔</span>
+      <span class="pill">平均单笔 +0.49%</span>
+    </div>
+    <div class="minichart">
+      <svg viewBox="0 0 420 120" width="100%" height="120">
+        <line x1="0" y1="52" x2="420" y2="52" stroke="#DDE3EC" stroke-dasharray="4 4"/>
+        <polyline fill="none" stroke="#1976D2" stroke-width="2"
+          points="0,95 30,90 60,82 90,86 120,70 150,74 180,60 210,64 240,52 270,55 300,44 330,48 360,34 390,30 420,24"/>
+        <circle cx="60" cy="82" r="4" fill="#1B7F3B"/>
+        <circle cx="150" cy="74" r="4" fill="#B3261E"/>
+        <circle cx="240" cy="52" r="4" fill="#1B7F3B"/>
+        <circle cx="330" cy="48" r="4" fill="#B3261E"/>
+      </svg>
+    </div>
+    <div class="sect">
+      <div class="sect-h"><b>参数详情</b><span class="grow"></span><span class="colsub">区间 16-01-01~26-09-24</span></div>
+      <div class="sect-b">
+        买入：CROSS(DIFF,DEA)<br>
+        卖出：CROSS(DEA,DIFF)<br>
+        风控：最长 20 根 · 止损 5%<br>
+        成交：次日开盘 ｜ 大盘门控：未启用<br>
+        条件组：买 2 条 · 卖 1 条 ｜ 函数段：共 3 段
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn primary">👁 载入查看</button>
+      <button class="btn">↺ 复用参数</button>
+      <button class="btn">▶ 重跑</button>
+      <button class="btn">📤 送行情页</button>
+      <button class="btn">☆ 重点</button>
+      <span class="sp"></span>
+      <button class="btn danger">🗑 删除</button>
+    </div>`,
+
+  /* M2 / M3 同一套形态，只差"基准日 / 区间"一行 */
+  scan: (kind) => `
+    <div class="pv-head">
+      <div class="pv-title">沪深300 · 300只<span class="idx-chip">sh000300</span> <span class="star">· ★重点</span></div>
+      <div class="pv-sub">${kind === 'M2' ? '基准日 2026-09-24' : '区间 2025-09-01 ~ 2026-09-24'}
+         · 存档于 2026-09-25 20:15:03 · 口径 前复权</div>
+    </div>
+
+    <div class="statbar">
+      <div class="row1">
+        <span>有效样本 <b>44 / 300</b></span>
+        <span class="rate">命中率 18.2%</span>
+        <span class="colsub">用时 4.90 s</span>
+      </div>
+      <div class="bar">
+        <div class="seg hit" style="width:18%">8</div>
+        <div class="seg miss" style="width:12%">36</div>
+        <div class="seg ins" style="width:70%">数据不足 256</div>
+      </div>
+      <div class="legend">
+        <span><i class="hit"></i>命中 8</span>
+        <span><i class="miss"></i>未命中 36</span>
+        <span><i class="ins"></i>数据不足 256</span>
+        <span><i class="flt"></i>被粗筛剔除 0</span>
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="sect-h"><b>筛选条件</b><span class="colsub">3 段 · 42 行</span>
+        <span class="grow"></span><button class="mini">复制</button></div>
+      <pre class="code">DIFF := EMA(C,12) - EMA(C,26);
+DEA  := EMA(DIFF,9);
+COND := CROSS(DIFF, DEA) AND C > MA(C,20);</pre>
+    </div>
+
+    <div class="sect">
+      <div class="sect-h"><b>粗筛漏斗</b><span class="colsub">5 项开启</span></div>
+      <div class="sect-b kv">
+        成交额 ≥ 5000万 · 价格 ≥ 2元 · 上市 ≥ 250日 · 剔停牌 · 剔 ST / 退市 · 剔一字板
+        <div class="colsub" style="margin-top:4px">参数：N=20;M=60</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn">↺ 复用参数</button>
+      <button class="btn">▶ 重跑</button>
+      <button class="btn">📤 送行情页</button>
+      <button class="btn">☆ 重点</button>
+      <span class="sp"></span>
+      <button class="btn danger">🗑 删除</button>
+    </div>`
+};
+
+/* ---------- 渲染 ---------- */
+let current = 'M1';
+
+function render() {
+  const d = DATA[current];
+  document.getElementById('kindCtl').textContent = d.label + ' ▾';
+  document.getElementById('scopeCtl').textContent =
+    (current === 'M1' ? '全部标的 ▾' : '全部范围 ▾');
+
+  document.getElementById('thead').innerHTML =
+    '<tr>' + d.columns.map((c, i) =>
+      `<th style="${i === 0 || i >= 5 ? 'text-align:center' : ''}">${c}</th>`).join('') + '</tr>';
+
+  const scan = current !== 'M1';
+  document.getElementById('tbody').innerHTML = d.rows.map((r, idx) => {
+    const cells = scan
+      ? [ r.pin, r.time,
+          `<span class="colname">${r.name}</span>${r.sub ? `<div class="colsub">${r.sub}</div>` : ''}`,
+          r.strat, r.range,
+          `<span style="color:var(--accent);font-weight:bold">${r.win}</span>`,
+          r.n, `<span style="color:var(--ins)">${r.extra}</span>`, r.src ]
+      : [ r.pin, r.time, r.name, r.strat, r.range,
+          `<span class="${r.winSign > 0 ? 'pos' : 'neg'}">${r.win}</span>`,
+          `<span class="${r.cumSign > 0 ? 'pos' : 'neg'}">${r.cum}</span>`,
+          r.n, r.src ];
+    const align = i => (i === 0 || i >= 5) && !(scan && i === 8) ? 'c' : '';
+    return `<tr class="${idx === 0 ? 'sel' : ''}">` +
+      cells.map((t, i) => `<td class="${align(i)}">${t}</td>`).join('') + '</tr>';
+  }).join('');
+
+  document.getElementById('preview').innerHTML =
+    '<div class="pv">' + (current === 'M1' ? pv.M1 : pv.scan(current)) + '</div>';
+}
+
+document.getElementById('kindSeg').addEventListener('click', e => {
+  const b = e.target.closest('button[data-kind]');
+  if (!b) return;
+  [...e.currentTarget.children].forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  current = b.dataset.kind;
+  render();
+});
+
+document.getElementById('wRange').addEventListener('input', e => {
+  const w = e.target.value;
+  document.getElementById('app').style.width = w + 'px';
+  document.getElementById('wLabel').textContent = w + ' px';
+});
+
+render();
+</script>
+</body>
+</html>

@@ -14,8 +14,9 @@ QMessageBox 二次确认，§10-10）的职责。
 【区间切换为什么零成本】一次扫描的矩阵本来就是**全日期**的（D3）⇒ 换区间只是
 `breadth_frame()` 上的纯切片，不进线程、不读盘、不求值。
 
-【指数副图】读 `index_daily` 分区；缺数据**自动补拉一次**（后台 `SingleSyncWorker`，
-联网走 `MarketSyncService`，§9-H）—— 失败只出声，**绝不连累主图广度**。
+【指数副图】读 `index_daily` 分区；**缺数据 或 落后于主图广度轴** ⇒ 自动补拉到最新
+（后台 `SingleSyncWorker`，联网走 `MarketSyncService`，§9-H）—— 失败只出声，
+**绝不连累主图广度**；同一目标日只自动补一次，补不动也不空转刷网络（★v1.46/方案A）。
 """
 from __future__ import annotations
 
@@ -25,7 +26,9 @@ import pandas as pd
 from PyQt6.QtWidgets import QMessageBox
 
 from core.cross_section import ScanThresholds
+from core.preferences import preferences
 from core.utils import parse_params_text
+from data.backtest_archive import KIND_M3, SOURCE_AUTO, BacktestArchive, build_scan_record
 from data.market_db import DataLakeManager
 from data.scan_store import kline_zone_dir
 from data.sync_service import ZONE_INDEX
@@ -35,7 +38,8 @@ from ui.widgets.breadth_chart import DEFAULT_CHART_TYPE, DEFAULT_INDEX_STYLE
 from ui.widgets.breadth_layout import DEFAULT_INDEX_CODE, DEFAULT_RANGE, RANGE_PRESETS
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.widgets.readiness_flow import (constituent_failure_text,
-                                       constituent_snapshot_text)
+                                       constituent_snapshot_text, mark_archived,
+                                       scope_snapshot)
 from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard, SingleSyncWorker
 
 __all__ = ['BreadthFlow', 'BREADTH_UI_KEY']
@@ -60,6 +64,11 @@ class BreadthFlow:
         self.page = page
         # ★v1.43 / §7-B11：指数补拉与后台队列的互斥占位（唯一公共件，别再手写 token）
         self._index_gate = SingleSyncGate(page)
+        # ★v1.46 / 方案A：已自动补拉过的「(指数代码, 目标日)」—— 同一目标日只补一次，
+        #   补不动（离线 / 当天指数尚未发布）就保留旧副图，绝不在 refresh 里空转刷网络。
+        self._index_synced_to = None
+        # ★v1.46：历史页「重跑」用 —— 等名单解析完再自动开扫（见 request_run）
+        self._pending_run = False
         p = self.page
         p.cb_scope.currentIndexChanged.connect(self.on_scope_changed)
         p.cb_index.currentIndexChanged.connect(self.on_index_changed)
@@ -150,6 +159,7 @@ class BreadthFlow:
             p._result.set_empty(f'范围就绪（{len(p._symbols)} 只）—— 正在体检本地数据就绪度…')
             p._readiness.start(p._symbols,
                                min_bars=p._filter_pane.to_thresholds().min_bars)
+        self._maybe_run_pending()          # ★v1.46：历史页重跑等的是"名单就绪"
 
     def _on_constituents(self, result, token: int) -> None:
         p = self.page
@@ -184,6 +194,7 @@ class BreadthFlow:
             f'—— 正在体检本地数据就绪度…')
         p._readiness.start(p._symbols,
                            min_bars=p._filter_pane.to_thresholds().min_bars)
+        self._maybe_run_pending()          # ★v1.46：成分股异步解析回来 ⇒ 重跑在此接着走
 
     def _refresh_chips(self) -> None:
         p = self.page
@@ -267,6 +278,30 @@ class BreadthFlow:
     def on_run_clicked(self) -> None:
         self._start_worker(busy_text='扫描中…（读盘 → 粗筛 → 逐标的求值）')
 
+    # ==========================================
+    # ★v1.46：历史页「重跑」—— 等名单解析完再自动开扫
+    # ==========================================
+    def request_run(self) -> None:
+        """外部（运行历史页「▶ 重跑」）请求"复用参数后立刻扫一次"。
+
+        ⚠ 旧版 `apply_config()` + `start_scan()` 连招对「指数成分」范围必然失败 ——
+        成分股是**异步**解析的，`p._symbols` 此刻还是空 ⇒ `_start_worker` 早退
+        （回执"范围是空的"），用户点了重跑什么都没发生。
+        """
+        p = self.page
+        self._pending_run = True
+        p.lbl_receipt.setText('已复用参数 —— 正在解析统计范围，就绪后自动开始扫描…')
+        self._maybe_run_pending()
+
+    def _maybe_run_pending(self) -> None:
+        if not self._pending_run:
+            return
+        p = self.page
+        if not p._symbols:
+            return                              # 成分股还在异步解析
+        self._pending_run = False
+        self.on_run_clicked()
+
     def on_incremental_clicked(self) -> None:
         """⚡ 增量到最新：历史矩阵一天都不重算，只续算新交易日（D7）。"""
         p = self.page
@@ -345,6 +380,34 @@ class BreadthFlow:
                                      *('⚠ ' + w for w in warns)]))))
         self._refresh_chips()
         self.refresh()
+        self._auto_archive(outcome)         # ★P4：非缓存的新扫描落一份 kind=M3 快照
+
+    def _auto_archive(self, outcome) -> None:
+        """扫描完成落一份 `kind=M3` 不可变快照（§7-B12 P4 · v1.46 重做）。
+
+        受「每次回测 / 扫描自动存档」开关控制；缓存命中不重落；成功后补一行**可见回执**
+        （旧版纯静默）；存档失败绝不拖挂扫描回执。
+        """
+        p = self.page
+        if outcome is None or outcome.cached:
+            return
+        if not bool((preferences.get('backtest_archive') or {}).get('auto', True)):
+            return
+        try:
+            dates = outcome.result.dates
+            asof = dates[-1] if dates is not None and len(dates) else outcome.asof
+            counts = outcome.counts_on(asof) if asof is not None else {}
+            label, code = scope_snapshot(p, counts.get('total', 0))   # ★带指数名（旧版会丢）
+            range_label = (str(pd.Timestamp(dates[0]).date())
+                           if dates is not None and len(dates) else '')
+            rid = BacktestArchive().save(build_scan_record(
+                p.current_config(), kind=KIND_M3, scope_label=label, scope_code=code,
+                counts=counts, asof=asof, range_label=range_label, source=SOURCE_AUTO))
+            if rid:
+                p._last_archive_id = rid
+                mark_archived(p, label)
+        except Exception as e:  # noqa: BLE001 —— 存档失败绝不拖挂扫描回执
+            logger.warning('M3 自动存档失败（忽略）: %s', e)
 
     def _on_failed(self, job_id: int, reason: str) -> None:
         p = self.page
@@ -458,30 +521,68 @@ class BreadthFlow:
         p.lbl_mini.setText(('近5日：' + ' ｜ '.join(cells)) if cells else '')
 
     # ==========================================
-    # 指数副图数据链（读湖 → 缺了自动补拉一次；失败不连累主图）
+    # 指数副图数据链（读湖 → 缺数据 或 落后于主图 ⇒ 自动补拉到最新；失败不连累主图）
     # ==========================================
+    def _axis_latest(self):
+        """主图广度轴的最后一个交易日（副图要对齐到这天）；无结果 ⇒ None（不判落后）。"""
+        p = self.page
+        result = p._outcome.result if p._outcome is not None else None
+        dates = getattr(result, 'dates', None) if result is not None else None
+        if dates is None or len(dates) == 0:
+            return None
+        return pd.Timestamp(dates[-1]).normalize()
+
+    @staticmethod
+    def _index_is_stale(df, want) -> bool:
+        """指数日线末日是否**落后于目标日 want**（有数据但停在更早的日子）。
+
+        `want is None`（还没扫描出广度轴）⇒ 不判落后（维持旧行为，绝不误发车）。
+        """
+        if want is None or df is None or df.empty or 'date' not in df.columns:
+            return False
+        try:
+            last = pd.Timestamp(pd.to_datetime(df['date']).max()).normalize()
+        except Exception:                                # noqa: BLE001 —— 解析不了当不落后，保守不动
+            return False
+        return last < want
+
     def _ensure_index(self) -> None:
         p = self.page
         code = str(p._display_pane.cb_overlay_code.currentData() or DEFAULT_INDEX_CODE)
-        if p._index_code == code and p._index_df is not None and not p._index_df.empty:
-            return
-        df = p._lake.load_data(ZONE_INDEX, code)
-        if df is not None and not df.empty:
-            p._index_df = df
-            p._index_code = code
-            self.refresh()                                # 拿到了 ⇒ 带上副图重画
-            return
+        want = self._axis_latest()                       # 副图要对齐到的目标日（主图最右端）
+        have = (p._index_code == code and p._index_df is not None
+                and not p._index_df.empty)
+        if have:
+            # 已缓存该指数：不落后就直接用（旧行为，端到端测试靠这条不碰真实湖）
+            if not self._index_is_stale(p._index_df, want):
+                return
+        else:
+            df = p._lake.load_data(ZONE_INDEX, code)
+            if df is not None and not df.empty:
+                p._index_df = df
+                p._index_code = code
+                have = True
+                if not self._index_is_stale(df, want):
+                    self.refresh()                       # 读到且够新 ⇒ 带上副图重画
+                    return
+        # 走到这里：缺数据 或 落后于主图 ⇒ 后台补拉到最新（失败不连累主图）
         if p._index_fetching == code:
             return                                        # 已经在拉了，别重复发车
+        if self._index_synced_to == (code, want):
+            return                                        # 这一目标日已补拉过仍不够新 ⇒ 不再空转
         name = str(p._display_pane.cb_overlay_code.currentText()).split(' ')[0]
         if self._index_gate.blocked_by(code, ZONE_INDEX):
             # ★v1.43 / §7-B11：该指数已在后台队列里 ⇒ 不重复抓（同一个文件不能两个写者）；
             #   副图缺数据不影响主图广度，所以这里只出声、不阻断。
-            p.lbl_receipt.setText(f'副图缺 {name} 日线 —— 该指数正在后台下载队列里，'
+            p.lbl_receipt.setText(f'副图 {name} 日线待更新 —— 该指数正在后台下载队列里，'
                                   '等它跑完再重画（不影响主图广度）')
             return
-        p.lbl_receipt.setText(f'副图缺 {name} 日线 —— 后台拉取中…（失败不影响主图广度）')
+        # have=True ⇒ 有数据但落后；have=False ⇒ 完全缺失（文案分别说清，不静默）
+        p.lbl_receipt.setText(
+            f'副图 {name} 日线{"落后于主图，后台更新中" if have else "缺失，后台拉取中"}'
+            '…（失败不影响主图广度）')
         p._index_fetching = code
+        self._index_synced_to = (code, want)
         job = p._index_guard.next()
         p._index_worker = SingleSyncWorker(code, zone=ZONE_INDEX, parent=p)
         p._index_worker.finished.connect(
@@ -520,3 +621,43 @@ class BreadthFlow:
         p.save_breadth_ui()
         self._refresh_chips()
         p.lbl_receipt.setText('已恢复默认粗筛 —— 点「▶ 开始扫描」生效。')
+
+    # ==========================================
+    # ★P3 配置打包 / 还原（与 M2 同形，供共享的筛选方案库读写）
+    # ==========================================
+    def current_config(self) -> dict:
+        p = self.page
+        return {
+            'scope': p.cb_scope.currentIndex(),
+            'index_code': str(p.cb_index.currentData() or ''),
+            'formula': p._formula_pane.txt_formula.toPlainText(),
+            'params': p._formula_pane.txt_params.text(),
+            'thresholds': p._filter_pane.to_thresholds().to_dict(),
+            'adjust': 'qfq',
+        }
+
+    def apply_config(self, cfg: dict) -> None:
+        """把一份方案快照还原进 M3（只动筛选配置，不碰展示偏好 range/chart/overlay）。"""
+        cfg = cfg or {}
+        p = self.page
+        p._ui_restoring = True
+        try:
+            try:
+                index = int(cfg.get('scope') or 0)
+            except (TypeError, ValueError):
+                index = 0
+            p.cb_scope.setCurrentIndex(index if 0 <= index < p.cb_scope.count() else 0)
+            p.cb_index.setVisible(p.cb_scope.currentIndex() == 1)
+            code = str(cfg.get('index_code') or '')
+            if code:
+                idx = p.cb_index.findData(code)
+                if idx >= 0:
+                    p.cb_index.setCurrentIndex(idx)
+            p._formula_pane.txt_formula.setPlainText(str(cfg.get('formula') or ''))
+            p._formula_pane.txt_params.setText(str(cfg.get('params') or ''))
+            thresholds = ScanThresholds.from_dict(cfg.get('thresholds'))
+            p._thresholds = thresholds
+            p._filter_pane.from_thresholds(thresholds)
+        finally:
+            p._ui_restoring = False
+        p.resolve_scope()

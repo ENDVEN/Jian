@@ -365,10 +365,15 @@ def scan_cached(zone_dir: str, formula: str, symbols=None, params: dict = None,
     if not force:
         hit = store.get(key)
         if hit is not None:
-            note = ('矩阵已算到最新，无需增量' if incremental else '')
-            return ScanOutcome(result=hit, key=key, cached=True,
-                               asof=pd.Timestamp(asof) if asof is not None else hit.asof,
-                               note=note)
+            want = pd.Timestamp(asof).normalize() if asof is not None else None
+            # 缓存命中且“要的就是快照那天”（或没指定 asof）⇒ 直接复用（切日期/换窗口零成本）。
+            # ⚠ 但用户显式选了**另一个基准日**去扫 ⇒ 缓存里的数值快照属于旧那天，直接复用
+            #   会让结果表数值列全 '—'（用户实测 bug：选历史日 + 开始扫描 = 缓存命中 → 全空）。
+            #   这时**必须往下重扫**，为新基准日算出快照（状态矩阵本就全日期，重扫只为补数值）。
+            if want is None or hit.asof is None or want == pd.Timestamp(hit.asof).normalize():
+                note = ('矩阵已算到最新，无需增量' if incremental else '')
+                return ScanOutcome(result=hit, key=key, cached=True,
+                                   asof=want if want is not None else hit.asof, note=note)
 
     started = perf_counter()
 

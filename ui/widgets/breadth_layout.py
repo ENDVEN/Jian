@@ -198,6 +198,13 @@ class BreadthLayout:
         p.chip_display = _chip('📈 展示 —', '平滑 / 占比 / 指数副图（点开抽屉编辑）')
         for chip in (p.chip_formula, p.chip_filter, p.chip_scope, p.chip_display):
             lay.addWidget(chip)
+
+        # ★v1.46 / §7-B12 P3：筛选方案「载入 / 存为 / 管理」（与 M2 共享一份方案池）。
+        p.btn_load = _flat_btn('📚 载入', '载入已保存的筛选方案（函数/参数/粗筛/范围）；M2 与 M3 共用一份方案库')
+        p.btn_save = _flat_btn('💾 存为', '把当前筛选配置存成命名方案（同名覆盖），下次一键载入')
+        p.btn_manage = _flat_btn('管理', '管理（删除）已保存的筛选方案')
+        for _b in (p.btn_load, p.btn_save, p.btn_manage):
+            lay.addWidget(_b)
         lay.addStretch()
 
         p.lbl_receipt = QLabel('还没有扫描过 —— 选好范围与条件后点「▶ 开始扫描」')
@@ -215,16 +222,18 @@ class BreadthLayout:
         lay.addWidget(p.bar_progress)
 
         # ★v1.41 / §11.5-80：**常驻**「更新到最新」入口（与 M2 同款、同文案）。
-        #   ⚠ 与下面「⚡ 增量到最新」**职责不同**：这个**下载数据**，那个**用已有数据重算广度**。
+        #   ⚠ 与下面「⚡ 只补新交易日」**职责不同**：这个**下载数据**，那个**用已有数据续算广度**。
         #   旧版 M3 也没有任何常驻的下载入口（唯一入口同样是空态按钮）⇒ 一并补齐。
         p.btn_sync = _flat_btn(SYNC_ACTION_LABEL,
                                '把当前范围的数据补齐/更新到最近一个已收盘定稿的交易日。\n'
                                '已是最新的标的会**自动跳过、不发请求**。\n'
-                               '⚠ 它只**下载数据**；下载完还要点「⚡ 增量到最新」把广度续算上去。')
+                               '⚠ 它只**下载数据**；下载完还要点「⚡ 只补新交易日」把广度续算上去。')
         lay.addWidget(p.btn_sync)
 
-        p.btn_incr = _flat_btn('⚡ 增量到最新', '把广度续算到数据里的最新交易日：历史一天都不重算'
-                               '（D7）。数据没变时点了也只是确认一下"已是最新"。')
+        p.btn_incr = _flat_btn('⚡ 只补新交易日', '已经有结果、只是新下了几天数据时用：'
+                               '过去每一天都不重算、逐位不变，只把新增的交易日接到曲线末尾（D7）。'
+                               '数据没变时点了也只是确认一下"已是最新"。\n'
+                               '（要整段历史重算请用「▶ 开始扫描」；怀疑历史被修订用「⟳ 全量重算」。）')
         p.btn_incr.setEnabled(False)
         lay.addWidget(p.btn_incr)
 
@@ -235,10 +244,12 @@ class BreadthLayout:
             "QPushButton:hover { color:#C62828; }")
         p.btn_full.setCursor(Qt.CursorShape.PointingHandCursor)
         p.btn_full.setToolTip('**危险动作**（隔离 + 二次确认）：只有"数据被修订"或"换了复权口径"'
-                              '时才需要 —— 日常用「⚡ 增量到最新」即可，它只算新交易日（D7）。')
+                              '时才需要 —— 日常用「⚡ 只补新交易日」即可，它只算新交易日（D7）。')
         lay.addWidget(p.btn_full)
 
         p.btn_run = QPushButton('▶ 开始扫描')
+        p.btn_run.setToolTip('按当前公式/阈值/范围，把**整段历史从头算一遍**（首次运行、'
+                             '或改了条件时用）。数据与条件都没变 ⇒ 直接命中缓存秒回。')
         p.btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
         p.btn_run.setStyleSheet(
             "QPushButton { background:#1976D2; color:white; font-weight:bold;"

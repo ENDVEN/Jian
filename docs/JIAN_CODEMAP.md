@@ -50,8 +50,10 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   ├── 1.22-backtest-ui/     # 回测页 4 套样板（用户拍板 A ⇒ 摘要条 + 遮罩抽屉）
 │   ├── 1.23-trading-desk-ui/ # 行情工作台 4 套样板 + 汇总页（用户拍板 **A 骨架 + 现状配色**，见 §7-B6）
 │   ├── 1.24-desk-sidebar-ui/ # 侧边栏 4 套样板（用户拍板 A 手风琴，见 §7-B8）
-│   └── 1.27-scan-breadth-ui/ # ★M2/M3（§7-B1/B2 主案）：README 方案 + index 总览 +
-│                             #   m2 全市场筛选 / m3 广度统计 两个可点原型（含状态演示）
+│   ├── 1.27-scan-breadth-ui/ # ★M2/M3（§7-B1/B2 主案）：README 方案 + index 总览 +
+│   │                         #   m2 全市场筛选 / m3 广度统计 两个可点原型（含状态演示）
+│   └── 1.46-run-history-ui/  # ★§7-B12 P8：🗂 运行历史重做样板（M1/M2/M3 三套分型；
+│                             #   可交互 index.html：切 kind / 拖"窗口宽度"看动作行换行）
 ├── docs/                # 【文档归档：给"未来的我"读；app 不 import，人看】（v6.32 分层重构新增）
 │   ├── JIAN_HISTORY.md       # 时间线：版本叙事（v5.1→v6.32）+ §8 完整 changelog（**历史数字冻结**）
 │   ├── JIAN_PLAYBOOK.md      # §11.5「最容易踩的坑」全量清单（**编号不变**）
@@ -131,6 +133,10 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   │                    #      latest_settled_trading_day（日历∩定稿判据）；纯 Python 零 Qt，网络交 CalendarWorker
 │   ├── backtest_archive.py #  ★v1.37 §7-A4 回测历史存档：BacktestArchive（不可变快照+轻量索引，
 │   │                    #      save/list/load/pin/delete/滞动淘汰/uuid 防注入）+ build_record/record_to_result
+│   │                    #      + ★v1.46：build_scan_record 改**显式分组**（scope/condition/counts
+│   │                    #        + day/range_start，不再借 M1 的 total_trades/win_rate）；
+│   │                    #        `_entry_of` 规范化索引项（三种 kind 同形）；`filter_options()`
+│   │                    #        取代 M1-only 的 symbols()；`_evict` 分组按 scope
 │   │                    #      + ★v6.13 zone_for_adjust / ADJUST_* / adjust_label（复权口径的**唯一规范化入口**）
 │   │                    #      ThrottlePolicy(间隔/抖动/重试/熔断/断点续传)；纯 Python 零 Qt 依赖
 │   │                    #      + friendly_fetch_message / short_fetch_reason / friendly_constituent_message
@@ -171,6 +177,10 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     ├── widgets/         # custom_widgets.py(K线图元/NoWheel控件族/悬浮删除/SPINBOX_QSS
     │                    #   + ★v1.42 **数值控件唯一工厂**：`SPIN_MIN_WIDTH=72` + `double_spin()/int_spin()`
     │                    #     （只给 minimumWidth、**绝不 setFixedWidth** —— 钉死宽度会把"0.6"截成"0"）
+    │                    #   + ★v1.46 **界面字体唯一出口**（§10-15 字体版权纪律）：`UI_FONT_STACK` /
+    │                    #     `UI_MONO_STACK` / `apply_ui_font()` / `mono_font_css()` / `ui_font_status()`
+    │                    #     —— **禁止点名专有字体**（雅黑/宋体/Consolas）；**只"点菜"不"捆绑"**：
+    │                    #     一款都没装 ⇒ 回落系统默认（不报错、不显方框）
     │                    #   + ★v1.43 `download_bar.py`（底部下载条：空闲 hide、长文案进 tooltip、
     │                    #     水平 Ignored 不撑窗 §11.5-73；文案全取 `DownloadJob`）与
     │                    #     `download_queue_panel.py`（**非模态**队列面板：任务表 + 只重试失败 /
@@ -290,12 +300,24 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #        build_daily_series(§7-A2 逐日净值+买卖点共同源) + CSV/PNG 入口)
     │                    #   / backtest_xlsx.py(★v1.36 §7-A2：openpyxl 内嵌净值曲线图+买卖点，
     │                    #        _build_workbook 与存盘解耦)
-    │                    #   / **backtest_history_ui.py(★v1.37 §7-A4 运行历史版式/渲染**：
-    │                    #        过滤条 `HistoryFilterBar`(M2/M3 置灰预留) / `HistoryTable`
-    │                    #        (9 列 + 按 id 选中；数字着色走 `_SignedValueDelegate` —— 选中行
-    │                    #        不叠色) / `MiniEquityChart`(净值+买卖点散点；⚠ 方法名不能叫 `plot`) /
-    │                    #        `HistoryPreviewPane`(KPI 胶囊 + 迷你图 + 可折叠参数 + 6 个动作) /
+    │                    #   / **backtest_history_ui.py(★v1.46/§7-B12 P8 运行历史版式/渲染（重做**）：
+    │                    #        过滤条 `HistoryFilterBar`(过滤轴标题随 kind：标的/范围) /
+    │                    #        `HistoryTable`(**列由 `history_kinds` 声明表给**；按 id 选中；
+    │                    #        数字着色走 `_SignedValueDelegate` —— 选中行不叠色；列宽策略 =
+    │                    #        每 kind 只测一次宽 + stretch 列吃剩余) /
+    │                    #        `MiniEquityChart`(M1 专用净值+买卖点散点；⚠ 方法名不能叫 `plot`；
+    │                    #        ★v1.46 外套白底+浅边框+圆角卡 `chart_card`=样板 `.minichart`，
+    │                    #        ⚠ 显隐要**连卡一起**，只隐藏 chart 会留空框) /
+    │                    #        `ScanStatBar`(★新：M2/M3 专用**四态占比条** + 图例) /
+    │                    #        `SectionCard`(★新：带标题小节，条件=深底等宽代码块 + 复制) /
+    │                    #        `HistoryPreviewPane`(M1 胶囊+迷你图+参数 / M2·M3 占比条+条件全文；
+    │                    #        **钉底动作行走 `FlowHost` 自动换行**、删除隔离到最右) /
     │                    #        `HistorySettingsBar`(自动存档开关 + 回执 + 上限只读))
+    │                    #   / **history_kinds.py(★v1.46 新：kind 声明式注册表**：
+    │                    #        `ColumnSpec`(标题/取值/对齐/着色/stretch) + `KindSpec`(列/过滤轴/
+    │                    #        动作集)，`KIND_SPECS` 一行一种 kind ⇒ 列表·预览·动作层 `if kind` 归零；
+    │                    #        ★v6.64：`_ACTIONS_SCAN` **既无「载入查看」也无「送行情页」**
+    │                    #        —— 统计口径不针对个股，用户拍板撤销前者之外也撤后者)
     │                    #   / review_*.py —— ★1.26/§9-U+§9-L **复盘页拆出来的 5 个模块**
     │                    #     （同款约定：状态留页面、行为搬模块 + 页面保留同名薄壳）：
     │                    #     · review_layout.py(310：两行操作轴 + 宏观/微观**可拖竖向分栏** +
@@ -325,10 +347,13 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
                          #         结果区 / 导出 / 运行流程 / 策略库 六块各归其位，本页只做装配与接线；
                          #         ★v1.37 §7-A4 又加：预览横幅(`_preview_bar`)/`exit_preview`/
                          #         `save_to_history`，并把「运行历史」接成第 4 子页)
-                         #   / **backtest_history(★v1.37 §7-A4 运行历史**——薄壳：状态 + 接线；
-                         #         版式/渲染分居 `ui/widgets/backtest_history_ui.py`，
-                         #         存档读写分居 `data/backtest_archive.py`；pin 走**就地更新一行**
-                         #         以保住选中)
+                         #   / **backtest_history(★v1.46/§7-B12 P8 运行历史（重做）**——薄壳：
+                         #         状态 + 接线 + **把 kind 声明表翻译成界面**；版式/渲染分居
+                         #         `ui/widgets/backtest_history_ui.py`，kind 差异分居
+                         #         `ui/widgets/history_kinds.py`，存档读写分居
+                         #         `data/backtest_archive.py`；pin 走**就地更新一行**以保住选中；
+                         #         ⚠ 三个动作入口（载入查看/送行情/重跑）**各自校验 kind**，
+                         #         不依赖按钮灰（旧版只靠 `setEnabled(False)`）；搜索防抖 220ms）
                          #   / **scan_view(164 ★v6.37/§7-B1/B2 STEP 4：M2 全市场筛选页**——状态全在页面
                          #         + 同名薄壳；版式/流程/渲染分居 `ui/widgets/scan_layout|flow|result`)
                          #   / **breadth_view(197 ★v6.38/§7-B1/B2 STEP 5：M3 广度统计页**——状态全在页面

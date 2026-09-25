@@ -38,7 +38,8 @@ from ui.download_hub import download_policy_from_prefs, hub_of
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.workers import CalendarWorker, JobGuard, ReadinessWorker
 
-__all__ = ['ReadinessFlow', 'constituent_failure_text', 'constituent_snapshot_text']
+__all__ = ['ReadinessFlow', 'constituent_failure_text', 'constituent_snapshot_text',
+           'scope_snapshot', 'mark_archived']
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,44 @@ def constituent_snapshot_text(index_name: str, payload: dict) -> str:
     return ' · '.join(parts)
 
 
+def scope_snapshot(page, total: int) -> tuple:
+    """把页面当前的「统计范围」拍成 `(label, code)` —— 存档与回执用（★v1.46）。
+
+    【为什么必须带上指数名】旧版只存 `cb_scope` 的文本（"指数成分 300只"）⇒ 存档丢掉
+    "是哪个指数"，列表/预览/搜索全都认不出来（用户实测点名）；这里优先取 `cb_index`
+    的显示名（沪深300 / 中证500），代码单独存一列供过滤与将来复用。
+    """
+    cb_scope = getattr(page, 'cb_scope', None)
+    cb_index = getattr(page, 'cb_index', None)
+    index = cb_scope.currentIndex() if cb_scope is not None else 0
+    n = int(total or 0)
+    if index == 1 and cb_index is not None:
+        text = str(cb_index.currentText() or '').strip()
+        code = str(cb_index.currentData() or '').strip()
+        name = (text.split(' ')[0] or code).strip()
+        return (f'{name} · {n}只' if name else f'指数 · {n}只'), code
+    scope_text = (str(cb_scope.currentText() or '').replace('…', '').strip()
+                  if cb_scope is not None else '')
+    return (f'{scope_text} · {n}只' if scope_text else f'{n}只'), ''
+
+
+def mark_archived(page, note: str = '') -> None:
+    """自动存档成功后的**一行可见回执**（★v1.46：旧版是纯静默的，用户根本不知道存了）。
+
+    只追加一个短标记（长说明进 tooltip）—— 单行标签不撑窗（§11.5-73）。
+    """
+    label = getattr(page, 'lbl_receipt', None)
+    if label is None:
+        return
+    text = label.text().rstrip()
+    if '📄 已存档' not in text:
+        label.setText((text + ' · ' if text else '') + '📄 已存档')
+    tip = label.toolTip() or ''
+    extra = f'📄 本次已存入「🗂 运行历史」{("（" + note + "）") if note else ""}'
+    if '运行历史' not in tip:
+        label.setToolTip((tip + '\n' if tip else '') + extra)
+
+
 class ReadinessFlow:
     """体检 + 补齐（只读写 `p.X`；页面持有一个实例，范围变化时调 `start()`）。"""
 
@@ -100,6 +139,10 @@ class ReadinessFlow:
         self._calendar = None                # list[date] | None
         self.trading_target = None           # 最近已定稿交易日 | None
         self._cal_thread = None
+        # 可选的"体检结束"回调（成功 / 失败都算结束）—— ★v1.46：M2/M3 的**重跑**要用它，
+        # 等名单解析 + 体检都就绪再扫，免得重跑时弹出"体检还没完成"的闸门框。
+        # 默认 None ⇒ 零行为变化。
+        self.on_probe_done = None
 
     # ==========================================
     # ① 体检（后台 footer 探测；范围解析完成后调用）
@@ -169,6 +212,35 @@ class ReadinessFlow:
         if self._scan_running():
             return          # 扫描进行中 ⇒ 结果区属于它，体检不许打扰
         self._render_readiness()
+        self._fire_probe_done()
+
+    def _partial_note(self) -> str:
+        """「历史不足」（partial）的**看得见说明**（§10-10：关键概念不能只靠 tooltip）。
+
+        【为什么单列一段】partial = 本地有文件但行数 < 粗筛要求的交易日数 —— 最常见是
+        **次新股（上市时间短）**，也可能是本地下载起点偏晚。用户看到"历史不足 1"会以为
+        是数据没下全，于是反复点「更新到最新」也永远消不掉（数据源本来就没有更早的行情）。
+        所以必须**在结果区把话说清**、点名是哪只，并给出"想纳入就把门槛调小"的出路 ——
+        否则就是一个用户永远追不上、也看不懂的数字（用户 2026-09-25 实测反馈驱动）。
+        """
+        r = self.report
+        if r is None or not r.partial:
+            return ''
+        names = getattr(self.page, '_names', None) or {}
+        items = list(r.partial.items())[:5]
+        cells = []
+        for sym, rows in items:
+            nm = str(names.get(sym) or '').strip()
+            cells.append(f'{sym}（{nm}）本地仅 {rows} 个交易日' if nm
+                         else f'{sym} 本地仅 {rows} 个交易日')
+        more = len(r.partial) - len(items)
+        head = '、'.join(cells) + (f' …等共 {len(r.partial)} 只' if more > 0 else '')
+        need = (f'（粗筛要求 ≥ {int(self._last_min_bars)} 个交易日）'
+                if self._last_min_bars else '')
+        return (f'⚠ 历史不足 {len(r.partial)} 只{need}：{head}\n'
+                '   多为新股（上市时间短）或本地下载起点偏晚 —— 数据源没有更早的行情，'
+                f'「{SYNC_ACTION_LABEL}」也补不齐（不是缺陷）；'
+                '想把它纳入，可把「🎚 粗筛 → 上市 ≥」调小。')
 
     def _render_readiness(self) -> None:
         """把就绪度报告 + 滞后提示 + 基准日覆盖诚实提示渲染到回执/空态。
@@ -187,6 +259,7 @@ class ReadinessFlow:
         stale_days = trading_days_between(rep_date, self.trading_target, self._calendar)
         stale = format_stale(rep_date, self.trading_target, stale_days)
         line = r.summary_line()
+        partial_note = self._partial_note()   # ★历史不足必须"看得见地"解释（更新补不齐，非缺陷）
         # 基准日覆盖诚实提示（M2 有 date_asof；M3 无则跳过）：基准日当天真正有行的只数
         cov_hint = ''
         need_action = r.gap_count > 0 or stale_days > 0
@@ -215,6 +288,8 @@ class ReadinessFlow:
                     body += '\n' + stale
                 if cov_hint:
                     body += '\n' + cov_hint
+                if partial_note:
+                    body += '\n' + partial_note
                 if r.unreadable:
                     body += '\n文件损坏的标的请到「🗄 数据管理」重新全量下载。'
                 if self._syncing and self._same_batch(getattr(p, '_symbols', None)):
@@ -233,7 +308,10 @@ class ReadinessFlow:
                            f'去「🗄 数据管理」对它们重新全量下载。',
                     '去数据管理', self._go_data_manager)
             else:
-                p._result.set_empty(line + ' —— 点「▶ 开始扫描」。')
+                # 没有"需要动作"的缺口，但有"历史不足"时也必须把话说清 ——
+                # 否则用户看到一个"历史不足 1"却没有任何解释，只会反复点更新（永远消不掉）。
+                extra = ('\n' + partial_note) if partial_note else ''
+                p._result.set_empty(line + extra + ' —— 点「▶ 开始扫描」。')
         else:
             # ★v6.42：已有扫描结果 ⇒ **回执不动**（它是扫描的，不是体检的），
             #   但"正在体检"的占位必须换掉 —— 旧版在这里直接 return，
@@ -284,6 +362,12 @@ class ReadinessFlow:
             return
         self.page.lbl_receipt.setText('就绪度体检失败 —— ' + str(reason)[:100])
         self.page.lbl_receipt.setToolTip(str(reason))
+        self._fire_probe_done()             # 失败也算"体检结束"（重跑不能无限等下去）
+
+    def _fire_probe_done(self) -> None:
+        hook = self.on_probe_done
+        if callable(hook):
+            hook()
 
     # ==========================================
     # 交易日历（§7-B10 STEP 3）：与 M1 同源，喂滞后判据
@@ -401,8 +485,15 @@ class ReadinessFlow:
             return
         self._syncing = True
         self._sync_scope = tuple(str(s) for s in symbols)   # 记住"跑的是哪一批"（§11.5-83）
-        p._result.set_empty(f'{label}中…（{n} 只 · 温柔抓取 {note}）',
-                            f'⏹ 停止{label}', self.stop_fill)
+        # ★v1.46 修复（用户 2026-09-25 实测）：**已有扫描结果时绝不 set_empty** ——
+        #   那会把用户刚扫出来的结果表藏起来、换成一句"更新中…"（`set_empty` 内含
+        #   `empty_box.show() + table.hide()`），而下载结束后 `_render_readiness` 的
+        #   "已有结果"分支只换「正在体检」占位、**不会恢复它** ⇒ 页面永久卡在"更新中…"。
+        #   结果区此刻属于结果（与 `_render_readiness` 同口径）；进度看回执行 + 进度条 +
+        #   全局下载条（§7-B11：进度真源在 hub，这里只是投影）。
+        if getattr(p, '_outcome', None) is None:
+            p._result.set_empty(f'{label}中…（{n} 只 · 温柔抓取 {note}）',
+                                f'⏹ 停止{label}', self.stop_fill)
         p.lbl_receipt.setText(f'{label} 0/{n} · 已提交后台（任务 #{self._sync_job}）…')
 
     def _job_name(self, label: str) -> str:
@@ -450,6 +541,10 @@ class ReadinessFlow:
             # 中断原因要说清（§7-E2）：代理全灭 ⇒ "请检查代理软件"；否则只是"被限流/已中断"
             _why = abort_reason_text(stats)
             text += f' · 已中断（{_why}；可再点「{SYNC_ACTION_LABEL}」续传）'
+        elif getattr(p, '_outcome', None) is not None:
+            # ★v1.46：已有扫描结果时数据已经变了 ⇒ 结果表仍是**旧数据**算的（我们不自动重扫，
+            #   全市场重扫代价高）—— 明说并给出刷新动作，别让用户以为表已经跟着新数据变了。
+            text += ' · 数据已更新，结果区仍是旧数据的扫描结果 —— 点「▶ 开始扫描」可刷新'
         p.lbl_receipt.setText(text)
         failed_symbols = list(stats.get('symbols_failed') or [])
         if failed_symbols:

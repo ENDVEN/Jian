@@ -28,6 +28,19 @@ MAX_TABLE_ROWS = 2000
 STATUS_BG = {HIT: '#E8F5E9', MISS: '#F5F6F8', INSUFFICIENT: '#FFF3E0', FILTERED: '#F0F3F8'}
 STATUS_FG = {HIT: '#2E7D32', MISS: '#8A94A6', INSUFFICIENT: '#E65100', FILTERED: '#B4BECB'}
 
+# ---- 列索引（与 `scan_layout.TABLE_COLUMNS` 严格同序；★P6 新增行业列）----
+(COL_NUM, COL_SYM, COL_NAME, COL_INDUSTRY, COL_CLOSE, COL_DAY, COL_MONTH, COL_YEAR,
+ COL_AMOUNT, COL_VOL, COL_TURNOVER, COL_PE, COL_PB, COL_TOTAL_MKTCAP,
+ COL_MKTCAP, COL_STATUS, COL_DETAIL) = range(17)
+# 涨幅三列（用 _signed_pct 显带符号百分数）
+_PCT_COLS = (COL_DAY, COL_MONTH, COL_YEAR)
+# 表头点击 → 排序取值（'sym'/'name' 走文本，其余走 snapshot 原始键；排序按原始值，与显示同序）。
+# 状态列 = 复位到"命中置顶"；`#` / 说明 不参与排序；★P5/P6 估值与行业列来自独立快照/缓存，暂不排序。
+_SORT_KEY = {COL_SYM: 'sym', COL_NAME: 'name', COL_CLOSE: 'close',
+             COL_DAY: 'day_pct', COL_MONTH: 'month_pct', COL_YEAR: 'year_pct',
+             COL_AMOUNT: 'amount', COL_VOL: 'volume', COL_TURNOVER: 'turnover',
+             COL_MKTCAP: 'float_mktcap'}
+
 _KPI_STYLE = {
     'hit': ('#E8F5E9', '#2E7D32', '命中（满足条件）'),
     'miss': ('#F5F6F8', '#5A6474', '未命中（有数据、条件不成立）'),
@@ -49,6 +62,19 @@ def _num(value) -> str:
     if number != number:                      # NaN
         return '—'
     return f'{number:,.2f}'.rstrip('0').rstrip('.') if abs(number) < 1e6 else f'{number:,.0f}'
+
+
+def _signed_pct(value) -> str:
+    """涨幅小数 → 带符号百分数（+6.87 / -2.30）；None/NaN → '—'（诚实，不拿 0 冒充）。"""
+    try:
+        if value is None:
+            return '—'
+        number = float(value)
+    except (TypeError, ValueError):
+        return '—'
+    if number != number:                      # NaN
+        return '—'
+    return f'{number * 100.0:+.2f}'
 
 
 class ScanResult:
@@ -90,6 +116,8 @@ class ScanResult:
         只复位 KPI 与表格；空态由紧随其后的 `set_empty(...)` 接管，这里不碰。
         """
         p = self.page
+        p._sort_col = None            # ★P1：换范围 ⇒ 排序复位到默认命中置顶
+        p._sort_desc = False
         for pill in (p.kpi or {}).values():
             pill.setText('—')
             pill.setToolTip('还没有结果')
@@ -128,7 +156,61 @@ class ScanResult:
                 f'background:{bg}; border-radius:8px; padding:5px 10px;')
 
     # ---------- 表格 ----------
-    def _render_table(self, status: dict, detail, snapshot, names: dict) -> int:
+    def toggle_sort(self, col: int) -> bool:
+        """表头点击 → 切换排序态（写在页面 `_sort_col/_sort_desc`）。返回 True = 状态变了要重画。
+
+        默认（`_sort_col is None`）= 命中置顶；点数值/文本列 = 全局按该列排（None 值恒排最后）；
+        再点同列 = 升/降切换；点**状态列** = 复位到命中置顶（用户 2026-09-25 拍板，不加额外按钮）。
+        """
+        p = self.page
+        if col == COL_STATUS:
+            p._sort_col, p._sort_desc = None, False
+            return True
+        keyname = _SORT_KEY.get(col)
+        if keyname is None:                       # `#` / 说明 列不排
+            return False
+        if p._sort_col == col:
+            p._sort_desc = not p._sort_desc
+        else:
+            p._sort_col = col
+            p._sort_desc = keyname not in ('sym', 'name')   # 文本列默认升序，数值列默认降序
+        return True
+
+    def _ordered_rows(self, status: dict, snapshot, names: dict) -> list:
+        """行序：**永远命中置顶**（HIT→MISS→INSUFFICIENT→FILTERED 分组）。
+
+        组内默认按代码；点了某列后**组内按该列排**（取不到值的行排到该组末尾）。
+        —— 用户 2026-09-25 明确：要的是“命中永远置顶 + 组内排序”，不是把命中/未命中混排。
+        """
+        p = self.page
+        snap = snapshot or {}
+        keyname = _SORT_KEY.get(getattr(p, '_sort_col', None))
+        desc = bool(getattr(p, '_sort_desc', False))
+
+        def _val(sym):
+            if keyname in (None, 'sym'):
+                return sym
+            if keyname == 'name':
+                return str(names.get(sym) or '')
+            raw = (snap.get(sym) or {}).get(keyname)
+            try:
+                return None if raw is None else float(raw)
+            except (TypeError, ValueError):
+                return None
+
+        rows: list = []
+        for key in (HIT, MISS, INSUFFICIENT, FILTERED):
+            group = sorted(s for s in status if status[s] == key)
+            if keyname:
+                have = [s for s in group if _val(s) is not None]
+                tail = [s for s in group if _val(s) is None]
+                have.sort(key=_val, reverse=desc)
+                group = have + tail
+            rows.extend(group)
+        return rows
+
+    def _render_table(self, status: dict, detail, snapshot, names: dict,
+                      valuation=None, industry=None, resize: bool = True) -> int:
         """填表并返回**总行数**（可能大于实际上屏行数 —— 截断由调用方说清）。
 
         ⚠ 性能铁律（v6.42，用户实测"点 ◀▶ 软件卡死"的根因）：
@@ -138,8 +220,7 @@ class ScanResult:
         tooltip 只给"说明"列（3.8 万个 tooltip 对象是另一笔白付的开销）。"""
         p = self.page
         table: QTableWidget = p.table
-        order = (HIT, MISS, INSUFFICIENT, FILTERED)
-        rows = [sym for key in order for sym in sorted(status) if status[sym] == key]
+        rows = self._ordered_rows(status, snapshot, names)
         total = len(rows)
         shown = rows[:MAX_TABLE_ROWS]
         header = table.horizontalHeader()
@@ -156,37 +237,54 @@ class ScanResult:
             for row, sym in enumerate(shown):
                 state = status[sym]
                 values = (snapshot or {}).get(sym) or {}
+                val = (valuation or {}).get(sym) or {}      # ★P5 估值（仅基准日==最新定稿日才传入）
                 cells = (
+                    row + 1,                              # 行号：随显示顺序（含排序后）重算，命中区一眼数得清
                     sym,
                     str(names.get(sym) or ''),
+                    str((industry or {}).get(sym) or '') or '—',   # ★P6 细分行业（本地缓存，缺则 '—'）
                     _num(values.get('close')),
+                    _signed_pct(values.get('day_pct')),
+                    _signed_pct(values.get('month_pct')),
+                    _signed_pct(values.get('year_pct')),
                     _num((values.get('amount') / 1e4) if values.get('amount') is not None else None),
+                    _num((values.get('volume') / 1e6) if values.get('volume') is not None else None),
                     _num((values.get('turnover') * 100.0)
                          if values.get('turnover') is not None else None),
+                    _num(val.get('pe')),                  # ★P5 估值（valuation=None 时自然全 '—'）
+                    _num(val.get('pb')),
+                    _num((val.get('total_mktcap') / 1e8) if val.get('total_mktcap') is not None else None),
+                    _num((values.get('float_mktcap') / 1e8) if values.get('float_mktcap') is not None else None),
                     STATUS_LABELS.get(state, state),
                     (detail or {}).get(sym, ''),
                 )
                 for col, text in enumerate(cells):
                     item = QTableWidgetItem(str(text))
-                    if col == 5:                          # 状态 pill
+                    if col == COL_NUM:                    # 行号：居中 + 弱化色
+                        item.setForeground(QColor('#B4BECB'))
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    elif col == COL_STATUS:               # 状态 pill
                         item.setForeground(QColor(STATUS_FG.get(state, '#1F2430')))
                         item.setBackground(QColor(STATUS_BG.get(state, '#FFFFFF')))
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    elif col == 6 and text:               # 说明列才有 tooltip
+                    elif col == COL_DETAIL and text:      # 说明列才有 tooltip
                         item.setForeground(QColor('#8A94A6'))
                         item.setToolTip(str(text))
                     table.setItem(row, col, item)
-            table.resizeColumnsToContents()               # 整表只测这一次
+            if resize:                                  # ★只在**新扫描**时测一次列宽；
+                table.resizeColumnsToContents()         #   排序/切日期不重测（否则列宽随顶部行内容跳动）
         finally:
             table.setUpdatesEnabled(True)
         return total
 
     # ---------- 主入口 ----------
     def render(self, counts: dict, status: dict, detail, snapshot, names: dict,
-               elapsed_ms: float, cached: bool, date_label: str, scope_label: str) -> None:
+               elapsed_ms: float, cached: bool, date_label: str, scope_label: str,
+               valuation=None, industry=None, resize: bool = True) -> None:
         p = self.page
         self._render_kpis(counts, elapsed_ms, cached)
-        total = self._render_table(status, detail, snapshot, names)
+        total = self._render_table(status, detail, snapshot, names,
+                                   valuation=valuation, industry=industry, resize=resize)
         p.empty_box.hide()
         p.table.show()
         # 口径印在标题上（E 节）

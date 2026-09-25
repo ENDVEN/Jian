@@ -26,6 +26,7 @@ from ui.widgets.breadth_layout import (DRAWER_MAX_WIDTH, DRAWER_MIN_WIDTH,
                                        BreadthLayout)
 from ui.widgets.breadth_result import BreadthResult
 from ui.widgets.readiness_flow import ReadinessFlow
+from ui.widgets.scan_strategy_bridge import ScanStrategyBridge
 
 # 出厂示例：与主案 B2/P3 用的同一句（用户一进来就有可跑的东西，而不是一个空框）
 DEFAULT_FORMULA = ("DIFF := EMA(C,12) - EMA(C,26);\n"
@@ -69,6 +70,11 @@ class BreadthView(QWidget):
         self._result = BreadthResult(self)
         self._flow = BreadthFlow(self)
         self._readiness = ReadinessFlow(self)        # 就绪度体检 + 更新到最新/滞后（D6/§7-B10，两页共用）
+        # ★v1.46 / §7-B12 P3：筛选方案库桥接（载入/存为/管理；与 M2 共享一份方案池）
+        self._strategy = ScanStrategyBridge(self)
+        self.btn_load.clicked.connect(self._strategy.load)
+        self.btn_save.clicked.connect(self._strategy.save)
+        self.btn_manage.clicked.connect(self._strategy.manage)
         self._load_breadth_ui()
         self._result.set_empty('还没有扫描结果 —— 选好统计范围与条件，点「▶ 开始扫描」。')
         self._readiness.start_calendar_fetch()       # 后台拉一次交易日历，喂滞后提示（§7-B10 STEP 3）
@@ -93,6 +99,13 @@ class BreadthView(QWidget):
 
     def build_result_area(self):
         return self._layout.build_result_area()
+
+    # ★P3 筛选方案库需要的两个接口（委托 flow；桥接只认这两个 + lbl_receipt）
+    def current_config(self) -> dict:
+        return self._flow.current_config()
+
+    def apply_config(self, cfg: dict) -> None:
+        self._flow.apply_config(cfg)
 
     def build_overlays(self):
         self._layout.build_overlays()
@@ -140,6 +153,10 @@ class BreadthView(QWidget):
     # ==========================================
     def start_scan(self):
         self._flow.on_run_clicked()
+
+    def request_run(self):
+        """★v1.46：供「🗂 运行历史 → ▶ 重跑」调用 —— 等名单解析完再开扫（不弹空跑）。"""
+        self._flow.request_run()
 
     def incremental_scan(self):
         self._flow.on_incremental_clicked()

@@ -41,7 +41,8 @@ from data.market_db import DataLakeManager
 from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
-                               is_daily_bar_settled, short_fetch_reason)
+                               fetch_industry_map, is_daily_bar_settled,
+                               short_fetch_reason, spot_valuation_map)
 from data.trade_calendar import (latest_settled_trading_day, load_or_fetch,
                                  previous_trading_day)
 
@@ -384,6 +385,42 @@ class SingleSyncWorker(QThread):
         self.finished.emit(result)
 
 
+class SpotValuationWorker(QThread):
+    """★P5：后台拉全市场当前估值快照（供 M2 结果表 B 层列：市盈率/市净率/总市值）。
+
+    非阻塞、失败回 None（那几列诚实留 '—'），与 M3 指数副图后台补拉同款"不连累主流程"。
+    走 `spot_valuation_map()` 门面（§9-H：ui 不直连行情源，联网抓取一律经 data 层）。
+    """
+
+    finished = pyqtSignal(object)   # {symbol: {pe, pb, total_mktcap}} 或 None
+
+    def run(self):
+        try:
+            data = spot_valuation_map()
+        except Exception as e:  # noqa: BLE001 —— 网络/接口异常一律回 None，绝不外泄到 UI
+            logger.warning(f"估值快照后台拉取失败: {e}")
+            data = None
+        self.finished.emit(data or None)
+
+
+class IndustryMapWorker(QThread):
+    """★P6：后台抓全市场「代码→行业」映射（~80+ 次请求，一次性）。
+
+    失败回 None（行业列继续留 '—'）；回包后由页面存进 industry_store 并落盘。
+    走 `fetch_industry_map()` 门面（§9-H：ui 不直连行情源）。
+    """
+
+    finished = pyqtSignal(object)   # {symbol: 行业} 或 None
+
+    def run(self):
+        try:
+            data = fetch_industry_map()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"行业映射后台拉取失败: {e}")
+            data = None
+        self.finished.emit(data or None)
+
+
 class BacktestRunWorker(QThread):
     """回测计算（市场回测页）。
 
@@ -523,7 +560,7 @@ class CrossSectionWorker(QThread):
     · **取消**：`cancel()` ⇒ 内核在**块边界**抛 `ScanCancelled` ⇒
       **绝不落半成品矩阵**（半个矩阵的命中家数 / 广度占比全是错的，且界面上看不出来）；
       事后可读 `worker.cancelled`；
-    · **增量路径**（`incremental=True`，M3 的「⚡ 增量到最新」，主案 D7）：
+    · **增量路径**（`incremental=True`，M3 的「⚡ 只补新交易日」，主案 D7）：
       `scan_cached` 先找同配置旧条目做**尾段续接**（历史矩阵逐位不动）；
       找不到 / 结构变了 ⇒ 诚实退化全量，过程说明在 `outcome.note`；
     · **会话缓存命中时不进计算循环** —— `scan_cached` 直接返回上次的矩阵
