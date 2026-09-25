@@ -276,7 +276,9 @@ class BacktestFlow:
                 # 这只标的正在批量下载 ⇒ 本地文件可能被另一个写者改着，不拿它跑回测
                 self._set_busy(False, f"{p.current_symbol} 正在后台下载队列里，请稍后再跑。")
                 return
-            self._set_busy(True, f"本地日线未到 {need.toString('yyyy-MM-dd')}，正在联网补全...")
+            # ★v6.66：回测只认**前复权**那一份（`ZONE_KLINE`）—— 补数据时也要说清，别让用户以为
+            #   自己切到不复权后回测也会跟着换口径（回测/扫描口径与图表口径是**两件事**，§10-10）
+            self._set_busy(True, f"本地前复权日线未到 {need.toString('yyyy-MM-dd')}，正在联网补全...")
             p._sync_thread = SingleSyncWorker(p.current_symbol, zone=ZONE_KLINE, parent=p)
             p._sync_thread.finished.connect(self._on_synced)
             self._stock_gate.hold(p.current_symbol, ZONE_KLINE)

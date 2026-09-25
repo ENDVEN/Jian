@@ -153,8 +153,10 @@ class DeskData:
             QMessageBox.information(p, "提示", "请先搜索并选中一个标的，再进行云端同步。")
             return
         p.btn_sync.setEnabled(False)
-        p.lbl_sync_status.setText("正在同步…")
         zone, _key = self._data_zone_and_key()
+        # ★v6.66：把"在同步哪一份"写在进度上（旧版只写"正在同步…" ⇒ 用户分不清抓的是前复权还是不复权）
+        p.lbl_sync_status.setText(
+            f"正在同步 {adjust_label(p.current_adjust)}（{zone}）…")
         # ★v1.43 / §7-B11：单只同步**不进队列**（秒级、回包直接喂给当页渲染），
         #   但要先问一句队列：这只标的正在批量下载时，重复抓它 = 白等 + 抢同一个文件。
         if self._gate.blocked_by(p.current_symbol, zone):
@@ -200,7 +202,11 @@ class DeskData:
         else:
             added = int(result.get("added", 0) or 0)
             unit = "根" if expected_period else "行"
-            p.lbl_sync_status.setText(f"已更新，新增 {added} {unit}" if added > 0 else "已更新")
+            # ★v6.66：回执带上口径 —— 用户据此确认"抓的确实是我要的那一份"
+            _caliber = f"（{adjust_label(p.current_adjust)}）"
+            p.lbl_sync_status.setText(
+                (f"已更新，新增 {added} {unit}{_caliber}" if added > 0
+                 else f"已更新{_caliber}"))
 
         df = p.data_lake.load_data(zone, key)
         if df.empty:
@@ -290,6 +296,17 @@ class DeskData:
             "**前复权**（默认）：看长期趋势 / 算指标用它；**不复权**：看当年的真实价位。\n"
             "两份数据**各存一个分区**，来回切换不覆盖、也不会重复下载。")
         p.lbl_caliber_note.setText("分钟：真实成交价口径（不含复权）" if minute_mode else "")
+        # ★v6.66（用户 2026-09-25 反馈"切了口径点云端同步，抓的不是我要的那份"）：
+        #   「☁️ 云端同步」抓的就是**当前口径**那一份 —— 这件事必须**看得见**：
+        #   鼠标一悬停就知道"现在按这个按钮会把哪一份写进哪个分区"，不必猜。
+        _zone_now = self._data_zone_and_key()[0]
+        p.btn_sync.setToolTip(
+            "本地有数据 → 只补缺失的最新几天（快）；本地没数据 → 直接整段抓取。\n\n"
+            f"⚠ 本次同步目标 = **当前口径**：{adjust_label(p.current_adjust)}"
+            f"（分区 `{_zone_now}`）。\n"
+            "前复权与不复权是**两份独立数据**（互推不出来）—— 要看另一份，先切口径再点同步，"
+            "或到「🗄 数据管理」按分区单独补（那里可一次补两套：口径选「两个都下」）。\n\n"
+            "需要「丢弃本地重新整段下载」时，请到「🗄 数据管理」页用「重新全量下载」。")
 
     # ==========================================
     # 复权（v6.13 · P8 收尾）

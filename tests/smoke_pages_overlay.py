@@ -3768,6 +3768,116 @@ except Exception as _e:  # noqa: BLE001
     check(f"§7-E2 批量预下载 JobGuard 断言整段抛异常: {type(_e).__name__}: {_e}", False)
 
 # ==========================================
+# ★v6.66 · 「不复权」分区的**下载入口**（用户 2026-09-25 实测："预下载从来没补过这里"）
+#   两条死路（本次一并修）：
+#     ① 批量预下载**没有口径选择** ⇒ 永远只写 `kline_daily`（前复权）；
+#     ② 数据管理页对一个**空分区**没入口（表里没有任何行可勾 ⇒ 更新/全量按钮恒灰）
+#        —— 截图实证：`kline_daily_raw` 只有 1 项，搜索 300803 得到空表，想补也无从下手。
+# ==========================================
+print("\n== v6.66 · 不复权分区下载入口（批量口径选择 + 空分区回落）==")
+try:
+    from data.sync_service import (ZONE_INDEX as _ZI16, ZONE_KLINE as _ZK16,
+                                   ZONE_KLINE_RAW as _ZKR16)  # noqa: E402
+    from ui.dialogs.bulk_download import BulkDownloadDialog as _BD16  # noqa: E402
+
+    _dlg16 = _BD16(win, win)
+    _dlg16._radios["paste"].setChecked(True)
+    _dlg16.txt_paste.setPlainText("300803")
+    check("★ v6.66：批量预下载有「口径」选择，默认前复权（旧版没有这一项）",
+          _dlg16.cmb_adjust.count() == 3 and _dlg16.cmb_adjust.currentData() == "qfq")
+    check("★ v6.66：口径=前复权 ⇒ 只写 kline_daily", _dlg16._zones_to_download() == [_ZK16])
+    _dlg16.cmb_adjust.setCurrentIndex(_dlg16.cmb_adjust.findData("raw"))
+    check("★ v6.66：口径=不复权 ⇒ 写 kline_daily_raw（**旧版根本没有这条路** ⇒ 该分区永远是空的）",
+          _dlg16._zones_to_download() == [_ZKR16])
+    _dlg16.cmb_adjust.setCurrentIndex(_dlg16.cmb_adjust.findData("both"))
+    check("★ v6.66：口径=两个都下 ⇒ 两个分区各一份（两份数据互推不出来，只能各存各下）",
+          _dlg16._zones_to_download() == [_ZK16, _ZKR16])
+    check("★ v6.66：预估按「只数 × 口径数」算并把口径写出来（别少报一半耗时）",
+          "前复权 + 不复权" in _dlg16.lbl_estimate.text())
+
+    _sent16 = []
+    _orig_submit16 = win.downloads.submit
+    win.downloads.submit = (lambda label, syms, **kw:
+                            (_sent16.append((label, list(syms), kw.get("zone")))
+                             or len(_sent16)))
+    try:
+        _dlg16._start()
+    finally:
+        win.downloads.submit = _orig_submit16
+    check("★ v6.66：点「开始下载」真提交**两个任务**，任务名带口径（在下载条/队列里认得出是哪个）",
+          [z for _, _, z in _sent16] == [_ZK16, _ZKR16]
+          and all(("前复权" in lab or "不复权" in lab) for lab, _, _ in _sent16))
+    check("★ v6.66：两个任务 id 都记下了（回包过滤与「停止本任务」要认一组）",
+          len(_dlg16._job_ids) == 2)
+
+    _dlg16._radios["index_preset"].setChecked(True)
+    check("★ v6.66：指数预设来源 ⇒ 口径选择**禁用并说明**（指数没有复权概念，不是藏起来）",
+          _dlg16._zones_to_download() == [_ZI16] and not _dlg16.cmb_adjust.isEnabled())
+    _dlg16.close()
+
+    # ---- 数据管理页：空分区也能把新标的下进来 ----
+    _dm16 = win.page_data
+    _dm16._current_zone = _ZKR16        # 直接切到"不复权"（空的那一个）
+    _dm16._items = []
+    _dm16._checked.clear()
+    _dm16.txt_filter.setText("300803")
+    _dm16._render_items()
+    _dm16._sync_ops_enabled()
+    check("★★ v6.66：空分区 + 过滤框有代码 ⇒ **下载入口可用**"
+          "（旧版表里没行可勾 ⇒ 更新/全量按钮恒灰 = 用户无路可走）",
+          _dm16._sync_targets() == ["300803"]
+          and _dm16.btn_force.isEnabled() and _dm16.btn_sync.isEnabled())
+    check("★ v6.66：但「删除」仍**只认勾选**（不许按过滤框删一个并不在本地的名字）",
+          not _dm16.btn_delete.isEnabled())
+    check("★ v6.66：界面说清「现在按谁下载」（按钮突然可点不能显得莫名其妙）",
+          "300803" in _dm16.lbl_selected.text() and "过滤框" in _dm16.lbl_selected.text())
+    check("★ v6.66：空分区把出路写在状态行（旧版这里一声不吭）",
+          "本分区当前为空" in _dm16.lbl_status.text())
+    _dm16.txt_filter.setText("平安")      # 中文名/非代码 ⇒ 不猜
+    _dm16._render_items()
+    check("★ v6.66：过滤框不是代码形态（中文名）⇒ **不给**下载入口，不乱猜",
+          _dm16._sync_targets() == [])
+    _dm16.txt_filter.setText("")
+    _dm16._render_items()
+
+    # ---- 「抓的是哪一份」必须**看得见**（用户实测反馈："点了云端同步，抓的不是我要的那份"）----
+    import pathlib as _pl16b  # noqa: E402
+
+    from data.sync_service import ADJUST_NONE as _AN16, ADJUST_QFQ as _AQ16  # noqa: E402
+    from ui.widgets import readiness_flow as _rf16  # noqa: E402
+
+    _adj_back16 = mkt.current_adjust
+    _per_back16 = mkt.current_period
+    mkt.current_period = "D"
+    mkt.current_adjust = _AN16
+    mkt._sync_period_widgets()
+    _tt_raw16 = mkt.btn_sync.toolTip()
+    check("★ v6.66：切到不复权 ⇒「云端同步」tooltip 明说目标 = **不复权 · kline_daily_raw**",
+          "不复权" in _tt_raw16 and "kline_daily_raw" in _tt_raw16)
+    mkt.current_adjust = _AQ16
+    mkt._sync_period_widgets()
+    check("★ v6.66：切回前复权 ⇒ tooltip 跟着改（同一条按钮两种口径，说明必须实时算）",
+          "前复权" in mkt.btn_sync.toolTip()
+          and "kline_daily_raw" not in mkt.btn_sync.toolTip())
+    mkt.current_adjust = _adj_back16
+    mkt.current_period = _per_back16
+    mkt._sync_period_widgets()
+
+    check("★★ v6.66：M2/M3 的「更新到最新」写明**口径固定 = 前复权日线**"
+          "（回测/扫描口径与行情页图表口径是两件事，用户问过）",
+          "前复权" in win.page_backtest.page_scan.btn_sync.toolTip()
+          and "前复权" in win.page_backtest.page_breadth.btn_sync.toolTip())
+    check("★ v6.66：回测页补数据的回执也点名口径（不是只写在 tooltip 里）",
+          "本地前复权日线未到" in _pl16b.Path("ui/widgets/backtest_flow.py").read_text(
+              encoding="utf-8"))
+    check("★ v6.66：M1/M2/M3 的同步口径只有一个出口（`SYNC_CALIBER_LABEL`），回执直接引用它",
+          _rf16.SYNC_CALIBER_LABEL == '前复权日线'
+          and '口径 {SYNC_CALIBER_LABEL}' in _pl16b.Path(
+              "ui/widgets/readiness_flow.py").read_text(encoding="utf-8"))
+except Exception as _e16:  # noqa: BLE001
+    check(f"v6.66 不复权下载入口断言整段抛异常: {type(_e16).__name__}: {_e16}", False)
+
+# ==========================================
 # §7-B1/B2 补漏 · 「需要动作」必须有**入口**（v1.41 · 用户实测反馈驱动 · §11.5-80）
 #   现场（用户截图）：M2 范围切到「指数成分 · 中证500」，体检说"未下载 456"，
 #   结果区却**没有任何更新入口**；上方还挂着旧范围(300)的统计，与 500 的就绪度同屏打架。
@@ -4384,6 +4494,32 @@ try:
                                      "ui_painter_font", "mono_font_css", "ui_font_status")))
 except Exception as _e15:  # noqa: BLE001
     check(f"§10-15 字体断言整段抛异常: {type(_e15).__name__}: {_e15}", False)
+
+# ==========================================
+# 发布物一致性（v6.66）：`version.json` 是**老用户的更新清单**（`core/updater.py` 每次启动比对）
+#   ⇒ 它必须是**合法 JSON**，且版本号与 `settings.APP_VERSION` 同步（§9-A 三处同步的机器版）。
+#   【为什么加机器护栏】v6.66 手工回写时 notes 里写了**裸双引号** ⇒ 整个文件成了非法 JSON
+#   （人眼完全看不出来，只有 `json.load` 会炸）—— 而那等于**所有老用户的更新检查崩**。
+#   这条纪律以前只有 §11.7 一句"三处同步"（靠人记）⇒ 现在改成可执行断言。
+# ==========================================
+print("\n== 发布物一致性：version.json 可解析 + 版本号三处同步 ==")
+try:
+    import json as _json17  # noqa: E402
+    import pathlib as _pl17  # noqa: E402
+
+    from config import settings as _st17  # noqa: E402
+
+    _vj17 = _json17.loads(_pl17.Path("version.json").read_text(encoding="utf-8"))
+    check("★ version.json 是**合法 JSON**（解析失败 = 所有老用户的更新检查直接崩）",
+          isinstance(_vj17, dict) and bool(str(_vj17.get("version") or "")))
+    check("★ 版本号三处同步：version.json 的 version == settings.APP_VERSION",
+          str(_vj17.get("version")) == str(_st17.APP_VERSION))
+    check("★ version.json 的 url 仍指向项目 Releases 页（正式发版才换直链）",
+          "github.com/ENDVEN/Jian/releases" in str(_vj17.get("url") or ""))
+    check("★ 更新说明非空且是给人看的（用户点更新时看到的就是它）",
+          len(str(_vj17.get("notes") or "").strip()) > 20)
+except Exception as _e17:  # noqa: BLE001
+    check(f"发布物一致性断言整段抛异常: {type(_e17).__name__}: {_e17}", False)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:

@@ -392,6 +392,34 @@ class DataManagerView(QWidget):
         valid = {item["name"] for item in self._items}
         return sorted(self._checked & valid)
 
+    def _filter_query_symbol(self) -> str:
+        """过滤框里那个"看着像标的代码"的输入（否则空串）—— 中文名/多词/超长一律不算。
+
+        ⚠ **必须判 `isascii()`**：Python 的 `str.isalnum()` 对**中文也为 True**（汉字算字母），
+          只判 `isalnum()` 会把"平安"这种**按名称过滤**的输入也当成标的代码去下载
+          （写这条时就被自己的断言抓过一次）。
+        """
+        q = self.txt_filter.text().strip()
+        if not q or len(q) > 16 or not q.isascii() or any(ch.isspace() for ch in q):
+            return ""
+        return q if all(ch.isalnum() or ch in "._-" for ch in q) else ""
+
+    def _sync_targets(self) -> list[str]:
+        """**要同步的标的** = 勾选的那些；**一个都没勾**时回落"过滤框里的代码"。
+
+        【为什么必须有这条回落（★v6.66 · 用户 2026-09-25 实测死局）】
+          分区是**空的**（实证：`kline_daily_raw` 只有 1 项）⇒ 表里没有任何行可勾 ⇒
+          「更新到最新 / 重新全量下载」永远灰着 ⇒ **用户没有任何办法把一只新标的下载进一个空分区**
+          （截图里"搜索 300803 → 空表"就是这个局面：想补也补不了）。
+          用户的心智本来就是"我在这个分区里输入代码，想把它下进来"，所以这里顺着它做。
+        ⚠ 只对**同步类**动作用这条回落；删除仍只认勾选（免得误删一个并不在本地的名字）。
+        """
+        names = self._checked_names()
+        if names:
+            return names
+        q = self._filter_query_symbol()
+        return [q] if q and self._current_zone in SYNCABLE else []
+
     def _set_all_checked(self, checked: bool):
         """全选/取消当前可见项（配合过滤搜索的直觉）"""
         for item in self._visible_items():
@@ -430,9 +458,15 @@ class DataManagerView(QWidget):
 
     def _update_selected_count(self):
         count = len(self._checked_names())
-        self.lbl_selected.setText(f"已选 {count} 项")
-        for btn in (self.btn_delete, self.btn_sync, self.btn_force):
-            btn.setEnabled(count > 0)
+        targets = self._sync_targets()
+        extra = ""
+        if count == 0 and targets:
+            # 让用户看得见"现在按哪个标的下载"（否则按钮突然可点会显得莫名其妙）
+            extra = f"　→ 下载对象：{targets[0]}（取自过滤框）"
+        self.lbl_selected.setText(f"已选 {count} 项{extra}")
+        self.btn_delete.setEnabled(count > 0)          # 删除仍只认勾选
+        for btn in (self.btn_sync, self.btn_force):
+            btn.setEnabled(bool(targets))
 
     def _sync_ops_enabled(self):
         available = self._current_zone in SYNCABLE
@@ -440,6 +474,14 @@ class DataManagerView(QWidget):
             btn.setVisible(available)
         # 非空分区才允许"清空"；不可同步的分区（如财报）也能清
         self.btn_clear.setEnabled(bool(self._items))
+        # ★v6.66：**空分区**时必须把出路写出来 —— 旧版这里什么都不说，用户看到的是
+        #   "分区空的 + 按钮全灰 + 一条能走的路都没有"（实测：raw 分区搜索 300803 就是这局面）。
+        if available and not self._items:
+            _q = self._filter_query_symbol()
+            self.lbl_status.setText(
+                ("本分区当前为空"
+                 + (f"（过滤框里的 {_q} 还没下载过）" if _q else "")
+                 + " —— 右下角的下载按钮可以把它从云端取进来。"))
 
     # ==========================================
     # 删除（单条/批量）
@@ -505,7 +547,7 @@ class DataManagerView(QWidget):
     # 同步（更新到最新 / 重新全量下载）—— v1.43：提交给主窗口的后台下载队列
     # ==========================================
     def _sync_selected(self, force_full: bool):
-        names = self._checked_names()
+        names = self._sync_targets()      # ★v6.66：空分区/搜索未命中时回落"过滤框里的代码"
         if not names:
             return
         if self._current_zone not in SYNCABLE:

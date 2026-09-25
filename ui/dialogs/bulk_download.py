@@ -28,9 +28,9 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QMessageBox, QApplication, QFrame)
 
 from data.akshare_feed import INDEX_PRESETS
-from data.sync_service import (ZONE_KLINE, ZONE_INDEX, abort_reason_text,
-                               estimate_seconds, format_duration,
-                               friendly_constituent_message)
+from data.sync_service import (ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX,
+                               abort_reason_text, estimate_seconds,
+                               format_duration, friendly_constituent_message)
 from ui.dialogs.download_settings import DownloadSettingsDialog
 from ui.download_hub import download_policy_from_prefs
 from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
@@ -66,6 +66,8 @@ class BulkDownloadDialog(QDialog):
         #   “下载中不能关窗”与“关窗前硬等 15 秒”都是这一行带来的）。
         #   现在只记自己提交的任务号，进度与回执全部从队列订阅而来。
         self._job_id: int | None = None
+        # ★v6.66：口径选「两个都下」会**提交两个任务** ⇒ 回包过滤与「停止本任务」都要认一组 id
+        self._job_ids: list[int] = []
         self._cons_worker: ConstituentsWorker | None = None
         # ★v1.38/§7-E2（P4 顺手项）：成分股的"只认最后一次"改用**公共件** JobGuard
         #   （原先这里是手写的 `_cons_token` 计数器，与 §9-O5 的公共判据重复 ——
@@ -192,6 +194,33 @@ class BulkDownloadDialog(QDialog):
         blay.addWidget(self.txt_paste)
         root.addWidget(box)
 
+        # ---------- 复权口径（★v6.66 · **"不复权分区永远填不上"的根因修复**）----------
+        # 【旧版】来源不是指数时一律写 `kline_daily`（前复权）⇒ 用户"预下载了几十轮"、
+        #   `kline_daily_raw` 里仍只有当初手工下的那一只（用户 2026-09-25 截图实证：
+        #   raw 分区 1 项 / 173KB，而且**没有任何入口**能往里加新的）。
+        #   前复权与不复权是**两份独立数据**（互推不出来，见 market_db 的分区注释）⇒
+        #   必须在这里让用户选，否则"点了预下载却永远补不上不复权那份"。
+        adj_row = QHBoxLayout()
+        adj_row.setSpacing(10)
+        adj_row.addWidget(self._minor("复权口径"))
+        self.cmb_adjust = NoWheelComboBox()
+        self.cmb_adjust.setFixedHeight(28)
+        for _key, _text in (("qfq", "前复权（默认）"),
+                            ("raw", "不复权"),
+                            ("both", "两个都下（各存一份）")):
+            self.cmb_adjust.addItem(_text, _key)
+        self.cmb_adjust.setToolTip(
+            "**前复权**＝看长期趋势、算指标（随除权整体重算）；**不复权**＝看当年真实价位。\n"
+            "两份数据各存一个分区、**互推不出来** ⇒ 选「两个都下」会提交**两个任务**。\n"
+            "⚠ 指数预设来源没有复权概念，本项对它无效。")
+        self.cmb_adjust.currentIndexChanged.connect(self._refresh_estimate)
+        adj_row.addWidget(self.cmb_adjust)
+        self.lbl_adjust_note = QLabel("不复权那份必须单独下 —— 否则行情页切过去只能现取")
+        self.lbl_adjust_note.setStyleSheet("font-size: 11.5px; color: #8A94A6;")
+        adj_row.addWidget(self.lbl_adjust_note)
+        adj_row.addStretch()
+        root.addLayout(adj_row)
+
         # ---------- 参数 ----------
         params = QHBoxLayout()
         params.setSpacing(14)
@@ -302,7 +331,29 @@ class BulkDownloadDialog(QDialog):
         self.btn_resolve.setEnabled(key == "constituent")
         self.lbl_cons.setVisible(key == "constituent")
         self.txt_paste.setVisible(key == "paste")
+        # ★v6.66：指数预设走 `index_daily`，没有复权概念 ⇒ 口径选择对它无效（不是隐藏，是禁用 + 说明）
+        _is_index = (key == "index_preset")
+        self.cmb_adjust.setEnabled(not _is_index)
+        self.lbl_adjust_note.setText(
+            "指数只有一种口径（指数点位本身不复权），本项不适用"
+            if _is_index else "不复权那份必须单独下 —— 否则行情页切过去只能现取")
         self._refresh_estimate()
+
+    def _zones_to_download(self) -> list:
+        """本次要写哪几个分区（★v6.66）：指数预设固定 `index_daily`；其它来源看**口径选择**。"""
+        if self._current_source() == "index_preset":
+            return [ZONE_INDEX]
+        key = str(self.cmb_adjust.currentData() or "qfq")
+        if key == "raw":
+            return [ZONE_KLINE_RAW]
+        if key == "both":
+            return [ZONE_KLINE, ZONE_KLINE_RAW]
+        return [ZONE_KLINE]
+
+    @staticmethod
+    def _zone_label(zone: str) -> str:
+        return {ZONE_KLINE: "前复权", ZONE_KLINE_RAW: "不复权",
+                ZONE_INDEX: "指数"}.get(zone, zone)
 
     def _apply_scan_ready_preset(self):
         """「全市场扫描就绪」预设（D6-2）：只**填控件**，不替用户点开始 —— 下载永远手动发起。"""
@@ -394,9 +445,12 @@ class BulkDownloadDialog(QDialog):
         if not symbols:
             self.lbl_estimate.setText(f"待下载：—（{self._empty_source_hint()}）")
             return
-        seconds = estimate_seconds(len(symbols), policy)
+        zones = self._zones_to_download()
+        # ★v6.66：每个口径是**一个独立任务**（各发一轮请求）⇒ 预估按"只数 × 口径数"算，别少报
+        seconds = estimate_seconds(len(symbols) * len(zones), policy)
         self.lbl_estimate.setText(
-            f"待下载：{len(symbols)} 只　·　区间 {self._zone}　·　"
+            f"待下载：{len(symbols)} 只　·　口径 "
+            f"{' + '.join(self._zone_label(z) for z in zones)}　·　"
             f"最多约 {format_duration(seconds)}（间隔 {policy.interval:.1f}s"
             f"{' + 抖动' if policy.jitter else ''}）")
         # ★v1.40/§7-E5：这里**给不出**"真正要跑几只"（没体检过，逐只读 footer 反而要先花时间），
@@ -433,22 +487,34 @@ class BulkDownloadDialog(QDialog):
 
         # ★v1.43 / §7-B11：**提交给主窗口的后台队列**，本弹窗不再持有线程。
         #   ⇒ 窗口可以关、界面可以用，下载照在后台串行跑（一次只跑一批）。
+        # ★v6.66：**一个口径一个任务**（前复权 / 不复权是两份独立数据）⇒ 循环提交、逐个记 id。
         hub = self.main_win.downloads
-        self._job_id = hub.submit(f"批量预下载 · {self._source_label()}", symbols,
-                                  zone=self._zone,
-                                  force_full=bool(self.chk_force.isChecked()),
-                                  min_date=self.date_start.date().toString("yyyyMMdd"),
-                                  origin="bulk")
-        if not self._job_id:
+        force = bool(self.chk_force.isChecked())
+        min_date = self.date_start.date().toString("yyyyMMdd")
+        self._job_ids = []
+        dup: list[str] = []
+        for zone in self._zones_to_download():
+            jid = hub.submit(f"批量预下载 · {self._source_label()} · {self._zone_label(zone)}",
+                             symbols, zone=zone, force_full=force,
+                             min_date=min_date, origin="bulk")
+            if jid:
+                self._job_ids.append(jid)
+            else:
+                dup.append(self._zone_label(zone))
+        self._job_id = self._job_ids[-1] if self._job_ids else None
+        if not self._job_ids:
             # 去重命中（同样的标的清单已在跑/已排队）⇒ 诚实说清楚，不假装修了新任务
-            self.lbl_status.setText("同样的任务已经在队列里了 —— 进度见底部下载条。")
+            self.lbl_status.setText(
+                "同样的任务已经在队列里了（含口径）—— 进度见底部下载条。")
             self.btn_cancel.setEnabled(False)
             return
-        ahead = max(0, hub.pending_count() - 1)
+        ahead = max(0, hub.pending_count() - len(self._job_ids))
+        _dup_note = f"　⚠ {'、'.join(dup)} 已在队列里，未重复提交" if dup else ""
         self.btn_cancel.setEnabled(True)
         self.lbl_status.setText(
-            f"已提交后台（任务 #{self._job_id}）· {len(symbols)} 只"
+            f"已提交后台（任务 {'、#'.join(str(i) for i in self._job_ids)}）· {len(symbols)} 只"
             + (f" · 前面还排着 {ahead} 个" if ahead else "")
+            + _dup_note
             + "。本窗口可以一直开着看进度，也可以直接关掉去做别的事。")
 
     def _source_label(self) -> str:
@@ -461,21 +527,21 @@ class BulkDownloadDialog(QDialog):
     # 队列回包（本弹窗只是其中一个视图：只认自己提交的那个任务）
     # ==========================================
     def _on_hub_progress(self, job_id: int, done: int, total: int, symbol: str):
-        if job_id != self._job_id:
+        if job_id not in self._job_ids:      # ★v6.66：本弹窗可能提交了**两个**口径的任务
             return
         self.progress.setMaximum(max(1, total))
         self.progress.setValue(done)
         self.lbl_status.setText(f"({done}/{total}) 正在处理 {symbol} …")
 
     def _on_hub_failed(self, job_id: int, symbol: str, reason: str):
-        if job_id != self._job_id:
+        if job_id not in self._job_ids:
             return
         self._failures.append(symbol)
         if self.log.count() < 500:
             self.log.addItem(f"✗ {symbol} —— {reason}")
 
     def _on_hub_finished(self, job_id: int, stats: dict):
-        if job_id != self._job_id:
+        if job_id not in self._job_ids:
             return
         stats = stats or {}
         self.btn_cancel.setEnabled(False)
@@ -499,8 +565,10 @@ class BulkDownloadDialog(QDialog):
     # 其它
     # ==========================================
     def _cancel(self):
-        if self._job_id:
-            self.main_win.downloads.cancel(self._job_id)
+        """停掉**本弹窗刚提交的**任务（口径选「两个都下」时是两个）。"""
+        if self._job_ids:
+            for _jid in list(self._job_ids):
+                self.main_win.downloads.cancel(_jid)
             self.lbl_status.setText("正在停止本任务…（等待当前这一只结束）")
             self.btn_cancel.setEnabled(False)
 

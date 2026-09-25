@@ -36,6 +36,12 @@ from data.sync_service import (ZONE_KLINE, abort_reason_text,
 from data.trade_calendar import latest_settled_trading_day, trading_days_between
 from ui.download_hub import download_policy_from_prefs, hub_of
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
+
+# ★v6.66（用户 2026-09-25 问："回测里更新到最近交易日，怎么保证是前复权还是不复权？"）
+#   M1/M2/M3 的「更新到最新」**口径固定 = 前复权日线**（`ZONE_KLINE`，见 `_launch_sync` 的 `zone=`）：
+#   回测 / 扫描 / 指标都以**连续价格**为前提（不复权在除权日会跳空，会把指标与命中判定带偏）。
+#   而"行情页当前选的是哪个口径"与它**无关** —— 这是两件事，所以回执里必须写明（§10-10）。
+SYNC_CALIBER_LABEL = '前复权日线'
 from ui.workers import CalendarWorker, JobGuard, ReadinessWorker
 
 __all__ = ['ReadinessFlow', 'constituent_failure_text', 'constituent_snapshot_text',
@@ -494,7 +500,8 @@ class ReadinessFlow:
         if getattr(p, '_outcome', None) is None:
             p._result.set_empty(f'{label}中…（{n} 只 · 温柔抓取 {note}）',
                                 f'⏹ 停止{label}', self.stop_fill)
-        p.lbl_receipt.setText(f'{label} 0/{n} · 已提交后台（任务 #{self._sync_job}）…')
+        p.lbl_receipt.setText(
+            f'{label} 0/{n} · 口径 {SYNC_CALIBER_LABEL} · 已提交后台（任务 #{self._sync_job}）…')
 
     def _job_name(self, label: str) -> str:
         """任务名：带上当前统计范围，让用户在队列里认得出是谁提交的。"""
@@ -536,7 +543,8 @@ class ReadinessFlow:
         skipped = int(stats.get('skipped', 0))
         fail = int(stats.get('fail', 0))
         aborted = bool(stats.get('aborted'))
-        text = f'{self._sync_label}结束：成功 {ok} · 已最新 {skipped} · 失败 {fail}'
+        text = (f'{self._sync_label}结束（{SYNC_CALIBER_LABEL}）：'
+                f'成功 {ok} · 已最新 {skipped} · 失败 {fail}')
         if aborted:
             # 中断原因要说清（§7-E2）：代理全灭 ⇒ "请检查代理软件"；否则只是"被限流/已中断"
             _why = abort_reason_text(stats)
