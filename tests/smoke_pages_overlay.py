@@ -37,6 +37,31 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 跑完会自检"用户真实库没被创建/修改"（见文件末尾），这条时间戳就是判据。
 RUN_STARTED_AT = time.time()
 
+# ★v6.68：**真实库指纹**（跑前抓一次、跑完比一次）—— 见文件末尾自检处的长注释。
+#   【为什么要有它】旧判据只看 mtime，会被**用户正在运行的应用**合法改写同一批文件 ⇒ **假红**
+#   （本轮实测：应用开着时该断言 3 次里飘 2 次）。内容指纹能分清"被动过"与"被我们写过"。
+_REAL_LIB_FILES = ("annotations.json", "formula_library.json", "watchlist.json",
+                   "backtest_strategies.json", "preferences.json", "trade_calendar.json",
+                   "scan_strategies.json", "industry_map.json")
+
+
+def _real_lib_fingerprint() -> dict:
+    """用户真实库里那批 JSON 的**内容指纹**（读不到/非法 JSON 一律记 None）。"""
+    import json as _json
+
+    from config import settings as _s
+    out = {}
+    for _n in _REAL_LIB_FILES:
+        try:
+            with open(os.path.join(_s.USER_DATA_DIR, _n), encoding="utf-8") as _f:
+                out[_n] = _json.load(_f)
+        except Exception:  # noqa: BLE001 —— 不存在 / 解析失败都算"没有内容"
+            out[_n] = None
+    return out
+
+
+_REAL_LIB_SNAPSHOT = _real_lib_fingerprint()
+
 import numpy as np
 import pandas as pd
 
@@ -133,6 +158,16 @@ _pref_module.Preferences.save = lambda self: True
 _du = _pref_module.preferences.get("desk_ui")
 if isinstance(_du, dict):
     _pref_module.preferences.set("desk_ui", {**_du, "sub_order": [], "layer_enabled": []})
+
+# ★v6.68：`scan_ui` / `breadth_ui` 的 **`col_order`（列拖拽序）也必须抹掉** —— 它会让
+#   「表头点击(视觉列) → 逻辑列」的映射**整体错位** ⇒ M2 的排序断言**稳定假红**：本轮实测
+#   `on_header_clicked(10)` 之后 `_sort_col` 仍是 `None`（视觉 10 被映射成了**状态列** ⇒ 复位）。
+#   与 §11.5-90 同族：**测试不许依赖用户真实偏好**（用户用得越久，冒烟越红）。
+for _vk in ("scan_ui", "breadth_ui"):
+    _cur_vk = _pref_module.preferences.get(_vk)
+    if isinstance(_cur_vk, dict) and "col_order" in _cur_vk:
+        _pref_module.preferences.set(
+            _vk, {a: b for a, b in _cur_vk.items() if a != "col_order"})
 
 # §7-A4：构造前关掉自动存档，避免任何测试回测写脏真实 ~/.jian_data/backtest_results/。
 # （存档接线在下方用临时 root 直接测；真实目录仅可能被读，不会被写。）
@@ -1272,6 +1307,24 @@ check("tooltip 点名了对应分区（便于用户去数据管理页核对）",
 mkt.select_adjust(ADJUST_QFQ)                # 切回前复权
 check("切回前复权：回到前复权分区（两份来回切不会互相覆盖）",
       mkt.current_adjust == ADJUST_QFQ and adjust_syncs[-1] == 'kline_daily')
+
+# ★v6.68（用户 2026-09-25 实测："无论怎么切，图始终是前复权"）：**必须验"真人手点"这条路**。
+#   真事故 = `SegmentedControl._on_clicked` 用 `not key` 判"无效段"，而「不复权」的业务值
+#   `ADJUST_NONE` **就是空字符串** ⇒ 手点被整段吞掉；而程序入口 `select_adjust()` 走的是
+#   `set_current()`（**没有**那个真值判断）⇒ 一切正常。于是**所有走程序入口的断言全绿，
+#   只有真人点不动** —— 这是本轮最贵的一课（§11.5-96）。
+_btns68 = mkt.seg_adjust.buttons()
+_keys68 = [mkt.seg_adjust.key_at(i) for i in range(mkt.seg_adjust.count())]
+check("★ v6.68：复权分段的 key 里**确实有一个空字符串**（= `ADJUST_NONE`）—— 事故的地基",
+      _keys68 == [ADJUST_QFQ, ADJUST_NONE] and ADJUST_NONE == "")
+mkt.select_adjust(ADJUST_QFQ)
+_btns68[1].click()                           # ← **真实点击**（用户手点走的就是这条）
+check("★ v6.68：【真实点击】「不复权」必须切过去（空 key 也点得动；旧版 `not key` 把它吞了）",
+      mkt.current_adjust == ADJUST_NONE and mkt.seg_adjust.current_key() == ADJUST_NONE
+      and mkt._data_zone_and_key()[0] == 'kline_daily_raw')
+_btns68[0].click()                           # ← 点回前复权
+check("★ v6.68：【真实点击】点回「前复权」同样生效（不是单向可用）",
+      mkt.current_adjust == ADJUST_QFQ and mkt._data_zone_and_key()[0] == 'kline_daily')
 
 print("== v6.15 · 坐标轴自适应（§7-B4）：页面级 ==")
 from ui.widgets.adaptive_axis import handle_for  # noqa: E402
@@ -4512,12 +4565,55 @@ except Exception as _e_p3:  # noqa: BLE001
 # ==========================================
 from config import settings  # noqa: E402
 
+# ★v6.68：判据**不再是 mtime** —— 旧版 `mtime < RUN_STARTED_AT` 会被**用户正在运行的应用**合法改写
+#   （它自己也会写 `preferences.json` / `trade_calendar.json`：用户一点界面就可能落盘）⇒ **假红**
+#   （本轮实测：应用开着时这条 3 次里飘 2 次）。新判据两级：
+#     ①**内容指纹**与跑前完全一致 ⇒ 真没被动过；②指纹变了 ⇒ 再看**我们可能写的那几个键**
+#       （desk_ui / scan_ui / …）是否**逐值一致** —— 一致 ⇒ 被动的是别人的键，不是我们写的 ⇒ 通过。
+#   两级都不满足才 FAIL（真污染仍然抓得住）。
+_AFTER_LIB = _real_lib_fingerprint()
+_OUR_KEYS = ("desk_ui", "scan_ui", "breadth_ui", "review_ui", "download_prefs")
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
               "backtest_strategies.json", "preferences.json", "trade_calendar.json",
               "scan_strategies.json", "industry_map.json", "backtest_results"):
     _path = os.path.join(settings.USER_DATA_DIR, _name)
     _untouched = (not os.path.exists(_path)) or os.path.getmtime(_path) < RUN_STARTED_AT
+    if not _untouched and _name in _AFTER_LIB:
+        _before, _after = _REAL_LIB_SNAPSHOT.get(_name), _AFTER_LIB[_name]
+        if _before == _after:
+            _untouched = True                    # 内容一模一样（可能只是被别的进程重写了一遍）
+        elif isinstance(_before, dict) and isinstance(_after, dict):
+            _untouched = all(_before.get(_k) == _after.get(_k) for _k in _OUR_KEYS)
+            if _untouched:
+                print(f"  [说明] {_name} 被外部改动过，但我们关心的键逐值一致 ⇒ 判定未污染")
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)
+
+# ==========================================
+# §9-A 末条 · 提交备注规范（v6.68 · 用户 2026-09-26 拍板：**照 1.12–1.33 的短写法**）
+#   【为什么要机器钉】备注长度靠"自觉"必然反弹 —— 我上一轮就写成 200–900 字，用户在 GitHub 里看着头晕。
+#   判据（只查 **HEAD**，也就是"即将被 push 的那一条"）：
+#     ① 首词 == `APP_VERSION`（三处同步的**第四处**核对）；② 长度 ≤ 60 字符；
+#     ③ 不含「§11.5-」「文档回写」「版本号三处同步」这类套话（细节本就属于文档）。
+#   ⚠ 非 git 环境（导出 zip 跑冒烟）⇒ 打印说明并跳过，**不假红**。
+# ==========================================
+print("\n== §9-A 末条 · 提交备注规范（短 · 无套话 · 首词=版本号）==")
+try:
+    import subprocess as _sp68  # noqa: E402
+
+    _git68 = _sp68.run(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),   # 仓库根（同文件开头口径）
+        capture_output=True, text=True, encoding="utf-8")
+    if _git68.returncode != 0:
+        print("  [说明] 非 git 环境 ⇒ 跳过备注规范检查（不假红）")
+    else:
+        _subj68 = _git68.stdout.strip()
+        _banned68 = [t for t in ("§11.5-", "文档回写", "版本号三处同步") if t in _subj68]
+        check(f"★ 备注够短 · 首词=版本号 · 无套话（实测 {len(_subj68)} 字符 / 上限 60）",
+              _subj68.split(" ")[0] == settings.APP_VERSION
+              and len(_subj68) <= 60 and not _banned68)
+except Exception as _e68:  # noqa: BLE001
+    check(f"§9-A 备注规范断言抛异常: {type(_e68).__name__}: {_e68}", False)
 
 # ==========================================
 # §10-15 · 字体版权纪律（v1.46）：**不许把专有字体名写进 QSS / QFont**

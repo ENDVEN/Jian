@@ -483,8 +483,15 @@ class SegmentedControl(QFrame):
 
     # ---------- 内部 ----------
     def _on_clicked(self, index: int) -> None:
-        key = self.key_at(index)
-        if not key or key == self._current:
+        # ⚠ **绝不许用 `not key` 判"无效段"**（v6.68 真事故 · 用户实测"切了不复权图不变"）：
+        #   本控件的 key **允许是空字符串** —— 复权那一组的「不复权」就是 `ADJUST_NONE = ""`。
+        #   `not key` 会把**合法的空 key** 一起吞掉 ⇒ **手点毫无反应，而程序调 `set_current()`
+        #   却一切正常**（于是所有走程序入口的断言全绿，只有真人点不动 —— 典型测试盲区）。
+        #   判据只能看**索引**：`key_at()` 越界时也返回 `""`，靠返回值**分不出**"越界"与"合法空 key"。
+        if index < 0 or index >= len(self._keys):
+            return
+        key = self._keys[index]
+        if key == self._current:            # 幂等：重复点同一段不发信号
             return
         self._current = key
         self._sync_visual()

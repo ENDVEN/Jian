@@ -140,8 +140,14 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #             `昨收 → prev_close`（**不进** `DAILY_KEEP_COLUMNS`，只当判据）+ `_spot_prev_close_ok()`
 #             除权闸门（不等 >0.1% 或判据缺失 ⇒ 一律拒绝秒补 ⇒ 退回网络增量整段重算）。
 #          ③ v6.66/1.48 的其它两件（发布物护栏 / 口径可见性）见 §11.6。smoke 869 / 714。
+#   1.50 = **「切不复权图始终是前复权」修复**（用户实测 601825，数据层与程序入口都正常）：
+#          `ui/widgets/custom_widgets.py` 的 `SegmentedControl._on_clicked` 曾用 `not key` 判"无效段"，
+#          而「不复权」的业务值 `ADJUST_NONE` **就是空字符串** ⇒ 手点被整段吞掉（`current_adjust`
+#          不变、高亮也不动）；而 `select_adjust()` 走 `set_current()`（无该判断）⇒ 程序化正常 ⇒
+#          **断言全绿、真人点不动**。改**按索引**判有效（`key_at()` 越界也返回 `""`，靠返回值分不出
+#          "越界"与"合法空 key"）+ 断言补**真实点击**。坑 = §11.5-96。smoke 869 / 717。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.49"
+APP_VERSION = "1.50"
 
 # ==========================================
 # 界面配置 (UI Settings)
