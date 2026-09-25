@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QTableWidgetItem, QHeaderView, QPushButton,
                              QLineEdit, QMessageBox, QInputDialog)
 from PyQt6.QtGui import QColor, QFont
+from ui.widgets.custom_widgets import ui_painter_font   # ★v1.46 §10-15 开源字体栈（唯一出口）
 
 from data.market_db import DataLakeManager
 from data.sync_service import (MarketSyncService, ZONE_KLINE, ZONE_KLINE_RAW,
@@ -367,7 +368,7 @@ class DataManagerView(QWidget):
             self.table.setItem(row, _COL_CHECK, check)
 
             name_cell = QTableWidgetItem(name)
-            name_cell.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            name_cell.setFont(ui_painter_font(10, bold=True))
             self.table.setItem(row, _COL_NAME, name_cell)
 
             values = [

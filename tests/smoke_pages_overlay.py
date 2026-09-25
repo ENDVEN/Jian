@@ -1948,6 +1948,27 @@ mkt._data._health_cache.clear()
 mkt._refresh_adjust_hint()
 check("体检：非正价行被抓出（一根负价就会把整张图压扁）",
       '非正价 1 根' in mkt.lbl_adjust_hint.text())
+# ★v1.46（用户 2026-09-25 实测）：③ **价格接缝** —— 单日 ≥25% 交易上不可能（创业板上限 20%），
+#   它正是"除权后前复权历史没重算"的指纹（实证：指南针 300803 的 9/18=82.00 → 9/21=56.86）。
+#   旧版只查量能接缝 ⇒ 这种**假跳空**永远不进回执，用户只能靠肉眼怀疑"复权是不是坏了"。
+_price_df = _seam_df.copy()
+_price_df['close'] = np.concatenate([np.full(40, 11.6), np.full(40, 8.0)])   # → -31% 假跳空
+mkt.current_df = _price_df
+mkt._data._health_cache.clear()
+mkt._refresh_adjust_hint()
+_price_text = mkt.lbl_adjust_hint.text()
+check(f"★ v1.46：体检抓到「价格接缝」并点名疑似除权未重算 + 给出修复入口（{_price_text[:60]}…）",
+      '价格接缝' in _price_text and '疑似除权后历史未重算' in _price_text
+      and '重新全量下载' in _price_text)
+
+# ★v1.46（用户实测）：取数失败必须**退出"正在取数"态**，否则回执永远挂着"正在从云端取这一份…"，
+#   用户看到的就是"切了口径没反应"（而不是"取数失败了"）。
+mkt.current_df = pd.DataFrame()
+mkt._data._health_cache.clear()
+mkt._refresh_adjust_hint(failed=True)
+check("★ v1.46：取数失败时口径回执**不再停在「正在取数」**（旧版会永久挂着 = 看起来没反应）",
+      '取数失败' in mkt.lbl_adjust_hint.text()
+      and '正在从云端取' not in mkt.lbl_adjust_hint.text())
 mkt.current_df = df.copy()
 mkt._data._health_cache.clear()
 mkt._refresh_adjust_hint()
@@ -4330,6 +4351,39 @@ for _name in ("annotations.json", "formula_library.json", "watchlist.json",
     _path = os.path.join(settings.USER_DATA_DIR, _name)
     _untouched = (not os.path.exists(_path)) or os.path.getmtime(_path) < RUN_STARTED_AT
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)
+
+# ==========================================
+# §10-15 · 字体版权纪律（v1.46）：**不许把专有字体名写进 QSS / QFont**
+#   用户 2026-09-25 拍板：界面字体只许点名开源 / 免费商用字体（思源黑体 / Noto / JetBrains Mono…）。
+#   判据 = **源码形态**（不是"提没提到"）：`font-family:` 里出现专有名、或 `QFont(` 里点名专有族。
+#   ⚠ 注释 / docstring 里**讲这条禁令**不算违规（本断言只看代码部分）。
+# ==========================================
+print("\n== §10-15 · 字体版权纪律：专有字体名不许进 QSS / QFont ==")
+try:
+    import pathlib as _pl15  # noqa: E402
+    import re as _re15  # noqa: E402
+
+    _PROP15 = "Consolas|Courier New|Microsoft YaHei|SimSun|Microsoft JhengHei|Arial|宋体|微软雅黑"
+    _bad_qss15 = _re15.compile(r"font-family\s*:[^;\"']*(?:" + _PROP15 + ")", _re15.I)
+    _bad_font15 = _re15.compile(r"QFont\(\s*[\"'](?:" + _PROP15 + ")", _re15.I)
+    _hits15 = []
+    _scan15 = [("ui", "*.py"), ("design", "*.html"), ("design", "*.css")]
+    for _dir15, _glob15 in _scan15:
+        for _p15 in sorted(_pl15.Path(_dir15).rglob(_glob15)):
+            for _ln15 in _p15.read_text(encoding="utf-8", errors="ignore").splitlines():
+                # 只对 .py 去注释（`#` 在 CSS/HTML 里是**颜色值**，按注释切会把后面整段切掉 ⇒ 漏检）
+                _code15 = _ln15.split("#", 1)[0] if _p15.suffix == ".py" else _ln15
+                if _bad_qss15.search(_code15) or _bad_font15.search(_code15):
+                    _hits15.append(f"{_p15.name}: {_ln15.strip()[:50]}")
+                    break
+    check(f"★ §10-15：ui/ 与 design/ 样板都无「专有字体名写进 QSS/QFont」"
+          f"（越界 {len(_hits15)} 处：{_hits15[:3]}）", not _hits15)
+    _cw15 = _pl15.Path("ui/widgets/custom_widgets.py").read_text(encoding="utf-8")
+    check("★ §10-15：字体仍只有**一个出口**（界面栈 / 等宽栈 / 磅值版 / 页面根钉一次 / 状态自检）",
+          all(_n in _cw15 for _n in ("UI_FONT_STACK", "UI_MONO_STACK", "apply_ui_font",
+                                     "ui_painter_font", "mono_font_css", "ui_font_status")))
+except Exception as _e15:  # noqa: BLE001
+    check(f"§10-15 字体断言整段抛异常: {type(_e15).__name__}: {_e15}", False)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:

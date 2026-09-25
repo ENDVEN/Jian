@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFrame,
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, EditDrawer, EditPane,
                                        FLAT_QSS, number_spin)
+from ui.widgets.custom_widgets import mono_font_css   # ★v1.46 §10-15 开源等宽栈（唯一出口）
 from ui.widgets.custom_widgets import (CHIP_QSS_OFF, CHIP_QSS_ON, COMBO_QSS,
                                        SYNC_ACTION_LABEL, NoWheelComboBox,
                                        NoWheelDateEdit, TAB_QSS_OFF, TAB_QSS_ON,
@@ -73,7 +74,7 @@ class ScanFormulaPane(EditPane):
             "COND := CROSS(DIFF, DEA) AND C > MA(C,20);")
         self.txt_formula.setMinimumHeight(150)
         self.txt_formula.setStyleSheet(
-            "QTextEdit { font-family: Consolas, monospace; font-size: 12.5px; }")
+            "QTextEdit { " + mono_font_css() + " font-size: 12.5px; }")
         self.txt_formula.setToolTip(
             "可写多段 `变量 := 表达式;`；**最后一条变量**就是判定变量（也可在下方指定）。\n"
             "函数与 M1 单股回测 / 行情页叠加同一套引擎 —— 口径一致。")

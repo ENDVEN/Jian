@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                              QPushButton, QFrame)
 
+from ui.widgets.custom_widgets import mono_font_css   # ★v1.46 §10-15 开源等宽栈（唯一出口）
 from ui.widgets.custom_widgets import (COMBO_QSS_SMALL, NoWheelComboBox,
                                        NoWheelDoubleSpinBox)
 
@@ -214,7 +215,7 @@ class ConditionGate(QWidget):
         # —— DSL 预览 ——
         self.lbl_preview = QLabel(" ")
         self.lbl_preview.setStyleSheet(
-            "font-size: 11px; font-family: Consolas, 'Microsoft YaHei', monospace; "
+            "font-size: 11px; " + mono_font_css() + " "
             "color: #424B5A; background:#F6F8FC; border-radius:6px; padding:4px 8px;")
         self.lbl_preview.setWordWrap(True)
         lay.addWidget(self.lbl_preview)

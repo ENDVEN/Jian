@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QHeaderView, QMenu, QFrame, QMessageBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
-from ui.widgets.custom_widgets import NoWheelComboBox
+from ui.widgets.custom_widgets import NoWheelComboBox, ui_painter_font
 
 from config import settings
 from core.preferences import TIME_PRECISION_DATE, TIME_PRECISION_FILL, preferences
@@ -387,7 +387,7 @@ class RecordsView(QWidget):
             # 待缝合行的开仓价用灰色斜体，并附上可操作的提示
             if is_orphan:
                 items[4].setForeground(QColor("#BDBDBD"))
-                items[4].setFont(QFont("Arial", 10, -1, True))
+                items[4].setFont(ui_painter_font(10, italic=True))
                 items[4].setToolTip(
                     "未找到开仓记录。可导入更早月份的交割单自动缝合，"
                     "或在「深度复盘」中选中此单手工补录开仓价。")
@@ -396,7 +396,7 @@ class RecordsView(QWidget):
             pnl_color = (settings.COLOR_PROFIT_TEXT if net_amount > 0
                          else settings.COLOR_LOSS_TEXT)
             items[COL_PNL].setForeground(QColor(pnl_color))
-            items[COL_PNL].setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            items[COL_PNL].setFont(ui_painter_font(10, bold=True))
             items[COL_PNL].setToolTip(
                 "净额 = 平仓盈亏 − 手续费（真实到手）；与绩效统计、筛选器同口径。")
             if points is not None:

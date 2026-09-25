@@ -457,9 +457,10 @@ class TradingDeskView(QWidget):
     def _adjust_warning_short(self) -> str:
         return self._data._adjust_warning_short()
 
-    def _refresh_adjust_hint(self, loaded_from_lake: bool = False, pending: bool = False):
+    def _refresh_adjust_hint(self, loaded_from_lake: bool = False, pending: bool = False,
+                             failed: bool = False):
         return self._data._refresh_adjust_hint(loaded_from_lake=loaded_from_lake,
-                                               pending=pending)
+                                               pending=pending, failed=failed)
 
     # ==========================================
     # 工具行 chips（★STEP 3c → desk_chips.DeskChips）

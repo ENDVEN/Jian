@@ -72,6 +72,22 @@ def ui_font(size_px: int = UI_FONT_SIZE_PX, bold: bool = False) -> QFont:
     return font
 
 
+def ui_painter_font(point_size: int, bold: bool = False, italic: bool = False) -> QFont:
+    """手绘 / 表格项用的开源字体栈 `QFont`（**按磅值**）。
+
+    ⚠ 为什么单独留一个"磅值版"：老代码里散着「微软雅黑 9pt」「Arial 10pt Bold」这类
+      **专有字体名**的 `QFont` 构造（§10-15 禁止）。本函数**只换字体族**，
+      磅值 / 粗体 / 斜体语义逐条保持不变 ⇒ 替换是"除 family 外逐像素等价"的，
+      **不会引起版式漂移**（比强行换成 px 字号安全得多）。
+    """
+    font = QFont()
+    font.setFamilies(list(UI_FONT_STACK))
+    font.setPointSize(int(point_size))
+    font.setBold(bool(bold))
+    font.setItalic(bool(italic))
+    return font
+
+
 def apply_ui_font(widget, size_px: int = UI_FONT_SIZE_PX) -> None:
     """把开源字体栈**钉到整棵控件树**（Qt 字体向下继承 ⇒ 在页面根调一次即可）。
 

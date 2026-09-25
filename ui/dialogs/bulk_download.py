@@ -33,7 +33,8 @@ from data.sync_service import (ZONE_KLINE, ZONE_INDEX, abort_reason_text,
                                friendly_constituent_message)
 from ui.dialogs.download_settings import DownloadSettingsDialog
 from ui.download_hub import download_policy_from_prefs
-from ui.widgets.custom_widgets import NoWheelComboBox, NoWheelDateEdit
+from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
+                                       mono_font_css)   # ★v1.46 §10-15 开源等宽栈
 # 【架构纪律 v5.12 · §9-O2】线程一律用 ui/workers.py 的，弹窗不自造 QThread
 from ui.workers import ConstituentsWorker, JobGuard
 
@@ -185,7 +186,7 @@ class BulkDownloadDialog(QDialog):
             "每行一个，或用空格/逗号/分号分隔。例：\n600519 000001, 300750\n（指数请填 sh000001 / sz399001 这类带前缀的代码）")
         self.txt_paste.setFixedHeight(80)
         self.txt_paste.setStyleSheet(
-            "QPlainTextEdit { font-family: Consolas, 'Microsoft YaHei', monospace; "
+            "QPlainTextEdit { " + mono_font_css() + " "
             "font-size: 12px; border: 1px solid #E0E4EC; border-radius: 8px; "
             "background: white; padding: 6px; }")
         blay.addWidget(self.txt_paste)

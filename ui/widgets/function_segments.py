@@ -17,7 +17,9 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QPlainTextEdit, QSizePolicy)
 
-_EDITOR_QSS = ("QPlainTextEdit { font-family: Consolas, 'Microsoft YaHei', monospace; "
+from ui.widgets.custom_widgets import mono_font_css   # ★v1.46 §10-15 开源等宽栈（唯一出口）
+
+_EDITOR_QSS = ("QPlainTextEdit { " + mono_font_css() + " "
                "font-size: 13px; border: 1px solid #E0E4EC; border-radius: 8px; "
                "background: #FAFBFD; padding: 6px; }")
 _HEADER_QSS = ("QLabel { font-size: 12px; font-weight: bold; color: #8A94A6; }")

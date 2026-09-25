@@ -13,8 +13,8 @@
 
 【渲染方式】
   QWidget 按目标尺寸离屏排版 → processEvents → grab() 存 PNG。
-  中文依赖系统字体（用户 Windows 自带微软雅黑，正常；CI/沙箱缺 CJK 字体会显示方框，
-  属环境问题不是代码问题）。
+  中文依赖系统已装的中文字体（界面字体栈见 §10-15，**只点开源/免费商用字体**；
+  CI/沙箱缺 CJK 字体会显示方框，属环境问题不是代码问题）。
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from config import settings
 from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS, fill_summary,
                            risk_summary)
 from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
+from ui.widgets.custom_widgets import ui_painter_font   # ★v1.46 §10-15 开源字体栈（唯一出口）
 
 # 报告图默认画布
 REPORT_WIDTH = 1120
@@ -62,7 +63,7 @@ class _ReasonPie(QWidget):
         total = sum(c for _, c in self._items)
         if total <= 0:
             painter.setPen(QColor(_TEXT_FAINT))
-            painter.setFont(QFont("Microsoft YaHei", 10))
+            painter.setFont(ui_painter_font(10))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "无成交")
             return
 

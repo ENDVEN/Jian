@@ -30,7 +30,7 @@ from core.backtest import EXIT_REASON_COLORS, EXIT_REASON_LABELS
 from ui.widgets.adaptive_axis import axis_px, compute_ticks, slice_span, visible_span
 from ui.widgets.chart_pane import ChartPane
 from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
-from ui.widgets.custom_widgets import CandlestickItem
+from ui.widgets.custom_widgets import CandlestickItem, ui_painter_font
 from ui.widgets.draw_overlay import OverlayPainter, overlay_extent, slice_draws
 
 PLACEHOLDER = "-"
@@ -336,7 +336,7 @@ class BacktestResultArea(QWidget):
                     item_color = (settings.COLOR_PROFIT_TEXT if t.pnl > 0
                                   else settings.COLOR_LOSS_TEXT)
                     item.setForeground(QColor(item_color))
-                    item.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+                    item.setFont(ui_painter_font(10, bold=True))
                 if col == 8:
                     item_color = EXIT_REASON_COLORS.get(
                         getattr(t, 'exit_reason', 'signal'), "#212121")

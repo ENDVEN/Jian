@@ -23,6 +23,8 @@ from PyQt6.QtCore import QPointF, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PyQt6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
+from ui.widgets.custom_widgets import ui_painter_font   # ★v1.46 §10-15 开源字体栈（唯一出口）
+
 # 周一为第一行（中文习惯）；仅标注 一/三/五 以免左侧拥挤（同 GitHub 做法）
 _WEEKDAY_LABELS = ("一", "二", "三", "四", "五", "六", "日")
 _LABEL_ROWS = (0, 2, 4)  # 一 / 三 / 五
@@ -186,7 +188,7 @@ class CalendarHeatmap(QWidget):
 
         if self._year is None:
             painter.setPen(QColor(self.AXIS_TEXT))
-            painter.setFont(QFont("Microsoft YaHei", 10))
+            painter.setFont(ui_painter_font(10))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "暂无交易数据")
             return
 
@@ -200,7 +202,7 @@ class CalendarHeatmap(QWidget):
 
     def _draw_month_labels(self, painter, cell, x0, cols):
         painter.setPen(QColor(self.AXIS_TEXT))
-        painter.setFont(QFont("Microsoft YaHei", 9))
+        painter.setFont(ui_painter_font(9))
         last_month = None
         for col in range(cols):
             day = self._box_date.get((col, 0))
@@ -218,7 +220,7 @@ class CalendarHeatmap(QWidget):
 
     def _draw_weekday_labels(self, painter, cell, y0):
         painter.setPen(QColor(self.AXIS_TEXT))
-        painter.setFont(QFont("Microsoft YaHei", 9))
+        painter.setFont(ui_painter_font(9))
         for row in _LABEL_ROWS:
             painter.drawText(QRectF(0, y0 + row * (cell + _GAP), _LEFT_W - 4, cell),
                              Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
@@ -243,7 +245,7 @@ class CalendarHeatmap(QWidget):
         cells = 11  # 5 档亏损 + 中性 + 5 档盈利
         width = cells * (leg + 2) - 2
         left_text, right_text = "亏损 ", " 盈利"
-        font = QFont("Microsoft YaHei", 9)
+        font = ui_painter_font(9)
         painter.setFont(font)
         metrics = painter.fontMetrics()
         total_w = metrics.horizontalAdvance(left_text + right_text) + width + 8

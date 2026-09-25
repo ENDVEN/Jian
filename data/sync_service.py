@@ -134,6 +134,15 @@ DAILY_SETTLE_HHMM = 1505
 # 受定稿守卫约束的日线类分区（分钟 `kline_min` 本就是盘中语义，不裁）
 DAILY_ZONES = (ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX)
 
+# ★v1.46（2026-09-25 用户实测复权异常）：**前复权（qfq）增量拉取的重叠窗口**（自然日）。
+# 【为什么必须有】前复权的历史价**随每次除权整体漂移** ⇒ 若只从"本地末日 + 1 天"追加新行，
+#   库里就留下"旧行是旧口径、新行是新口径"的**混合序列**：图上出现**假跳空**，而且两份
+#   口径看起来一模一样（用户实测：指南针 300803 本地 9/18=82.00（旧口径）× 9/21=56.86
+#   （新口径），而源端 qfq 其实连续 56.55 → 56.86）。
+#   带重叠窗口后：**同一天用新口径覆盖旧口径**，并给 `_qfq_factor_drifted` 提供判据样本
+#   ⇒ 复权因子变了就能当场发现并整段重算（见 `refresh_one` 第 3 步）。
+QFQ_OVERLAP_DAYS = 10
+
 
 def _num_or_none(v):
     """安全转 float；None/NaN/非数 → None（估值缺值诚实留空，不拿 0 冒充）。"""
@@ -418,6 +427,7 @@ class MarketSyncService:
             "ok": False, "symbol": symbol, "zone": zone, "key": key, "period": period_key,
             "rows": 0, "added": 0,
             "skipped": False, "reason": "", "first": None, "last": None, "message": "",
+            "rescaled": False,      # ★v1.46：本次是否因"检测到除权"而整段重算了前复权历史
         }
         if not symbol:
             result["message"] = "标的为空"
@@ -445,8 +455,9 @@ class MarketSyncService:
                                       first=self._first_day(old), last=last.strftime("%Y-%m-%d"),
                                       reason="fresh", message="本地已是最新，已跳过")
                         return result
-                    # 增量起点 = 本地末日 + 1 天（多留一点重叠，方便前复权修正）
-                    start_date = (last + pd.Timedelta(days=1)).strftime("%Y%m%d")
+                    # 增量起点 = 本地末日 **减去重叠窗口**（★v1.46 修正：旧版只从"末日+1"拉，
+                    # 看似省流量，实则让前复权的历史永远修不回来 —— 见 `QFQ_OVERLAP_DAYS`）。
+                    start_date = (last - pd.Timedelta(days=QFQ_OVERLAP_DAYS)).strftime("%Y%m%d")
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"本地末日解析失败 [{symbol}]: {e}")
 
@@ -496,7 +507,25 @@ class MarketSyncService:
             return result
 
         # ---- 3) 合并去重（新数据优先，便于顺带修正前复权漂移）----
-        merged = new if (force_full or old.empty) else self._merge(old, new)
+        # ★v1.46 自愈（用户 2026-09-25 实测）：前复权分区**一旦发生除权，整段历史都要重算**。
+        #   重叠窗口里只要有一天与源端对不上，就说明**复权因子变了** ⇒ 当场升级为**整段重拉**
+        #   （一次请求），否则只覆盖重叠段会留下"更早的行还是旧口径"的半截错误。
+        #   只在 qfq 分区判定：`kline_daily_raw`（不复权）与指数都不存在"因子漂移"这回事。
+        rescaled = False
+        if incremental and zone == ZONE_KLINE and self._qfq_factor_drifted(old, new):
+            logger.info(f"检测到复权因子变化（除权/除息），整段重算前复权历史: {symbol}")
+            full = pd.DataFrame()
+            try:
+                policy.sleep(sleep_fn)
+                full = self._fetch(symbol, zone, min_date or DEFAULT_MIN_DATE, period_key)
+            except Exception as e:  # noqa: BLE001 —— 网络层异常绝不外泄到 UI
+                logger.warning(f"前复权整段重算失败 [{symbol}]: {e}")
+            if not full.empty:
+                new, merged, rescaled = full, full, True
+            else:
+                merged = self._merge(old, new)   # 退化：至少把重叠段修对（整段下次再试）
+        else:
+            merged = new if (force_full or old.empty) else self._merge(old, new)
 
         # ---- 3.5) 定稿守卫（§7-B10 STEP 1）：日线类分区落盘前裁掉"今天未定稿"那根 ----
         # ⚠ v1.40/§7-E5 后这是**第二道防线**（第一条是"日历感知的新鲜度判据"）：
@@ -516,9 +545,41 @@ class MarketSyncService:
         result.update(
             ok=True, rows=len(merged), added=max(0, len(merged) - old_rows),
             first=self._first_day(merged), last=self._last_day(merged),
-            reason="ok", message="OK",
+            reason="ok", rescaled=rescaled,
+            message=("OK（检测到除权/除息，已重算整段前复权历史）" if rescaled else "OK"),
         )
         return result
+
+    @staticmethod
+    def _qfq_factor_drifted(old: pd.DataFrame, new: pd.DataFrame,
+                            tol: float = 0.005) -> bool:
+        """**重叠日期**上价格对不上 ⇒ 前复权的复权因子变了（除权/除息）。**只此一处判据**。
+
+        · 只比 `close`、只在**两边都有的日期**上比（没有重叠 ⇒ 无从判断，返回 False 走普通合并）；
+        · 容差 0.5%：正常行情下同一天的价格不会变，>0.5% 的差异只可能来自"复权重算"或"源端修订"，
+          两者都该整段重拉（多一次请求，换来数据正确 —— 静默错值比慢一点严重得多）。
+        """
+        try:
+            if old is None or new is None or old.empty or new.empty:
+                return False
+            need = {"date", "close"}
+            if not need.issubset(old.columns) or not need.issubset(new.columns):
+                return False
+            left = pd.DataFrame({"date": pd.to_datetime(old["date"], errors="coerce"),
+                                 "close": pd.to_numeric(old["close"], errors="coerce")})
+            right = pd.DataFrame({"date": pd.to_datetime(new["date"], errors="coerce"),
+                                  "close": pd.to_numeric(new["close"], errors="coerce")})
+            both = left.merge(right, on="date", how="inner",
+                              suffixes=("_old", "_new")).dropna()
+            if both.empty:
+                return False
+            base = both["close_old"].abs().replace(0, pd.NA)
+            rel = ((both["close_new"] - both["close_old"]).abs() / base)
+            peak = rel.max()
+            return bool(pd.notna(peak) and float(peak) > tol)
+        except Exception as e:  # noqa: BLE001 —— 判据坏了不能拖垮同步
+            logger.debug(f"复权漂移判据失败: {e}")
+            return False
 
     # ==========================================
     # 内部实现

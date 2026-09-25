@@ -44,6 +44,9 @@ class DeskData:
     HEALTH_SEAM_RATIO = 50.0     # 接缝后 20 根中位量 / 前 20 根 ≥ 50 倍（或 ≤1/50）视为量纲接缝
     HEALTH_SEAM_WINDOW = 20
     HEALTH_MIN_BARS = 60         # 太短的数据不做体检（免得噪声当结论）
+    # ★v1.46：**价格接缝**判据 —— 单日收盘涨跌 ≥ 25% 在交易上不可能（创业板/科创板上限 20%、
+    #   主板 10%，ST 5%）⇒ 命中只可能是"除权后前复权历史没重算"或源端异常跳变。
+    HEALTH_PRICE_SEAM_RATIO = 0.25
 
     def __init__(self, page):
         self.page = page
@@ -183,11 +186,17 @@ class DeskData:
 
         if not result.get("ok"):
             p.lbl_sync_status.setText("同步失败")
+            # ★v1.46：失败必须**退出"正在取数"态** —— 旧版只改这一行小字，口径回执会永远挂着
+            #   "正在从云端取这一份…" ⇒ 用户看到的是"切了口径没反应"（2026-09-25 实测反馈）。
+            p._refresh_adjust_hint(failed=True)
             QMessageBox.warning(p, "行情同步失败", friendly_fetch_message(symbol, result))
             return
 
         if result.get("skipped"):
             p.lbl_sync_status.setText("已是最新，无需更新")
+        elif result.get("rescaled"):
+            # ★v1.46：检测到除权 ⇒ 本次不是普通增量，而是**整段前复权历史已重算**，必须说出来
+            p.lbl_sync_status.setText("已重算整段前复权历史（检测到除权/除息）")
         else:
             added = int(result.get("added", 0) or 0)
             unit = "根" if expected_period else "行"
@@ -195,6 +204,7 @@ class DeskData:
 
         df = p.data_lake.load_data(zone, key)
         if df.empty:
+            p._refresh_adjust_hint(failed=True)
             QMessageBox.critical(p, "错误", f"{symbol} 行情拉取失败（未取得数据）。")
             return
         p.current_df = df
@@ -326,10 +336,13 @@ class DeskData:
         return ("" if self.page.current_adjust == ADJUST_QFQ
                 else "⚠ 含除权跳空，画线不共用")
 
-    def _refresh_adjust_hint(self, loaded_from_lake: bool = False, pending: bool = False):
+    def _refresh_adjust_hint(self, loaded_from_lake: bool = False, pending: bool = False,
+                             failed: bool = False):
         """数据口径回执：现在看的是哪一份、有哪些已知差异、在不在取数。
 
         :param pending: True = 刚切过去、正在联网取这一份（不显示根数，避免报旧口径的行数）
+        :param failed:  True = 刚才那次取数**失败了**（见 `_on_sync_finished`）——
+                        必须退出"正在取数"态，否则回执永远在撒谎
         """
         p = self.page
         rows = len(p.current_df) if p.current_df is not None else 0
@@ -342,7 +355,9 @@ class DeskData:
             # 深度是**档位的已知事实**（实测表），不是"数据加载出来后才知道的东西"
             # ⇒ 无论有没有数据、在不在取数都写明，用户一眼知道这个档位能看多远。
             # ★STEP 5：**一行摘要**（窄面板不再折行），完整说明进 tooltip。
-            if pending:
+            if failed:
+                text = f"{label} · 取数失败（本地还没有这一档）"
+            elif pending:
                 text = f"{label} · 正在从云端取这一档…（约 {depth} 个交易日 · 真实成交价）"
             elif rows:
                 text = f"{label} · {rows} 根（约 {depth} 个交易日）· 真实成交价"
@@ -364,7 +379,11 @@ class DeskData:
         zone = zone_for_adjust(p.current_adjust)
         label = adjust_label(p.current_adjust)
         # ★STEP 5：一行摘要 = 口径 + 根数（+ 已知差异的短版）；完整说法在 tooltip
-        if pending:
+        if failed:
+            # ★v1.46：失败要**说出来**，不能停在"正在取"（否则就是"切了口径没反应"）。
+            # ⚠ 不在这里点名按钮（§11.5-80：文案指称的按钮名一旦改名就失联）——说"重试"即可。
+            text = f"{label} · 取数失败（本地还没有这一份，可再同步一次重试）"
+        elif pending:
             text = f"{label} · 正在从云端取这一份…"
         elif rows:
             text = f"{label} · {rows} 根"
@@ -409,7 +428,13 @@ class DeskData:
         try:
             qfq = p.data_lake.load_data(ZONE_KLINE, symbol)
             raw = p.data_lake.load_data(ZONE_KLINE_RAW, symbol)
-            if not qfq.empty and not raw.empty:
+            if qfq.empty or raw.empty:
+                # ★v1.46（用户 2026-09-25 实测）：另一份口径**本地还没有** ⇒ 必须说清
+                #   "差异暂时比不了"，否则用户切来切去只会看到"两个口径一模一样"
+                #   （前复权在除权日之后本来就跟不复权逐根相同，见 `_refresh_adjust_hint` 的说明）。
+                other = "不复权" if qfq.empty else "前复权"
+                note = f"（{other}那份本地尚未下载，切过去会现取，差异暂时比不了）"
+            elif not qfq.empty and not raw.empty:
                 left = qfq[["date", "close"]].rename(columns={"close": "qfq"})
                 right = raw[["date", "close"]].rename(columns={"close": "raw"})
                 both = pd.merge(left, right, on="date", how="inner").dropna()
@@ -461,16 +486,52 @@ class DeskData:
             seam = self._volume_seam(volume)
             if seam is not None:
                 index, ratio = seam
-                stamp = ""
-                try:
-                    stamp = str(pd.to_datetime(df["date"].iloc[index]))[:10]
-                except Exception:  # noqa: BLE001
-                    stamp = f"第 {index} 根"
-                issues.append(f"量能接缝 {stamp}（×{ratio:.0f}）")
+                issues.append(f"量能接缝 {self._row_stamp(df, index)}（×{ratio:.0f}）")
+        # ★v1.46（用户 2026-09-25 实测）：③ **价格接缝** —— 单日 ≥25% 的跳变交易上不可能，
+        #   而它正是"除权后前复权历史没重算"的指纹（实证：指南针 300803 的 9/18 → 9/21）。
+        #   旧版只查量能接缝 ⇒ 这种"假跳空"永远不进回执，用户只能靠肉眼怀疑"复权是不是坏了"。
+        if "close" in df.columns:
+            seam = self._price_seam(df)
+            if seam is not None:
+                index, ratio = seam
+                issues.append(f"价格接缝 {self._row_stamp(df, index)}"
+                              f"（{ratio:+.1%}，疑似除权后历史未重算）")
         note = ("⚠ 疑似数据异常：" + "、".join(issues)
                 + " · 建议「🗄 数据管理 → 重新全量下载」修回历史") if issues else ""
         self._health_cache[key] = note
         return note
+
+    @staticmethod
+    def _row_stamp(df, index: int) -> str:
+        """把行号翻成日期串（拿不到日期就说第几根）—— 体检文案两处共用（§11.5-11 同源）。"""
+        try:
+            return str(pd.to_datetime(df["date"].iloc[index]))[:10]
+        except Exception:  # noqa: BLE001
+            return f"第 {index} 根"
+
+    def _price_seam(self, df):
+        """找"价格接缝"：**单日收盘涨跌 ≥ 25%**（`HEALTH_PRICE_SEAM_RATIO`）。
+
+        交易上不可能（创业板/科创板上限 20%、主板 10%）⇒ 命中即说明这份历史里有**没重算的
+        除权缺口**（或源端异常跳变）。返回 `(行号, 幅度)`，找不到返回 None。
+
+        ⚠ 用"最大单日幅度"而不是滚动中位数：除权只跳**一天**（这与量能接缝的判据正相反）。
+        """
+        try:
+            close = pd.to_numeric(df["close"], errors="coerce").astype(float)
+        except Exception:  # noqa: BLE001
+            return None
+        if len(close) < 2:
+            return None
+        prev = close.shift(1)
+        values = (close / prev - 1).abs().to_numpy(dtype=float)
+        best_i, best = -1, 0.0
+        for i, v in enumerate(values):
+            if v == v and v > best:          # `v == v` 用来排除 NaN（不为此引入 numpy 依赖）
+                best_i, best = i, float(v)
+        if best_i < 0 or best < self.HEALTH_PRICE_SEAM_RATIO:
+            return None
+        return best_i, best
 
     def _volume_seam(self, volume):
         """找"成交量量纲接缝"。

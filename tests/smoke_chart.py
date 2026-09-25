@@ -4514,6 +4514,98 @@ try:
 except Exception as _e8:  # noqa: BLE001
     check(f"§7-B11 后续 统一下载设置入口断言整段抛异常: {type(_e8).__name__}: {_e8}", False)
 
+# ==========================================
+print("\n== 复权自愈（v1.46/§7-B10 后续）：除权后**前复权历史必须整段重算**（不留假跳空）==")
+# 【为什么单独立段】用户 2026-09-25 实测：指南针 300803 的「前复权」分区里
+#   9/18=82.00（旧口径）× 9/21=56.86（新口径）⇒ 图上出现**假跳空**；而源端 qfq 其实连续
+#   （56.55 → 56.86）。根因 = 增量只从「本地末日 + 1」拉 ⇒ 除权后**历史永远不重算**，
+#   库里留下"旧行旧口径 / 新行新口径"的混合序列（而且两份口径看起来一模一样）。
+#   本段钉住三件事：① 重叠窗口真的存在；② 漂移判据只认"重叠日对不上"；③ 命中即整段重拉。
+# ==========================================
+try:
+    import pandas as _pdR  # noqa: E402
+    from data.sync_service import (DEFAULT_MIN_DATE, QFQ_OVERLAP_DAYS,  # noqa: E402
+                                   ZONE_KLINE, MarketSyncService, ThrottlePolicy)
+
+    _oldR = _pdR.DataFrame({"date": ["2026-09-17", "2026-09-18"],
+                            "close": [79.06, 82.00]})
+    _sameR = _pdR.DataFrame({"date": ["2026-09-18", "2026-09-21"],
+                             "close": [82.00, 82.45]})
+    _driftR = _pdR.DataFrame({"date": ["2026-09-18", "2026-09-21"],
+                              "close": [56.55, 56.86]})          # 除权后的新口径
+
+    check("★ 漂移判据：重叠日**价格一致** ⇒ 判「没有漂移」（不误触发整段重拉）",
+          MarketSyncService._qfq_factor_drifted(_oldR, _sameR) is False)
+    check("★ 漂移判据：重叠日差 31%（82.00 → 56.55）⇒ 判**漂移**（除权/除息）",
+          MarketSyncService._qfq_factor_drifted(_oldR, _driftR) is True)
+    check("★ 漂移判据：没有重叠日期 ⇒ 无从判断，返回 False（走普通合并，不乱重拉）",
+          MarketSyncService._qfq_factor_drifted(
+              _oldR, _pdR.DataFrame({"date": ["2026-09-24"], "close": [56.50]})) is False)
+    check("★ 重叠窗口是真实常量且足够宽（旧版从「末日 + 1」拉 = 零重叠）",
+          isinstance(QFQ_OVERLAP_DAYS, int) and int(QFQ_OVERLAP_DAYS) >= 5)
+
+    class _LakeR:
+        """假湖：只回放"本地旧数据"，记录落盘的那一份。"""
+
+        def __init__(self, df):
+            self._df = df
+            self.saved = None
+
+        def load_data(self, zone, key):
+            return self._df.copy()
+
+        def save_data(self, zone, key, df):
+            self.saved = df.copy()
+            return True
+
+        def exists(self, zone, key):
+            return True
+
+    _svcR = MarketSyncService.__new__(MarketSyncService)   # 不连数据库：只跑 refresh_one 的编排
+    _svcR.lake = _LakeR(_oldR)
+    _callsR = []
+
+    def _fake_fetch(symbol, zone, start_date, period=None):
+        _callsR.append(start_date)
+        # 第一次＝增量（返回**新口径**的重叠段）；第二次＝整段全量（返回完整历史）
+        if len(_callsR) == 1:
+            return _driftR.copy()
+        return _pdR.DataFrame({"date": ["2010-01-04", "2026-09-18", "2026-09-21"],
+                               "close": [12.30, 56.55, 56.86]})
+
+    _svcR._fetch = _fake_fetch
+    _resR = _svcR.refresh_one(
+        "300803", zone=ZONE_KLINE, sleep_fn=lambda s: None,
+        policy=ThrottlePolicy(interval=0.0, jitter=False, skip_fresh=False))
+    check("★ 增量起点 = 本地末日 **减去重叠窗口**（本地 9/18 ⇒ 从 9/08 起拉）",
+          _callsR and _callsR[0] == "20260908")
+    check("★ 检测到除权 ⇒ 第二次取数用**全量起点**（整段重算，只多一次请求）",
+          len(_callsR) == 2 and _callsR[1] == DEFAULT_MIN_DATE)
+    check("★ 结果标明 rescaled（UI 才能说清「这次不是普通增量」）",
+          _resR.get("rescaled") is True and _resR.get("ok") is True)
+    check("★ 落盘的是**整段新口径**（旧行 82.00 已被 56.55 覆盖，不再是混合序列）",
+          _svcR.lake.saved is not None
+          and float(_svcR.lake.saved["close"].iloc[1]) == 56.55
+          and len(_svcR.lake.saved) == 3)
+
+    # 反面：**没有漂移**时绝不能整段重拉（否则每次增量都变成全量，白烧流量）
+    _svcR2 = MarketSyncService.__new__(MarketSyncService)
+    _svcR2.lake = _LakeR(_oldR)
+    _callsR2 = []
+
+    def _fake_fetch2(symbol, zone, start_date, period=None):
+        _callsR2.append(start_date)
+        return _sameR.copy()
+
+    _svcR2._fetch = _fake_fetch2
+    _resR2 = _svcR2.refresh_one(
+        "300803", zone=ZONE_KLINE, sleep_fn=lambda s: None,
+        policy=ThrottlePolicy(interval=0.0, jitter=False, skip_fresh=False))
+    check("★ 没有漂移 ⇒ 只拉一次（不把普通增量升级成全量）",
+          len(_callsR2) == 1 and _resR2.get("rescaled") is False)
+except Exception as _eR:  # noqa: BLE001
+    check(f"复权自愈断言整段抛异常: {type(_eR).__name__}: {_eR}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

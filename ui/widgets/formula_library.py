@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QInputDialog, QLabel, QListWi
 
 from data.formula_store import (SOURCE_LABELS, normalize_segments,
                                 segments_as_tuples)
+from ui.widgets.custom_widgets import mono_font_css   # ★v1.46 §10-15 开源等宽栈（唯一出口）
 
 _BTN_QSS = ("QPushButton { background:#F5F5F5; border:1px solid #E0E0E0; border-radius:6px; "
             "padding:6px 12px; font-weight:bold; color:#424242; }"
@@ -92,7 +93,7 @@ class FormulaLibraryDialog(QDialog):
         self.txt_preview.setReadOnly(True)
         self.txt_preview.setStyleSheet(
             "QPlainTextEdit { border:1px solid #E7EAF0; border-radius:8px; background:#FCFCFD; "
-            "font-family: Consolas, monospace; font-size:12px; padding:8px; }")
+            + mono_font_css() + " font-size:12px; padding:8px; }")
         body.addWidget(self.txt_preview, 1)
         lay.addLayout(body, 1)
 
