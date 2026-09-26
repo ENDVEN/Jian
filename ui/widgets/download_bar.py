@@ -24,8 +24,8 @@ from PyQt6.QtWidgets import (QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLa
                              QWidget)
 
 from ui.download_hub import STATUS_CANCELLED, STATUS_DONE, STATUS_QUEUED, STATUS_RUNNING
-from ui.widgets.backtest_panes import FLAT_QSS
-from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
+from ui.widgets.custom_widgets import (FLAT_QSS,          # ★v6.70 §9-F③ 样式唯一出口
+                                        SYNC_ACTION_LABEL)
 
 _BAR_QSS = ("QWidget#DownloadBar { background:transparent; }"
             "QFrame#BarCard { background:#FFFFFF; border:1px solid #E4E9F0;"
@@ -188,3 +188,25 @@ class DownloadBar(QWidget):
         #   要收起请到队列面板；要停请按「中断」。
         self.btn_close.setVisible(not live)
         self.show()
+
+    def show_stopping(self, waited_ms: int = 0) -> None:
+        """★v6.70 / §9-F①：退出守卫期间的「正在停止…」（取代“整屏冻住、一句话都不说”）。
+
+        【为什么需要它】旧版 `hub.shutdown()` 是一次 `wait(15000)` 阻塞主线程 ⇒
+        用户只能猜“程序是不是死了”。现在主窗口分片等，每片调本方法把“已等多久”刷出来。
+        ⚠ 与 `refresh()` 同纪律：**不存任何任务数据**，只写文案；进度条走 busy 条纹
+        （不知道还要多久就别画假进度 —— §10-4 诚实）。由调用方转一圈事件循环才会真重画。
+        """
+        self.lbl_ico.setText("⏳")
+        self.lbl_ico.setStyleSheet("font-size:13px; font-weight:bold; color:#E65100;")
+        self.lbl_name.setText("正在停止后台下载…")
+        self.lbl_name.setToolTip("已请求中断，正在等当前这一只把这次网络请求跑完（不硬杀线程）")
+        self.lbl_txt.setText(f"已等待 {waited_ms / 1000.0:.1f} 秒")
+        self.lbl_eta.setText("")
+        self.lbl_queue.setText("")
+        self.lbl_warn.setVisible(False)
+        self.btn_stop.setVisible(False)      # 已经在停了，再给「中断」只会让人以为没反应
+        self.btn_close.setVisible(False)     # 同理：这条回执不该被 ✕ 掉（它说的是退出本身）
+        self.bar.setRange(0, 0)              # busy 模式
+        self.show()
+

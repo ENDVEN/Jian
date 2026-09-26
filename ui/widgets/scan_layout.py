@@ -22,12 +22,12 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFrame,
 
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, EditDrawer, EditPane,
-                                       FLAT_QSS, number_spin)
+                                       number_spin)
+from ui.widgets.custom_widgets import (CHIP_QSS_OFF, CHIP_QSS_ON, COMBO_QSS, FLAT_QSS,
+                                        SYNC_ACTION_LABEL, NoWheelComboBox,
+                                        NoWheelDateEdit, TAB_QSS_OFF, TAB_QSS_ON,
+                                        date_edit_qss, hint_icon, mini_label)
 from ui.widgets.custom_widgets import mono_font_css   # ★v1.46 §10-15 开源等宽栈（唯一出口）
-from ui.widgets.custom_widgets import (CHIP_QSS_OFF, CHIP_QSS_ON, COMBO_QSS,
-                                       SYNC_ACTION_LABEL, NoWheelComboBox,
-                                       NoWheelDateEdit, TAB_QSS_OFF, TAB_QSS_ON,
-                                       date_edit_qss, hint_icon, mini_label)
 from ui.widgets.scan_result import STATUS_BG, STATUS_FG
 
 __all__ = ['ScanLayout', 'ScanFormulaPane', 'ScanFilterPane',

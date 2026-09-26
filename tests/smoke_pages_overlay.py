@@ -2675,6 +2675,30 @@ try:
         _scan._flow._maybe_fetch_industry()
         check("★ v6.68：行业走**分批**抓取（每批几页，不再是一次性几十次连击）",
               _started_ind68 == [(1, _sflow4.INDUSTRY_PAGES_PER_SCAN)])
+        # ★v6.69（用户 2026-09-26 实测：一次扫描完成会**同时**打"行业 + 估值"两串全市场请求
+        #   ⇒ 4 秒内两条一起 `RemoteDisconnected`）—— 三处收紧：
+        #   ① 每批 8 → 3 页；② 估值改**按标的池批量**（不再全市场 56 页）；③ 失败退避冷却。
+        check("★ v6.69：行业每批**降到 3 页**（单次扫描的突发从 8 个请求降到 3 个）",
+              _sflow4.INDUSTRY_PAGES_PER_SCAN == 3)
+        _cool_back68 = _sflow4.em_throttle.describe
+        _sflow4.em_throttle.describe = lambda *a, **k: '东财限流冷却中（约 9 分钟后再试）'
+        _started_ind68.clear()
+        _scan.lbl_receipt.setText('基线')
+        _scan._flow._maybe_fetch_industry()
+        check("★ v6.69：冷却中 ⇒ **一个请求都不打**，且回执明说'还要等多久'（不再越点越死）",
+              _started_ind68 == [] and '冷却' in _scan.lbl_receipt.text()
+              and '行业映射未取到' in _scan.lbl_receipt.text())
+        _sflow4.em_throttle.describe = _cool_back68
+        # 估值也必须**按标的池**取（源码级护栏：这条一旦被改回"无参全市场"，额度立刻又会被打光）
+        import pathlib as _pl68  # noqa: E402
+
+        _src68 = _pl68.Path("ui/widgets/scan_flow.py").read_text(encoding="utf-8")
+        check("★ v6.69：估值走**按标的池**（`SpotValuationWorker(list(p._symbols…))`，源码级护栏）",
+              'SpotValuationWorker(list(p._symbols or [])' in _src68)
+        import ui.main_window as _mw68  # noqa: E402
+
+        check("★ v6.69：关窗统一 `cancel + wait` 后台线程（消掉 `QThread: Destroyed while …`）",
+              hasattr(_mw68.JianMainWindow, '_shutdown_background_threads'))
         _scan.lbl_receipt.setText('基线')
         _scan._flow._on_industry_ready(
             {'map': {'600000': '银行'}, 'page_start': 1, 'pages_done': 2,
@@ -4558,6 +4582,263 @@ except Exception as _e13:  # noqa: BLE001
     check(f"§7-B11 后台下载断言整段抛异常: {type(_e13).__name__}: {_e13}", False)
 
 # ==========================================
+# §9-F① · 退出守卫（v6.70）：**分片等待 + “正在停止…”可见 + 超时不销毁在跑的线程**
+#   旧形态 = `cancel(None)` + 一次 `worker.wait(15000)` ⇒ 两个问题：
+#   ① 主线程整段阻塞 ⇒ 界面完全不动，用户无法区分“正在收尾”与“程序死了”；
+#   ② 真超时时 `wait()` 返回后主窗口照常析构 ⇒ **带着在跑的 QThread 被 delete**（必崩）。
+#   本段用**假 worker**（不 start、不联网）把三个分支逐个验到；
+#   ⚠ 全程不碰真 `SyncWorker`（§11.5-71②：否则“跑测试 = 真下载”）。
+# ==========================================
+print("\n== §9-F① · 退出守卫：分片等待 / 正在停止回执 / 超时摘 parent ==")
+try:
+    import pathlib as _pl18  # noqa: E402
+    from PyQt6.QtCore import QObject as _QO18, pyqtSignal as _PS18  # noqa: E402
+
+    from ui import download_hub as _dh18  # noqa: E402
+
+    class _StuckWorker18(_QO18):
+        """假 worker：`wait()` 醒够 `n` 次才算结束 ⇒ 能验“到底等了几片”。"""
+
+        finished = _PS18(object)              # ★加固断言的靶子：孤儿线程跑完要自清
+
+        def __init__(self, n: int, parent=None):
+            super().__init__(parent)          # ★给超时分支挂上 parent ⇒ 能验“真被摘了”
+            self.running = True
+            self.n = n
+            self.wait_calls = 0
+            self.cancelled = False
+
+        def isRunning(self):        # noqa: N802
+            return self.running
+
+        def cancel(self):
+            self.cancelled = True
+
+        def wait(self, ms):         # noqa: N802
+            self.wait_calls += 1
+            if self.wait_calls >= self.n:
+                self.running = False
+            return not self.running
+
+    # ---- ① 分片：醒 3 片才结束 ⇒ on_tick 必须被叫到 3 次（旧实现只会 wait 一次）----
+    _hub18 = _dh18.DownloadHub()
+    _w18 = _StuckWorker18(3)
+    _hub18._worker = _w18
+    _seen18 = []
+    _ok18 = _hub18.shutdown(wait_ms=10000, tick_ms=5, on_tick=_seen18.append)
+    check("★ shutdown 分片等待：每片回调一次（实测 tick %d 次、worker.wait %d 次）"
+          % (len(_seen18), _w18.wait_calls),
+          _ok18 is True and len(_seen18) == 3 and _w18.wait_calls == 3)
+    check("★ 分片之间会刷新回执（而不是一个阻塞 wait 把界面闷死 15 秒）",
+          _seen18 == [5, 10, 15])
+    check("★ 退出中绝不再吃新任务（分片等待会转事件循环 ⇒ 一手误点就能重新填队）",
+          _hub18.submit("退出后再投", ["000001"]) == 0 and not _hub18.jobs())
+
+    # ---- ② 超时分支：卡住不醒 ⇒ 不能假装“已停干净”，也不能裸销毁 ----
+    _hub18b = _dh18.DownloadHub()
+    _stuck18 = _StuckWorker18(10 ** 9, _hub18b)      # parent = hub（与真 SyncWorker 同形）
+    assert _stuck18.parent() is _hub18b              # 前置事实：没超时时它确实会被窗口带走
+    _hub18b._worker = _stuck18
+    _seenb18 = []
+    _ret18 = _hub18b.shutdown(wait_ms=60, tick_ms=5, on_tick=_seenb18.append)
+    check("★ 预算内停不下 ⇒ 返回 False（不谎报“已经停干净”）",
+          _ret18 is False and len(_seenb18) >= 10)
+    check("★ 超时不销毁在跑的线程：parent 已摘掉 + hub 松手 + 模块级列表握住引用",
+          _stuck18.parent() is None and _hub18b._worker is None
+          and _stuck18 in _dh18._ORPHAN_WORKERS)
+    # ★v6.70 加固（二次修改）：孤儿线程跑完必须**自清** —— 旧版列表只增不减：
+    #   每次"退出超时"都留一个跑完的线程对象（Python 引用常驻 + C++ 侧永不回收）。
+    _stuck18.running = False
+    _stuck18.finished.emit({})                 # 线程已结束 ⇒ 摘引用 + deleteLater
+    check("★ 孤儿线程**跑完自清**（`_ORPHAN_WORKERS` 回到空 ⇒ 退出路径不留慢性泄漏）",
+          _stuck18 not in _dh18._ORPHAN_WORKERS)
+
+    # ---- ③ 回执真的落在下载条上（投影件不存任务数据）----
+    _bar18 = win.download_bar
+    _bar18.show_stopping(1500)
+    check("★ 「正在停止…」写进下载条（名字 + 已等多久，不是静默阻塞）",
+          _bar18.lbl_name.text().startswith("正在停止")
+          and "1.5" in _bar18.lbl_txt.text() and not _bar18.isHidden())
+    check("★ 不知道还要多久就走 busy 条纹（不画假百分比）+ 收起「中断 / ✕」",
+          _bar18.bar.maximum() == 0 and _bar18.btn_stop.isHidden()
+          and _bar18.btn_close.isHidden())
+    _bar18.refresh()                            # 归还：下一拍仍是 hub 的投影
+
+    # ---- ④ 源码级防漂移 ----
+    _mws18 = _pl18.Path('ui/main_window.py').read_text(encoding='utf-8')
+    check("★ 主窗口 closeEvent 带 `_exiting` 重入闸门（转事件循环后“再点 X”会重入）",
+          'if self._exiting:' in _mws18 and 'self._exiting = True' in _mws18)
+    _dhs18 = _pl18.Path('ui/download_hub.py').read_text(encoding='utf-8')
+    check("★ hub 不再“一次 wait(全预算)”（那等于把界面闷死 15 秒）",
+          'worker.wait(wait_ms)' not in _dhs18 and 'on_tick' in _dhs18)
+    check("★ 退出等待里的 `processEvents` **挡掉用户输入**（只许看、不许动）",
+          'ExcludeUserInputEvents' in _mws18)
+except Exception as _e18:  # noqa: BLE001
+    check(f"§9-F① 退出守卫断言整段抛异常: {type(_e18).__name__}: {_e18}", False)
+
+# ==========================================
+# §9-F② · 「继续未完成」（v6.70）：**中断后那些一次都没轮到的标的，得有个入口**
+#   旧面板只有「只重试失败」，而“没轮到的那批”压根不在失败清单里（没发过请求）
+#   ⇒ 用户只能自己重新提交同范围（属可发现性问题，不是数据问题）。
+#   【本批真正要钉住的口径】续传的根据 = `SyncWorker` 记下的 `symbols_attempted`；
+#   ⚠ 绝不允许改用 `symbols[done:]`——并发 K>1 下完成顺序与提交顺序无关，
+#   而“已最新跳过”也计入 done ⇒ 按位置切会**同时**漏抓与重抓（下面用乱序样本验）。
+#   ⚠ 全程打桩：不 start 真线程、不联网（§11.5-71②）；桩**成对还原**（§11.5-84）。
+# ==========================================
+print("\n== §9-F② · 续传清单：只认 symbols_attempted（不拿位置当依据）==")
+try:
+    import pathlib as _pl19  # noqa: E402
+    from PyQt6.QtCore import QObject as _QO19, pyqtSignal as _PS19  # noqa: E402
+
+    from data.sync_service import ThrottlePolicy as _TP19  # noqa: E402
+    from ui import download_hub as _dh19  # noqa: E402
+    from ui import workers as _wk19  # noqa: E402
+    from ui.widgets.download_queue_panel import DownloadQueuePanel as _QP19  # noqa: E402
+
+    class _Svc19:
+        """假同步门面：每只都"成功"，可在第 N 只后把 worker 标成"请收手"。"""
+
+        def __init__(self, interrupt_after: int = 0):
+            self.calls = []
+            self.interrupt_after = interrupt_after
+            self.owner = None
+
+        def refresh_one(self, symbol, **_kw):
+            self.calls.append(symbol)
+            if self.interrupt_after and len(self.calls) >= self.interrupt_after:
+                self.owner._cancel = True      # 与真实 `cancel()` 同路径：只与只之间生效
+            return {"ok": True, "added": 1, "reason": "net"}
+
+    _orig19 = (_wk19.MarketSyncService, _wk19._load_calendar_safely, _dh19.SyncWorker)
+
+    class _NoStartWorker19(_QO19):     # 队列的假 worker（绝不可真起线程）
+        progress = _PS19(int, int, int)
+        failed = _PS19(str, str)
+        finished = _PS19(object)
+
+        def __init__(self, *a, **k):
+            super().__init__(k.get("parent"))
+
+        def start(self):               # noqa: D401
+            pass
+
+        def isRunning(self):           # noqa: N802
+            return False
+
+        def cancel(self):
+            pass
+
+    try:
+        _wk19._load_calendar_safely = lambda *a, **k: None     # 不联网拿日历
+        _dh19.SyncWorker = _NoStartWorker19
+
+        # ---- ① 串行路径：第 3 只没轮到 ⇒ 不记成"碰过" ----
+        _svc19 = _Svc19(interrupt_after=2)
+        _w19 = _wk19.SyncWorker(["A1", "A2", "A3", "A4"],
+                                policy=_TP19(concurrency=1))
+        _svc19.owner = _w19
+        _wk19.MarketSyncService = lambda *a, **k: _svc19
+        _cap19 = []
+        _w19.finished.connect(lambda s: _cap19.append(s))
+        _w19.run()
+        check("★ 串行逐只记 `symbols_attempted`（只发了请求才算；实测 %s / 只跑了 %s）"
+              % (_cap19[0].get("symbols_attempted"), _svc19.calls),
+              _cap19[0]["symbols_attempted"] == ["A1", "A2"] == _svc19.calls)
+        check("★ 被中断的两只仍记作 aborted（续传与熍断不互相遮盖）",
+              bool(_cap19[0].get("aborted")) and _cap19[0].get("aborted_by") == "cancel")
+
+        # ---- ② 并发路径：同样逐只记，且不重不漏 ----
+        _svc19b = _Svc19()
+        _w19b = _wk19.SyncWorker(["P%d" % i for i in range(6)],
+                                 policy=_TP19(concurrency=3))
+        _wk19.MarketSyncService = lambda *a, **k: _svc19b
+        _cap19b = []
+        _w19b.finished.connect(lambda s: _cap19b.append(s))
+        _w19b.run()
+        _att19b = _cap19b[0]["symbols_attempted"]
+        check("★ 并发 K=3 下仍逐只记（6 只不多不少、无重复：实测 %d 条）"
+              % len(_att19b),
+              sorted(_att19b) == ["P%d" % i for i in range(6)] and len(set(_att19b)) == 6)
+    finally:
+        # ⚠ 只还原 `_wk19` 那两个；`_dh19.SyncWorker` 必须**整段持桩**到本块结束 ——
+        #   因为下面的 `submit()` / `continue_unfinished()` 会走 `_pump()` 真建 worker，
+        #   提前还原 = “跑测试 = 真下载”（§11.5-71② / §11.5-81⑤）。
+        _wk19.MarketSyncService, _wk19._load_calendar_safely = _orig19[0], _orig19[1]
+
+    # ---- ③ 续传口径：乱序 + 跳过也算"碰过"，按位置切定当错 ----
+    _hub19 = _dh19.DownloadHub()
+    _hub19.submit("全市场 A 股 日线", ["B1", "B2", "B3", "B4", "B5"],
+                  min_date="2020-01-01")
+    _j19 = _hub19.jobs()[0]
+    _j19.stats = {"symbols_attempted": ["B3", "B1", "B5"], "symbols_failed": ["B5"],
+                  "ok": 2, "fail": 1, "skipped": 0}
+    _j19.status = _dh19.STATUS_CANCELLED
+    check("★ 续传按**真没碰过**算（乱序样本）：期望 [B2, B4]、实测 %s（旧的 symbols[done:] 会错切成 [B4, B5]）"
+          % _j19.unprocessed(), _j19.unprocessed() == ["B2", "B4"])
+    check("★ `rest_count()` 不构集合也能对上（面板每拍都算，不能埋 O(n)）",
+          _j19.rest_count() == 2 and _j19.to_dict()["rest"] == 2)
+    _nid19 = _hub19.continue_unfinished(_j19.id)
+    _n19 = _hub19.get(_nid19)
+    check("★ 「继续未完成」投的正是那两只，且 zone / min_date / force_full 完全沿用",
+          _n19 is not None and _n19.symbols == ["B2", "B4"]
+          and _n19.zone == _j19.zone and _n19.min_date == "2020-01-01"
+          and _n19.force_full is _j19.force_full and _n19.policy is _j19.policy)
+    check("★ 任务名用人话（动作 + 对象，不甩“断点续传”这类术语，§10-10）",
+          _n19 is not None and _n19.label.startswith("继续未完成 ·"))
+    _j19b = _dh19.DownloadJob(id=9001, label="已全部跑完", symbols=["Z1", "Z2"],
+                              status=_dh19.STATUS_CANCELLED,
+                              stats={"symbols_attempted": ["Z2", "Z1"]})
+    _hub19._jobs.append(_j19b)
+    check("★ 已全部碰过 ⇒ 不投空任务（返回 0）", _hub19.continue_unfinished(_j19b.id) == 0)
+    check("★ 拿不到的 job id ⇒ 返回 0（不报错、不投东西）", _hub19.continue_unfinished(4242) == 0)
+
+    # ---- ④ 面板判据：被中断才给「继续」，“完成但有失败”不得误判 ----
+    _panel19 = _QP19(_hub19)
+    _btn19 = _panel19._row_action({"id": 1, "status": _dh19.STATUS_CANCELLED,
+                                   "failed": 1, "rest": 2}, _dh19.STATUS_CANCELLED)
+    check("★ 被中断且还有没轮到的 ⇒ 行内按钮是「继续 2 只」（失败那批仍由底部「只重试失败」兼顾）",
+          _btn19.text() == "继续 2 只" and "同一份参数" in _btn19.toolTip())
+    _btn2 = _panel19._row_action({"id": 2, "status": _dh19.STATUS_DONE,
+                                  "failed": 3, "rest": 0}, _dh19.STATUS_CANCELLED)
+    check("★ “完成但有失败”被 `_state_of` 映射成同一个橙色档 ⇒ 绝不可当成可续传（只能重试失败）",
+          _btn2.text() == "只重试失败")
+    _btn3 = _panel19._row_action({"id": 3, "status": _dh19.STATUS_DONE,
+                                  "failed": 0, "rest": 5}, _dh19.STATUS_DONE)
+    check("★ 正常完成（即使数字上有差）不给续传入口，不给“看得到却没用”的按钮",
+          _btn3.text() == "" or not hasattr(_btn3, "text"))
+
+    # ---- ⑥ ★v6.70 加固（二次修改）：续传**幂等** + 旧行收成「已续传」（不可点）----
+    check("★ 续传过的那条带 `continued` 标记（面板据此收口，别让旧行一直可点）",
+          _j19.to_dict().get("continued") is True)
+    _nid19b = _hub19.continue_unfinished(_j19.id)
+    check("★ 上一次续传**还在途** ⇒ 再点只把它还回来（不重投同一批：白抓 / `force_full` 时整段重下）",
+          _nid19b == _nid19 and len(_hub19.jobs()) == 3)
+    _btn4 = _panel19._row_action({"id": 4, "status": _dh19.STATUS_CANCELLED, "failed": 0,
+                                  "rest": 2, "continued": True}, _dh19.STATUS_CANCELLED)
+    check("★ 已续传的旧行 ⇒ 按钮变**不可点**的「已续传」（旧版会一直挂着可点的「继续 N 只」）",
+          _btn4.text() == "已续传" and not _btn4.isEnabled())
+
+    # ---- ⑤ 源码级防漂移 ----
+    _ws19 = _pl19.Path('ui/workers.py').read_text(encoding='utf-8')
+    check("★ 两条取数路径（串行 + 并发池）**都**记 attempted（只加一处 = 另一档位静默错值）",
+          _ws19.count('stats["symbols_attempted"].append(symbol)') == 2)
+    _hs19 = _pl19.Path('ui/download_hub.py').read_text(encoding='utf-8')
+    # ⚠ 判据只盯“真代码形状”（`self.symbols[self.done`）——早先写的是短字面量，
+    #   结果被自己 docstring 里那句“绝不能用 …”触红（§11.5-101：负向断言的样本
+    #   必须收到“写错时长什么样”，否则注释也会把它引爆）。
+    check("★ 续传不拿位置当依据（出现真代码形状 `self.symbols[self.done` 即口径错）",
+          'self.symbols[self.done' not in _hs19 and 'symbols_attempted' in _hs19)
+    _hub19.cancel(None)
+except Exception as _e19:  # noqa: BLE001
+    check(f"§9-F② 续传断言整段抛异常: {type(_e19).__name__}: {_e19}", False)
+finally:
+    # 桩成对还原（§11.5-84）；用 globals().get 防御“整段在赋值前就抱异常”的情况
+    _o19 = globals().get("_orig19")
+    _d19 = globals().get("_dh19")
+    if _o19 is not None and _d19 is not None:
+        _d19.SyncWorker = _o19[2]
+
+# ==========================================
 # §7-B12 P3 · 筛选方案库（ScanStrategyStore CRUD + M2 配置打包/还原往返）
 # ==========================================
 print("\n== §7-B12 P3 · 筛选方案库 ==")
@@ -4616,6 +4897,11 @@ try:
     import tempfile as _tf68  # noqa: E402
 
     import data.akshare_feed as _af68  # noqa: E402
+    # ★v6.69：分页取数实现搬到 `data/em_market.py` ⇒ 打桩点跟着挪到**新的 HTTP 边界**
+    #   （`clist_page`），断言口径不变；退避闸门在 `data/em_throttle.py`（失败即冷却）。
+    import data.em_market as _em68  # noqa: E402
+    import data.em_throttle as _et68  # noqa: E402
+
     from data.sync_service import fetch_industry_page as _fip68  # noqa: E402
 
     _pages68 = {
@@ -4625,25 +4911,28 @@ try:
              {'f12': 'BAD', 'f14': '怪码', 'f100': '银行'},
              {'f12': '600001', 'f14': '无行业', 'f100': '-'}], 150),
     }
-    _real_page68 = _af68.AkShareFeed._push2_clist_page
-    _af68.AkShareFeed._push2_clist_page = staticmethod(
-        lambda page, pz: _pages68.get(page, ([], 150)))
+    _real_page68 = _em68.clist_page
+    _em68.clist_page = lambda page, pz=100: _pages68.get(page, ([], 150))
     try:
         _r68 = _fip68(1, 2, sleep_fn=lambda _s: None, interval=0)
     finally:
-        _af68.AkShareFeed._push2_clist_page = _real_page68
+        _em68.clist_page = _real_page68
     check("★ v6.68：分页直取只收「6 位数字码 + 有行业名」的行（怪码 / '-' 被过滤）",
           _r68['map'] == {'600000': '银行', '600519': '白酒', '000001': '银行'})
     check("★ v6.68：分页边界（total=150、单页 100 ⇒ 抓满 2 页即 done、不多打）",
           _r68['pages_done'] == 2 and _r68['total_pages'] == 2 and _r68['done'] is True)
-    _af68.AkShareFeed._push2_clist_page = staticmethod(
-        lambda page, pz: (_ for _ in ()).throw(RuntimeError('模拟风控')))
+    _thr_back68 = preferences.get('em_throttle')
+    _em68.clist_page = lambda page, pz=100: (_ for _ in ()).throw(RuntimeError('模拟风控'))
     try:
         _r68b = _fip68(1, 2, sleep_fn=lambda _s: None, interval=0)
     finally:
-        _af68.AkShareFeed._push2_clist_page = _real_page68
+        _em68.clist_page = _real_page68
     check("★ v6.68：单页失败 ⇒ 空 map + done=False（**绝不上抛**；页面保留旧缓存并出声）",
           _r68b['map'] == {} and _r68b['pages_done'] == 0 and _r68b['done'] is False)
+    check("★ v6.69：失败同时记一笔**退避冷却**，并把'还要等多久'交回上层（回执据此说话）",
+          _et68.is_cooling() and '冷却' in (_r68b.get('error') or ''))
+    _et68.reset()                                    # ⚠ 收尾：绝不把"冷却中"留给用户的应用
+    preferences.set('em_throttle', _thr_back68 or {'fails': 0, 'cooldown_until': 0})
 
     from data.industry_store import IndustryStore as _IS68  # noqa: E402
     _st68 = _IS68(path=os.path.join(_tf68.mkdtemp(prefix='jian_ind68_'), 'industry_map.json'))
@@ -4752,6 +5041,56 @@ try:
                                      "ui_painter_font", "mono_font_css", "ui_font_status")))
 except Exception as _e15:  # noqa: BLE001
     check(f"§10-15 字体断言整段抛异常: {type(_e15).__name__}: {_e15}", False)
+
+# ==========================================
+# §9-F③ · 按钮样式唯一出口（v6.70）：**同一类按钮只允许有一份定义**
+#   背景：`FLAT_QSS` 的定义曾住在 `backtest_panes.py`（名字带“回测”却被全站 6 处引用），
+#   另有 4 处**私有 `_FLAT_QSS` 副本**——其中 3 处是 flat 家族的尺寸/字号变体，
+#   1 处（运行历史页）**有底有框**、根本是另一种控件（⇒ 正名 `OUTLINE_QSS`）。
+#   【为什么只钉结构不钉“一张脸”】把不同形状硬统一 = 视觉变更，不属本项。
+#   【本护栏守的是】今后谁再开一份私有副本、或把定义搬回带业务名的模块 → 当场红。
+# ==========================================
+print("\n== §9-F③ · 按钮样式唯一出口（flat / outline 家族）==")
+try:
+    import pathlib as _plq  # noqa: E402
+    import re as _req  # noqa: E402
+
+    _uiq = sorted(_plq.Path("ui").rglob("*.py"))
+    _priv = [p.name for p in _uiq
+             if _req.search(r"(?m)^_FLAT_QSS\s*=", p.read_text(encoding="utf-8", errors="ignore"))]
+    check(f"★ §9-F③：`ui/` 内不再有任何私有 `_FLAT_QSS =` 定义（越界 {_priv}）", not _priv)
+
+    _cwq = _plq.Path("ui/widgets/custom_widgets.py").read_text(encoding="utf-8")
+    check("★ §9-F③：样式只有一个出口 = `flat_qss()` 生成器 + 五个命名变体",
+          all(_n in _cwq for _n in ("def flat_qss(", "FLAT_QSS = flat_qss()",
+                                    "FLAT_QSS_WIDE", "FLAT_QSS_SMALL", "FLAT_QSS_DANGER",
+                                    "OUTLINE_QSS =")))
+    _bpq = _plq.Path("ui/widgets/backtest_panes.py").read_text(encoding="utf-8")
+    check("★ §9-F③：`backtest_panes` 只 import、不再**定义** `FLAT_QSS`（归属漂移已退役）",
+          not _req.search(r"(?m)^FLAT_QSS\s*=", _bpq))
+    _badimport = [p.name for p in _uiq
+                  if _req.search(r"from ui\.widgets\.backtest_panes import[^\n]*FLAT_QSS",
+                                 p.read_text(encoding="utf-8", errors="ignore"))]
+    check(f"★ §9-F③：全站不再从 `backtest_panes` 借 `FLAT_QSS`（越界 {_badimport}）",
+          not _badimport)
+    # **观感零变化**的机器版证据：五个常量逐项钉住当年那五处的值
+    from ui.widgets import custom_widgets as _cwmq  # noqa: E402
+    check("★ §9-F③：五项样式逐项照旧（颜色 / 内边距 / 圆角 / 字号 / 悬停态）——本轮只改结构",
+          ("color: #1976D2" in _cwmq.FLAT_QSS and "padding: 0 8px" in _cwmq.FLAT_QSS
+           and "border-radius: 8px" in _cwmq.FLAT_QSS
+           and "disabled" in _cwmq.FLAT_QSS
+           and "padding: 0 10px" in _cwmq.FLAT_QSS_WIDE
+           and "border-radius: 6px" in _cwmq.FLAT_QSS_WIDE
+           and "font-size: 12px" in _cwmq.FLAT_QSS_SMALL
+           and "disabled" not in _cwmq.FLAT_QSS_SMALL
+           and "#8A94A6" in _cwmq.FLAT_QSS_DANGER
+           and "#F44336" in _cwmq.FLAT_QSS_DANGER and "#FDECEA" in _cwmq.FLAT_QSS_DANGER
+           and "border: 1px solid #E4E9F0" in _cwmq.OUTLINE_QSS
+           and "background: #fff" in _cwmq.OUTLINE_QSS))
+    check("★ §9-F③：flat 家族都是“无底无框”、描边家族保留底与框（两种形状没被强成一张脸）",
+          "border: none" in _cwmq.FLAT_QSS and "border: none" not in _cwmq.OUTLINE_QSS)
+except Exception as _eq:  # noqa: BLE001
+    check(f"§9-F③ 样式断言整段抛异常: {type(_eq).__name__}: {_eq}", False)
 
 # ==========================================
 # 发布物一致性（v6.66）：`version.json` 是**老用户的更新清单**（`core/updater.py` 每次启动比对）

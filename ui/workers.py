@@ -201,6 +201,10 @@ class SyncWorker(QThread):
         self._spot_ctx = self._build_spot_ctx(service, policy, calendar)
         stats = {"ok": 0, "fail": 0, "skipped": 0, "added": 0, "spot_hit": 0,
                  "aborted": False, "aborted_by": "", "symbols_failed": [],
+                 # ★v6.70 / §9-F②：**真正跑过一只请求**的清单（含“已最新跳过”）——
+                 #   它是“中断后还剩哪些没碰”的**唯一正确依据**：`done` 只是计数，
+                 #   并发下与提交顺序无关 ⇒ 拿 `symbols[done:]` 切会同时漏抓与重抓。
+                 "symbols_attempted": [],
                  "total": len(self._symbols)}
         if (policy.concurrency or 1) > 1:
             self._run_pool(service, policy, stats)
@@ -264,6 +268,7 @@ class SyncWorker(QThread):
             result = service.refresh_one(
                 symbol, zone=self._zone, force_full=self._force_full,
                 min_date=self._min_date, policy=policy, **self._spot_kwargs(symbol))
+            stats["symbols_attempted"].append(symbol)     # ★v6.70 §9-F②：发了请求才算“碰过”
 
             if result.get("skipped"):
                 stats["skipped"] += 1
@@ -319,6 +324,7 @@ class SyncWorker(QThread):
             with lock:
                 done[0] += 1
                 d = done[0]
+                stats["symbols_attempted"].append(symbol)   # ★v6.70 §9-F②（与串行路径同口径）
                 if result.get("skipped"):
                     stats["skipped"] += 1
                     consec["fail"] = consec["proxy"] = 0
@@ -386,17 +392,28 @@ class SingleSyncWorker(QThread):
 
 
 class SpotValuationWorker(QThread):
-    """★P5：后台拉全市场当前估值快照（供 M2 结果表 B 层列：市盈率/市净率/总市值）。
+    """★P5：后台拉**当前估值**（供 M2 结果表 B 层列：市盈率/市净率/总市值）。
 
     非阻塞、失败回 None（那几列诚实留 '—'），与 M3 指数副图后台补拉同款"不连累主流程"。
     走 `spot_valuation_map()` 门面（§9-H：ui 不直连行情源，联网抓取一律经 data 层）。
+    ★v6.69：**按标的池取**（`symbols`）—— 旧版无参 = 全市场快照（东财内部 ~56 页突发），
+      会与行业分页抢同一份匿名额度；现在几百只池子只需 2~3 个请求（§11.5-100）。
     """
 
     finished = pyqtSignal(object)   # {symbol: {pe, pb, total_mktcap}} 或 None
 
+    def __init__(self, symbols=None, parent=None):
+        super().__init__(parent)
+        self._symbols = [str(s).strip() for s in (symbols or []) if str(s).strip()]
+        self._cancel = False
+
+    def cancel(self):
+        """供页面在关窗/取消时调用（只置一个 bool，跨线程安全）。"""
+        self._cancel = True
+
     def run(self):
         try:
-            data = spot_valuation_map()
+            data = spot_valuation_map(self._symbols)
         except Exception as e:  # noqa: BLE001 —— 网络/接口异常一律回 None，绝不外泄到 UI
             logger.warning(f"估值快照后台拉取失败: {e}")
             data = None
@@ -406,10 +423,11 @@ class SpotValuationWorker(QThread):
 class IndustryMapWorker(QThread):
     """★v6.68：后台**分批**取全市场「代码→行业」（东财列表 `f100`：单页 100、全市场 ~56 页）。
 
-    【为什么改】旧版走"板块清单 + 逐板块成分 ≈ **80+ 连击**" ⇒ 正踩东财"匿名高频"风控
-    （连打几十次后整段拒绝、约 30 分钟自恢复，§11.5-99）；新版与"全市场快照 / 估值"**同源同端点**，
-    **每批只抓几页** + 页间隔，分几次扫描摊平；进度由页面按"断点续抓"给出。
-    回包 `{"map", "page_start", "pages_done", "total_pages", "done"}`；失败回 None。
+    【为什么分批】东财对**匿名高频**请求有频次窗（连打几十次整段拒绝、约 30 分钟自恢复，§11.5-99）
+    ⇒ **每批只抓几页** + 页间隔，分几次扫描摊平；进度由页面按"断点续抓"给出。
+    ★v6.69：加 `cancel()` —— 关窗时页面会取消并 `wait()`，不再让 QThread 运行中被销毁
+      （用户实测日志里的 `QThread: Destroyed while thread '' is still running`）。
+    回包 `{"map", "page_start", "pages_done", "total_pages", "done", "error"}`；整体失败回 None。
     走 `fetch_industry_page()` 门面（§9-H：ui 不直连行情源）。
     """
 
@@ -419,10 +437,16 @@ class IndustryMapWorker(QThread):
         super().__init__(parent)
         self._page_start = int(page_start)
         self._pages = int(pages)
+        self._cancel = False
+
+    def cancel(self):
+        """供页面在关窗/取消时调用（**在页与页之间**生效，最多多等一个页间隔）。"""
+        self._cancel = True
 
     def run(self):
         try:
-            data = fetch_industry_page(self._page_start, self._pages)
+            data = fetch_industry_page(self._page_start, self._pages,
+                                       should_stop=lambda: self._cancel)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"行业映射后台拉取失败: {e}")
             data = None

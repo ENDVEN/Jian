@@ -36,8 +36,8 @@ from config import settings
 from core.cross_section import human_amount, human_mktcap
 from data.backtest_archive import KIND_M1, KIND_LABELS, SOURCE_LABELS
 from ui.widgets.chart_style import apply_pokorny_style
-from ui.widgets.custom_widgets import (FlowHost, ScrollRegion, apply_ui_font,
-                                       mono_font_css)
+from ui.widgets.custom_widgets import (OUTLINE_QSS, FlowHost, ScrollRegion,
+                                        apply_ui_font, mono_font_css)
 from ui.widgets.history_kinds import ACTION_ORDER, KIND_SPECS, spec_of
 
 __all__ = ['HistoryFilterBar', 'HistoryTable', 'HistoryPreviewPane',
@@ -65,10 +65,11 @@ _TABLE_QSS = (
     "QHeaderView::section{background:#F4F6FA;color:#5B6472;font-weight:bold;"
     " padding:6px;border:none;}"
 )
-_FLAT_QSS = ("QPushButton{border:1px solid #E4E9F0;background:#fff;border-radius:8px;"
-             " padding:6px 12px;font-size:13px;color:#1F2430;}"
-             "QPushButton:hover{background:#F3F8FE;border-color:#BBDEFB;color:#1976D2;}"
-             "QPushButton:disabled{color:#B8C2D0;background:#F5F6F8;border-color:#EDF0F5;}")
+# ★v6.70 / §9-F③：旧名叫 `_FLAT_QSS`（跟其他三处私有副本同名），但它**有底有框** ——
+#   不属 flat（文字型）家族，只是“描边次级按钮”。⇒ 正名 `OUTLINE_QSS` 并上收唯一出口；
+#   ⚠ 不许把它与 `FLAT_QSS` 强成一张脸（那是两种控件，不是“配色漂移”）。
+# 本文件自族的 `_PRIMARY_QSS`（蓝实心）/ `_DANGER_QSS`（描边红字）**本轮不动**：
+#   它们与 `backtest_panes` 的 `SEND_QSS`/`ACTION_QSS` 数值不同，对齐 = 视觉变更，另拍。
 _PRIMARY_QSS = ("QPushButton{background:#1976D2;color:#fff;font-weight:bold;border:none;"
                 " border-radius:8px;padding:7px 14px;}"
                 "QPushButton:hover{background:#1565C0;}"
@@ -174,7 +175,7 @@ class HistoryFilterBar(QWidget):
         lay.addStretch(1)
 
         self.btn_refresh = QPushButton("↻ 刷新")
-        self.btn_refresh.setStyleSheet(_FLAT_QSS)
+        self.btn_refresh.setStyleSheet(OUTLINE_QSS)
         lay.addWidget(self.btn_refresh)
 
     # ---------- 读 ----------
@@ -572,7 +573,7 @@ class HistoryPreviewPane(QFrame):
 
         # M2/M3：筛选条件（等宽代码块 + 复制）
         self.btn_copy = QPushButton("复制")
-        self.btn_copy.setStyleSheet(_FLAT_QSS)
+        self.btn_copy.setStyleSheet(OUTLINE_QSS)
         self.btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_copy.clicked.connect(self._on_copy_formula)
         self.sect_condition = SectionCard("筛选条件", action=self.btn_copy)
@@ -611,10 +612,10 @@ class HistoryPreviewPane(QFrame):
         specs = (
             ('view', "👁 载入查看", _PRIMARY_QSS,
              "忠实回放当天结果（只读，不影响你正在编辑的配置）"),
-            ('reuse', "↺ 复用参数", _FLAT_QSS, "把这份快照的配置灌回编辑器（可改后再跑）"),
-            ('rerun', "▶ 重跑", _FLAT_QSS, "复用参数 + 按当前行情重跑（会自动补齐最新数据）"),
-            ('send', "📤 送行情页", _FLAT_QSS, "把这份函数段送到「📈 市场行情」看图"),
-            ('pin', "☆ 重点", _FLAT_QSS, "标为重点后不被自动淘汰"),
+            ('reuse', "↺ 复用参数", OUTLINE_QSS, "把这份快照的配置灌回编辑器（可改后再跑）"),
+            ('rerun', "▶ 重跑", OUTLINE_QSS, "复用参数 + 按当前行情重跑（会自动补齐最新数据）"),
+            ('send', "📤 送行情页", OUTLINE_QSS, "把这份函数段送到「📈 市场行情」看图"),
+            ('pin', "☆ 重点", OUTLINE_QSS, "标为重点后不被自动淘汰"),
             ('del', "🗑 删除", _DANGER_QSS, "删除这份存档文件（二次确认）"),
         )
         for acc, text, qss, tip in specs:

@@ -30,29 +30,32 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from dataclasses import dataclass, field
 from typing import Iterable
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.preferences import preferences
 from data.sync_service import (DEFAULT_DOWNLOAD_CONCURRENCY, ZONE_KLINE,
-                               ThrottlePolicy, abort_reason_text, failure_hint,
+                               ThrottlePolicy,
                                format_duration)
 from ui.workers import SyncWorker
 
+# ★v6.70 / §4 体积债：任务形状、状态口径、单只互斥已拆到 `ui/download_jobs.py`
+#   （纯搬家）。这里**再导出**一遍 ⇒ 既有 `from ui.download_hub import ...` 零改动。
+from ui.download_jobs import (DownloadJob, SingleSyncGate, hub_of,  # noqa: F401
+                              STATUS_QUEUED, STATUS_RUNNING, STATUS_DONE,
+                              STATUS_CANCELLED, STATUS_LABELS,
+                              FINISHED_STATUSES, KEEP_FINISHED)
+
+
 logger = logging.getLogger(__name__)
 
-# 任务状态（面板与下载条共用同一套标签，别处不许再写中文状态字面量）
-STATUS_QUEUED = "queued"
-STATUS_RUNNING = "running"
-STATUS_DONE = "done"
-STATUS_CANCELLED = "cancelled"
-STATUS_LABELS = {STATUS_QUEUED: "排队中", STATUS_RUNNING: "下载中",
-                 STATUS_DONE: "已完成", STATUS_CANCELLED: "已中断"}
-FINISHED_STATUSES = (STATUS_DONE, STATUS_CANCELLED)
-
-KEEP_FINISHED = 20          # 面板里最多回看多少条已结束任务（纯内存，不落盘）
+# ★v6.70 / §9-F①：退出等待**超时**时，仍在跑的 worker 挂到这里。
+# 【为什么必须留引用】它的 parent 是 hub（随主窗口销毁）——若不摘 parent 并**握住引用**，
+#   Python 对象被回收 = C++ QThread 在运行中被 delete = 崩（就是那条
+#   `QThread: Destroyed while thread is still running`）。摘了 parent + 本列表握着，
+#   最坏情况只是“一条日志 + 进程退出时操作系统收尾”，而不是必崩。
+_ORPHAN_WORKERS: list = []
 
 
 def download_policy_from_prefs(prefs=None) -> ThrottlePolicy:
@@ -92,141 +95,6 @@ def download_policy_from_prefs(prefs=None) -> ThrottlePolicy:
     )
 
 
-def hub_of(owner):
-    """取主窗口的下载队列（页面与流程件统一走它）。
-
-    `owner` 可以是页面（自动取 `page.main_win`）也可以是主窗口；**拿不到就返回 None**
-    ⇒ 调用方的互斥检查与后台提交自然降级成旧行为，不会因为这个件不存在而报错
-    （测试里常用自建的假页面，根本没有 `main_win`）。
-    """
-    win = getattr(owner, "main_win", owner)
-    return getattr(win, "downloads", None)
-
-
-class SingleSyncGate:
-    """单只同步的**互斥占位**（§7-B11）—— 唯一实现，别各处手写 `note_single/release_single`。
-
-    【为什么收成一个件】单只同步（行情页 / 回测滞后补 / M3 指数补拉）本身**不进队列**
-    （秒级、回包直接喂当页），但必须与批量任务互斥：同一个 parquet 不能有两个写者。
-    早先的写法是每个调用方各存一个 `self._token` 再 `getattr` 回来释放 —— 一旦某条
-    return 路径漏释放，`is_busy_for` 就**永久为真**（该标的再也同步不了，界面上还看不出原因）。
-    ⇒ 收敛到这里：`blocked_by()` 问一句、`hold()` 占位（**幂等**）、`release()` 释放（**可重复调用**）。
-
-        gate = SingleSyncGate(page)          # 构造一次，常驻
-        if gate.blocked_by(symbol, zone):    # 命中 ⇒ 别启动，先告诉用户
-            return
-        gate.hold(symbol, zone)
-        ...起 SingleSyncWorker...
-        gate.release()                       # 回包里调用即可（漏调也不会误占）
-
-    ⚠ `hub` **惰性取**（构造期页面可能还没挂上 `main_win`）⇒ 不写死在 `__init__` 里。
-    """
-
-    def __init__(self, owner=None):
-        self._owner = owner
-        self._token = None
-
-    @property
-    def _hub(self):
-        return hub_of(self._owner) if self._owner is not None else None
-
-    def blocked_by(self, symbol: str, zone: str = ZONE_KLINE) -> bool:
-        """这只标的是否已在批量任务里 / 已被别的单只占着（命中就别再抓一遍）。"""
-        hub = self._hub
-        return hub is not None and hub.is_busy_for(symbol, zone)
-
-    def hold(self, symbol: str, zone: str = ZONE_KLINE) -> None:
-        """占位；**幂等**：已有占位先释放 —— 换标的/重试时不会泄漏旧占位。"""
-        self.release()
-        hub = self._hub
-        if hub is not None:
-            self._token = hub.note_single(symbol, zone)
-
-    def release(self) -> None:
-        """释放占位（可重复调用；没有占位时是空操作）。"""
-        hub = self._hub
-        if hub is not None and self._token is not None:
-            hub.release_single(self._token)
-        self._token = None
-
-
-@dataclass
-class DownloadJob:
-    """一次批量下载任务（提交后不可变的部分 = 参数；可变的 = 进度与回执）。"""
-
-    label: str                          # 用户能看懂的任务名（"全市场 A 股 日线"）
-    symbols: list                       # 待抓取标的
-    zone: str = ZONE_KLINE
-    force_full: bool = False
-    min_date: str | None = None
-    policy: ThrottlePolicy | None = None
-    origin: str = ""                    # 发起方标识：bulk / data_manager / scan / breadth
-    id: int = 0
-    status: str = STATUS_QUEUED
-    done: int = 0
-    total: int = 0
-    current: str = ""
-    stats: dict = field(default_factory=dict)
-
-    def __post_init__(self):
-        self.total = len(self.symbols)
-
-    # ---- 展示（唯一出口：下载条与面板都从这里取文案，别各拼一遍）----
-    @property
-    def percent(self) -> int:
-        return int(self.done * 100 / self.total) if self.total else 0
-
-    @property
-    def running(self) -> bool:
-        return self.status == STATUS_RUNNING
-
-    def progress_text(self) -> str:
-        """运行中的一行短状态：`223/5849 · 正在处理 000622`。"""
-        if self.status == STATUS_QUEUED:
-            return f"排队中 · {self.total} 只"
-        if self.running:
-            return f"{self.done}/{self.total} · 正在处理 {self.current}"
-        return self.receipt_text()
-
-    def eta_text(self) -> str:
-        """还剩多久 —— 按**剩余只数**估（不是总数），避免"永远 50 分钟"的劝退式预估。"""
-        if not self.running or not self.total:
-            return ""
-        remain = max(0, self.total - self.done)
-        interval = (self.policy.interval if self.policy is not None
-                    else ThrottlePolicy().interval)
-        return f"约剩 {format_duration(remain * interval)}"
-
-    def receipt_text(self) -> str:
-        """结束回执（成功 / 已最新 / 失败 + 中断原因）。原因只走 `abort_reason_text`。"""
-        s = self.stats or {}
-        base = (f"成功 {s.get('ok', 0)} · 已最新 {s.get('skipped', 0)}"
-                f" · 失败 {s.get('fail', 0)} · 新增 {s.get('added', 0)} 行")
-        spot = int(s.get('spot_hit', 0) or 0)      # ★v1.45：多少只走了 1 次全市场快照秒补
-        if spot:
-            base += f" · 其中 {spot} 只走快照秒补"
-        why = abort_reason_text(s)
-        if why:
-            base = f"已中断：{why}（可再点「更新到最新」续传）· " + base
-        return base
-
-    @property
-    def failures(self) -> list:
-        return list((self.stats or {}).get("symbols_failed") or [])
-
-    @property
-    def hint_text(self) -> str:
-        """有失败才给教学文案（原因只走 `sync_service.failure_hint` 单出口）。"""
-        return failure_hint(self.stats) if self.failures else ""
-
-    def to_dict(self) -> dict:
-        return {"id": self.id, "label": self.label, "origin": self.origin,
-                "status": self.status, "done": self.done, "total": self.total,
-                "current": self.current, "percent": self.percent,
-                "text": self.progress_text(), "eta": self.eta_text(),
-                "receipt": self.receipt_text(), "failed": len(self.failures)}
-
-
 class DownloadHub(QObject):
     """串行下载队列（主窗口持有，与 `engine` 同级；页面经 `main_win.downloads` 取用）。"""
 
@@ -243,6 +111,7 @@ class DownloadHub(QObject):
         self._running: DownloadJob | None = None
         self._worker: SyncWorker | None = None
         self._next_id = 1
+        self._closing = False                       # ★v6.70 §9-F①：退出中 ⇒ 拒收新任务
         # 单只同步的"占位登记"：不排队、不接管回包，只用来避免与批量重复抓同一只
         self._singles: set[tuple[str, str]] = set()
         self._active_flag = False
@@ -260,6 +129,11 @@ class DownloadHub(QObject):
         """
         syms = [str(s).strip() for s in (symbols or []) if str(s).strip()]
         if not syms:
+            return 0
+        if self._closing:
+            # ★v6.70 / §9-F①：退出守卫在分片等待期间会让窗口重画（转一圈事件循环），
+            #   这扇子里“还能投新任务”必须先关掉 —— 否则刚排空的队列会被用户的一次误点重新填上。
+            logger.info(f"正在退出，已拒绝新任务：{label}")
             return 0
         # ★v1.45：未传策略 ⇒ 读全局下载偏好（间隔/抖动/熍断/跳过/并发均一处真源）；
         #   传了策略（目前仅单测/去重验证会传）⇒ 完全尊重它，不再自动升档。
@@ -353,6 +227,37 @@ class DownloadHub(QObject):
         return self.submit(f"重试失败 · {job.label}", job.failures, zone=job.zone,
                            force_full=False, min_date=job.min_date,
                            policy=job.policy, origin=job.origin)
+
+    def continue_unfinished(self, job_id: int) -> int:
+        """★v6.70 / §9-F②：把一条**已结束**任务里“真没碰过”的标的重新入队（同参数）。
+
+        【还的是什么债】旧面板只有「只重试失败」，而“中断时还没轮到的那批”**不在失败清单里**
+        （它们一次请求都没发过）⇒ 批量侧只能用户自己重新提交同范围（靠 `skip_fresh` 续传），
+        属**可发现性**问题，不是数据问题。
+        【口径】只认 `symbols_attempted`（见 `DownloadJob.unprocessed`）；新任务**完全沿用**
+        旧任务的 `zone` / `min_date` / `force_full` / `policy` ⇒ 不会出现“续传换了口径”。
+        :return: 新 job id；0 = 没有可继续的（没这条任务 / 已全部碰过 / 正在退出）。
+        """
+        job = self.get(job_id)
+        if job is None or job.status not in FINISHED_STATUSES:
+            return 0
+        # ★v6.70 加固（二次修改）：上一次续传**还在跑/还在排队** ⇒ 直接把它还给调用方。
+        #   为什么不是"另投一条"：同一批"没轮到的"投两遍 = 白抓一遍（新任务结束 + `force_full`
+        #   时更是整段重下）；而且这对调用方是幂等的（点两下 = 一条任务）。
+        #   ⚠ 只挡"在途"：上一次续传**已经结束**（可能自己也被中断了）⇒ 允许再续一次，
+        #   否则那批"二次中断"剩下的标的就再也没入口了。
+        prev = self.get(job.continued_to) if job.continued_to else None
+        if prev is not None and prev.status not in FINISHED_STATUSES:
+            return prev.id
+        rest = job.unprocessed()
+        if not rest:
+            return 0
+        new_id = self.submit(f"继续未完成 · {job.label}", rest, zone=job.zone,
+                             force_full=job.force_full, min_date=job.min_date,
+                             policy=job.policy, origin=job.origin)
+        if new_id:
+            job.continued_to = new_id      # 面板据此把旧行收成「已续传」（不可点）
+        return new_id
 
     def clear_finished(self) -> None:
         """面板里的「清空已完成」：只动内存，绝不动正在跑与排队的。"""
@@ -486,16 +391,69 @@ class DownloadHub(QObject):
     # ==========================================
     # 退出守卫（主窗口 closeEvent 调用）
     # ==========================================
-    def shutdown(self, wait_ms: int = 15000) -> None:
-        """中断所有任务并等待线程结束。
+    def shutdown(self, wait_ms: int = 15000, tick_ms: int = 250,
+                 on_tick=None) -> bool:
+        """中断所有任务并**分片**等线程结束；超时也不让在跑的 QThread 被销毁。
 
         ⚠ 【为什么必须等】QThread 在运行时被销毁 = 程序崩溃（旧弹窗的 `_try_stop_worker`
           就为这件事写过 15 秒硬等）。这里同样：先请求中断，再等它自己结束。
+        ★v6.70 / §9-F①【为什么改成一片一片等】原先是一次 `worker.wait(15000)` ⇒
+          界面在这 15 秒里**完全不动**（用户以为程序死了，而它其实在等一次网络请求）。
+          现在每 `tick_ms` 醒一次，把“已经等了多久”交给 `on_tick` 去刷“正在停止…”并重画。
+          （`SyncWorker.cancel()` 的标志只在**只与只之间**生效，单次 HTTP 请求不可中断 ⇒
+          预算只需覆盖“当前这一只剩下的那一次请求”，15 秒极少不够。）
+        :param on_tick: 每片回调一次（主窗口用它刷回执 + `processEvents`）；测试可注入计数桩。
+        :return: True = 线程已停干净；False = 超时（已摘 parent + 握住引用）。
         """
+        self._closing = True          # 会转事件循环 ⇒ 先关掉“还能投任务”这扇门
         self.cancel(None)
         worker = self._worker
-        if worker is not None and worker.isRunning():
-            worker.wait(wait_ms)
+        if worker is None or not worker.isRunning():
+            return True
+        waited = 0
+        while worker.isRunning() and waited < wait_ms:
+            worker.wait(tick_ms)
+            waited += tick_ms
+            if on_tick is not None:
+                try:
+                    on_tick(waited)
+                except Exception as e:  # noqa: BLE001 —— 刷提示失败不该拖住退出
+                    logger.warning(f"退出提示回调异常（已忽略，继续等待）: {type(e).__name__}: {e}")
+        if not worker.isRunning():
+            return True
+        # 超时：绝不“带着在跑的线程去销毁”。摘 parent ⇒ 主窗口与 hub 析构碰不到它；
+        # 模块级列表握住 Python 引用 ⇒ 不会被 GC 顺手 delete（两条加起来 = 必崩 → 一条日志）。
+        logger.warning(f"退出时仍有下载在收尾（已等 {waited} ms），已把它脱离窗口生命周期")
+        self._orphan(worker)
+        return False
+
+    def _orphan(self, worker) -> None:
+        """★v6.70 加固（二次修改）：把"超时仍在收尾"的 worker 交给自己管，**跑完自清**。
+
+        三步：① `setParent(None)` 脱离 hub / 主窗口的生命周期；② 挂进模块级 `_ORPHAN_WORKERS`
+        握住 Python 引用；③ `finished` 一到就摘引用 + `deleteLater()` 交还 Qt 回收。
+
+        【为什么必须有 ③】旧版只做了 ①②：列表**只增不减** —— 每次"退出超时"都往里面堆一个
+          跑完的线程对象，引用常驻（内存不回收），C++ 侧也永远等不到删除。次数少看不出，
+          但这是"退出路径上的慢性泄漏"。跑完即摘 ⇒ 列表最终回到空。
+        【安全性】`finished` 是**线程已结束**后才发的 ⇒ 此刻 `deleteLater()` 安全
+          （危险的是"运行中被 delete"，那正是本路径要避免的）。
+        """
+        worker.setParent(None)
+        self._worker = None           # 之后它的 `finished` 迟到也不会再被 `_on_finished` 收
+        _ORPHAN_WORKERS.append(worker)
+        fin = getattr(worker, "finished", None)      # 真 worker 必有；测试假件可能没有
+        if fin is not None:
+            fin.connect(lambda *_, w=worker: self._release_orphan(w))
+
+    @staticmethod
+    def _release_orphan(worker) -> None:
+        """孤儿线程跑完 ⇒ 摘引用 + 交还 Qt（**幂等**：重复回调不会炸）。"""
+        try:
+            _ORPHAN_WORKERS.remove(worker)
+        except ValueError:
+            pass
+        worker.deleteLater()
 
     def has_unfinished(self) -> bool:
         """是否还有未完成（排队或在跑）的任务 —— 主窗口 closeEvent 的退出守卫用。

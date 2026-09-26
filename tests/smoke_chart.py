@@ -4361,30 +4361,33 @@ try:
     _today7 = _dt7.date(2026, 9, 22)          # 已定稿的交易日（当天）
     _prev7 = _dt7.date(2026, 9, 21)           # 上一交易日
 
-    # ---- ① fetch_market_spot_daily 单位归一（命门）----
-    _real_ak7 = _af7.ak
+    # ---- ① fetch_market_spot_daily 单位归一（命门）—— ★v6.69 改走**按标的批量报价** ----
+    # 【打桩点为什么挪】旧实现唯一入口 = `ak.stock_zh_a_spot_em()`（东财**全市场**，内部逐页翻
+    #   ~56 页）；现在入口 = `data/em_market.ulist_page`（一次一批最多 100 只）⇒ 桩挪到**新的
+    #   HTTP 边界**，但断言的是**同一套单位口径**（成交量 手→股、换手率 %→小数）。
+    import data.em_market as _em7
+    import data.em_throttle as _et7
 
-    class _FakeAk7:
-        @staticmethod
-        def stock_zh_a_spot_em():
-            return _pd7.DataFrame({
-                '代码': ['600000', '000001', '600999'],
-                '名称': ['浦发银行', '平安银行', '停牌股'],
-                '今开': [10.0, 11.0, float('nan')],
-                '最高': [10.5, 11.5, float('nan')],
-                '最低': [9.8, 10.8, float('nan')],
-                '最新价': [10.2, 11.2, float('nan')],
-                '成交量': [12345.0, 20000.0, 0.0],        # 东财=手
-                '成交额': [1.28e8, 2.3e8, 0.0],            # 元
-                '换手率': [0.93, 1.55, 0.0],               # 百分数
-                '流通市值': [1.9e10, 2.1e10, 0.0],        # 元
-            })
-
-    _af7.ak = _FakeAk7
+    _et7.reset()
+    _rows7 = [
+        {'f12': '600000', 'f14': '浦发银行', 'f2': 10.2, 'f17': 10.0, 'f15': 10.5, 'f16': 9.8,
+         'f18': 10.0, 'f5': 12345.0, 'f6': 1.28e8, 'f8': 0.93, 'f9': 4.8, 'f20': 2.9e11,
+         'f21': 1.9e10, 'f23': 0.4},
+        {'f12': '000001', 'f14': '平安银行', 'f2': 11.2, 'f17': 11.0, 'f15': 11.5, 'f16': 10.8,
+         'f18': 11.0, 'f5': 20000.0, 'f6': 2.3e8, 'f8': 1.55, 'f9': 4.3, 'f20': 2.2e11,
+         'f21': 2.1e10, 'f23': 0.5},
+        {'f12': '600999', 'f14': '停牌股', 'f2': '-', 'f17': '-', 'f15': '-', 'f16': '-',
+         'f18': 8.0, 'f5': 0.0, 'f6': 0.0, 'f8': 0.0, 'f9': '-', 'f20': 1.0e10,
+         'f21': 1.0e10, 'f23': '-'},
+    ]
+    _asked7 = []
+    _real_ulist7 = _em7.ulist_page
+    _real_clist7 = _em7.clist_page
+    _em7.ulist_page = lambda codes: (_asked7.append(list(codes)), list(_rows7))[1]
     try:
-        _snap7 = _AF7.fetch_market_spot_daily()
+        _snap7 = _AF7.fetch_market_spot_daily(['600000', '000001', '600999'])
     finally:
-        _af7.ak = _real_ak7
+        _em7.ulist_page = _real_ulist7
     _r7 = _snap7.set_index('symbol') if not _snap7.empty else _snap7
     check("★ spot 列集合 ⊆ 白名单且不含 date（‘该算哪天’由上层定）",
           not _snap7.empty and set(_snap7.columns) <= set(_SDK7) and 'date' not in _snap7.columns)
@@ -4398,6 +4401,71 @@ try:
           and abs(float(_r7.loc['600000', 'outstanding_share']) - 1.9e10) < 1e-2)
     check("★ 停牌行（最新价缺）被拦下、不进快照（同一道物理护栏）",
           '600999' not in _r7.index)
+
+    # ---- ★v6.69：**按标的批量**（本轮治"额度被自己打光"的那一刀）----
+    check("★ v6.69：只问**清单里的标的**（1 个请求覆盖 3 只；旧版是东财内部翻 ~56 页）",
+          _asked7 == [['600000', '000001', '600999']])
+    check("★ v6.69：无清单 ⇒ **不联网**回空表（本通道不做「全市场一把抓」，上层诚实回退逐只）",
+          _AF7.fetch_market_spot_daily().empty and _AF7.fetch_market_spot_valuation().empty)
+    check("★ v6.69：`secid` 寻址（沪 1. / 深 0.）—— 批量报价的代码口径",
+          _em7.secid('600000') == '1.600000' and _em7.secid('000001') == '0.000001'
+          and _em7.secid('300750') == '0.300750')
+    _asked7b = []
+    _em7.ulist_page = lambda codes: (_asked7b.append(list(codes)), list(_rows7))[1]
+    try:
+        _q7 = _em7.fetch_quotes([f'{i:06d}' for i in range(1, 251)], sleep_fn=lambda _s: None)
+    finally:
+        _em7.ulist_page = _real_ulist7
+    check("★ v6.69：250 只 ⇒ 按 `QUOTE_BATCH_SIZE=100` **分 3 包**（不是 250 个请求）",
+          [len(c) for c in _asked7b] == [100, 100, 50])
+    _q7r = _q7.drop_duplicates(subset='symbol', keep='first').set_index('symbol')
+    check("★ v6.69：批量报价同时带出**估值列**（pe/pb/总市值）—— 估值与秒补共用一条通道",
+          abs(float(_q7r.loc['600000', 'pe']) - 4.8) < 1e-9
+          and abs(float(_q7r.loc['600000', 'pb']) - 0.4) < 1e-9
+          and abs(float(_q7r.loc['600000', 'total_mktcap']) - 2.9e11) < 1.0)
+    _asked7c = []
+    _em7.ulist_page = lambda codes: (_asked7c.append(list(codes)), list(_rows7))[1]
+    try:
+        _em7.fetch_quotes(['600000'] * 5, sleep_fn=lambda _s: None)
+    finally:
+        _em7.ulist_page = _real_ulist7
+    check("★ v6.69：清单里的重复代码只发 1 次（去重保序）", _asked7c == [['600000']])
+
+    # ---- ★v6.69：失败 ⇒ **退避冷却**（不再"越点越死"）；冷却期内一条请求都不打 ----
+    _et7.reset()
+    _em7.ulist_page = lambda codes: (_ for _ in ()).throw(RuntimeError('模拟风控'))
+    try:
+        _q7b = _em7.fetch_quotes(['600000'], sleep_fn=lambda _s: None)
+    finally:
+        _em7.ulist_page = _real_ulist7
+    _left7 = _et7.cooldown_left()
+    check("★ v6.69：取数失败 ⇒ 记一笔退避（首败冷却 10 分钟）+ 交回空表（**不上抛**）",
+          _q7b.empty and 9 * 60 < _left7 <= 10 * 60 and '冷却' in _et7.describe())
+    _asked7d = []
+    _em7.clist_page = lambda page, pz=100: (_asked7d.append(page), ([], 0))[1]
+    try:
+        _r68c = _em7.fetch_industry_page(1, 3, sleep_fn=lambda _s: None)
+    finally:
+        _em7.clist_page = _real_clist7
+    check("★ v6.69：冷却期内**连第 1 页都不打**（旧版每次扫描都重打第一页 ⇒ 越点越死）",
+          _asked7d == [] and _r68c['map'] == {} and _r68c['pages_done'] == 0
+          and '冷却' in _r68c['error'])
+    _et7.note_success()
+    check("★ v6.69：成功一次即**清零**（额度是「连打才拒」，能过一次就说明窗已恢复）",
+          _et7.cooldown_left() == 0 and _et7.is_cooling() is False)
+
+    # ---- ★v6.69：`should_stop` ⇒ **页与页之间**收手（关窗取消不必等整批跑完）----
+    _stop_pages7 = []
+    _em7.clist_page = lambda page, pz=100: (
+        _stop_pages7.append(page), ([{'f12': '600000', 'f14': 'x', 'f100': '银行'}], 5000))[1]
+    try:
+        _r7s = _em7.fetch_industry_page(1, 8, sleep_fn=lambda _s: None,
+                                       should_stop=lambda: len(_stop_pages7) >= 2)
+    finally:
+        _em7.clist_page = _real_clist7
+    check("★ v6.69：`should_stop` 在页与页之间生效（取消后最多多等一个页间隔）",
+          _stop_pages7 == [1, 2] and _r7s['pages_done'] == 2)
+    _et7.reset()          # ⚠ 收尾：绝不给用户的应用留一个"冷却中"（否则下次扫描会拒抓）
 
     # ---- ② refresh_one 的 spot 快路径（只补当天 / 不造假 / 幂等 / 分区限定）----
     class _MemLake7:

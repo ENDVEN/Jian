@@ -17,15 +17,14 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QPlainTextEdit, QSizePolicy)
 
-from ui.widgets.custom_widgets import mono_font_css   # ★v1.46 §10-15 开源等宽栈（唯一出口）
+from ui.widgets.custom_widgets import (FLAT_QSS_DANGER,   # ★v6.70 §9-F③ 样式唯一出口
+                                        mono_font_css)     # ★v1.46 §10-15 开源等宽栈
 
 _EDITOR_QSS = ("QPlainTextEdit { " + mono_font_css() + " "
                "font-size: 13px; border: 1px solid #E0E4EC; border-radius: 8px; "
                "background: #FAFBFD; padding: 6px; }")
 _HEADER_QSS = ("QLabel { font-size: 12px; font-weight: bold; color: #8A94A6; }")
-_FLAT_QSS = ("QPushButton { color: #8A94A6; background: transparent; border: none; "
-             "padding: 2px 6px; font-weight: bold; border-radius: 6px; font-size: 11px; }"
-             "QPushButton:hover { color: #F44336; background: #FDECEA; }")
+# 删段小钮（常态灰字、悬停转红 = 危险动作的语言）= custom_widgets.FLAT_QSS_DANGER
 
 
 class FunctionSegments(QWidget):
@@ -113,7 +112,7 @@ class FunctionSegments(QWidget):
                 wrap.accessory = accessory
                 head.addWidget(accessory)
         btn_del = QPushButton("✕ 删除该段")
-        btn_del.setStyleSheet(_FLAT_QSS)
+        btn_del.setStyleSheet(FLAT_QSS_DANGER)
         btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_del.clicked.connect(lambda: self._remove_segment(wrap))
         head.addWidget(btn_del)

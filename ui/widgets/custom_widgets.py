@@ -319,6 +319,63 @@ DIALOG_INPUT_QSS = (                                              # 手工录入
 )
 
 # ==========================================
+# 按钮家族：扁平（flat）与描边（outline）
+# ==========================================
+# ★v6.70 / §9-F③「`FLAT_QSS` 归属漂移」还账：原先定义住在 `backtest_panes.py`（名字带
+# “回测”，实际被 M2/M3 版式、下载条、队列面板、回测页共 6 处引用），另有 **4 处私有副本**
+# （`condition_gate` / `function_segments` / `data_manager` / `backtest_history_ui`）——
+# 同一个名字四种写法，就是 §10-9「同类控件同一张脸」的长期回归点。
+# 【本轮只统一结构，不改观感】它们**本来就不是同一种按钮**（内边距 / 圆角 / 字号 / 悬停色
+# 各异），所以硬并成一个常量= 视觉上改东西。⇒ 用**一个生成器 + 命名变体**收编：
+#   定义只在此处一份，想要哪种“脸”就引哪个名字；**新增按钮一律从这里取，不许再开私有副本**。
+# 【为什么生成器能保持像素不变】CSS 的空白与分号不影响渲染（原副本里 `color:#1976D2` 与
+#   `color: #1976D2` 混用）⇒ 统一排版 = 同一张脸；**颜色值 / 尺寸 / 字号 / 悬停态逐项照旧**。
+FLAT_BLUE = "#1976D2"          # 主强调蓝（与 K 线主题、`RECIPE_BADGE_MAIN` 同源）
+FLAT_MUTED = "#8A94A6"         # 弱化行内动作（删除段 / 附属小件）
+FLAT_HOVER_BG = "#EEF4FD"      # flat 家族通用悬停底（浅蓝）
+FLAT_DISABLED = "#B4BECB"      # flat 家族通用禁用字色
+
+
+def flat_qss(*, color: str = FLAT_BLUE, padding: str = "0 8px", radius: int = 8,
+             font_size: int = None, hover_bg: str = FLAT_HOVER_BG,
+             hover_color: str = None, disabled_color: str = FLAT_DISABLED) -> str:
+    """**文字型（无底无框）按钮**的完整 QSS —— 唯一生成处。
+
+    只给 `QPushButton` 本体与 `:hover` / `:disabled` 状态（无子控件 ⇒ 不踩 §10-9“半截 QSS”）。
+    :param hover_color: 悬停换字色（“删除”类按钮用红色告警）；None ⇒ 只换底色。
+    :param disabled_color: None ⇒ 不写 disabled 态（紧凑行内按钮家族）。
+    """
+    qss = (f"QPushButton {{ color: {color}; background: transparent; border: none;"
+           f" padding: {padding}; font-weight: bold; border-radius: {radius}px;")
+    if font_size:
+        qss += f" font-size: {font_size}px;"
+    qss += f" }} QPushButton:hover {{ background: {hover_bg};"
+    if hover_color:
+        qss += f" color: {hover_color};"
+    qss += " }"
+    if disabled_color:
+        qss += f" QPushButton:disabled {{ color: {disabled_color}; }}"
+    return qss
+
+
+FLAT_QSS = flat_qss()                                     # 标准行内动作（原 `backtest_panes` 值）
+FLAT_QSS_WIDE = flat_qss(padding="0 10px", radius=6)       # 数据管理页：稍宽 + 小圆角
+FLAT_QSS_SMALL = flat_qss(padding="0 6px", radius=6,       # 条件门控行：紧凑、无禁用态
+                          font_size=12, disabled_color=None)
+FLAT_QSS_DANGER = flat_qss(color=FLAT_MUTED,               # 删段小钮：静置灰字、悬停转红
+                           padding="2px 6px", radius=6, font_size=11,
+                           hover_bg="#FDECEA", hover_color="#F44336", disabled_color=None)
+# 描边次级按钮（“实体但低调”）：旧副本叫 `_FLAT_QSS`，可它**有底有框**、不属 flat 家族
+# ⇒ 收编时正名为 `OUTLINE_QSS`，**不要把两种形状当“配色漂移”强成一张脸**。
+OUTLINE_QSS = ("QPushButton { border: 1px solid #E4E9F0; background: #fff; border-radius: 8px;"
+               " padding: 6px 12px; font-size: 13px; color: #1F2430; }"
+               "QPushButton:hover { background: #F3F8FE; border-color: #BBDEFB;"
+               " color: #1976D2; }"
+               "QPushButton:disabled { color: #B8C2D0; background: #F5F6F8;"
+               " border-color: #EDF0F5; }")
+
+
+# ==========================================
 # 表单小构件（v6.21 · §7-B6 STEP 1 上收：原先住在 `backtest_panes.py`）
 # ==========================================
 # 【为什么上收】行情工作台收口（§7-B6）也要用这两个构件；而"同一手法"在

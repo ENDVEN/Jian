@@ -157,8 +157,17 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          改为**同端点分页直取 `f100`**：`fetch_industry_page`（单页 100、全市场 ~56 页）+ 每批 8 页
 #          + 页间隔 0.5s + 进度存 `preferences['industry_fetch']`（**断点续抓**）+ `IndustryStore.merge`
 #          分批入库（空值不覆盖）⇒ 分几次扫描摊平、补齐后零请求。坑 = §11.5-98/99。smoke 869 / 727。
+#   1.53 = 东财额度「不再自己打光」（用户实测：行业列仍空，日志两条相隔 7 秒一起失败）：
+#          真因 = 一次扫描完成**同时**起两串"全市场"请求 —— 行业分页（1.52）+ `ak.stock_zh_a_spot_em`
+#          的**隐藏 ~56 页突发**（akshare 源码 pz=100 + 逐页翻）⇒ 匿名频次窗被自己打光（§11.5-100）。
+#          ① 东财取数整块搬 `data/em_market.py`：分页 `clist`（行业）+ **批量报价 `ulist.np/get`**
+#             （一次 100 只，估值/秒补共用；实测 f9/f20/f21/f23 + 价量一次全给）⇒ 估值与秒补**按标的取**
+#             （单只 1 个请求，不再是 56 页）；② `data/em_throttle.py` 失败退避（10→20→40→60 分钟、
+#             成功清零、跨重启、冷却期不联网 + 回执说"还要等多久"）；③ 行业每批 8→3 页；
+#             ④ 关窗 `main_window._shutdown_background_threads()` 统一 cancel+wait 所有 QThread。
+#          smoke 879 / 732。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.52"
+APP_VERSION = "1.53"
 
 # ==========================================
 # 界面配置 (UI Settings)

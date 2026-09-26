@@ -28,7 +28,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QTableWidgetItem, QHeaderView, QPushButton,
                              QLineEdit, QMessageBox, QInputDialog)
 from PyQt6.QtGui import QColor, QFont
-from ui.widgets.custom_widgets import ui_painter_font   # ★v1.46 §10-15 开源字体栈（唯一出口）
+from ui.widgets.custom_widgets import (FLAT_QSS_WIDE,      # ★v6.70 §9-F③ 样式唯一出口
+                                        ui_painter_font)    # ★v1.46 §10-15 开源字体栈
 
 from data.market_db import DataLakeManager
 from data.sync_service import (MarketSyncService, ZONE_KLINE, ZONE_KLINE_RAW,
@@ -58,10 +59,7 @@ _COLUMNS = ["☑", "标的", "行数", "起始", "结束", "大小", "更新时�
 _COL_CHECK, _COL_NAME = 0, 1
 
 _CARD_QSS = "QFrame { background: white; border: 1px solid #E7EAF0; border-radius: 10px; }"
-_FLAT_QSS = ("QPushButton { color:#1976D2; background:transparent; border:none; "
-             "padding:0 10px; font-weight:bold; border-radius:6px; }"
-             "QPushButton:hover { background:#EEF4FD; }"
-             "QPushButton:disabled { color:#B4BECB; }")
+# 顶部操作条按钮（刷新 / 全选 / 清空 / 同步 / 重下）：样式 = custom_widgets.FLAT_QSS_WIDE
 
 
 def _fmt_bytes(num) -> str:
@@ -120,7 +118,7 @@ class DataManagerView(QWidget):
         head.addStretch()
 
         self.btn_rescan = QPushButton("🔄 重新扫描")
-        self.btn_rescan.setStyleSheet(_FLAT_QSS)
+        self.btn_rescan.setStyleSheet(FLAT_QSS_WIDE)
         self.btn_rescan.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_rescan.clicked.connect(self._rescan)
         head.addWidget(self.btn_rescan)
@@ -189,11 +187,11 @@ class DataManagerView(QWidget):
         self.txt_filter.textChanged.connect(self._render_items)
         tools.addWidget(self.txt_filter)
         self.btn_select_all = QPushButton("全选")
-        self.btn_select_all.setStyleSheet(_FLAT_QSS)
+        self.btn_select_all.setStyleSheet(FLAT_QSS_WIDE)
         self.btn_select_all.clicked.connect(lambda: self._set_all_checked(True))
         tools.addWidget(self.btn_select_all)
         self.btn_select_none = QPushButton("取消")
-        self.btn_select_none.setStyleSheet(_FLAT_QSS)
+        self.btn_select_none.setStyleSheet(FLAT_QSS_WIDE)
         self.btn_select_none.clicked.connect(lambda: self._set_all_checked(False))
         tools.addWidget(self.btn_select_none)
         right_lay.addLayout(tools)
@@ -232,7 +230,7 @@ class DataManagerView(QWidget):
         ops.addSpacing(10)
         # ★v1.45：独立的“同步间隔”旋钮已去掉 —— 参数收进全局下载偏好（一处调、处处生效）。
         self.btn_settings = QPushButton("⚙ 下载设置…")
-        self.btn_settings.setStyleSheet(_FLAT_QSS)
+        self.btn_settings.setStyleSheet(FLAT_QSS_WIDE)
         self.btn_settings.setToolTip(
             "间隔 / 抖动 / 连续失败熍断 / 跳过已最新 / 并发数 —— 全局统一，"
             "改一次对所有下载入口生效（含批量预下载、全市场筛选/广度统计）。")
@@ -241,7 +239,7 @@ class DataManagerView(QWidget):
         ops.addStretch()
 
         self.btn_sync = QPushButton("🔄 更新到最新")
-        self.btn_sync.setStyleSheet(_FLAT_QSS)
+        self.btn_sync.setStyleSheet(FLAT_QSS_WIDE)
         self.btn_sync.setToolTip(
             "只下载本地缺失的最新几天数据，速度很快，是日常更新方式。\n"
             "已是最新的标的自动跳过；休市/未开盘时按「已是最新」处理，不算失败。")
@@ -249,7 +247,7 @@ class DataManagerView(QWidget):
         ops.addWidget(self.btn_sync)
 
         self.btn_force = QPushButton("⟳ 重新全量下载")
-        self.btn_force.setStyleSheet(_FLAT_QSS)
+        self.btn_force.setStyleSheet(FLAT_QSS_WIDE)
         self.btn_force.setToolTip(
             "丢弃本地已有数据，从 2010-01-01 起整段重新下载，耗时较长，日常不需要。\n"
             "仅在怀疑数据被「前复权修正」搞坏、或本地数据异常时才用 —— "

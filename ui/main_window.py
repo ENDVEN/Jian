@@ -1,10 +1,12 @@
 # ui/main_window.py
+import logging
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
                              QVBoxLayout, QPushButton, QFrame, QStackedWidget,
-                             QDialog, QMessageBox, QFileDialog, QLabel)
+                             QDialog, QMessageBox, QFileDialog, QLabel,
+                             QApplication)
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QEventLoop, Qt, QThread, QUrl
 
 from config import settings
 from core.analyzer import TradeAnalyzer
@@ -30,6 +32,9 @@ from ui.dialogs.list_manager import ListManagerDialog
 from ui.dialogs.manual_entry import ManualEntryDialog
 from ui.dialogs.import_futures import FuturesImportDialog
 
+logger = logging.getLogger(__name__)
+
+
 class JianMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -53,6 +58,8 @@ class JianMainWindow(QMainWindow):
         #   任务归属搬到这一层后：弹窗只收集参数，下载与界面解绑，切页/关窗都不影响它。
         # ⚠ 必须在各页面**构造之前**建好（页面构造期就可能取 `main_win.downloads`）。
         self.downloads = DownloadHub(self)
+        # ★v6.70 / §9-F①：关窗重入闸门（退出等待现在会转事件循环，不再有“物理上不可能重入”）
+        self._exiting = False
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -226,21 +233,89 @@ class JianMainWindow(QMainWindow):
         ⚠ 【为什么必须等】QThread 运行中被销毁 = 崩溃。旧弹窗为这件事写过
           "中断 + wait(15s)"（`bulk_download._try_stop_worker`）；任务搬到 hub 后，
           同样的约束落在主窗口上（hub 是 worker 的 parent）。
+        ⚠ 【为什么要 `_exiting` 闸门（★v6.70 / §9-F①）】等待从“一次 `wait(15s)` 阻塞”
+          改成“分片 + `processEvents`”后，关闭期间事件循环仍在转 ⇒ 用户再点一次 X 会
+          **重入本函数**（旧形态下不可能）。重入直接忽略 —— 否则会弹第二个确认框、
+          再套一层等待（而第二层里 `QApplication.processEvents()` 就是无限套娃的入口）。
         """
-        if self.downloads.has_unfinished():
-            n = self.downloads.pending_count()
-            reply = QMessageBox.question(
-                self, "下载仍在进行",
-                f"还有 {n} 个下载任务在跑。\n\n"
-                "退出会中断它们（已下载的部分会保留，下次重跑同范围会自动跳过）。\n"
-                "确定现在退出吗？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No)
-            if reply != QMessageBox.StandardButton.Yes:
-                event.ignore()
-                return
-        self.downloads.shutdown()
-        super().closeEvent(event)
+        if self._exiting:
+            event.ignore()                # 已经在关了，忽略重入的关闭请求
+            return
+        self._exiting = True
+        try:
+            if self.downloads.has_unfinished():
+                n = self.downloads.pending_count()
+                reply = QMessageBox.question(
+                    self, "下载仍在进行",
+                    f"还有 {n} 个下载任务在跑。\n\n"
+                    "退出会中断它们（已下载的部分会保留，下次重跑同范围会自动跳过）。\n"
+                    "确定现在退出吗？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    event.ignore()
+                    return
+            # ★v6.70 / §9-F①：先等队列（它会刷“正在停止…”），再扫其余页面级 worker。
+            #   顺序不能反：`_shutdown_background_threads` 对每个在跑线程是一次性
+            #   `wait(3000)` 的静默阻塞，排在前面就等于“先闷三秒再说话”——
+            #   而下载 worker 本来就是 hub 的孩子，hub 先停干净后它已不在跑，后排自然跳过。
+            self._wait_downloads_to_stop()
+            self._shutdown_background_threads(on_wait=self._paint_stopping)
+            super().closeEvent(event)
+        finally:
+            self._exiting = False         # “不退出”那条路要能把闸门放下（下次还能正常关）
+
+    def _paint_stopping(self, waited_ms: int = 0) -> None:
+        """把「正在停止…」画出来并转一拍事件循环（§9-F①：退出等待不再是静默阻塞）。
+
+        ★v6.70 加固（二次修改）：`processEvents` 显式**挡掉用户输入**
+        （`ExcludeUserInputEvents`）—— 分片等待期间转循环，若还收鼠标/键盘事件，用户能在
+        "正在退出"的窗口上点出新动作（新任务入口虽被 `hub._closing` 关掉，别的按钮不收：
+        例如页面「更新到最新」会把页面置成"进行中"却永远等不到回包）。
+        **退出路径上只许看、不许动**；重画与排队的信号照常投递（回执要能刷出来）。
+        """
+        self.download_bar.show_stopping(waited_ms)
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _wait_downloads_to_stop(self) -> None:
+        """★v6.70 / §9-F①：分片等后台下载停手，**并让“正在停止…”真画出来**。
+
+        【还的是什么债】旧版直接 `hub.shutdown()` = 主线程一次 `wait(15000)`：
+        期间界面完全不动，用户无法区分“正在收尾”与“程序死了”。
+        现在 hub 每片醒一次回调 `_tick`，刷回执 + 转一拍事件循环。
+        重入安全靠两层：本函数只从 `closeEvent`（已带 `_exiting` 闸门）进来，
+        且 `hub._closing` 已置位 ⇒ 转循环期间新任务会被 `submit()` 直接拒收。
+        """
+        if not self.downloads.shutdown(on_tick=self._paint_stopping):
+            # 超时：hub 已把这只线程摘 parent + 握住引用（不会带着它在跑的线程去销毁）。
+            #   对用户只说一句人话，并给出路 —— 下次重跑同范围会从断点续上。
+            self.download_bar.lbl_name.setToolTip(
+                "还有一只请求没回来，已让它脱离窗口生命周期（不影响下次续传）")
+
+    def _shutdown_background_threads(self, timeout_ms: int = 3000, on_wait=None) -> None:
+        """★v6.69：关窗前**取消并等停**所有在跑的 QThread（行业分页 / 估值快照 / 扫描体…）。
+
+        【为什么必须做】用户实测日志里出现过
+          `QThread: Destroyed while thread '' is still running`
+        —— 那是**页面销毁时后台 worker 还在跑**（行业分页一批 3 页 × 0.5s 间隔 ≈ 2~3 秒，
+        刚好落在"点完扫描就关窗"的时间窗里）。Qt 对"运行中的 QThread 被销毁"是**硬崩级**
+        （与 §11.5-95 那次偶发 fastfail 同源），所以这里统一收口：
+        `cancel()`（各 worker 自己实现，页与页之间生效）+ `wait()`（等它真退出）。
+        找不到的对象（无 parent 的线程）不在 `findChildren` 里 —— 那是它们自己的责任，
+        本函数至少保证**页面持有的**那些不会带病销毁。
+        """
+        for thread in self.findChildren(QThread):
+            if not thread.isRunning():
+                continue
+            cancel = getattr(thread, 'cancel', None)
+            if callable(cancel):
+                try:
+                    cancel()
+                except Exception as e:  # noqa: BLE001 —— 取消失败不该拦住关窗
+                    logger.warning(f"取消后台线程失败({type(thread).__name__}): {e}")
+            if on_wait is not None:
+                on_wait()                 # ★v6.70 §9-F①：等之前先把“正在停止…”画出来
+            thread.wait(timeout_ms)
 
     def send_formula_to_backtest(self, segments, params_text: str = "") -> int:
         """行情页 → 回测页：把函数送进①函数段编辑区并切页，返回段数（0 = 内容为空）。

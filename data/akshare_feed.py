@@ -5,27 +5,16 @@ import logging
 import time
 from datetime import datetime
 
-import requests
-
 from core.utils import MINUTE_PERIODS, normalize_period
+from data import em_market
 
-# ★v6.68 / §11.5-99：全市场「代码→所属行业」的**分页直取**（东财 push2 列表的 `f100` 字段）。
-# 【为什么要它】旧写法 = 1 次板块清单 + **逐板块取成分 ≈ 80+ 次连击** ⇒ 正踩东财"匿名高频"
-#   风控（实测：连打几十次后该端点对**匿名**请求整段拒绝，静置约 30 分钟自动恢复；带登录 Cookie
-#   可豁免，但**绝不把登录做成产品依赖**）。而 `f100` 就在与"全市场快照 / 估值"**同源同端点**的
-#   列表里 ⇒ 不再需要"逐板块"这层放大，且**每批只抓几页**可分次摊平。
-# 【两个实测硬约束】① 单页 `pz` 上限 = **100 行**（请求 1000 也只回 100）；② 全市场 ~5560 只
-#   ⇒ **~56 页** ⇒ 必须分批 + 页间隔，否则一次连打仍会撞风控。
-INDUSTRY_PAGE_SIZE = 100
-INDUSTRY_HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                   "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "zh-CN,zh;q=0.9",
-    "Referer": "https://quote.eastmoney.com/",
-}
-# 全市场 A 股（沪主板/深主板/创业板/科创板 + 北交所）—— 与"快照/估值"同一 `fs`
-INDUSTRY_FS_A = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+# ★v6.69：东财 `push2` 的**两条取数通道**（分页全市场列表 / 批量报价）已整块搬到
+#   `data/em_market.py`（§11.7：本文件再长就该分文件），退避闸门在 `data/em_throttle.py`。
+#   唯一变化是**规模**：企业版旧写法每次同步/扫描都会翻 ~56 页的全市场列表，
+#   而新的批量报价**按标的取**（单只 1 个请求）⇒ 不再与行业分页互抢匿名额度（§11.5-100）。
+#   下面两个常量保留为**别名**（旧调用点/文档/断言仍可引用，语义与 em_market 同源）。
+INDUSTRY_PAGE_SIZE = em_market.EM_PAGE_SIZE
+INDUSTRY_FS_A = em_market.EM_FS_A
 
 # 系统内部统一的标准量价列名 (Canonical OHLCV Schema)
 OHLCV_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume']
@@ -268,63 +257,44 @@ class AkShareFeed:
             return pd.DataFrame()
 
     @staticmethod
-    def fetch_market_spot_daily() -> pd.DataFrame:
-        """★v1.45 / §7-B11 后续：**1 次请求**拿全市场"当天"日线快照（供秒补当天这一根）。
+    def fetch_market_spot_daily(symbols=None) -> pd.DataFrame:
+        """★v6.69 / §7-B11 后续：**按标的**批量取"当天"日线快照（供秒补当天这一根）。
 
-        唯一入口 = `ak.stock_zh_a_spot_em()`（与花名册同源，本模块已在用，只是多取几列）。
+        【为什么改】旧写法 = `ak.stock_zh_a_spot_em()` —— 它内部 `pz=100` + **逐页翻**，
+          **本身就是一串 ~56 页的隐藏突发**；而它与行业分页**同时开火**（一次扫描完成起两串）
+          ⇒ 把东财**匿名额度**自己打光（§11.5-100，用户实测两条 4 秒内一起失败）。
+          新写法走 `em_market.fetch_quotes()`：**一次可带 100 只** ⇒ 单只同步 = **1 个请求**、
+          几百只池子 = 2~3 个请求（东财 `ulist.np/get` 实测字段齐全）。
+        :param symbols: 标的清单；**None/空 ⇒ 回空表**（本通道不做"全市场一把抓"；
+                        调用方据此诚实回退逐只真拉，绝不因快照挂了而中断整批）
         返回标准列 `SPOT_DAILY_KEEP`（**不含 date**，"该算哪天"由上层用真交易日历决定）；
         成交量已×`EM_VOLUME_UNIT`换算成股、换手率已÷100 归一为小数，非正价/缺价行已剔除。
         ⚠ 本方只做"取数 + 单位归一"这一件事；能否落库/落到哪个分区/定稿与否全在上层。
-        失败（网络/接口变更）⇒ 回**空表**（上层据此诚实回退逐只，绝不上抛）。
         """
-        try:
-            df = ak.stock_zh_a_spot_em()
-        except Exception as e:  # noqa: BLE001 —— 快照失败由上层诚实回退逐只，绝不上抛
-            logging.warning(f"全市场快照(spot_em)失败: {e}")
+        df = em_market.fetch_quotes(symbols)
+        if df is None or df.empty:
             return pd.DataFrame(columns=list(SPOT_DAILY_KEEP))
-        if df is None or df.empty or '代码' not in df.columns:
-            return pd.DataFrame(columns=list(SPOT_DAILY_KEEP))
-        out = df.rename(columns=SPOT_DAILY_RENAME)
-        out = out[[c for c in SPOT_DAILY_KEEP if c in out.columns]].copy()
+        out = df[[c for c in SPOT_DAILY_KEEP if c in df.columns]].copy()
         if out.empty:                                    # 一个受支持列都没映上 ⇒ 诚实回空
             return pd.DataFrame(columns=list(SPOT_DAILY_KEEP))
-        # 只留 6 位数字代码（挡掉指数/异常行）
-        out = out[out['symbol'].astype(str).str.match(r'^\d{6}$')]
-        for col in ('open', 'high', 'low', 'close', 'volume', 'amount',
-                    'turnover', 'outstanding_share', 'prev_close'):
-            if col in out.columns:
-                out[col] = pd.to_numeric(out[col], errors='coerce')
-        # 单位归一（命门，见模块常量注释）：只在列存在时做，绝不凭空造列
-        if 'volume' in out.columns:
-            out['volume'] = out['volume'] * EM_VOLUME_UNIT       # 手 → 股
-        if 'turnover' in out.columns:
-            out['turnover'] = out['turnover'] / 100.0            # 百分数 → 小数
-        out = drop_unusable_price_rows(out, "spot全市场快照")     # 同一道物理护栏
+        out = drop_unusable_price_rows(out, "spot批量报价")   # 同一道物理护栏
         return out.reset_index(drop=True)
 
     @staticmethod
-    def fetch_market_spot_valuation() -> pd.DataFrame:
-        """★P5：1 次请求拿全市场**当前估值快照**（市盈率-动态/市净率/总市值），供 M2 B 层列。
+    def fetch_market_spot_valuation(symbols=None) -> pd.DataFrame:
+        """★v6.69：**按标的**批量取当前估值（市盈率-动态/市净率/总市值），供 M2 B 层列。
 
         返回列 `SPOT_VALUATION_KEEP`（symbol + pe + pb + total_mktcap，元）。**这是"当前值"、
         不是历史** ⇒ 上层只在基准日==数据最新交易日时才用，否则 '—'。
-        ⚠ 不进 kline_daily（非价量 bar）；失败（网络/接口变更）⇒ 回**空表**（上层诚实留空）。
+        `symbols` 为空 ⇒ 回空表（不联网）；失败（网络/接口变更）⇒ 回**空表**（上层诚实留空）。
+        ⚠ 不进 kline_daily（非价量 bar）。
         """
-        try:
-            df = ak.stock_zh_a_spot_em()
-        except Exception as e:  # noqa: BLE001 —— 估值快照失败由上层诚实留空，绝不上抛
-            logging.warning(f"全市场估值快照(spot_em)失败: {e}")
+        df = em_market.fetch_quotes(symbols)
+        if df is None or df.empty:
             return pd.DataFrame(columns=list(SPOT_VALUATION_KEEP))
-        if df is None or df.empty or '代码' not in df.columns:
-            return pd.DataFrame(columns=list(SPOT_VALUATION_KEEP))
-        out = df.rename(columns=SPOT_VALUATION_RENAME)
-        out = out[[c for c in SPOT_VALUATION_KEEP if c in out.columns]].copy()
+        out = df[[c for c in SPOT_VALUATION_KEEP if c in df.columns]].copy()
         if 'symbol' not in out.columns or out.empty:
             return pd.DataFrame(columns=list(SPOT_VALUATION_KEEP))
-        out = out[out['symbol'].astype(str).str.match(r'^\d{6}$')]
-        for col in ('pe', 'pb', 'total_mktcap'):
-            if col in out.columns:
-                out[col] = pd.to_numeric(out[col], errors='coerce')
         return out.reset_index(drop=True)
 
     @staticmethod
@@ -358,59 +328,18 @@ class AkShareFeed:
 
     # ==========================================
     # ★v6.68：全市场「代码→行业」**分页直取**（替代上面的 80+ 连击）
+    #   ★v6.69：实现整块搬到 `data/em_market.py`（本文件只留门面）—— 同一份退避闸门
+    #   （`data/em_throttle.py`）管住"分页通道"与"批量报价通道"，别再各写一套。
     # ==========================================
     @staticmethod
-    def fetch_industry_page(page_start: int = 1, pages: int = 1,
-                            sleep_fn=time.sleep, interval: float = 0.5) -> dict:
-        """从东财 `push2 clist` 分页取**全市场**「代码→所属行业」（字段 `f100`）。
+    def fetch_industry_page(page_start: int = 1, pages: int = 1, **kwargs) -> dict:
+        """全市场「代码→所属行业」**分页直取**（东财 `clist` 的 `f100`）—— 转发 `data/em_market`。
 
-        【两个实测硬约束】单页上限 **100 行**；全市场 ~5560 只 ⇒ **~56 页** ⇒ 上层必须**分批**
-          （`pages` 控制本次抓几页），一次连打 56 次照样撞风控（§11.5-99）。
-
-        :param page_start: 从第几页开始（1-based）—— **断点续抓**用
-        :param pages:      本次最多抓几页（上层按"每次扫描补几页"摊平）
-        :param sleep_fn:   页间等待（可注入；测试传 `lambda _s: None`）
-        :param interval:   页间间隔秒（默认 0.5s）
-        :return: `{"map": {code: 行业}, "page_start", "pages_done", "total_pages", "done"}`
-        ⚠ 失败（网络/风控/接口变更）⇒ `map` 为空 dict、`done=False`，**绝不上抛**（上层保留旧缓存 + 出声）
+        **契约不变**（老调用点/断言无需改）：分批（`pages`）、页间隔、单页失败**不上抛**，
+        返回 `{"map", "page_start", "pages_done", "total_pages", "done", "error"}`；
+        `kwargs` 可传 `sleep_fn` / `interval` / `should_stop`（关窗取消用）。
         """
-        out, total, pages_done = {}, 0, 0
-        page = max(1, int(page_start))
-        want = max(1, int(pages))
-        for i in range(want):
-            try:
-                rows, total = AkShareFeed._push2_clist_page(page, INDUSTRY_PAGE_SIZE)
-            except Exception as e:                   # noqa: BLE001 —— 单页失败 ⇒ 停在这页（下次续）
-                logging.warning(f"行业分页拉取失败(page={page}): {e}")
-                break
-            if not rows:
-                break
-            for row in rows:
-                code = str(row.get('f12') or '').strip()
-                name = str(row.get('f100') or '').strip()
-                if len(code) == 6 and code.isdigit() and name and name != '-':
-                    out[code] = name
-            pages_done += 1
-            page += 1
-            if total and (page - 1) * INDUSTRY_PAGE_SIZE >= total:
-                break                                # 已到末页
-            if i + 1 < want:
-                sleep_fn(interval)
-        total_pages = (-(-int(total) // INDUSTRY_PAGE_SIZE)) if total else 0
-        return {"map": out, "page_start": max(1, int(page_start)), "pages_done": pages_done,
-                "total_pages": total_pages,
-                "done": bool(total_pages and page > total_pages)}
-
-    @staticmethod
-    def _push2_clist_page(page: int, pz: int) -> tuple:
-        """取 `clist` 一页（全市场 A 股 + `f100` 行业）⇒ `(rows, total)`；失败**上抛**给调用方。"""
-        params = {"pn": max(1, int(page)), "pz": max(1, int(pz)), "po": 1, "np": 1,
-                  "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": 2, "invt": 2,
-                  "fid": "f12", "fs": INDUSTRY_FS_A, "fields": "f12,f14,f100"}
-        resp = requests.get("https://push2.eastmoney.com/api/qt/clist/get", params=params,
-                            headers=INDUSTRY_HEADERS, timeout=15)
-        data = (resp.json() or {}).get("data") or {}
-        return (data.get("diff") or []), int(data.get("total") or 0)
+        return em_market.fetch_industry_page(page_start, pages, **kwargs)
 
     # ==========================================
     # 交易日历 (Trading Calendar)  v6.45 / §7-B10

@@ -153,13 +153,15 @@ def _num_or_none(v):
     return None if f != f else f
 
 
-def spot_valuation_map() -> dict:
-    """★P5：全市场当前估值快照 → `{symbol: {pe, pb, total_mktcap}}`（供 M2 B 层列）。
+def spot_valuation_map(symbols=None) -> dict:
+    """★P5：**按标的**批量取当前估值 → `{symbol: {pe, pb, total_mktcap}}`（供 M2 B 层列）。
 
     走本门面（§9-H：任何联网抓取必须经此，ui/ 不出现 AkShareFeed 符号）。
-    失败/空 ⇒ 返回 `{}`（上层诚实留 '—'）。**当前值**，上层仅在基准日==数据最新交易日才用。
+    ★v6.69：`symbols` = 本次要看的标的池 —— **一次批量报价即可覆盖**（100 只/请求）；
+    旧写法是无参全市场快照（`ak.stock_zh_a_spot_em` 内部翻 ~56 页）⇒ 与行业分页互抢匿名额度。
+    `symbols` 为空 ⇒ 不联网、回 `{}`（上层诚实留 '—'）。**当前值**，只在基准日==最新交易日才用。
     """
-    df = AkShareFeed.fetch_market_spot_valuation()
+    df = AkShareFeed.fetch_market_spot_valuation(symbols)
     if df is None or df.empty or 'symbol' not in df.columns:
         return {}
     out: dict = {}
@@ -360,24 +362,24 @@ class MarketSyncService:
     # ★v1.45 / §7-B11 后续：全市场当日快照（秒补“只差当天”的批量入口）
     # ==========================================
     def fetch_spot_snapshot(self, symbols=None) -> dict:
-        """1 次请求拿全市场当天日线快照 → `{symbol: {open,high,low,close,volume,amount,turnover,outstanding_share}}`。
+        """**按标的**批量取当天日线快照 → `{symbol: {open,high,low,close,volume,amount,turnover,outstanding_share,prev_close}}`。
 
-        联网唯一出口（§9-H）：内部只调 `AkShareFeed.fetch_market_spot_daily()`（单位已在该层归一）。
+        联网唯一出口（§9-H）：内部只调 `AkShareFeed.fetch_market_spot_daily(symbols)`（单位已在该层归一）。
+        ★v6.69：**只抓清单里的标的**（100 只/请求）—— 旧写法是"全市场 56 页"，与行业分页同时开火
+        ⇒ 把东财匿名额度自己打光（§11.5-100）。`symbols` 为空 ⇒ 不联网、回 `{}`。
         失败/空 ⇒ 回 `{}`（调用方据此诚实回退逐只，**绝不因快照挂了而报错中断整批**）。
-        `symbols` 给定时只保留这些（全市场 5000+ 行，按范围裁剪省内存）。
         """
-        want = None
-        if symbols is not None:
-            want = {str(s).strip() for s in symbols if str(s).strip()}
-        df = AkShareFeed.fetch_market_spot_daily()
+        want = [str(s).strip() for s in (symbols or []) if str(s).strip()]
+        if not want:
+            return {}
+        df = AkShareFeed.fetch_market_spot_daily(want)
         if df is None or df.empty or 'symbol' not in df.columns:
             return {}
         out = {}
         for rec in df.to_dict('records'):
             sym = str(rec.get('symbol') or '').strip()
-            if not sym or (want is not None and sym not in want):
-                continue
-            out[sym] = rec
+            if sym:
+                out[sym] = rec
         return out
 
     # ==========================================

@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect,
 from ui.dialogs.download_settings import DownloadSettingsDialog
 from ui.download_hub import (STATUS_CANCELLED, STATUS_DONE, STATUS_LABELS,
                              STATUS_QUEUED, STATUS_RUNNING)
-from ui.widgets.backtest_panes import FLAT_QSS
+from ui.widgets.custom_widgets import FLAT_QSS   # ★v6.70 §9-F③ 样式唯一出口
 
 PANEL_WIDTH = 490                    # 与样板一致（490px）
 DOWNLOAD_PANEL_GAP_RIGHT = 18        # 右边距（样板 right:18px）
@@ -281,13 +281,42 @@ class DownloadQueuePanel(QFrame):
         self.table.setRowHeight(row, _ROW_H)
 
     def _row_action(self, job: dict, status: str) -> QWidget:
-        """每行的操作（样板：运行中/排队中 = 中断；有失败 = 只重试失败）。"""
+        """每行的操作（样板：运行中/排队中 = 中断；有失败 = 只重试失败）。
+
+        ★v6.70 / §9-F② 多一档：**已中断且还有没轮到的标的** ⇒ 给「继续 N 只」。
+        ⚠ 判据用**原始状态** `job["status"]`，不用传进来的 `status` —— 后者会把
+          “完成但有失败”映射成同一个橙色档（`_state_of`），拿它判“被中断”就误判了。
+        ⚠ 优先级“继续”在“只重试失败”之前：失败那批仍可由底部「只重试失败」处理，
+          而“没轮到的那批”**只在**这个入口能拿到（它们不在失败清单里）。
+        """
         jid = int(job["id"])
         if status in (STATUS_RUNNING, STATUS_QUEUED):
             btn = QPushButton("中断")
             btn.setStyleSheet(FLAT_QSS)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _=False, i=jid: (self._hub.cancel(i), self.refresh()))
+            return btn
+        rest = int(job.get("rest") or 0)
+        if str(job.get("status") or "") == STATUS_CANCELLED and rest > 0:
+            # ★v6.70 加固（二次修改）：这条的"没轮到的"已经续传过 ⇒ 收成**不可点**的回执。
+            #   否则旧行会一直挂着「继续 N 只」，用户再点一次 = 同范围重投
+            #   （续传任务已结束 + `force_full` 时就是整段重下）；接着该看续传那一行。
+            if job.get("continued"):
+                btn = QPushButton("已续传")
+                btn.setStyleSheet(FLAT_QSS)
+                btn.setEnabled(False)
+                btn.setToolTip(
+                    "这批『没轮到的』已经用**同一份参数**续传过（一条单独的任务）。\n"
+                    "接着看下面那条「继续未完成 · …」；它若也被中断，那一行会再给「继续」。")
+                return btn
+            btn = QPushButton(f"继续 {rest} 只")
+            btn.setStyleSheet(FLAT_QSS)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(
+                f"这批被中断时还有 {rest} 只一次都没抓到（所以不在失败清单里）。\n"
+                "点这里：按**同一份参数**只补这些，已抓过的不重抓、已最新的自动跳过。")
+            btn.clicked.connect(lambda _=False, i=jid: (self._hub.continue_unfinished(i),
+                                                        self.refresh()))
             return btn
         if int(job.get("failed") or 0) > 0:
             btn = QPushButton("只重试失败")

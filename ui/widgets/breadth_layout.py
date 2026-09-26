@@ -19,13 +19,13 @@ from PyQt6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
                              QPushButton, QProgressBar, QSizePolicy, QVBoxLayout, QWidget)
 
 from data.akshare_feed import INDEX_PRESETS
-from ui.widgets.backtest_panes import CARD_QSS, ClickCatcher, EditDrawer, EditPane, FLAT_QSS
+from ui.widgets.backtest_panes import CARD_QSS, ClickCatcher, EditDrawer, EditPane
 from ui.widgets.breadth_chart import (CHART_TYPES, DEFAULT_CHART_TYPE,
                                       DEFAULT_INDEX_STYLE, INDEX_STYLES,
                                       BreadthChart)
-from ui.widgets.custom_widgets import (CHIP_QSS_ON, COMBO_QSS,
-                                       SYNC_ACTION_LABEL, NoWheelComboBox,
-                                       hint_icon, mini_label)
+from ui.widgets.custom_widgets import (CHIP_QSS_ON, COMBO_QSS, FLAT_QSS,
+                                        SYNC_ACTION_LABEL, NoWheelComboBox,
+                                        hint_icon, mini_label)
 from ui.widgets.scan_layout import ScanFilterPane, ScanFormulaPane
 
 __all__ = ['BreadthLayout', 'BreadthDisplayPane', 'RANGE_PRESETS', 'DEFAULT_INDEX_CODE']

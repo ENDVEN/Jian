@@ -58,11 +58,12 @@ from data.formula_store import (SOURCE_BACKTEST, get_formula_store, make_formula
 #      但**任何联网抓取**都必须走 MarketSyncService（见下方 worker）。
 from data.akshare_feed import is_index_symbol, is_stock_code
 from data.strategy_store import StrategyStore
-from ui.widgets.custom_widgets import LINE_COMBO_QSS, NoWheelComboBox, NoWheelDateEdit
+from ui.widgets.custom_widgets import (FLAT_QSS, LINE_COMBO_QSS, NoWheelComboBox,
+                                        NoWheelDateEdit)
 from ui.widgets.formula_library import FormulaLibraryDialog
 # 1.22 / §9-L：本页已把「编辑卡片 + 抽屉 / 摘要条 / 结果区 / 导出 / 运行流程」拆出独立模块，
 #   自己只做装配与接线（视图层四件套的落点见各模块 docstring）。
-from ui.widgets.backtest_panes import (CARD_QSS, FLAT_QSS, ClickCatcher, ConditionPane,
+from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, ConditionPane,
                                        EditDrawer, FillPane, FunctionPane, IndexPane,
                                        RiskPane, hint_icon, mini_label)
 from ui.widgets.backtest_summary_bar import SummaryBar
@@ -195,7 +196,7 @@ class SingleStockBacktestView(QWidget):
         # 统一输入控件高度/圆角，避免“大大小小”的混乱感
         # v6.9：收敛到 custom_widgets.LINE_COMBO_QSS（含成对 ::drop-down/::down-arrow，§10-9）
         self._ctrl_qss = LINE_COMBO_QSS
-        self._flat_qss = FLAT_QSS   # 唯一来源 ui/widgets/backtest_panes.FLAT_QSS
+        self._flat_qss = FLAT_QSS   # 唯一来源 ui/widgets/custom_widgets.flat_qss()（§9-F③）
         ctrl_height = 32
 
         # —— 标的组 ——

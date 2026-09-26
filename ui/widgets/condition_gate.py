@@ -19,15 +19,13 @@ from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                              QPushButton, QFrame)
 
 from ui.widgets.custom_widgets import mono_font_css   # ★v1.46 §10-15 开源等宽栈（唯一出口）
-from ui.widgets.custom_widgets import (COMBO_QSS_SMALL, NoWheelComboBox,
-                                       NoWheelDoubleSpinBox)
+from ui.widgets.custom_widgets import (COMBO_QSS_SMALL, FLAT_QSS_SMALL,  # ★v6.70 §9-F③ 样式唯一出口
+                                       NoWheelComboBox, NoWheelDoubleSpinBox)
 
 _CARD_QSS = ("QFrame { background: white; border: 1px solid #E7EAF0; border-radius: 12px; }")
 # v6.9：行内下拉样式收敛到 custom_widgets（成对的 ::drop-down/::down-arrow，§10-9）
 _CTRL_QSS = COMBO_QSS_SMALL
-_FLAT_QSS = ("QPushButton { color: #1976D2; background: transparent; border: none; "
-             "padding: 0 6px; font-weight: bold; border-radius: 6px; font-size: 12px; }"
-             "QPushButton:hover { background: #EEF4FD; }")
+# 行内紧凑动作按钮（添加条件 / 删除）：样式在 `custom_widgets.FLAT_QSS_SMALL`（唯一出口）。
 
 # 条件规则：显示文本 -> DSL 算子
 CONDITION_RULES = [
@@ -102,7 +100,7 @@ class _ConditionRow(QWidget):
 
         btn_del = QPushButton("✕")
         btn_del.setFixedSize(24, 24)
-        btn_del.setStyleSheet(_FLAT_QSS)
+        btn_del.setStyleSheet(FLAT_QSS_SMALL)
         btn_del.setToolTip("删除该条件")
         btn_del.clicked.connect(lambda: self.remove_requested.emit(self))
         lay.addWidget(btn_del)
@@ -207,7 +205,7 @@ class ConditionGate(QWidget):
         lay.addWidget(self._rows_box)
 
         self.btn_add = QPushButton("＋ 添加条件")
-        self.btn_add.setStyleSheet(_FLAT_QSS)
+        self.btn_add.setStyleSheet(FLAT_QSS_SMALL)
         self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_add.clicked.connect(self._append_row)
         lay.addWidget(self.btn_add)

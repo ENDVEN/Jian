@@ -37,7 +37,7 @@ from ui.widgets.condition_gate import ConditionGate
 # ⚠ 后 4 个是**再导出**：`mini_label` / `hint_icon` / `TAB_QSS_*` 的**定义**已于 v6.21
 # 上收到 `custom_widgets.py`（§7-B6 STEP 1，样式/构件单一来源）。这里 import 进来只为
 # **保持既有导入路径不变** —— `ui/views/backtest.py` 仍从本模块 import 它们，断言零改动。
-from ui.widgets.custom_widgets import (COMBO_QSS, NoWheelComboBox,  # noqa: F401
+from ui.widgets.custom_widgets import (COMBO_QSS, FLAT_QSS, NoWheelComboBox,  # noqa: F401
                                        NoWheelDoubleSpinBox, SPINBOX_QSS,
                                        TAB_QSS_OFF, TAB_QSS_ON,  # noqa: F401（再导出）
                                        hint_icon, mini_label)    # noqa: F401（再导出）
@@ -48,9 +48,8 @@ from ui.widgets.function_segments import FunctionSegments
 # ==========================================
 CARD_QSS = "QFrame { background: white; border: 1px solid #E7EAF0; border-radius: 12px; }"
 
-FLAT_QSS = ("QPushButton { color: #1976D2; background: transparent; border: none; "
-            "padding: 0 8px; font-weight: bold; border-radius: 8px; }"
-            "QPushButton:hover { background: #EEF4FD; } QPushButton:disabled { color: #B4BECB; }")
+# ★v6.70 / §9-F③：`FLAT_QSS` 的定义已上收到 `custom_widgets.flat_qss()`（唯一出口）——
+#   它名字不带“回测”却全站 6 处在引，放在这里就是归属漂移的本体；本模块只从那里 import。
 
 ACTION_QSS = ("QPushButton { background:#F5F5F5; border:1px solid #E0E0E0; "
               "border-radius:8px; padding:4px 10px; font-weight:bold; color:#424242; }"

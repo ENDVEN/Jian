@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import QMessageBox
 from core.cross_section import ScanThresholds
 from core.preferences import preferences
 from core.utils import parse_params_text
+from data import em_throttle
 from data.backtest_archive import KIND_M2, SOURCE_AUTO, BacktestArchive, build_scan_record
 from data.industry_store import get_industry_store
 from data.scan_store import kline_zone_dir
@@ -40,7 +41,10 @@ __all__ = ['ScanFlow', 'SCAN_UI_KEY']
 
 # ★v6.68：行业映射**分批**抓取 —— 东财对"匿名高频"请求有频次窗（连打几十次会整段拒绝、约 30 分钟
 #   自恢复，§11.5-99），而全市场行业要 ~56 页（单页 100 行）⇒ **每批只抓几页**、分几次扫描摊平。
-INDUSTRY_PAGES_PER_SCAN = 8                # 每次扫描最多补抓页数（1 页 = 100 只）
+# ★v6.69：**8 → 3**（用户实测：8 页/次仍会在一次扫描里连打 8 个请求，正好撞上"行业 + 估值"
+#   同时开火的那段时间；降到 3 页后单次突发只剩 3 个请求，且全市场 ~56 页 ≈ 19 次扫描补齐，
+#   补齐后长期缓存、零请求）。配合 `em_throttle` 的失败冷却，不再"越点越死"。
+INDUSTRY_PAGES_PER_SCAN = 3                # 每次扫描最多补抓页数（1 页 = 100 只）
 INDUSTRY_PROGRESS_KEY = 'industry_fetch'   # preferences 里的断点：{next_page, pages_total}
 
 logger = logging.getLogger(__name__)
@@ -495,7 +499,9 @@ class ScanFlow:
         if p._valuation_worker is not None and p._valuation_worker.isRunning():
             return
         job = p._valuation_guard.next()
-        p._valuation_worker = SpotValuationWorker(parent=p)
+        # ★v6.69：**按标的池取**（一次批量报价覆盖 100 只）—— 旧版无参 = 全市场快照，
+        #   东财内部要翻 ~56 页，与行业分页抢同一份匿名额度（§11.5-100）
+        p._valuation_worker = SpotValuationWorker(list(p._symbols or []), parent=p)
         p._valuation_worker.finished.connect(
             lambda data, token=job: self._on_valuation_ready(data, token))
         p._valuation_worker.start()
@@ -525,6 +531,27 @@ class ScanFlow:
         preferences.set(INDUSTRY_PROGRESS_KEY,
                         {"next_page": int(next_page), "pages_total": int(pages_total)})
 
+    def _note_industry_failure(self, err: str = '') -> None:
+        """行业映射拿不到 ⇒ 回执**追加**（不覆盖）原因与出路 —— 唯一出处（两处调用点都用它）。
+
+        ★v6.69：`err` 带上退避原因（例："东财限流冷却中（约 9 分钟后再试）"）—— 用户据此知道
+          **该等，而不是反复点**（反复点 = 继续压住额度，越点越死，§11.5-100）。
+        v6.68 的初衷（拿到空表**绝不静默**，否则界面只剩一列 '—'、用户只能怀疑自己）保持不变。
+        """
+        p = self.page
+        _note = (" · ⚠ 行业映射未取到（东财接口暂时不可用）—— 该列暂显 '—'；"
+                 + (f"{err}；" if err else "")
+                 + "再点一次「▶ 开始扫描」会重试（从断点续抓）")
+        if '行业映射未取到' not in (p.lbl_receipt.text() or ''):
+            p.lbl_receipt.setText((p.lbl_receipt.text() or '') + _note)
+        _tip = ('行业 = 细分板块，取自东财全市场列表的「所属行业」字段（分页抓取：单页 100 行、'
+                '全市场约 56 页 ⇒ 每批补几页，抓满即长期缓存）。\n'
+                '抓不到就诚实留 \'—\'，**绝不拿别的口径瞎猜板块**。\n'
+                '常见原因：东财对**匿名高频**请求有"频次窗"（连打几十次会整段拒绝、约 30 分钟'
+                '自恢复）—— 现已改成"分批 + 失败冷却"，**过一会儿再点一次扫描**即可从断点继续，'
+                '不必连点（连点只会把额度继续压住）。')
+        p.lbl_receipt.setToolTip(((p.lbl_receipt.toolTip() or '') + '\n' + _tip).strip())
+
     def _maybe_fetch_industry(self) -> None:
         """行业映射**分批**补齐（每批 `INDUSTRY_PAGES_PER_SCAN` 页；补齐后长期缓存、不再联网）。
 
@@ -543,6 +570,13 @@ class ScanFlow:
         pages_total = int(prog.get('pages_total') or 0)
         if pages_total and next_page > pages_total:
             return                                   # 已补齐 ⇒ 只读缓存（不联网）
+        # ★v6.69：冷却中（东财限流退避）⇒ **一个请求都不打**，并把"还要等多久"写进回执。
+        #   注意顺序：这一关放在"已补齐 ⇒ 不联网"**之后** —— 缓存补齐了就该安静，不该报冷却。
+        #   旧版每次扫描都从第 1 页重打 ⇒ 用户越点越死（正是 19:37 那条"连第 1 页都拒"）。
+        _cool = em_throttle.describe()
+        if _cool:
+            self._note_industry_failure(_cool)
+            return
         job = p._industry_guard.next()
         p._industry_worker = IndustryMapWorker(next_page, INDUSTRY_PAGES_PER_SCAN, parent=p)
         p._industry_worker.finished.connect(
@@ -576,16 +610,8 @@ class ScanFlow:
                         + f" · ✅ 行业映射已补齐（{store.coverage()} 只）")
             return
         # 失败（None / 空）：**可见回执 + 出路**（下次扫描会从断点继续 —— 缓存命中也算）
-        _note = (" · ⚠ 行业映射未取到（东财接口暂时不可用）—— 该列暂显 '—'；"
-                 "再点一次「▶ 开始扫描」会重试（从断点续抓）")
-        if '行业映射未取到' not in (p.lbl_receipt.text() or ''):
-            p.lbl_receipt.setText((p.lbl_receipt.text() or '') + _note)
-        _tip = ('行业 = 细分板块，取自东财全市场列表的「所属行业」字段（分页抓取：单页 100 行、'
-                '全市场约 56 页 ⇒ 每批补几页，抓满即长期缓存）。\n'
-                '抓不到就诚实留 \'—\'，**绝不拿别的口径瞎猜板块**。\n'
-                '常见原因：东财对**匿名高频**请求有"频次窗"（连打几十次会整段拒绝、约 30 分钟自恢复）'
-                '—— 过一会儿再点一次「▶ 开始扫描」即可从断点继续。')
-        p.lbl_receipt.setToolTip(((p.lbl_receipt.toolTip() or '') + '\n' + _tip).strip())
+        # ★v6.69：把退避原因一起说出来（"东财限流冷却中（约 N 分钟后再试）"）⇒ 用户该等、不必连点
+        self._note_industry_failure(str(payload.get('error') or ''))
 
     def _on_failed(self, job_id: int, reason: str) -> None:
         p = self.page
