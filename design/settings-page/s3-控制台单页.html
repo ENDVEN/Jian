@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设置 · S3 控制台单页</title>
+<style>
+:root{
+  --bg:#F6F8FB; --card:#fff; --line:#E7EBF1; --ink:#1E232B; --ink2:#5F6875; --ink3:#949DAA;
+  --blue:#1976D2; --blue-bg:#EDF4FD; --ok:#2E7D32; --warn:#E65100;
+  --ui:"Source Han Sans SC","Noto Sans CJK SC",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono","Noto Sans Mono CJK SC",ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--ui);background:var(--bg);color:var(--ink);font-size:13px}
+.app{display:flex;height:100vh}
+.rail{width:176px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:10px 8px}
+.brand{font-size:15px;font-weight:700;color:var(--blue);padding:6px 10px 14px}
+.nav{padding:9px 10px;border:0;background:none;border-radius:8px;font:inherit;color:var(--ink2);cursor:pointer;text-align:left}
+.nav:hover{background:var(--blue-bg);color:var(--ink)}
+.nav.active{background:var(--blue-bg);color:var(--blue);font-weight:600}
+.grow{flex:1}
+.pinned{border-top:1px solid var(--line);margin-top:6px;padding-top:12px;border-radius:0 0 8px 8px}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.hero{background:#fff;border-bottom:1px solid var(--line);padding:16px 22px 14px}
+.hero h1{font-size:16px}
+.hero p{color:var(--ink2);font-size:12.5px;margin-top:3px}
+.searchbar{display:flex;gap:10px;margin-top:12px}
+.searchbar input{flex:1;border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:inherit;background:#FBFCFE}
+.chips{display:flex;gap:6px;margin-top:10px}
+.chip{font-size:11.5px;color:var(--ink2);background:#F2F5FA;border:1px solid var(--line);padding:3px 10px;border-radius:999px;cursor:pointer}
+.chip.on{background:var(--blue-bg);border-color:#CFE1F7;color:var(--blue)}
+
+.scroll{flex:1;overflow:auto;padding:16px 22px 40px;display:block}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 268px;gap:16px;align-items:start}
+.group{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.group>header{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.group>header b{font-size:13.5px}
+.group>header .r{margin-left:auto;font-size:11.5px;color:var(--ink3)}
+.opt{display:flex;align-items:center;gap:12px;padding:9px 14px;border-top:1px solid #F3F6FA}
+.opt:first-of-type{border-top:0}
+.opt .k{width:140px;font-weight:600}
+.opt .h{flex:1;color:var(--ink2);font-size:12.5px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{border:0;background:#fff;padding:5px 11px;font:inherit;color:var(--ink2);cursor:pointer;border-left:1px solid var(--line)}
+.seg button:first-child{border-left:0}
+.seg button.on{background:var(--blue);color:#fff}
+.num{font-family:var(--mono);border:1px solid var(--line);border-radius:8px;padding:5px 8px;width:74px;background:#fff}
+.sw{width:38px;height:21px;border-radius:999px;background:#D6DDE6;border:0;position:relative;cursor:pointer}
+.sw.on{background:var(--blue)}
+.sw::after{content:"";position:absolute;inset:2px auto 2px 2px;width:17px;border-radius:50%;background:#fff}
+.sw.on::after{left:19px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:5px 12px;font:inherit;cursor:pointer}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.side{position:sticky;top:0}
+.sidecard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.sidecard h3{font-size:13px;margin-bottom:10px}
+.stat{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #F3F6FA;font-size:12.5px;color:var(--ink2)}
+.stat:first-of-type{border-top:0}
+.stat b{color:var(--ink)}
+.pill{font-size:11px;padding:2px 8px;border-radius:999px;background:#F2F5FA;color:var(--ink2)}
+.pill.ok{background:#E9F6EC;color:var(--ok)}
+.pill.warn{background:#FFF4E5;color:var(--warn)}
+.tip{margin-top:10px;font-size:11.5px;color:var(--ink3);line-height:1.6}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">Jian</div>
+    <button class="nav">📊 资金与表现</button>
+    <button class="nav">📝 交易流水</button>
+    <button class="nav">💡 深度复盘</button>
+    <button class="nav">📈 市场行情</button>
+    <button class="nav">📐 市场回测</button>
+    <button class="nav">🗄 数据管理</button>
+    <div class="grow"></div>
+    <button class="nav pinned active">⚙ 设置</button>
+  </aside>
+
+  <div class="main">
+    <div class="hero">
+      <h1>设置</h1>
+      <p>系统项 / 登录 / 个性化的唯一入口。搜一下就跳到对应项。</p>
+      <div class="searchbar"><input placeholder="搜索：登录、代理、间隔、主题、缓存、额度…"></div>
+      <div class="chips">
+        <span class="chip on">全部</span><span class="chip">账号与数据源</span>
+        <span class="chip">下载与取数</span><span class="chip">外观</span>
+        <span class="chip">回测与扫描</span><span class="chip">存储与维护</span>
+      </div>
+    </div>
+
+    <div class="scroll">
+      <div class="grid">
+        <div>
+          <section class="group">
+            <header><b>账号与数据源</b><span class="r">登录 = 常速 · 未登录 = 分批+冷却</span></header>
+            <div class="opt"><span class="k">东方财富</span><span class="h">凭据仅本机加密保存，不接触密码</span>
+              <span class="seg"><button class="on">登录…</button><button>退出</button></span></div>
+            <div class="opt"><span class="k">今日额度</span><span class="h">超限自动停在缓存档</span>
+              <span style="font-family:var(--mono);font-size:12px">287/300 · 0/100</span></div>
+            <div class="opt"><span class="k">地址族</span><span class="h">国内源实测 IPv4 更稳</span>
+              <span class="seg"><button class="on">IPv4 优先</button><button>系统默认</button></span></div>
+            <div class="opt"><span class="k">代理策略</span><span class="h">代理报错才降级直连（不默认绕过）</span>
+              <span class="seg"><button class="on">自动</button><button>直连</button><button>只用代理</button></span></div>
+          </section>
+
+          <section class="group">
+            <header><b>下载与取数</b><span class="r">全局生效</span></header>
+            <div class="opt"><span class="k">请求间隔</span><span class="h">越慢越安全</span>
+              <input class="num" value="0.6"> <span style="color:var(--ink3);font-size:12px">秒</span></div>
+            <div class="opt"><span class="k">随机抖动</span><span class="h">打散固定频率（±30%）</span><button class="sw on"></button></div>
+            <div class="opt"><span class="k">熔断阈值</span><span class="h">连续失败到此数停手</span>
+              <input class="num" value="12"> <span style="color:var(--ink3);font-size:12px">次</span></div>
+            <div class="opt"><span class="k">并发</span><span class="h">K≤4，聚合请求率不变</span><input class="num" value="3"></div>
+          </section>
+
+          <section class="group">
+            <header><b>外观与个性化</b><span class="r">即时生效</span></header>
+            <div class="opt"><span class="k">主题</span><span class="h">深色为后续主案</span>
+              <span class="seg"><button class="on">跟随系统</button><button>浅色</button><button>深色</button></span></div>
+            <div class="opt"><span class="k">涨跌配色</span><span class="h">K 线与结果表共用</span>
+              <span class="seg"><button class="on">红涨绿跌</button><button>绿涨红跌</button></span></div>
+            <div class="opt"><span class="k">界面字体</span><span class="h">只列开源 / 免费商用字体</span>
+              <span class="seg"><button class="on">思源黑体</button><button>系统默认</button></span></div>
+            <div class="opt"><span class="k">信息密度</span><span class="h">表格行高与留白</span>
+              <span class="seg"><button class="on">舒适</button><button>紧凑</button></span></div>
+          </section>
+
+          <section class="group">
+            <header><b>存储与维护</b><span class="r">数据目录与缓存</span></header>
+            <div class="opt"><span class="k">数据目录</span><span class="h" style="font-family:var(--mono);font-size:12px">C:\Users\…\.jian_data</span>
+              <span class="seg"><button>打开</button><button>迁移…</button></span></div>
+            <div class="opt"><span class="k">缓存</span><span class="h">行情快照 / 行业映射 / 交易日历</span>
+              <span style="font-family:var(--mono);font-size:12px">182 MB</span> <button class="btn">清理</button></div>
+          </section>
+        </div>
+
+        <aside class="side">
+          <div class="sidecard">
+            <h3>当前状态 <span class="pill warn">未登录</span></h3>
+            <div class="stat"><span>档位</span><b>慢速（分批 + 冷却）</b></div>
+            <div class="stat"><span>网络策略</span><b>IPv4 优先 · 代理自动</b></div>
+            <div class="stat"><span>出口</span><b>180.102.x.x</b></div>
+            <div class="stat"><span>今日额度</span><b>0 / 100（匿名档）</b></div>
+            <button class="btn primary" style="width:100%;margin-top:12px">登录东财，恢复常速</button>
+            <div class="tip">登录后：行业一次可补更多页、估值/秒补即时可用，不再动不动冷却。</div>
+          </div>
+          <div class="sidecard" style="margin-top:14px">
+            <h3>网络自检</h3>
+            <div class="stat"><span>IPv4 直连</span><span class="pill ok">200 · 0.18s</span></div>
+            <div class="stat"><span>IPv6</span><span class="pill warn">不可用（已跳过）</span></div>
+            <div class="stat"><span>代理</span><span class="pill">自动（未触发）</span></div>
+            <button class="btn" style="width:100%;margin-top:10px">重新自检</button>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

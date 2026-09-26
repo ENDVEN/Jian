@@ -39,6 +39,9 @@ from core.utils import MINUTE_DEPTH_DAYS, MINUTE_PERIODS, normalize_period
 from data.akshare_feed import (ADJUST_NONE, ADJUST_QFQ, DAILY_KEEP_COLUMNS,
                                AkShareFeed)
 from data.market_db import DataLakeManager
+# ★v6.72：代理指纹的**定义**已搬 `data/net_env.py`（`em_market` 传输层也要用，反向 import 会成环）；
+#   这里只是把同一个对象再导出 ⇒ 老调用点与断言零改动。
+from data.net_env import looks_like_proxy_error  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +108,10 @@ def zone_for_adjust(adjust: str) -> str:
     """
     return ZONE_KLINE if str(adjust or "").strip().lower() == ADJUST_QFQ else ZONE_KLINE_RAW
 
-# ★v1.44 / §7-B11 后续：真实批量下载的**默认并发档**（均衡档）。
+# ★v1.44 / §7-B11 后续：真实批量下载的**默认并发档**。
+# ★v6.74（用户 2026-09-27 拍板 **B 档**）：3 → **2** —— 用户自己的配置是 `0.3s × K=3`（≈**10 请求/秒**），
+#   实测那正是被东财限流的形态；B 档收敛到 ≈4 请求/秒，遇限流再自动降到 K=1 / 1.2s。
+#   ⚠ 与 `core/preferences.DEFAULTS['download_prefs']`（0.5s / K=2）**必须一致**（唯一真源）。
 # 【为什么是 3、而不是各线程各睡 interval】提速**不靠加大请求率**（那才是封 IP 的根源），
 #   而是靠"等待与网络往返重叠"：并发池共享**一把全局节流阀**（见 ui/workers.RateGovernor），
 #   聚合请求发起间隔仍 == `ThrottlePolicy.interval`，只是把每只的 fetch 往返藏进别的等待里。
@@ -113,7 +119,7 @@ def zone_for_adjust(adjust: str) -> str:
 # ⚠ 上限 K<=4（与"宁可慢也不封 IP"取向一致）；把它调回 1 == 完全退回旧串行（可零风险回滚）。
 # ⚠ 这是**下载队列**（DownloadHub.submit）用的档位；`ThrottlePolicy.concurrency` 字段默认仍是 1
 #   （裸构造 / 单测 / 直接起 SyncWorker 一律串行，确定性不变）。
-DEFAULT_DOWNLOAD_CONCURRENCY = 3
+DEFAULT_DOWNLOAD_CONCURRENCY = 2
 
 # 【数据起点】个股/指数的默认拉取起点 = 2010-01-01（全历史）。
 # 注意：它与"回测评估窗"(core/backtest.DEFAULT_START_DATE=2016) 是两回事 ——
@@ -151,6 +157,32 @@ def _num_or_none(v):
     except (TypeError, ValueError):
         return None
     return None if f != f else f
+
+
+def network_self_check(probe: bool = True) -> str:
+    """★v6.74 / S2-1b：**网络与取数自检**（人话报告）—— 门面（§9-H：`ui/` 不直连行情源）。
+
+    `probe=False` ⇒ 零请求（只读本机状态）；`probe=True` ⇒ 额外 1 个 `ulist`（1 只票）。
+    """
+    from data import em_market
+    return em_market.self_check_text(probe=probe)
+
+
+def fetch_enrich_map(symbols) -> dict:
+    """★v6.74：**按标的批量补全**「行业 + 估值」→ `{symbol: {'industry','pe','pb','total_mktcap'}}`。
+
+    走门面（§9-H：`ui/` 不直连行情源）—— 扫描后的**补全调度器只调它一个**。
+    一次请求覆盖 100 只（行业与估值同一次拿到）；失败/空 ⇒ 回 `{}`（上层保留 '—'、绝不阻断）。
+    """
+    df = AkShareFeed.fetch_market_enrich(symbols)
+    if df is None or df.empty or 'symbol' not in df.columns:
+        return {}
+    out = {}
+    for rec in df.to_dict('records'):
+        sym = str(rec.get('symbol') or '').strip()
+        if sym:
+            out[sym] = {k: rec.get(k) for k in ('industry', 'pe', 'pb', 'total_mktcap')}
+    return out
 
 
 def spot_valuation_map(symbols=None) -> dict:
@@ -785,13 +817,12 @@ _NET_HINTS = (
     "max retries", "name resolution", "11001", "10060", "remote end",
 )
 
-# ★v1.38 / §7-E2：**本机代理问题**的指纹（与 _NET_HINTS **分开**，见下面 _classify_error 的说明）
-_PROXY_HINTS = (
-    "proxyerror",                      # requests.exceptions.ProxyError 的类名
-    "unable to connect to proxy",      # 实测报错原文（§9.3）
-    "cannot connect to proxy",
-    "proxy",                           # 兜底：消息里出现 proxy 这个词基本就是代理问题
-)
+# ★v1.38 / §7-E2（**v6.72 起定义在 `data/net_env.py`**）：本机代理问题的指纹
+#   `looks_like_proxy_error()` 与 `PROXY_HINTS` 都搬去了网络策略模块（见文件顶部 re-export）。
+#   搬家的原因：`data/em_market.py`（东财分页/批量报价的传输层）也必须用同一份判据，
+#   而依赖方向是 sync_service → akshare_feed → em_market ⇒ 反向 import 会成环。
+#   ⚠ 判据本身一个字没改，**仍与 `_NET_HINTS` 分开**：`ProxyError` 也是 `OSError` 子类，
+#   `_classify_error` 必须先看代理指纹再看 isinstance（顺序别调换）。
 
 
 def _error_text(value) -> str:
@@ -799,20 +830,6 @@ def _error_text(value) -> str:
     if isinstance(value, BaseException):
         return f"{type(value).__name__}: {value}".lower()
     return str(value or "").lower()
-
-
-def looks_like_proxy_error(value) -> bool:
-    """是不是**本机代理问题**的失败指纹（v1.38 / §7-E2）—— 纯函数，文案层与熔断层共用。
-
-    【为什么要单独一个判据】§9.3 实测：本机系统代理（Clash 类）瞬断时，
-    一轮同步里**每一只**都报 `ProxyError('Unable to connect to proxy')`。
-    用户该做的动作是"**去查代理软件**"，而不是"稍后重试 / 调大间隔" ——
-    与普通断网、被限流**必须分开安抚**（§10-10）。
-
-    :param value: 异常实例，或已经是文本（大小写不敏感）
-    """
-    text = _error_text(value)
-    return any(hint in text for hint in _PROXY_HINTS)
 
 
 def _classify_error(error: Exception) -> str:

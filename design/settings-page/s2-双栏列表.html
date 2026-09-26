@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设置 · S2 系统设置双栏</title>
+<style>
+:root{
+  --bg:#F2F4F8; --card:#FFFFFF; --line:#E6EAF0; --ink:#20242C; --ink2:#616B7A; --ink3:#98A2B3;
+  --blue:#1976D2; --blue-bg:#EDF4FD; --ok:#2E7D32; --warn:#E65100; --danger:#F44336;
+  --ui:"Source Han Sans SC","Noto Sans CJK SC",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--ui);background:var(--bg);color:var(--ink);font-size:13.5px;-webkit-font-smoothing:antialiased}
+.app{display:flex;height:100vh}
+
+.rail{width:180px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:10px 8px}
+.brand{font-size:15px;font-weight:700;color:var(--blue);padding:6px 10px 14px;letter-spacing:.5px}
+.nav{display:flex;gap:8px;padding:9px 10px;border:0;background:none;border-radius:9px;font:inherit;color:var(--ink2);cursor:pointer;text-align:left}
+.nav:hover{background:var(--blue-bg);color:var(--ink)}
+.nav.active{background:var(--blue-bg);color:var(--blue);font-weight:600}
+.grow{flex:1}
+.pinned{border-top:1px solid var(--line);margin-top:6px;padding-top:12px;border-radius:0 0 9px 9px}
+
+.shell{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{height:50px;display:flex;align-items:center;padding:0 20px;background:#fff;border-bottom:1px solid var(--line)}
+.topbar h1{font-size:15.5px;font-weight:700}
+.topbar .hint{margin-left:12px;font-size:12px;color:var(--ink3)}
+
+.wrap{flex:1;display:flex;min-height:0;padding:16px;gap:16px}
+/* 左：条目列表（大圆角卡片） */
+.list{width:214px;background:var(--card);border-radius:14px;border:1px solid var(--line);padding:8px;overflow:auto}
+.item{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:10px;color:var(--ink2);cursor:pointer}
+.item:hover{background:#F7F9FC;color:var(--ink)}
+.item.sel{background:var(--blue);color:#fff}
+.item.sel .dot{background:#fff}
+.dot{width:7px;height:7px;border-radius:50%;background:#D8DEE8}
+/* 右：详情 */
+.detail{flex:1;overflow:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px}
+.card h2{font-size:14.5px;margin-bottom:4px}
+.card .lead{color:var(--ink2);font-size:12.5px;margin-bottom:12px}
+.line{display:flex;align-items:center;padding:11px 0;border-top:1px solid #F2F5F9}
+.line:first-of-type{border-top:0}
+.line .t{width:150px;font-weight:600}
+.line .d{flex:1;color:var(--ink2);font-size:12.5px}
+input[type=text],select{border:1px solid var(--line);border-radius:9px;padding:6px 9px;font:inherit;background:#fff}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 13px;font:inherit;cursor:pointer}
+.btn:hover{background:#F7F9FC}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.pill{font-size:11.5px;padding:3px 9px;border-radius:999px;background:#F2F5F9;color:var(--ink2)}
+.pill.ok{background:#E9F6EC;color:var(--ok)}
+.pill.warn{background:#FFF4E5;color:var(--warn)}
+.kv{font-family:"JetBrains Mono","Noto Sans Mono CJK SC",ui-monospace,monospace;font-size:12px;color:var(--ink2)}
+.sw{width:40px;height:22px;border-radius:999px;background:#D8DEE8;border:0;position:relative;cursor:pointer}
+.sw.on{background:var(--blue)}
+.sw::after{content:"";position:absolute;inset:2px auto 2px 2px;width:18px;border-radius:50%;background:#fff}
+.sw.on::after{left:20px}
+.tiles{display:flex;gap:10px}
+.tile{width:78px;border:1px solid var(--line);border-radius:11px;padding:8px;text-align:center;font-size:11.5px;color:var(--ink2);cursor:pointer}
+.tile.sel{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-bg);color:var(--blue)}
+.tile i{display:block;height:30px;border-radius:7px;margin-bottom:5px;border:1px solid var(--line);background:linear-gradient(#fff,#EEF2F7)}
+.tile.d i{background:linear-gradient(#2A2F3A,#20242C);border-color:#39404C}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">Jian</div>
+    <button class="nav">📊 资金与表现</button>
+    <button class="nav">📝 交易流水</button>
+    <button class="nav">💡 深度复盘</button>
+    <button class="nav">📈 市场行情</button>
+    <button class="nav">📐 市场回测</button>
+    <button class="nav">🗄 数据管理</button>
+    <div class="grow"></div>
+    <button class="nav pinned active">⚙ 设置</button>
+  </aside>
+
+  <div class="shell">
+    <div class="topbar"><h1>设置</h1>
+      <span class="hint">所有系统项的唯一入口 · 新设置项只需在注册表加一行</span></div>
+
+    <div class="wrap">
+      <div class="list">
+        <div class="item sel"><span class="dot"></span>账号与数据源</div>
+        <div class="item"><span class="dot"></span>下载与取数</div>
+        <div class="item"><span class="dot"></span>外观与个性化</div>
+        <div class="item"><span class="dot"></span>回测与扫描默认</div>
+        <div class="item"><span class="dot"></span>存储与维护</div>
+        <div class="item"><span class="dot"></span>快捷键与交互</div>
+        <div class="item"><span class="dot"></span>关于与更新</div>
+      </div>
+
+      <div class="detail">
+        <div class="card">
+          <h2>东方财富账号 <span class="pill warn">未登录 · 慢速档</span></h2>
+          <p class="lead">登录后取数恢复常速；不登录保持「分批 + 冷却」。凭据仅本机加密保存，软件不接触你的密码。</p>
+          <div class="line"><span class="t">账号</span><span class="d kv">—</span>
+            <span><button class="btn primary">登录东财…</button> <button class="btn">退出登录</button></span></div>
+          <div class="line"><span class="t">今日请求额度</span><span class="d">超限自动停在缓存档，避免把账号点进风控</span>
+            <span class="kv">287 / 300（登录） · 0 / 100（匿名）</span></div>
+          <div class="line"><span class="t">登录有效期</span><span class="d">失效时自动回退匿名档并提示你重新登录</span>
+            <span class="kv">—</span></div>
+        </div>
+
+        <div class="card">
+          <h2>网络</h2>
+          <p class="lead">国内行情源实测：IPv4 更稳（IPv6 端点不通）；代理按你的环境决定，出错才降级直连。</p>
+          <div class="line"><span class="t">地址族</span><span class="d">限定 IPv4（可回退系统默认）</span>
+            <span class="sw on" style="display:inline-block"></span></div>
+          <div class="line"><span class="t">代理策略</span><span class="d">自动 = 跟随系统代理，代理报错时降级直连重试一次</span>
+            <select><option>自动</option><option>直连</option><option>只用系统代理</option></select></div>
+          <div class="line"><span class="t">出口与自检</span><span class="d kv">180.102.x.x · IPv6 已跳过</span>
+            <button class="btn">重新自检</button></div>
+        </div>
+
+        <div class="card">
+          <h2>外观</h2>
+          <p class="lead">主题为后续主案（深色）。字体只列开源 / 免费商用字体。</p>
+          <div class="line"><span class="t">主题</span>
+            <span class="tiles">
+              <div class="tile sel"><i></i>跟随系统</div>
+              <div class="tile"><i></i>浅色</div>
+              <div class="tile d"><i></i>深色</div>
+            </span></div>
+          <div class="line"><span class="t">强调色</span>
+            <span style="display:flex;gap:6px">
+              <button class="btn" style="border-color:#1976D2;color:#1976D2">蓝</button>
+              <button class="btn">青</button><button class="btn">紫</button><button class="btn">琥珀</button>
+            </span></div>
+          <div class="line"><span class="t">信息密度</span><span class="d">表格行高与留白</span>
+            <select><option>舒适</option><option>紧凑</option></select></div>
+        </div>
+
+        <div class="card">
+          <h2>存储与维护</h2>
+          <div class="line"><span class="t">数据目录</span><span class="d kv">C:\Users\…\.jian_data</span>
+            <span><button class="btn">打开</button> <button class="btn">迁移…</button></span></div>
+          <div class="line"><span class="t">缓存</span><span class="d">行情快照 / 行业映射 / 交易日历</span>
+            <span class="kv">182 MB　</span><button class="btn">清理</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -24,7 +24,9 @@ from PyQt6.QtWidgets import QMessageBox
 from core.cross_section import ScanThresholds
 from core.preferences import preferences
 from core.utils import parse_params_text
-from data import em_throttle
+from data import em_market, em_throttle, net_env
+from ui import settings_registry as reg             # ★v6.74：设置项默认值取注册表（唯一真源）
+from ui.widgets.scan_enrich import EnrichScheduler  # ★v6.74：扫描后按轮补全行业/估值
 from data.backtest_archive import KIND_M2, SOURCE_AUTO, BacktestArchive, build_scan_record
 from data.industry_store import get_industry_store
 from data.scan_store import kline_zone_dir
@@ -44,10 +46,29 @@ __all__ = ['ScanFlow', 'SCAN_UI_KEY']
 # ★v6.69：**8 → 3**（用户实测：8 页/次仍会在一次扫描里连打 8 个请求，正好撞上"行业 + 估值"
 #   同时开火的那段时间；降到 3 页后单次突发只剩 3 个请求，且全市场 ~56 页 ≈ 19 次扫描补齐，
 #   补齐后长期缓存、零请求）。配合 `em_throttle` 的失败冷却，不再"越点越死"。
-INDUSTRY_PAGES_PER_SCAN = 3                # 每次扫描最多补抓页数（1 页 = 100 只）
+# ★v6.73 S2-1：页数**不再写死** —— 按档位取（登录档 10 页 / 匿名档 3 页），唯一出处 =
+#   `data/em_market.py` 的 `pages_per_scan()`（双档判据与每日取数额度也在那里）。
+#   保留本常量作为**匿名档默认值**（旧文档/旧断言仍可引用，语义与 `em_market` 同源）。
+INDUSTRY_PAGES_PER_SCAN = 3                # 匿名档每次扫描最多补抓页数（1 页 = 100 只）
 INDUSTRY_PROGRESS_KEY = 'industry_fetch'   # preferences 里的断点：{next_page, pages_total}
 
 logger = logging.getLogger(__name__)
+
+
+def _setting(key: str, fallback):
+    """读**设置页注册表**里声明的一项（★v6.74）。
+
+    【为什么要它】默认值只在 `ui/settings_registry.py` 声明一次 ⇒ 页面**不许写第二份默认**，
+      否则就会出现"设置页显示 A、实际按 B 跑"的漂移（§9-D 唯一真源）。
+    """
+    item = reg.find(key)
+    if item is None:
+        return fallback
+    try:
+        return reg.get_value(item)
+    except Exception:                                            # noqa: BLE001
+        return fallback
+
 
 SCAN_UI_KEY = 'scan_ui'          # 页面偏好键（core/preferences.DEFAULTS 里登记）
 
@@ -447,8 +468,14 @@ class ScanFlow:
         self._refresh_chips()
         self.refresh(resize=True)          # ★新扫描 ⇒ 重测一次列宽（排序/切日期不再重测）
         self._auto_archive(outcome)         # ★P4：非缓存的新扫描落一份 kind=M2 快照
-        self._maybe_fetch_valuation(outcome)  # ★P5：看的是最新交易日时，后台拉当前估值填 B 层列
-        self._maybe_fetch_industry()        # ★P6：行业映射为空时后台抓一次（持久缓存）
+        # ★v6.74（用户拍板）：**扫描先出结果，行业/估值在后台按轮补到表里**（见 scan_enrich）。
+        #   两条旧路径降级为**兜底**：补全被关掉 / 池子为空时才走；
+        #   分页通道（全市场 56 页）只在兜底或用户显式打开 `em.legacy_paging` 时才跑。
+        _enriching = self._start_enrich(outcome)
+        if not _enriching:
+            self._maybe_fetch_valuation(outcome)   # ★P5：看的是最新交易日时，后台拉当前估值填 B 层列
+        if (not _enriching) or bool(_setting('em.legacy_paging', False)):
+            self._maybe_fetch_industry()           # ★P6：行业映射为空时后台抓一次（持久缓存）
 
     def _auto_archive(self, outcome) -> None:
         """扫描完成落一份 `kind=M2` 不可变快照（§7-B12 P4 · v1.46 重做）。
@@ -519,6 +546,74 @@ class ScanFlow:
             self.refresh()                                  # 重画带上估值（不重测列宽）
 
     # ==========================================
+    # ★v6.74 扫描后**按轮补全**（行业 + 估值）
+    #   用户原话："不能先针对普通数据进行扫描，然后这些需要东财请求的隔一段时间就自动刷新补全到
+    #   扫描后的图表里呢" —— 这正是本段：**扫描零等待**，两列后台逐轮亮起来。
+    #   【纪律】进度/结束语**追加**进回执（不覆盖扫描结论）；默认值全取 `settings_registry`。
+    # ==========================================
+    _enrich_scheduler = None
+
+    def _start_enrich(self, outcome) -> bool:
+        """起补全调度器；**返回是否接管**（`False` ⇒ 调用方走旧路径兜底）。"""
+        p = self.page
+        if not bool(_setting('enrich.enabled', True)):
+            return False
+        symbols = [str(s).strip() for s in (getattr(p, '_symbols', None) or []) if str(s).strip()]
+        if not symbols:
+            return False
+        old = self._enrich_scheduler
+        if old is not None and old.isRunning():
+            old.cancel()                                    # 新扫描 ⇒ 停掉上一轮（回包靠身份校验丢弃）
+        sched = EnrichScheduler(symbols,
+                                per_round=int(_setting('enrich.requests', 3)),
+                                gap=int(_setting('enrich.gap', 30)), parent=p)
+        sched.progress.connect(
+            lambda done, total, nxt, s=sched: self._on_enrich_progress(s, done, total, nxt))
+        sched.rows.connect(lambda got, s=sched: self._on_enrich_rows(s, got))
+        sched.finished.connect(lambda why, s=sched: self._on_enrich_finished(s, why))
+        self._enrich_scheduler = sched
+        sched.start()
+        return True
+
+    def _on_enrich_progress(self, sched, done: int, total: int, next_in: int) -> None:
+        if sched is not self._enrich_scheduler:
+            return                                          # 迟到的旧调度器 ⇒ 丢弃
+        self._note_enrich(sched.progress_text(next_in))
+
+    def _on_enrich_rows(self, sched, got) -> None:
+        """一轮回来 ⇒ **并进持久缓存 + 更新表内两列**（渐进刷新）。"""
+        p = self.page
+        if sched is not self._enrich_scheduler or not got:
+            return
+        ind = {sym: str((rec or {}).get('industry') or '').strip()
+               for sym, rec in got.items()}
+        ind = {k: v for k, v in ind.items()
+               if len(k) == 6 and k.isdigit() and v and v != '-'}
+        if ind:
+            try:
+                get_industry_store().merge(ind)             # 与分页通道**同一套校验口径**
+            except Exception as e:                          # noqa: BLE001
+                logger.warning('补全写行业缓存失败（忽略）: %s', e)
+        p._valuation = dict(p._valuation or {}, **{sym: dict(rec or {}) for sym, rec in got.items()})
+        if p._valuation_date is None:                       # 口径与旧路径一致：只在最新交易日填
+            dates = getattr(getattr(p, '_outcome', None).result, 'dates', None)
+            p._valuation_date = (pd.Timestamp(dates[-1]).normalize()
+                                 if dates is not None and len(dates) else None)
+        self.refresh()                                      # 重画（不重测列宽）
+
+    def _on_enrich_finished(self, sched, why: str) -> None:
+        if sched is not self._enrich_scheduler:
+            return
+        self._note_enrich(f'行业/估值补全结束：{why}')
+
+    def _note_enrich(self, text: str) -> None:
+        """把补全进度写进回执（**替换上一句补全语**，既不覆盖扫描结论、也不会越长越乱）。"""
+        p = self.page
+        base = p.lbl_receipt.text() or ''
+        head = base.split('行业/估值补全')[0].rstrip(' ·')
+        p.lbl_receipt.setText(f'{head} · {text}'.strip(' ·'))
+
+    # ==========================================
     # ★P6 细分行业（本地缓存 industry_map.json；为空时后台抓一次，扫描只读缓存）
     # ==========================================
     def _industry_progress(self) -> dict:
@@ -547,13 +642,15 @@ class ScanFlow:
         _tip = ('行业 = 细分板块，取自东财全市场列表的「所属行业」字段（分页抓取：单页 100 行、'
                 '全市场约 56 页 ⇒ 每批补几页，抓满即长期缓存）。\n'
                 '抓不到就诚实留 \'—\'，**绝不拿别的口径瞎猜板块**。\n'
-                '常见原因：东财对**匿名高频**请求有"频次窗"（连打几十次会整段拒绝、约 30 分钟'
+                '常见原因：① 东财对**匿名高频**请求有"频次窗"（连打几十次会整段拒绝、约 30 分钟'
                 '自恢复）—— 现已改成"分批 + 失败冷却"，**过一会儿再点一次扫描**即可从断点继续，'
-                '不必连点（连点只会把额度继续压住）。')
+                '不必连点（连点只会把额度继续压住）；② **本机代理 / IPv6** 也会让请求"根本没出去"'
+                '（表现为 ProxyError 或不回包的断连）—— 这一块已由网络策略兜住：\n'
+                f'当前网络策略：{net_env.describe()}')
         p.lbl_receipt.setToolTip(((p.lbl_receipt.toolTip() or '') + '\n' + _tip).strip())
 
     def _maybe_fetch_industry(self) -> None:
-        """行业映射**分批**补齐（每批 `INDUSTRY_PAGES_PER_SCAN` 页；补齐后长期缓存、不再联网）。
+        """行业映射**分批**补齐（每批 `em_market.pages_per_scan()` 页；补齐后长期缓存、不再联网）。
 
         ★v6.68 改造（用户实测"行业一直是空的" + 探针结论 · §11.5-99）：
           · 旧写法 = "板块清单 + 逐板块成分" ≈ **80+ 连击** ⇒ 正踩东财**匿名高频风控**（连打几十次
@@ -578,7 +675,8 @@ class ScanFlow:
             self._note_industry_failure(_cool)
             return
         job = p._industry_guard.next()
-        p._industry_worker = IndustryMapWorker(next_page, INDUSTRY_PAGES_PER_SCAN, parent=p)
+        # ★v6.73 S2-1：页数按**当前档位**取（登录档可多抓）—— 判据/额度都在 em_market 一处
+        p._industry_worker = IndustryMapWorker(next_page, em_market.pages_per_scan(), parent=p)
         p._industry_worker.finished.connect(
             lambda data, token=job: self._on_industry_ready(data, token))
         p._industry_worker.start()

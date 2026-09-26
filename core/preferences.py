@@ -83,8 +83,11 @@ DEFAULTS = {
     #    "skip_fresh": True,    # 本地已最新自动跳过（断点续传）
     #    "concurrency": 3}      # 批内并发度（1=纯串行的回滚开关；上限 4，与“宁可慢也不封 IP”一致）
     #   ⚠ force_full / 起点 / 分区是“每次任务”参数，**不进全局**。
-    "download_prefs": {"interval": 0.6, "jitter": True, "circuit_breaker": 12,
-                       "skip_fresh": True, "concurrency": 3},
+    # ★v6.74（用户 2026-09-27 拍板 **B 档**）：默认节流从 `0.6s / K=3` 收成 **`0.5s / K=2`** ——
+    #   用户实测自己的配置是 `0.3s × K=3` ≈ **10 请求/秒**（全应用最激进的一条，也是被东财限流时
+    #   最先崩的）。B 档 ≈ 4 请求/秒；再遇限流会**自动降到 K=1 / 1.2s**（见 `data/em_throttle`）。
+    "download_prefs": {"interval": 0.5, "jitter": True, "circuit_breaker": 12,
+                       "skip_fresh": True, "concurrency": 2},
 }
 
 

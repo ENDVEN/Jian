@@ -42,7 +42,7 @@ from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
                                fetch_industry_page, is_daily_bar_settled,
-                               short_fetch_reason, spot_valuation_map)
+                               network_self_check, short_fetch_reason, spot_valuation_map)
 from data.trade_calendar import (latest_settled_trading_day, load_or_fetch,
                                  previous_trading_day)
 
@@ -451,6 +451,39 @@ class IndustryMapWorker(QThread):
             logger.warning(f"行业映射后台拉取失败: {e}")
             data = None
         self.finished.emit(data or None)
+
+
+class NetSelfCheckWorker(QThread):
+    """★v6.74 / §7-B13 S2-1b：**网络与取数自检**（后台跑，绝不阻塞界面）。
+
+    【自检做多少】策略 / 代理 / DNS / 登录 / 档位 / 额度 / 退避 = **零请求**；
+      只额外发 **1 个** `ulist`（1 只票）验"现在能不能取到数" ⇒ 不刷量（用户拍板口径）。
+    【纪律】走门面 `network_self_check()`（§9-H：ui 不直连行情源）；
+      结果**同时进日志**（`app.log`）把整段报告留痕，方便事后复盘。
+    """
+
+    finished = pyqtSignal(str)   # 人话报告（多行）；异常也回一段说明，绝不空回
+
+    def __init__(self, probe: bool = True, parent=None):
+        super().__init__(parent)
+        self._probe = bool(probe)
+        self._cancel = False
+
+    def cancel(self):
+        """关窗取消（自检本身很短，只标记不再发新请求）。"""
+        self._cancel = True
+
+    def run(self):
+        try:
+            text = '' if self._cancel else network_self_check(self._probe)
+        except Exception as e:  # noqa: BLE001 —— 自检炸了也要给用户一句话
+            logger.warning(f"网络自检失败: {type(e).__name__}: {e}")
+            text = f'网络自检失败：{type(e).__name__}: {e}'
+        try:
+            logger.info("网络自检报告：\n" + (text or '（已取消）'))
+        except Exception:  # noqa: BLE001
+            pass
+        self.finished.emit(text or '（已取消）')
 
 
 class BacktestRunWorker(QThread):

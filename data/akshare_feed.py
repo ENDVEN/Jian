@@ -70,6 +70,12 @@ SPOT_DAILY_KEEP = ('symbol', 'open', 'high', 'low', 'close', 'volume', 'amount',
 SPOT_VALUATION_RENAME = {'代码': 'symbol', '市盈率-动态': 'pe', '市净率': 'pb', '总市值': 'total_mktcap'}
 SPOT_VALUATION_KEEP = ('symbol', 'pe', 'pb', 'total_mktcap')
 
+# ★v6.74：**按标的批量补全**（行业 + 估值）—— 扫描后"补全调度器"用；一次请求喂两列。
+#   【为什么不再走"全市场 56 页分页"】实测（2026-09-27）`ulist` 能同时返回 `f100`（行业）与估值字段
+#     ⇒ 沪深300 只要 **3 个请求**、全 A 只要 **56 个**；而分页要 56 页、且按代码序补齐时
+#     小池子（沪深300/中证500）里的沪市票"永远轮不到"，命中率极低（用户实测 <30/300）。
+ENRICH_KEEP = ('symbol', 'industry', 'pe', 'pb', 'total_mktcap')
+
 # 东财接口超时上限 (秒)：作为兜底源时不允许无限期挂起
 EM_TIMEOUT_SECONDS = 15
 
@@ -295,6 +301,23 @@ class AkShareFeed:
         out = df[[c for c in SPOT_VALUATION_KEEP if c in df.columns]].copy()
         if 'symbol' not in out.columns or out.empty:
             return pd.DataFrame(columns=list(SPOT_VALUATION_KEEP))
+        return out.reset_index(drop=True)
+
+    @staticmethod
+    def fetch_market_enrich(symbols=None) -> pd.DataFrame:
+        """★v6.74：**按标的批量**取「行业 + 估值」—— 扫描后补全调度器的唯一取数入口。
+
+        【为什么单列一个方法（不复用估值那个）】语义不同：估值是"当前值"（只在基准日 == 最新交易日
+          才用），行业是相对稳定的分类字段；而补全调度器要的是"**一次把两列都补齐**"。
+        列 = `ENRICH_KEEP`（symbol + industry + pe + pb + total_mktcap）；单位已在 `em_market` 归一。
+        失败（网络/接口变更/额度）⇒ 回**空表**（上层保留 '—' 并继续下一轮，绝不上抛）。
+        """
+        df = em_market.fetch_quotes(symbols)
+        if df is None or df.empty:
+            return pd.DataFrame(columns=list(ENRICH_KEEP))
+        out = df[[c for c in ENRICH_KEEP if c in df.columns]].copy()
+        if 'symbol' not in out.columns or out.empty:
+            return pd.DataFrame(columns=list(ENRICH_KEEP))
         return out.reset_index(drop=True)
 
     @staticmethod

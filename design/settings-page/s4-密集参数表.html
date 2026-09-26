@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设置 · S4 密集参数表</title>
+<style>
+:root{
+  --bg:#F4F6F9; --card:#fff; --line:#E5E9EF; --ink:#1D222A; --ink2:#5C6572; --ink3:#939CAA;
+  --blue:#1976D2; --blue-bg:#EDF4FD; --ok:#2E7D32; --warn:#E65100;
+  --ui:"Source Han Sans SC","Noto Sans CJK SC",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono","Noto Sans Mono CJK SC",ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--ui);background:var(--bg);color:var(--ink);font-size:12.5px}
+.app{display:flex;height:100vh}
+.rail{width:172px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:10px 8px}
+.brand{font-size:15px;font-weight:700;color:var(--blue);padding:6px 10px 14px}
+.nav{padding:8px 10px;border:0;background:none;border-radius:8px;font:inherit;color:var(--ink2);cursor:pointer;text-align:left}
+.nav:hover{background:var(--blue-bg);color:var(--ink)}
+.nav.active{background:var(--blue-bg);color:var(--blue);font-weight:600}
+.grow{flex:1}
+.pinned{border-top:1px solid var(--line);margin-top:6px;padding-top:12px;border-radius:0 0 8px 8px}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.bar{background:#fff;border-bottom:1px solid var(--line);padding:12px 18px;display:flex;align-items:center;gap:12px}
+.bar h1{font-size:15px;margin-right:6px}
+.bar input.q{width:260px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit}
+.bar .sel{border:1px solid var(--line);border-radius:8px;padding:6px 9px;font:inherit;background:#fff;color:var(--ink2)}
+.bar .sp{margin-left:auto;color:var(--ink3);font-size:11.5px}
+
+.tblwrap{flex:1;overflow:auto;padding:14px 18px 40px}
+table{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--line);border-radius:11px;overflow:hidden}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #F1F4F9;vertical-align:middle}
+th{position:sticky;top:0;background:#FBFCFE;font-weight:600;color:var(--ink2);font-size:11.5px;z-index:1}
+tr:nth-child(even) td{background:#FCFDFE}
+tr:hover td{background:var(--blue-bg)}
+td.k{font-weight:600;white-space:nowrap}
+td.d{color:var(--ink2)}
+.mono{font-family:var(--mono);font-size:12px}
+.tag{font-size:11px;padding:2px 7px;border-radius:6px;background:#F2F5FA;color:var(--ink2);white-space:nowrap}
+.tag.g{background:#E9F6EC;color:var(--ok)}
+.tag.p{background:#EDF4FD;color:var(--blue)}
+.tag.w{background:#FFF4E5;color:var(--warn)}
+.act{border:0;background:none;color:var(--blue);cursor:pointer;font:inherit;padding:2px 4px}
+.act.mute{color:var(--ink3);cursor:default}
+.grp td{background:#F7F9FC !important;font-weight:700;color:var(--ink2);font-size:11.5px;letter-spacing:.3px}
+input[type=text],select{border:1px solid var(--line);border-radius:7px;padding:4px 7px;font:inherit;background:#fff}
+.sw{width:34px;height:19px;border-radius:999px;background:#D6DDE6;border:0;position:relative;cursor:pointer}
+.sw.on{background:var(--blue)}
+.sw::after{content:"";position:absolute;inset:2px auto 2px 2px;width:15px;border-radius:50%;background:#fff}
+.sw.on::after{left:17px}
+.foot{padding:10px 18px;color:var(--ink3);font-size:11.5px;border-top:1px solid var(--line);background:#fff;display:flex;gap:14px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">Jian</div>
+    <button class="nav">📊 资金与表现</button>
+    <button class="nav">📝 交易流水</button>
+    <button class="nav">💡 深度复盘</button>
+    <button class="nav">📈 市场行情</button>
+    <button class="nav">📐 市场回测</button>
+    <button class="nav">🗄 数据管理</button>
+    <div class="grow"></div>
+    <button class="nav pinned active">⚙ 设置</button>
+  </aside>
+
+  <div class="main">
+    <div class="bar">
+      <h1>设置</h1>
+      <input class="q" placeholder="过滤：登录 / 代理 / 间隔 / 主题 / 缓存…">
+      <select class="sel"><option>全部作用域</option><option>全局</option><option>页面</option><option>任务级</option></select>
+      <select class="sel"><option>全部类型</option><option>开关</option><option>数值</option><option>枚举</option></select>
+      <span class="sp">共 38 项 · 其中 6 项来自「登录/网络」主案</span>
+    </div>
+
+    <div class="tblwrap">
+      <table>
+        <thead>
+          <tr><th style="width:210px">设置项</th><th style="width:200px">当前值</th><th>说明</th>
+              <th style="width:86px">默认</th><th style="width:92px">作用域</th><th style="width:104px">来源</th><th style="width:76px"></th></tr>
+        </thead>
+        <tbody>
+          <tr class="grp"><td colspan="7">账号与数据源</td></tr>
+          <tr><td class="k">东方财富登录</td>
+              <td><span class="tag w">未登录 · 慢速档</span> <button class="act" style="color:#fff;background:#1976D2;border-radius:7px;padding:3px 10px">登录…</button></td>
+              <td class="d">登录 = 常速；未登录 = 分批 + 冷却。凭据本机加密保存，不接触密码</td>
+              <td class="mono">未登录</td><td><span class="tag p">全局</span></td><td class="d mono">em_cookie.json</td>
+              <td><button class="act mute">—</button></td></tr>
+          <tr><td class="k">今日请求额度</td>
+              <td class="mono">登录 287/300 · 匿名 0/100</td>
+              <td class="d">超限自动停在缓存档，避免把账号点进风控</td>
+              <td class="mono">300 / 100</td><td><span class="tag p">全局</span></td><td class="d mono">preferences.em_request_budget</td>
+              <td><button class="act">重置</button></td></tr>
+          <tr><td class="k">地址族</td>
+              <td><select><option>IPv4 优先</option><option>系统默认</option></select></td>
+              <td class="d">国内行情源实测 IPv4 更稳（IPv6 端点不通）；可回退</td>
+              <td class="mono">IPv4 优先</td><td><span class="tag p">全局</span></td><td class="d mono">preferences.net</td>
+              <td><button class="act">默认</button></td></tr>
+          <tr><td class="k">代理策略</td>
+              <td><select><option>自动（失败降级直连）</option><option>直连</option><option>只用系统代理</option></select></td>
+              <td class="d">必须走代理的环境不会被绕过；出错才降级一次</td>
+              <td class="mono">自动</td><td><span class="tag p">全局</span></td><td class="d mono">preferences.net</td>
+              <td><button class="act">默认</button></td></tr>
+
+          <tr class="grp"><td colspan="7">下载与取数</td></tr>
+          <tr><td class="k">请求间隔</td><td><input type="text" value="0.6" style="width:74px"> 秒</td>
+              <td class="d">所有批量下载共用一份（唯一真源）</td><td class="mono">0.6</td>
+              <td><span class="tag p">全局</span></td><td class="d mono">preferences.download_prefs</td>
+              <td><button class="act">默认</button></td></tr>
+          <tr><td class="k">随机抖动</td><td><button class="sw on"></button></td>
+              <td class="d">打散机器人固定频率特征（±30%）</td><td class="mono">开</td>
+              <td><span class="tag p">全局</span></td><td class="d mono">preferences.download_prefs</td>
+              <td><button class="act">默认</button></td></tr>
+          <tr><td class="k">并发</td><td><input type="text" value="3" style="width:74px"> 路</td>
+              <td class="d">K≤4；聚合请求率不变</td><td class="mono">3</td>
+              <td><span class="tag p">全局</span></td><td class="d mono">preferences.download_prefs</td>
+              <td><button class="act">默认</button></td></tr>
+          <tr><td class="k">行业补齐批次</td><td><input type="text" value="3" style="width:74px"> 页</td>
+              <td class="d">每批抓几页；<b>登录档可放大</b>（匿名档建议 ≤3）</td><td class="mono">3</td>
+              <td><span class="tag p">全局</span></td><td class="d mono">scan_flow.INDUSTRY_PAGES_PER_SCAN</td>
+              <td><button class="act">默认</button></td></tr>
+
+          <tr class="grp"><td colspan="7">外观与个性化</td></tr>
+          <tr><td class="k">主题</td>
+              <td><select><option>跟随系统</option><option>浅色</option><option>深色</option></select></td>
+              <td class="d">深色主题为后续主案（§7-B4）</td><td class="mono">跟随系统</td>
+              <td><span class="tag p">全局</span></td><td class="d mono">preferences.ui_theme</td>
+              <td><button class="act">默认</button></td></tr>
+          <tr><td class="k">涨跌配色</td>
+              <td><select><option>红涨绿跌</option><option>绿涨红跌</option></select></td>
+              <td class="d">K 线 / 结果表 / 复盘共用</td><td class="mono">红涨绿跌</td>
+              <td><span class="tag p">全局</span></td><td class="d mono">preferences.chart_style</td>
+              <td><button class="act">默认</button></td></tr>
+          <tr><td class="k">信息密度</td>
+              <td><select><option>舒适</option><option>紧凑</option></select></td>
+              <td class="d">表格行高与留白（结果表 / 流水 / 队列）</td><td class="mono">舒适</td>
+              <td><span class="tag p">全局</span></td><td class="d mono">preferences.ui_density</td>
+              <td><button class="act">默认</button></td></tr>
+
+          <tr class="grp"><td colspan="7">存储与维护</td></tr>
+          <tr><td class="k">数据目录</td><td class="mono">C:\Users\…\.jian_data</td>
+              <td class="d">数据湖 / 缓存 / 凭据都在这（可迁移）</td><td class="mono">默认目录</td>
+              <td><span class="tag p">全局</span></td><td class="d mono">config.settings</td>
+              <td><button class="act">打开</button></td></tr>
+          <tr><td class="k">缓存占用</td><td class="mono">182 MB</td>
+              <td class="d">行情快照 / 行业映射 / 交易日历（清理不影响数据湖）</td><td class="mono">—</td>
+              <td><span class="tag">只读</span></td><td class="d mono">industry_map.json 等</td>
+              <td><button class="act">清理</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="foot">
+      <span>作用域：全局 = 一处调处处生效</span>
+      <span>来源 = 这项落在哪个文件/偏好键（便于排障）</span>
+      <span style="margin-left:auto">新增设置项只需在注册表加一行，无需改页面</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

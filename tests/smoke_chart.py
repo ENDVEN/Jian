@@ -4321,9 +4321,9 @@ try:
     check("★ concurrency 越界夹进 [1,4]（K≤4：9→4、0→1）",
           _dpf66(_P66({"concurrency": 9})).concurrency == 4
           and _dpf66(_P66({"concurrency": 0})).concurrency == 1)
-    check("★ 空/缺键 ⇒ 回落默认（均衡档 3 / interval 0.6）",
+    check("★ v6.74（B 档）：空/缺键 ⇒ 回落默认（K=2 / interval 0.5，唯一真源 = preferences.DEFAULTS）",
           _dpf66(_P66({})).concurrency == DEFAULT_DOWNLOAD_CONCURRENCY
-          and abs(_dpf66(_P66({})).interval - 0.6) < 1e-9)
+          and abs(_dpf66(_P66({})).interval - 0.5) < 1e-9)
 
     # ---- ⑥ submit(policy=None) 读全局 ⇒ “改一处处处生效”端到端闭环 ----
     _hub66 = _DH66()
@@ -4447,12 +4447,23 @@ try:
         _r68c = _em7.fetch_industry_page(1, 3, sleep_fn=lambda _s: None)
     finally:
         _em7.clist_page = _real_clist7
-    check("★ v6.69：冷却期内**连第 1 页都不打**（旧版每次扫描都重打第一页 ⇒ 越点越死）",
-          _asked7d == [] and _r68c['map'] == {} and _r68c['pages_done'] == 0
-          and '冷却' in _r68c['error'])
+    check("★ v6.74：**ulist 冷却不再连坐 clist**（旧版「一份全局冷却」⇒ 行业与估值互相拖死）",
+          _asked7d == [1] and '冷却' not in (_r68c.get('error') or ''))
+    _et7.note_failure('clist', 'sim')                 # ★v6.74：按通道记，clist 自己进冷却
+    _asked7d.clear()
+    _em7.clist_page = lambda page, pz=100: (_asked7d.append(page), ([], 0))[1]
+    try:
+        _r68d = _em7.fetch_industry_page(1, 3, sleep_fn=lambda _s: None)
+    finally:
+        _em7.clist_page = _real_clist7
+    check("★ v6.69：clist 冷却期内**连第 1 页都不打**（旧版每次扫描都重打第一页 ⇒ 越点越死）",
+          _asked7d == [] and _r68d['map'] == {} and _r68d['pages_done'] == 0
+          and '冷却' in _r68d['error'])
     _et7.note_success()
-    check("★ v6.69：成功一次即**清零**（额度是「连打才拒」，能过一次就说明窗已恢复）",
+    _et7.note_success()
+    check("★ v6.69+v6.72：恢复后**连续两次**成功才清零（v6.72 起单次成功不再清零 ⇒ 见下节抗抖动）",
           _et7.cooldown_left() == 0 and _et7.is_cooling() is False)
+    _et7.reset()          # ⚠ 清掉冷却：下一段（should_stop）要真能发出请求才验得到
 
     # ---- ★v6.69：`should_stop` ⇒ **页与页之间**收手（关窗取消不必等整批跑完）----
     _stop_pages7 = []
@@ -4574,6 +4585,118 @@ except Exception as _e7:  # noqa: BLE001
     check(f"§7-B11 后续 快照秒补断言整段抛异常: {type(_e7).__name__}: {_e7}", False)
 
 # ==========================================
+print("\n== ★v6.72 · 网络策略：IPv4 优先 / 代理降级直连 / 失败分类 / 退避抗抖动 ==")
+#   用户实测（2026-09-26 22:13）：`ProxyError('Unable to connect to proxy')`。逐层实测是两件事叠加：
+#     ① DNS 把 IPv6 排前面而东财 IPv6 端点不通（同刻 `curl -4`=200 / `curl -6`=000）
+#        ⇒ `requests` 没有可靠的 Happy-Eyeballs 回退 ⇒ **额度充足也白撞**；
+#     ② 系统代理（clash-verge 写 WinINET `ProxyEnable=1 / 127.0.0.1:7897`）在中间，
+#        而 `netsh winhttp show proxy` **看不到它**（v6.68 那轮判据选错工具，坑 = §11.5-103）。
+# ==========================================
+try:
+    import socket as _sock72  # noqa: E402
+    import urllib3.util.connection as _u3c72  # noqa: E402
+
+    from core.preferences import preferences as _pref72  # noqa: E402
+    from data import em_market as _em72  # noqa: E402
+    from data import em_throttle as _et72  # noqa: E402
+    from data import net_env as _ne72  # noqa: E402
+    from data.sync_service import looks_like_proxy_error as _lpe72  # noqa: E402
+
+    _net_back72 = _pref72.get('net')
+    _gai_back72 = _u3c72.allowed_gai_family
+    try:
+        # ---- ① 地址族：默认限定 IPv4，且**可回退**（不是单向焊死）----
+        _pref72.set('net', {'force_ipv4': True, 'proxy_mode': 'auto'})
+        _ne72.apply()
+        check("★ v6.72：默认把地址族限定为 **IPv4**（DNS 优先 IPv6 而东财 IPv6 不通 ⇒ 否则白撞）",
+              _u3c72.allowed_gai_family() == _sock72.AF_INET)
+        _pref72.set('net', {'force_ipv4': False})
+        _ne72.apply()
+        check("★ v6.72：关掉开关即**还原系统默认**地址族（可回退）",
+              _u3c72.allowed_gai_family() == _gai_back72()          # ⚠ 比**返回值**，别比函数对象
+              and _u3c72.allowed_gai_family() != _sock72.AF_INET)
+        _pref72.set('net', {'force_ipv4': True, 'proxy_mode': 'direct'})
+        check("★ v6.72：`describe()` 说人话且随策略变（页面 tooltip 直接拼它）",
+              'IPv4 优先' in _ne72.describe() and '直连' in _ne72.describe())
+        check("★ v6.72：代理指纹只有**一份实现**（`net_env` 定义 + `sync_service` 再导出）",
+              _lpe72 is _ne72.looks_like_proxy_error
+              and _ne72.looks_like_proxy_error("ProxyError: Unable to connect to proxy")
+              and not _ne72.looks_like_proxy_error("RemoteDisconnected('Remote end closed')"))
+
+        # ---- ② 代理报错 ⇒ 降级直连重试一次；直连再失败 ⇒ 仍按"代理"报（不是限流）----
+        _pref72.set('net', {'force_ipv4': True, 'proxy_mode': 'auto'})
+        _et72.reset()
+        _em72._STATE.update({'direct_locked': False, 'proxy_err': ''})
+        _real_get72 = _em72._do_get
+        _calls72 = []
+
+        def _fake_get72(url, params, use_proxy):
+            _calls72.append(use_proxy)
+            if use_proxy:
+                raise RuntimeError("ProxyError: Unable to connect to proxy")
+            return {'data': {'diff': [{'f12': '600000', 'f14': 'X', 'f100': '银行'}], 'total': 1}}
+
+        _em72._do_get = _fake_get72
+        try:
+            _rows72 = _em72.ulist_page(['600000'])
+        finally:
+            _em72._do_get = _real_get72
+        check("★ v6.72：代理报错 ⇒ **降级直连重试一次**并成功 + 记住本轮用直连",
+              _calls72 == [True, False] and len(_rows72) == 1 and _em72.direct_locked())
+
+        _calls72b = []
+        _em72._STATE['direct_locked'] = False
+
+        def _fake_get72b(url, params, use_proxy):
+            _calls72b.append(use_proxy)
+            raise RuntimeError("ProxyError: Unable to connect to proxy")
+
+        _em72._do_get = _fake_get72b
+        try:
+            try:
+                _em72.ulist_page(['600000'])
+                _err72 = None
+            except Exception as e:               # noqa: BLE001
+                _err72 = e
+        finally:
+            _em72._do_get = _real_get72
+        check("★ v6.72：直连也失败 ⇒ 抛出的仍是**代理类**错误（上层才按代理安抚，不误导成限流）",
+              _err72 is not None and _ne72.looks_like_proxy_error(_err72)
+              and _calls72b == [True, False])
+
+        _et72.reset()
+        _real_clist72 = _em72.clist_page
+        _em72.clist_page = lambda page, pz=100: (_ for _ in ()).throw(
+            RuntimeError("ProxyError: Unable to connect to proxy"))
+        try:
+            _r72 = _em72.fetch_industry_page(1, 1, sleep_fn=lambda _s: None)
+        finally:
+            _em72.clist_page = _real_clist72
+        check("★ v6.72：代理类失败 ⇒ 回执说「查代理（重试无用）」，**不是**「限流冷却」",
+              '代理' in _r72['error'] and '限流' not in _r72['error']
+              and (_et72.channels().get('clist') or {}).get('fail_class') == 'proxy')
+        check("★ v6.72：代理类冷却**固定 5 分钟**（不是限流的 10→20→40 指数退避）",
+              abs(_et72.cooldown_left() - 300) < 5)
+
+        # ---- ③ 退避抗抖动：实测 4ms 内「冷却 → 清零 → 再冷却」⇒ 单次成功不许清零 ----
+        _et72.reset()
+        _et72.note_failure('test', 'boom')
+        _et72.note_success()
+        check("★ v6.72：失败后**一次**成功不清零（连击 1/2 ⇒ 冷却仍在）",
+              _et72.is_cooling() and int((_et72.channels().get('test') or {}).get('streak') or 0) == 1)
+        _et72.note_success()
+        check("★ v6.72：**连续两次**成功才清零（失败会把连击打回 0）",
+              not _et72.is_cooling() and _et72.cooldown_left() == 0)
+        _et72.reset()
+    finally:
+        _u3c72.allowed_gai_family = _gai_back72   # 收场：不给后面的断言留 IPv4-only
+        _pref72.set('net', _net_back72 or {'force_ipv4': True, 'proxy_mode': 'auto'})
+        _ne72.apply()
+        _et72.reset()
+except Exception as _e72:  # noqa: BLE001
+    check(f"v6.72 网络策略断言整段抛异常: {type(_e72).__name__}: {_e72}", False)
+
+# ==========================================
 print("\n== §7-B11 后续 · 统一下载设置入口（v1.45）==")
 # ==========================================
 try:
@@ -4589,8 +4712,8 @@ try:
     check("★ 全局下载偏好 download_prefs 存在且五项齐全（唯一真源的默认）",
           isinstance(_dp, dict) and {"interval", "jitter", "circuit_breaker",
                                      "skip_fresh", "concurrency"} <= set(_dp))
-    check("★ 默认并发=均衡档 3 / interval=0.6（与实际生效一致）",
-          _dp.get("concurrency") == _DDC8 and abs(float(_dp.get("interval")) - 0.6) < 1e-9)
+    check("★ v6.74（B 档）：默认并发 2 / interval 0.5（与实际生效一致；用户实测 0.3×K3≈10/秒 才激进）",
+          _dp.get("concurrency") == _DDC8 == 2 and abs(float(_dp.get("interval")) - 0.5) < 1e-9)
 
     _bulk8 = _src8("ui", "dialogs", "bulk_download.py")
     _dm8 = _src8("ui", "views", "data_manager.py")

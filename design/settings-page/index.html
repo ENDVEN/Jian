@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设置页 · 四版样式对比</title>
+<style>
+:root{--bg:#F5F7FA;--card:#fff;--line:#E4E9F0;--ink:#1F2430;--ink2:#5B6472;--ink3:#8A94A6;--blue:#1976D2;--blue-bg:#EEF4FD;
+--ui:"Source Han Sans SC","Noto Sans CJK SC",system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--ui);background:var(--bg);color:var(--ink);font-size:13.5px;padding:26px}
+.wrap{max-width:980px;margin:0 auto}
+h1{font-size:18px}
+p.lead{color:var(--ink2);margin:6px 0 18px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h2{font-size:14.5px;margin-bottom:6px}
+.card .tagline{color:var(--ink3);font-size:12px;margin-bottom:10px}
+ul{margin:0 0 12px 18px;color:var(--ink2);font-size:12.5px;line-height:1.75}
+a.open{display:inline-block;background:var(--blue);color:#fff;text-decoration:none;padding:7px 14px;border-radius:9px;font-size:13px}
+a.open:hover{background:#1565C0}
+.note{margin-top:18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px}
+.note b{color:var(--ink)}
+code{font-family:"JetBrains Mono","Noto Sans Mono CJK SC",ui-monospace,monospace;background:#F2F5FA;padding:1px 5px;border-radius:5px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚙ 设置页 · 四版样式（请挑一版，或指出混搭）</h1>
+  <p class="lead">四版的功能清单完全一致（账号与数据源 / 下载与取数 / 外观与个性化 / 回测与扫描默认 / 存储与维护 / 关于），
+     差别只在<b>信息组织方式与观感</b>。位置按你的要求：<b>左导航最下方固定</b>。</p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>S1 · 分组卡片 + 左锚点</h2>
+      <div class="tagline">贴近现有「数据管理 / 运行历史」的语言</div>
+      <ul>
+        <li>优点：学习成本最低，与现有页面最像；锚点跳转快</li>
+        <li>优点：分组卡片天然适合再加分组</li>
+        <li>代价：项多时（&gt;40）纵向会变长，需靠锚点/搜索</li>
+      </ul>
+      <a class="open" href="s1-分组卡片.html">打开 S1</a>
+    </div>
+
+    <div class="card">
+      <h2>S2 · 系统设置双栏</h2>
+      <div class="tagline">macOS / iOS「系统设置」观感，宽松</div>
+      <ul>
+        <li>优点：一屏只看一组，焦点强、最不容易误改</li>
+        <li>优点：留白大、观感高级；适合面向新用户</li>
+        <li>代价：同屏信息量最少，参数多时切换频繁</li>
+      </ul>
+      <a class="open" href="s2-双栏列表.html">打开 S2</a>
+    </div>
+
+    <div class="card">
+      <h2>S3 · 控制台单页 + 搜索</h2>
+      <div class="tagline">顶部搜索 + 右侧「当前状态 / 网络自检」</div>
+      <ul>
+        <li>优点：搜索直达；右侧常驻状态（登录档位/出口/额度）最实用</li>
+        <li>优点：适合"改完立刻看效果"的设置（主题、密度）</li>
+        <li>代价：右侧栏占宽；窄屏要折叠</li>
+      </ul>
+      <a class="open" href="s3-控制台单页.html">打开 S3</a>
+    </div>
+
+    <div class="card">
+      <h2>S4 · 密集参数表</h2>
+      <div class="tagline">每行：当前值 / 默认 / 作用域 / 来源文件</div>
+      <ul>
+        <li>优点：<b>参数爆炸后的正解</b>——可过滤、可排序、可一键回默认</li>
+        <li>优点：「来源」列直接显示落在哪个偏好键/文件，排障最快</li>
+        <li>代价：观感偏工程化；对纯"外观个性化"不够直观</li>
+      </ul>
+      <a class="open" href="s4-密集参数表.html">打开 S4</a>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>我的建议（供你参考）</b>：<code>S3 + S1</code> 混搭最稳 ——
+    外层用 S1/S3 的分组卡片保证"看得懂、像现有软件"，再把最上面一条做成
+    <b>搜索框 + 右侧状态卡（S3）</b>；等你哪天参数过百，切到 S4 的表格视图做"高级模式"即可（两视图共用同一份注册表）。
+    <br><br>
+    <b>技术前提（决定了后续扩展成本）</b>：无论选哪版，实现都走同一套
+    <code>ui/settings_registry.py</code> 声明式注册表（每项声明 key/类型/默认/校验/作用域/落点/是否需重启），
+    页面只负责渲染 ⇒ <b>以后加设置 = 加一行声明</b>，不用改页面、也不会各页各写一套。
+  </div>
+</div>
+</body>
+</html>

@@ -2674,12 +2674,14 @@ try:
         _started_ind68.clear()
         _scan._flow._maybe_fetch_industry()
         check("★ v6.68：行业走**分批**抓取（每批几页，不再是一次性几十次连击）",
-              _started_ind68 == [(1, _sflow4.INDUSTRY_PAGES_PER_SCAN)])
+              _started_ind68 == [(1, _sflow4.em_market.pages_per_scan())])
         # ★v6.69（用户 2026-09-26 实测：一次扫描完成会**同时**打"行业 + 估值"两串全市场请求
         #   ⇒ 4 秒内两条一起 `RemoteDisconnected`）—— 三处收紧：
         #   ① 每批 8 → 3 页；② 估值改**按标的池批量**（不再全市场 56 页）；③ 失败退避冷却。
-        check("★ v6.69：行业每批**降到 3 页**（单次扫描的突发从 8 个请求降到 3 个）",
-              _sflow4.INDUSTRY_PAGES_PER_SCAN == 3)
+        check("★ v6.69：行业每批**降到 3 页**（单次扫描的突发从 8 个请求降到 3 个）—— "
+              "★S2-1 起页数**按档位取**（唯一出处 `em_market.pages_per_scan()`）",
+              _sflow4.INDUSTRY_PAGES_PER_SCAN == 3
+              and _sflow4.em_market.pages_per_scan() in (3, 10))
         _cool_back68 = _sflow4.em_throttle.describe
         _sflow4.em_throttle.describe = lambda *a, **k: '东财限流冷却中（约 9 分钟后再试）'
         _started_ind68.clear()
@@ -2688,6 +2690,8 @@ try:
         check("★ v6.69：冷却中 ⇒ **一个请求都不打**，且回执明说'还要等多久'（不再越点越死）",
               _started_ind68 == [] and '冷却' in _scan.lbl_receipt.text()
               and '行业映射未取到' in _scan.lbl_receipt.text())
+        check("★ v6.72：行业失败 tooltip 带**当前网络策略**（用户才看得懂是代理/IPv6 那一层的事）",
+              '当前网络策略' in _scan.lbl_receipt.toolTip())
         _sflow4.em_throttle.describe = _cool_back68
         # 估值也必须**按标的池**取（源码级护栏：这条一旦被改回"无参全市场"，额度立刻又会被打光）
         import pathlib as _pl68  # noqa: E402
@@ -4210,9 +4214,10 @@ try:
     #   ⚠ 隔离（v1.45 隐患修正）：默认值锁在**规格常量** `DEFAULTS`，实框只验
     #     「预填 == 当前已存偏好」。旧写法直接钉 `value()==0.6` ⇒ 用户一旦在下载设置里
     #     改过间隔就**假红**（非产品 bug：规格与用户数据混在了同一条断言里）。
-    _cur_int12 = float((_prefs12.get("download_prefs") or {}).get("interval", 0.6))
-    check("★ 间隔默认 0.6（规格常量）、范围 0~10、步长 0.1、预填==已存偏好（口径原样+隔离）",
-          abs(float(_PDEF12["download_prefs"]["interval"]) - 0.6) < 1e-9
+    _cur_int12 = float((_prefs12.get("download_prefs") or {}).get(
+        "interval", _PDEF12["download_prefs"]["interval"]))       # ★v6.74 兜底也取**规格常量**
+    check("★ v6.74（B 档）：间隔规格常量 0.5、范围 0~10、步长 0.1、预填==已存偏好（口径原样+隔离）",
+          abs(float(_PDEF12["download_prefs"]["interval"]) - 0.5) < 1e-9
           and (_set12.spin_interval.minimum(), _set12.spin_interval.maximum()) == (0.0, 10.0)
           and abs(_set12.spin_interval.singleStep() - 0.1) < 1e-9
           and abs(_set12.spin_interval.value() - _cur_int12) < 1e-9)
@@ -5099,6 +5104,438 @@ except Exception as _eq:  # noqa: BLE001
 #   （人眼完全看不出来，只有 `json.load` 会炸）—— 而那等于**所有老用户的更新检查崩**。
 #   这条纪律以前只有 §11.7 一句"三处同步"（靠人记）⇒ 现在改成可执行断言。
 # ==========================================
+# ==========================================
+# §7-B13 · 设置页 S2-0（★v6.73）：**注册表驱动 / 位置固定 / 加一行即出现**
+#   用户 2026-09-26 定案："设置放左栏最下方"、"后续所有系统项/登录/个性化都塞进来"、
+#   并要求**预留接口** ⇒ 护栏就是下面这条"加一行注册项 ⇒ 页面自动多一行"。
+#   本段**只读**（不再往里写用户偏好：需要写的地方用内存桩，§11.5-84 成对还原）。
+# ==========================================
+print("\n== §7-B13 · 设置页 S2-0：注册表驱动 / 导航最下方固定 / 加一行即出现 ==")
+try:
+    import pathlib as _pl73  # noqa: E402
+
+    from config import settings as _st73  # noqa: E402
+    from ui import settings_registry as _sr73  # noqa: E402
+    from ui.views.settings_view import SettingsView as _SV73  # noqa: E402
+
+    _mws73 = _pl73.Path('ui/main_window.py').read_text(encoding='utf-8')
+    _svs73 = _pl73.Path('ui/views/settings_view.py').read_text(encoding='utf-8')
+
+    # ---- ① 位置与接线（用户定的位置：左轨最下方固定）----
+    check("★ S2-0：`⚙ 设置` 加在 `addStretch()` **之后** ⇒ 上方功能怎么增减都在最下方",
+          _mws73.index('sidebar_layout.addStretch()')
+          < _mws73.index('sidebar_layout.addWidget(self.btn_settings)'))
+    _side73 = win.btn_settings.parentWidget().layout()
+    check("★ S2-0：运行期实测 —— 左轨**最后一个控件**就是 `⚙ 设置`（真在底部，不只是源码写着）",
+          _side73.itemAt(_side73.count() - 1).widget() is win.btn_settings)
+    check("★ S2-0：设置页进了内容栈（index 6）+ 导航可切 + `switch_to('settings')` 认它",
+          'self.content_area.addWidget(self.page_settings)' in _mws73
+          and 'self.btn_settings.clicked.connect' in _mws73
+          and '"settings": 6' in _mws73)
+    check("★ S2-0：主窗口已挂上设置页（真实装配，不只是源码里有）",
+          hasattr(win, 'page_settings') and hasattr(win, 'btn_settings')
+          and win.content_area.indexOf(win.page_settings) == 6)
+
+    # ---- ② 唯一真源：页面不许自己描述设置项 / 不许自己读写偏好（§9-D 落点唯一）----
+    check("★ S2-0：设置页**只渲染注册表**（源码里既无 `preferences`、也无 item 字面量）",
+          'settings_registry' in _svs73 and 'preferences' not in _svs73)
+
+    _g73 = _sr73.groups()
+    check("★ S2-0：7 个分组齐全（账号与数据源 → 关于与更新，顺序即显示顺序）",
+          [g.gid for g in _g73] == ['account', 'download', 'appearance', 'defaults',
+                                    'storage', 'keys', 'about'])
+    _items73 = _sr73.items()
+    check("★ S2-0：注册表项**都声明了落点**（`where` ⇒ 唯一写入点），且先接 ≥7 个真项",
+          len(_items73) >= 7 and all(i.where for i in _items73))
+    _it73 = _sr73.find('download.interval')
+    # ⚠ `DEFAULTS` 是 `core.preferences` 的**模块级**名（不是实例属性）—— 别按实例取（会静默拿到空）
+    from core.preferences import DEFAULTS as _DEFS73  # noqa: E402
+
+    _dp73 = (_DEFS73.get('download_prefs') or {})
+    check("★ S2-0：注册表默认值 == `preferences.DEFAULTS`（防「两套默认」漂移）",
+          _it73 is not None and abs(float(_dp73.get('interval', -1)) - float(_it73.default)) < 1e-9
+          and _it73.where == 'download_prefs.interval')
+
+    # ---- ③ 读写往返（**内存桩**：绝不碰用户真实偏好）----
+    _real_pref73 = _sr73.preferences
+
+    class _MemPref73:
+        def __init__(self):
+            self.d = {}
+
+        def get(self, key, default=None):
+            return self.d.get(key, default)
+
+        def set(self, key, value):
+            self.d[key] = value
+
+    _sr73.preferences = _MemPref73()
+    try:
+        _sr73.set_value(_it73, 0.9)
+        check("★ S2-0：写入经注册表 ⇒ 落到声明的落点（`download_prefs.interval`）",
+              abs(float(_sr73.get_value(_it73)) - 0.9) < 1e-9
+              and abs(float(_sr73.preferences.get('download_prefs', {}).get('interval', -1)) - 0.9) < 1e-9)
+        _sr73.reset_value(_it73)
+        check("★ S2-0：「恢复默认」回到声明值（不写死第二份默认）",
+              abs(float(_sr73.get_value(_it73)) - float(_it73.default)) < 1e-9)
+        _ro73 = _sr73.Item('ro.demo', 'about', '只读演示', _sr73.KIND_READONLY,
+                           default=_st73.APP_VERSION, where='readonly:版本号由 APP_VERSION 提供',
+                           readonly=True)
+        check("★ S2-0：只读项**拒绝写入**（状态展示不许被改掉）",
+              _sr73.set_value(_ro73, '999') is False and _sr73.get_value(_ro73) == _st73.APP_VERSION)
+    finally:
+        _sr73.preferences = _real_pref73          # 成对还原（§11.5-84）
+
+    # ---- ④ 预留接口的**机器护栏**：注册表加一行 ⇒ 页面自动多一行 ----
+    _view73 = _SV73()
+    _n73 = _view73.count_rows('download')
+    _extra73 = _sr73.Item('smoke.extra', 'download', '冒烟临时项', _sr73.KIND_TOGGLE,
+                          default=False, where='smoke_tmp.flag')
+    _sr73.ITEMS.append(_extra73)
+    try:
+        _view73.reload()
+        _n73b = _view73.count_rows('download')
+    finally:
+        _sr73.ITEMS.remove(_extra73)
+        _view73.reload()
+    check("★ S2-0：**注册表加一行 ⇒ 页面自动多一行**（这才是「预留接口」；S2-1…S2-7 全靠它）",
+          _n73b == _n73 + 1 and _view73.count_rows('download') == _n73)
+    check("★ S2-0：左列表分组 = 注册表分组（视图不另造一份清单）",
+          len(_view73._btns) == len(_sr73.groups()) and _view73.count_rows('appearance') == 0)
+    check("★ S2-0：还没接的分组显示「哪一步接进来」，**不放假控件**",
+          all(g.todo for g in _g73 if not _sr73.items(g.gid)))
+except Exception as _e73:  # noqa: BLE001
+    check(f"§7-B13 设置页 S2-0 断言整段抛异常: {type(_e73).__name__}: {_e73}", False)
+
+# ==========================================
+# §7-B13 · S2-1a（★v6.73）：**东财双档（登录/匿名）+ 每日额度 + 登录入口**
+#   判据来自 2026-09-26 同刻对照实测：带 Cookie 200 / 匿名 RST ⇒ 门槛是"登录态"。
+#   本段**全程打桩**（不发请求、不写用户预算、不弹对话框、不动本机凭据文件）。
+# ==========================================
+print("\n== §7-B13 · S2-1a：东财双档（登录/匿名）+ 每日额度闸门 + 登录入口 ==")
+try:
+    import pathlib as _pl74  # noqa: E402
+
+    import data.em_auth as _ea74  # noqa: E402
+    import data.em_market as _em74  # noqa: E402
+    from ui import settings_registry as _sr74  # noqa: E402
+    from ui.views.settings_view import SettingsView as _SV74  # noqa: E402
+
+    # ---- ① 档位判据 + 档位参数（唯一出处）----
+    _back_login74 = _ea74.is_logged_in
+    try:
+        _ea74.is_logged_in = lambda: False
+        check("★ S2-1：匿名档 ⇒ 每批 3 页 / 页间隔 0.5s（v6.69 的慢速档原样保留）",
+              _em74.current_tier() == 'anon' and _em74.pages_per_scan() == 3
+              and abs(_em74.page_interval() - 0.5) < 1e-9 and '匿名档' in _em74.tier_text())
+        _ea74.is_logged_in = lambda: True
+        check("★ S2-1：登录档 ⇒ 每批 10 页 / 页间隔 0.15s（常速；判据/参数都在 em_market 一处）",
+              _em74.current_tier() == 'auth' and _em74.pages_per_scan() == 10
+              and abs(_em74.page_interval() - 0.15) < 1e-9 and '登录档' in _em74.tier_text())
+    finally:
+        _ea74.is_logged_in = _back_login74
+
+    # ---- ② 登录 ⇒ 请求头带 Cookie；匿名 ⇒ 不带（且凭据**绝不进日志/回执**）----
+    _sent74 = []
+
+    class _Resp74:
+        status_code = 200
+
+        def json(self):
+            return {'data': {'diff': [], 'total': 0}}
+
+    class _Sess74:
+        def get(self, url, params=None, headers=None, timeout=None):  # noqa: A002 —— 模拟 requests
+            _sent74.append(dict(headers or {}))
+            return _Resp74()
+
+    _back_sess74, _back_cookie74 = _em74._session, _ea74.cookie_header
+    _back_note74 = _ea74.note_request
+    _back_sleep74 = _em74._sleep_fn                     # ★v6.74 别在断言里真等 0.8s 节流
+    _em74._session = lambda use_proxy: _Sess74()
+    _em74._sleep_fn = lambda _s: None
+    _ea74.note_request = lambda who='auth', n=1: None          # ⚠ 别写用户真实预算
+    try:
+        _ea74.cookie_header = lambda: 'ut=V; ct=V; pi=V'
+        _em74.clist_page(1, 100)
+        _ea74.cookie_header = lambda: ''
+        _em74.clist_page(1, 100)
+    finally:
+        _em74._session, _ea74.cookie_header = _back_sess74, _back_cookie74
+        _ea74.note_request = _back_note74
+        _em74._sleep_fn = _back_sleep74
+    check("★ S2-1：登录 ⇒ 请求头带 `Cookie`（取数更稳）；未登录 ⇒ **不带**（不当假登录）",
+          str(_sent74[0].get('Cookie') or '').startswith('ut=') and 'Cookie' not in _sent74[1])
+    _em_src74 = _pl74.Path('data/em_market.py').read_text(encoding='utf-8')
+    _cookie_lines74 = [ln for ln in _em_src74.splitlines() if 'cookie' in ln.lower()]
+    check("★ S2-1：凭据**永不进日志** —— `em_market` 里凡带 cookie 的行都不是 logger 调用",
+          bool(_cookie_lines74) and not any('logger.' in ln for ln in _cookie_lines74))
+
+    # ---- ③ 每日额度闸门：用完 ⇒ **一个请求都不打**，回人话（停在缓存档）----
+    _back_left74, _back_btext74 = _ea74.budget_left, _ea74.budget_text
+    _ea74.budget_left = lambda who='auth': 0
+    _ea74.budget_text = lambda who='auth': '今日东财取数额度 还剩 0/100 次（匿名档）'
+    _hit74, _back_clist74 = [], _em74.clist_page
+    _back_desc74 = _em74.em_throttle.describe
+    _em74.clist_page = lambda page, pz=100: (_hit74.append(page), ([], 0))[1]
+    _em74.em_throttle.describe = lambda *a, **k: ''            # 排除"冷却中"那条更早的闸门干扰
+    try:
+        _r74 = _em74.fetch_industry_page(1, 3, sleep_fn=lambda _s: None)
+    finally:
+        _em74.clist_page, _em74.em_throttle.describe = _back_clist74, _back_desc74
+        _ea74.budget_left, _ea74.budget_text = _back_left74, _back_btext74
+    check("★ S2-1：**额度用完 ⇒ 连第 1 页都不打**（停在缓存档，不拿账号去硬试）",
+          _hit74 == [] and _r74['pages_done'] == 0 and '额度' in _r74['error'])
+
+    # ---- ④ 注册表：账号分组已接登录入口（动作项 + 动态只读项）----
+    _acc74 = _sr74.items('account')
+    _kinds74 = {i.key: i.kind for i in _acc74}
+    check("★ S2-1：账号分组已接「登录 / 退出」（动作项）+ 档位 / 登录状态 / 今日额度（动态只读）",
+          _kinds74.get('em.login') == _sr74.KIND_ACTION
+          and _kinds74.get('em.logout') == _sr74.KIND_ACTION
+          and _kinds74.get('em.tier') == _sr74.KIND_READONLY
+          and _kinds74.get('em.login_state') == _sr74.KIND_READONLY
+          and _kinds74.get('em.budget') == _sr74.KIND_READONLY)
+    _tier74 = _sr74.find('em.tier')
+    try:
+        _ea74.is_logged_in = lambda: True
+        _tx74 = _sr74.get_value(_tier74)
+    finally:
+        _ea74.is_logged_in = _back_login74
+    check("★ S2-1：动态只读项**现算**（切档 ⇒ 值立刻跟着变，不是写死的 default）",
+          '登录档' in str(_tx74) and str(_tx74) != str(_tier74.default))
+    check("★ S2-1：只读项 / 动作项**拒写**（它们没有偏好落点；写它 = 假设置）",
+          _sr74.set_value(_tier74, 'x') is False
+          and _sr74.set_value(_sr74.find('em.login'), 'x') is False)
+
+    # ---- ⑤ 页面真渲染 + 动作项执行链路（不弹真对话框）----
+    _view74 = _SV74()
+    check("★ S2-1：设置页「账号与数据源」渲染行数 == 注册表项数（7 = 2 网络 + 5 东财登录）",
+          _view74.count_rows('account') == len(_acc74) >= 7)
+    _act74 = _sr74.find('em.logout')
+    _back_act74 = _act74.action
+    _act74.action = lambda: '（冒烟）已退出登录'
+    try:
+        _view74._run_action(_act74)
+        _txt74 = _view74._status.text()
+    finally:
+        _act74.action = _back_act74
+    check("★ S2-1：动作项执行后 ⇒ 整页刷新 + 把动作返回的人话当回执（页面不写业务）",
+          '冒烟' in _txt74)
+    from ui.dialogs.em_login import EmLoginDialog as _EL74  # noqa: E402
+
+    check("★ S2-1：登录入口 = `ui/dialogs/em_login.py`（唯一入口；只看方法在不在，不弹窗）",
+          hasattr(_EL74, '_on_parse') and hasattr(_EL74, '_on_logout')
+          and 'em_auth' in _pl74.Path('ui/dialogs/em_login.py').read_text(encoding='utf-8'))
+except Exception as _e74:  # noqa: BLE001
+    check(f"§7-B13 S2-1a 断言整段抛异常: {type(_e74).__name__}: {_e74}", False)
+
+# ==========================================
+# ★v6.74 · 新骨干第一刀：**行业按池取（f100）+ 通道化退避 + 全局最小间隔 + 日志落文件**
+#   用户 2026-09-27 拍板 **B 档**（保留 K=2/0.5s，遇限流自动降档），并明确"不要调低每日额度"。
+#   本段全程打桩（不发请求、不等 0.8s、不动用户真实退避状态）。
+# ==========================================
+print("\n== ★v6.74：行业按池取（f100）/ 通道化退避 / 全局最小间隔 / 日志落文件 ==")
+try:
+    import pathlib as _pl76  # noqa: E402
+
+    import data.em_market as _em76  # noqa: E402
+    import data.em_throttle as _et76  # noqa: E402
+    from core.preferences import DEFAULTS as _DEFS76  # noqa: E402
+
+    # ---- ① 行业字段进了批量报价（一条通道喂三处）----
+    check("★ v6.74：`QUOTE_FIELDS` 带行业 `f100` ⇒ 行业/估值/秒补**共用同一次请求**（实测 200）",
+          'f100' in _em76.QUOTE_FIELDS and 'industry' in _em76.QUOTE_COLUMNS)
+    _df76 = _em76.rows_to_quotes([
+        {'f12': '600000', 'f14': '浦发银行', 'f2': 10.0, 'f18': 9.9, 'f5': 100.0, 'f6': 1.0e6,
+         'f8': 0.5, 'f9': 4.8, 'f20': 2.9e11, 'f21': 1.9e10, 'f23': 0.4, 'f100': '银行Ⅱ'},
+        {'f12': '300750', 'f14': '宁德时代', 'f2': 200.0, 'f18': 198.0, 'f5': 200.0, 'f6': 2.0e6,
+         'f8': 0.8, 'f9': 15.7, 'f20': 9.0e11, 'f21': 8.0e11, 'f23': 5.0, 'f100': '-'}])
+    _r76 = _df76.set_index('symbol')
+    check("★ v6.74：报价行同时带出**行业文本**（`-`/空 ⇒ 清成空串，不留字面 '-'）",
+          str(_r76.loc['600000', 'industry']) == '银行Ⅱ'
+          and str(_r76.loc['300750', 'industry']) == '')
+    check("★ v6.74：`industry_from_quotes()` = **按池补行业**的入口（空/`-`/非 6 位一律不入库）",
+          _em76.industry_from_quotes(_df76) == {'600000': '银行Ⅱ'})
+    check("★ v6.74：批量报价**仍是 100 只/请求**（沪深300 = 3 个请求、全 A = 56 个）",
+          _em76.QUOTE_BATCH_SIZE == 100)
+
+    # ---- ② 通道化退避：clist 失败**不再连坐** ulist（用户 23:59 日志里的真 bug）----
+    _et76.reset()
+    _back_gap76 = _em76.MIN_REQUEST_GAP_SECONDS
+    _em76.MIN_REQUEST_GAP_SECONDS = 0.0               # 断言里不真等 0.8s
+    _back_clist76, _back_ulist76 = _em76.clist_page, _em76.ulist_page
+    _em76.clist_page = lambda page, pz=100: (_ for _ in ()).throw(RuntimeError('模拟限流'))
+    try:
+        _r76b = _em76.fetch_industry_page(1, 2, sleep_fn=lambda _s: None)
+    finally:
+        _em76.clist_page = _back_clist76
+    check("★ v6.74：`clist` 失败 ⇒ **只冷 clist**（ulist 照旧可打；旧版是「一份全局冷却」连坐）",
+          _et76.is_cooling(kind='clist') and not _et76.is_cooling(kind='ulist')
+          and _et76.cooldown_left(kind='clist') >= 60 and '冷却' in _r76b['error'])
+    _em76.ulist_page = lambda codes: (_ for _ in ()).throw(RuntimeError('模拟限流'))
+    try:
+        _em76.fetch_quotes(['600000'], sleep_fn=lambda _s: None)
+    finally:
+        _em76.ulist_page = _back_ulist76
+    check("★ v6.74：ulist 也各自记账；`describe_all()` 能说清**是哪个通道在冷**（设置页/回执用）",
+          _et76.is_cooling(kind='ulist') and 'clist' in _et76.describe_all()
+          and 'ulist' in _et76.describe_all())
+    check("★ v6.74：任何失败后该通道**至少静默 60s**（不再 0.15s 密集重试；实测那是被 RST 的形态）",
+          _et76.MIN_RETRY_GAP_SECONDS >= 60
+          and _et76.cooldown_left(kind='ulist') >= _et76.MIN_RETRY_GAP_SECONDS - 1)
+    _et76.note_success('clist')
+    _et76.note_success('clist')
+    check("★ v6.74：**只有该通道**被连续成功清零（连击口径保留；ulist 仍在冷却）",
+          not _et76.is_cooling(kind='clist') and _et76.is_cooling(kind='ulist'))
+    _et76.reset()
+    _em76.MIN_REQUEST_GAP_SECONDS = _back_gap76
+
+    # ---- ③ 全局最小间隔（跨通道一条节流线）----
+    _waits76 = []
+    _back_sleep76 = _em76._sleep_fn
+    _em76._sleep_fn = lambda s: _waits76.append(s)
+    _em76._LAST_REQ['ts'] = _em76.time.monotonic()      # 假装刚发过 ⇒ 下一次必须等
+    _w76 = _em76._respect_min_gap()
+    _em76._sleep_fn = _back_sleep76
+    check("★ v6.74：**全局最小间隔** ≥0.8s（跨通道统一 + 小抖动 ⇒ 不做「完美等间隔」的机器特征）",
+          _w76 >= _em76.MIN_REQUEST_GAP_SECONDS and len(_waits76) == 1
+          and _w76 <= _em76.MIN_REQUEST_GAP_SECONDS + _em76.MIN_GAP_JITTER_SECONDS + 1e-6)
+    _emsrc76 = _pl76.Path('data/em_market.py').read_text(encoding='utf-8')
+    _doget76 = _emsrc76.split('def _do_get')[1].split('def _respect')[0]
+    check("★ v6.74：最小间隔**真接在唯一 HTTP 出口**上（源码级：`_do_get` 里调 `_respect_min_gap()`）",
+          '_respect_min_gap()' in _doget76)
+
+    # ---- ④ 日志落文件（排障不再靠用户复制控制台）----
+    _mainsrc76 = _pl76.Path('main.py').read_text(encoding='utf-8')
+    check("★ v6.74：日志**落文件 + 轮转**（RotatingFileHandler · app.log · 5MB×3 · 用户数据目录）",
+          'RotatingFileHandler' in _mainsrc76 and 'app.log' in _mainsrc76
+          and 'USER_DATA_DIR' in _mainsrc76 and 'backupCount=3' in _mainsrc76)
+    check("★ v6.74：B 档默认节流（`0.5s / K=2` ≈4 请求/秒；用户实测 0.3×K3 ≈10/秒 才是激进的）",
+          abs(float(_DEFS76.get('download_prefs', {}).get('interval', -1)) - 0.5) < 1e-9
+          and int(_DEFS76.get('download_prefs', {}).get('concurrency', -1)) == 2)
+except Exception as _e76:  # noqa: BLE001
+    check(f"★v6.74 新骨干断言整段抛异常: {type(_e76).__name__}: {_e76}", False)
+
+# ==========================================
+# ★v6.74 · **补全调度器**（`ui/widgets/scan_enrich.py`）：纯逻辑离网可测 + 设置旋钮 + 限流自动降档
+#   用户原话："不能先扫普通数据，然后这些需要东财请求的隔一段时间就自动刷新补全到扫描后的图表里呢"
+# ==========================================
+print("\n== ★v6.74：补全调度器（分轮 / 停止条件 / 进度语）+ 旋钮 + 限流自动降档 ==")
+try:
+    import pathlib as _pl77  # noqa: E402
+
+    import data.em_throttle as _et77  # noqa: E402
+    import ui.download_hub as _dh77  # noqa: E402
+    from ui import settings_registry as _sr77  # noqa: E402
+    from ui.widgets.scan_enrich import (EnrichScheduler as _ES77,  # noqa: E402
+                                       FIRST_ROUND_DELAY_SECONDS as _FD77)
+
+    _s77 = _ES77([f'{i:06d}' for i in range(1, 251)], per_round=2, gap=30)
+    check("★ v6.74：调度器池子去重保序 + 每轮 ≤「每轮请求数 × 100」只（250 只 / 每轮 2 ⇒ 首轮 200）",
+          _s77.total == 250 and len(_s77.next_chunk()) == 200)
+    check("★ v6.74：**首轮也延迟**启动（别和下载尾巴挤在同一秒；实测那正是 v6.69 自伤的形态）",
+          0 < _FD77 <= 5 and _s77.progress_text(3).endswith('下一轮 3 秒后'))
+    _s77._asked.update(_s77.next_chunk())
+    check("★ v6.74：下一轮**只问没问过的**（50 只）—— 绝不重问（否则无行业字段的票会被无限问）",
+          _s77.next_chunk() == [f'{i:06d}' for i in range(201, 251)])
+    _s77._asked.update(_s77.next_chunk())
+    check("★ v6.74：问完 ⇒ `should_stop()` 说**人话**（「已补齐 X/Y」）且不再排新轮",
+          _s77.should_stop().startswith('已补齐') and _s77.next_chunk() == [])
+    _s78 = _ES77([f'{i:06d}' for i in range(1, 101)], per_round=3, gap=30)
+    _s78._empty_rounds = 2
+    check("★ v6.74：**连续两轮一个都没拿到 ⇒ 早停**（被限流/额度用完时别继续烧额度）",
+          '没拿到数据' in _s78.should_stop())
+    check("★ v6.74：进度文案含「N/总数」，并在有下一轮时说「下一轮 X 秒后」（页面直接用它）",
+          '0/100' in _s78.progress_text()
+          and '下一轮 30 秒后' in _s78.progress_text(30))
+    check("★ v6.74：空池子 / 取消都能安全收手（不抛、不空转）",
+          _ES77([]).should_stop() != '' and _ES77([]).next_chunk() == [])
+    _s78.cancel()
+    check("★ v6.74：`cancel()` 后不再排轮（关窗时机；worker 也会被通知取消）",
+          _s78._stopped is True)
+
+    # ---- 旋钮：默认值只在注册表声明一次（页面用 `_setting()` 读，不写第二份）----
+    check("★ v6.74：设置页 4 个新旋钮齐全（补全开关 / 每轮请求数 / 轮间秒数 / 分页预热默认关）",
+          all(_sr77.find(k) is not None for k in
+              ('enrich.enabled', 'enrich.requests', 'enrich.gap', 'em.legacy_paging'))
+          and _sr77.find('em.legacy_paging').default is False
+          and _sr77.find('enrich.enabled').default is True
+          and int(_sr77.find('enrich.requests').default) == 3
+          and int(_sr77.find('enrich.gap').default) == 30)
+    _sfsrc77 = _pl77.Path('ui/widgets/scan_flow.py').read_text(encoding='utf-8')
+    check("★ v6.74：页面**默认值取注册表**（`_setting('enrich.requests', …)`；源码级防第二份默认）",
+          "_setting('enrich.requests'" in _sfsrc77 and "_setting('em.legacy_paging'" in _sfsrc77)
+
+    # ---- 限流自动降档（B 档）----
+    class _P77:
+        def get(self, key, default=None):
+            return {} if key == 'download_prefs' else default
+
+    _et77.reset()
+    _pol77 = _dh77.download_policy_from_prefs(_P77())
+    _et77.note_failure('clist', 'sim')
+    _pol77b = _dh77.download_policy_from_prefs(_P77())
+    _et77.reset()                                       # ⚠ 收尾：绝不给用户留一个冷却
+    check("★ v6.74（B 档）：**检测到限流 ⇒ 下载自动降档**（interval≥1.2s / K=1）；退避清了就回原档",
+          abs(_pol77.interval - 0.5) < 1e-9 and _pol77.concurrency == 2
+          and _pol77b.interval >= 1.2 and _pol77b.concurrency == 1)
+except Exception as _e77:  # noqa: BLE001
+    check(f"★v6.74 补全调度器断言整段抛异常: {type(_e77).__name__}: {_e77}", False)
+
+# ==========================================
+# §7-B13 · S2-1b（★v6.74）：**网络与取数自检**（零请求为主 + 最多 1 个探测）+ 异步动作通道
+#   用户口径："避免被反爬盯上" ⇒ 自检不刷量；报告要能给"现在该做什么"的结论。
+# ==========================================
+print("\n== §7-B13 · S2-1b：网络自检（零请求 8 段 + 1 个探测）+ 异步动作 ==")
+try:
+    import pathlib as _pl79  # noqa: E402
+
+    import data.em_market as _em79  # noqa: E402
+    from ui import settings_registry as _sr79  # noqa: E402
+    from ui.views.settings_view import SettingsView as _SV79  # noqa: E402
+    from ui.workers import NetSelfCheckWorker as _NSW79  # noqa: E402
+
+    _r79 = _em79.self_check(probe=False)                     # ⚠ 零请求
+    check("★ S2-1b：自检 8 段齐全（策略/代理/DNS/探测/登录/档位/额度/退避），`probe=False` ⇒ 零请求",
+          {'policy', 'proxy', 'dns', 'probe', 'auth', 'tier', 'budget', 'throttle'} <= set(_r79)
+          and _r79['probe'].get('skipped') is True)
+    _t79 = _em79.self_check_text(probe=False)
+    check("★ S2-1b：报告是**人话**（9 行：策略/代理/DNS/连通性/登录/档位/额度/退避/结论）",
+          all(k in _t79 for k in ('网络策略', '代理', 'DNS', '连通性', '登录', '档位',
+                                  '额度', '退避', '结论')))
+    check("★ S2-1b：DNS 段如实报 A/AAAA 条数（「IPv6 优先」这个坑的现场证据 · §11.5-103）",
+          'ipv4' in _r79['dns'] and 'ipv6' in _r79['dns'])
+    _back_ulist79 = _em79.ulist_page
+    _em79.ulist_page = lambda codes: [{'f12': '600000', 'f14': '浦发银行', 'f2': 10.0}]
+    try:
+        _ok79 = _em79.self_check(probe=True)
+    finally:
+        _em79.ulist_page = _back_ulist79
+    check("★ S2-1b：连通性探测**只问 1 只票**（命中 ⇒ ok + 毫秒 + 结论「正常」）",
+          _ok79['probe'].get('ok') is True and '正常' in _em79._verdict(_ok79))
+    _back_cool79 = _em79.em_throttle.is_cooling
+    _em79.em_throttle.is_cooling = lambda *a, **k: True
+    _cool79 = _em79.self_check(probe=False)
+    _em79.em_throttle.is_cooling = _back_cool79
+    check("★ S2-1b：**退避中 ⇒ 结论先说「当前受限 + 等它过去 + 不必连点」**（用户最需要那句）",
+          '受限' in _em79._verdict(_cool79))
+    _emsrc79 = _pl79.Path('data/em_market.py').read_text(encoding='utf-8')
+    check("★ S2-1b：自检**不记退避**（诊断不该把用户关 10 分钟；源码级）",
+          'note_failure' not in _emsrc79.split('def _probe_once')[1].split('def self_check')[0])
+    check("★ S2-1b：门面出口存在（ui 不直连行情源，§9-H）",
+          callable(getattr(__import__('data.sync_service', fromlist=['x']), 'network_self_check')))
+    _sc79 = _sr79.find('em.selfcheck')
+    check("★ S2-1b：设置页「网络自检」= **异步动作**（`worker` 工厂 ⇒ 后台跑、界面不卡）",
+          _sc79 is not None and _sc79.kind == _sr79.KIND_ACTION and callable(_sc79.worker))
+    check("★ S2-1b：页面有异步动作通道（`_run_worker_action`）且**握引用**防 QThread 被 GC",
+          hasattr(_SV79, '_run_worker_action')
+          and '_worker_action = thread' in _pl79.Path('ui/views/settings_view.py').read_text(encoding='utf-8'))
+    check("★ S2-1b：worker 在 `ui/workers.py`（§9-O2 线程唯一出处）+ 可取消（关窗不漏线程）",
+          callable(getattr(_NSW79, 'cancel', None)))
+except Exception as _e79:  # noqa: BLE001
+    check(f"§7-B13 S2-1b 断言整段抛异常: {type(_e79).__name__}: {_e79}", False)
+
 print("\n== 发布物一致性：version.json 可解析 + 版本号三处同步 ==")
 try:
     import json as _json17  # noqa: E402

@@ -74,8 +74,16 @@ def download_policy_from_prefs(prefs=None) -> ThrottlePolicy:
     except Exception:  # noqa: BLE001 —— 偏好不可用 ⇒ 全默认
         d = {}
     base = ThrottlePolicy()
+    # ★v6.74：兜底默认改取 `preferences.DEFAULTS['download_prefs']`（**唯一真源**）——
+    #   否则"偏好默认一套、`ThrottlePolicy` 字段默认另一套"会静默漂移（B 档 0.5/2）。
+    _defs = {}
     try:
-        interval = float(d.get("interval", base.interval))
+        from core.preferences import DEFAULTS as _ALL_DEFAULTS
+        _defs = dict(_ALL_DEFAULTS.get('download_prefs') or {})
+    except Exception:  # noqa: BLE001 —— 偏好模块不可用 ⇒ 退回字段默认（不阻断下载）
+        _defs = {}
+    try:
+        interval = float(d.get("interval", _defs.get('interval', base.interval)))
     except (TypeError, ValueError):
         interval = base.interval
     try:
@@ -86,6 +94,17 @@ def download_policy_from_prefs(prefs=None) -> ThrottlePolicy:
         conc = int(d.get("concurrency", DEFAULT_DOWNLOAD_CONCURRENCY))
     except (TypeError, ValueError):
         conc = DEFAULT_DOWNLOAD_CONCURRENCY
+    # ★v6.74（B 档 · 用户 2026-09-27 拍板）：**检测到东财限流 ⇒ 自动降到最保守档**（1.2s / K=1）。
+    #   依据：用户实测自己的 `0.3s × K=3`（≈10 请求/秒）正是被限流的形态；一旦已在退避中，
+    #   先把**我们这一侧**的请求率压到底，别拿账号去硬试（§10-10：直说，不静默）。
+    try:
+        from data import em_throttle as _thr_dl
+        if _thr_dl.is_cooling():
+            interval = max(interval, 1.2)
+            conc = 1
+            logger.info("东财取数在退避中 ⇒ 本次下载自动降档（interval≥1.2s / 并发 1）")
+    except Exception:  # noqa: BLE001 —— 判据坏了就按原档走（不阻断下载）
+        pass
     return ThrottlePolicy(
         interval=interval,
         jitter=0.3 if d.get("jitter", True) else 0.0,

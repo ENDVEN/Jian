@@ -31,6 +31,7 @@ from ui.views.data_manager import DataManagerView
 from ui.dialogs.list_manager import ListManagerDialog
 from ui.dialogs.manual_entry import ManualEntryDialog
 from ui.dialogs.import_futures import FuturesImportDialog
+from ui.views.settings_view import SettingsView      # ★v6.73 / §7-B13 S2-0：设置页（S2 双栏）
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,16 @@ class JianMainWindow(QMainWindow):
             btn.setAutoExclusive(True)
             sidebar_layout.addWidget(btn)
         self.btn_overview.setChecked(True)
+
+        # ★v6.73 / §7-B13 S2-0：`⚙ 设置` **固定在最下方**（用户定的位置）——
+        #   ⚠ 必须加在 `addStretch()` **之后**：无论上方功能怎么增减，它都停在底部、不上移。
+        self.btn_settings = QPushButton("⚙ 设置")
+        self.btn_settings.setProperty("class", "NavBtn")
+        self.btn_settings.setCheckable(True)
+        self.btn_settings.setAutoExclusive(True)
+        self.btn_settings.setToolTip("系统项 / 登录 / 个性化 —— 唯一入口")
         sidebar_layout.addStretch()
+        sidebar_layout.addWidget(self.btn_settings)
         
         # --- 右侧主内容栈构建 ---
         self.content_area = QStackedWidget()
@@ -101,6 +111,8 @@ class JianMainWindow(QMainWindow):
         self.page_market = TradingDeskView(self)
         self.page_backtest = BacktestModule(self)
         self.page_data = DataManagerView(self)
+        # ★v6.73 / §7-B13 S2-0：设置页（S2「系统设置双栏」）—— **只渲染注册表**，页面不写设置项
+        self.page_settings = SettingsView(self)
         
         self.content_area.addWidget(self.page_overview)
         self.content_area.addWidget(self.page_records)
@@ -108,6 +120,7 @@ class JianMainWindow(QMainWindow):
         self.content_area.addWidget(self.page_market)
         self.content_area.addWidget(self.page_backtest)
         self.content_area.addWidget(self.page_data)
+        self.content_area.addWidget(self.page_settings)      # ← index 6（设置）
         
         main_layout.addWidget(sidebar)
         # --- 右侧 = 内容栈 + 底部下载条（下载条只在有任务时出现，平时零高度）---
@@ -148,6 +161,7 @@ class JianMainWindow(QMainWindow):
         self.btn_market.clicked.connect(lambda: self.content_area.setCurrentIndex(3))
         self.btn_backtest.clicked.connect(lambda: self.content_area.setCurrentIndex(4))
         self.btn_data.clicked.connect(lambda: self.content_area.setCurrentIndex(5))
+        self.btn_settings.clicked.connect(lambda: self.content_area.setCurrentIndex(6))
         
         self.render_all_data()
         self.check_for_updates()
@@ -159,7 +173,7 @@ class JianMainWindow(QMainWindow):
     # 主窗口本来就是"组件装配与事件分发"的地方（§3），由它当唯一的传话筒最干净：
     #   行情页 ──send_formula_to_backtest──▶ 主窗口 ──▶ 回测页.load_formula_from_external()
     #   回测页 ──send_formula_to_market────▶ 主窗口 ──▶ 行情页.receive_formula()
-    _PAGE_INDEX = {"market": 3, "backtest": 4, "data": 5}
+    _PAGE_INDEX = {"market": 3, "backtest": 4, "data": 5, "settings": 6}
 
     def switch_to(self, key: str) -> None:
         """按名字切页（互送后直接把用户带到目标页，省得他自己找）。"""
