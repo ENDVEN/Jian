@@ -2,9 +2,30 @@
 import akshare as ak
 import pandas as pd
 import logging
+import time
 from datetime import datetime
 
+import requests
+
 from core.utils import MINUTE_PERIODS, normalize_period
+
+# ★v6.68 / §11.5-99：全市场「代码→所属行业」的**分页直取**（东财 push2 列表的 `f100` 字段）。
+# 【为什么要它】旧写法 = 1 次板块清单 + **逐板块取成分 ≈ 80+ 次连击** ⇒ 正踩东财"匿名高频"
+#   风控（实测：连打几十次后该端点对**匿名**请求整段拒绝，静置约 30 分钟自动恢复；带登录 Cookie
+#   可豁免，但**绝不把登录做成产品依赖**）。而 `f100` 就在与"全市场快照 / 估值"**同源同端点**的
+#   列表里 ⇒ 不再需要"逐板块"这层放大，且**每批只抓几页**可分次摊平。
+# 【两个实测硬约束】① 单页 `pz` 上限 = **100 行**（请求 1000 也只回 100）；② 全市场 ~5560 只
+#   ⇒ **~56 页** ⇒ 必须分批 + 页间隔，否则一次连打仍会撞风控。
+INDUSTRY_PAGE_SIZE = 100
+INDUSTRY_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "Referer": "https://quote.eastmoney.com/",
+}
+# 全市场 A 股（沪主板/深主板/创业板/科创板 + 北交所）—— 与"快照/估值"同一 `fs`
+INDUSTRY_FS_A = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 
 # 系统内部统一的标准量价列名 (Canonical OHLCV Schema)
 OHLCV_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume']
@@ -334,6 +355,62 @@ class AkShareFeed:
                 if len(code) == 6 and code.isdigit():
                     out[code] = name
         return out
+
+    # ==========================================
+    # ★v6.68：全市场「代码→行业」**分页直取**（替代上面的 80+ 连击）
+    # ==========================================
+    @staticmethod
+    def fetch_industry_page(page_start: int = 1, pages: int = 1,
+                            sleep_fn=time.sleep, interval: float = 0.5) -> dict:
+        """从东财 `push2 clist` 分页取**全市场**「代码→所属行业」（字段 `f100`）。
+
+        【两个实测硬约束】单页上限 **100 行**；全市场 ~5560 只 ⇒ **~56 页** ⇒ 上层必须**分批**
+          （`pages` 控制本次抓几页），一次连打 56 次照样撞风控（§11.5-99）。
+
+        :param page_start: 从第几页开始（1-based）—— **断点续抓**用
+        :param pages:      本次最多抓几页（上层按"每次扫描补几页"摊平）
+        :param sleep_fn:   页间等待（可注入；测试传 `lambda _s: None`）
+        :param interval:   页间间隔秒（默认 0.5s）
+        :return: `{"map": {code: 行业}, "page_start", "pages_done", "total_pages", "done"}`
+        ⚠ 失败（网络/风控/接口变更）⇒ `map` 为空 dict、`done=False`，**绝不上抛**（上层保留旧缓存 + 出声）
+        """
+        out, total, pages_done = {}, 0, 0
+        page = max(1, int(page_start))
+        want = max(1, int(pages))
+        for i in range(want):
+            try:
+                rows, total = AkShareFeed._push2_clist_page(page, INDUSTRY_PAGE_SIZE)
+            except Exception as e:                   # noqa: BLE001 —— 单页失败 ⇒ 停在这页（下次续）
+                logging.warning(f"行业分页拉取失败(page={page}): {e}")
+                break
+            if not rows:
+                break
+            for row in rows:
+                code = str(row.get('f12') or '').strip()
+                name = str(row.get('f100') or '').strip()
+                if len(code) == 6 and code.isdigit() and name and name != '-':
+                    out[code] = name
+            pages_done += 1
+            page += 1
+            if total and (page - 1) * INDUSTRY_PAGE_SIZE >= total:
+                break                                # 已到末页
+            if i + 1 < want:
+                sleep_fn(interval)
+        total_pages = (-(-int(total) // INDUSTRY_PAGE_SIZE)) if total else 0
+        return {"map": out, "page_start": max(1, int(page_start)), "pages_done": pages_done,
+                "total_pages": total_pages,
+                "done": bool(total_pages and page > total_pages)}
+
+    @staticmethod
+    def _push2_clist_page(page: int, pz: int) -> tuple:
+        """取 `clist` 一页（全市场 A 股 + `f100` 行业）⇒ `(rows, total)`；失败**上抛**给调用方。"""
+        params = {"pn": max(1, int(page)), "pz": max(1, int(pz)), "po": 1, "np": 1,
+                  "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": 2, "invt": 2,
+                  "fid": "f12", "fs": INDUSTRY_FS_A, "fields": "f12,f14,f100"}
+        resp = requests.get("https://push2.eastmoney.com/api/qt/clist/get", params=params,
+                            headers=INDUSTRY_HEADERS, timeout=15)
+        data = (resp.json() or {}).get("data") or {}
+        return (data.get("diff") or []), int(data.get("total") or 0)
 
     # ==========================================
     # 交易日历 (Trading Calendar)  v6.45 / §7-B10

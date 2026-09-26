@@ -174,11 +174,22 @@ def spot_valuation_map() -> dict:
 
 
 def fetch_industry_map() -> dict:
-    """★P6：全市场「代码→细分行业」映射门面（§9-H：ui 不直连行情源，抓取经此）。
+    """★P6（**旧**）：全市场「代码→细分行业」映射门面 —— 逐板块取成分（~80+ 连击）。
 
-    成本高（~80+ 次请求）⇒ 调用方（后台 worker）抓一次后存进 `industry_store`，扫描只读缓存。
+    ⚠ ★v6.68 起**不再被主流程使用**（保留仅为兼容/对照）：它正是踩中东财"匿名高频风控"的写法。
+    新写法 = `fetch_industry_page()`（同一份数据的**分页直取**，见下）。
     """
     return AkShareFeed.fetch_industry_map()
+
+
+def fetch_industry_page(page_start: int = 1, pages: int = 1, **kwargs) -> dict:
+    """★v6.68：全市场「代码→行业」**分页直取**门面（§9-H：ui 不直连行情源）。
+
+    走东财 `push2 clist` 的 `f100`＝所属行业（与"全市场快照 / 估值"**同源同端点**），
+    **每批只抓几页** + 页间隔 ⇒ 分次摊平，不撞"匿名高频"风控（§11.5-99）。
+    返回 `{"map", "page_start", "pages_done", "total_pages", "done"}`；失败回空 map（绝不上抛）。
+    """
+    return AkShareFeed.fetch_industry_page(page_start, pages, **kwargs)
 
 
 def is_daily_bar_settled(bar_date, now=None, settle_hhmm: int = DAILY_SETTLE_HHMM) -> bool:

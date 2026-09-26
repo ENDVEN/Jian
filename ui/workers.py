@@ -41,7 +41,7 @@ from data.market_db import DataLakeManager
 from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
-                               fetch_industry_map, is_daily_bar_settled,
+                               fetch_industry_page, is_daily_bar_settled,
                                short_fetch_reason, spot_valuation_map)
 from data.trade_calendar import (latest_settled_trading_day, load_or_fetch,
                                  previous_trading_day)
@@ -404,17 +404,25 @@ class SpotValuationWorker(QThread):
 
 
 class IndustryMapWorker(QThread):
-    """★P6：后台抓全市场「代码→行业」映射（~80+ 次请求，一次性）。
+    """★v6.68：后台**分批**取全市场「代码→行业」（东财列表 `f100`：单页 100、全市场 ~56 页）。
 
-    失败回 None（行业列继续留 '—'）；回包后由页面存进 industry_store 并落盘。
-    走 `fetch_industry_map()` 门面（§9-H：ui 不直连行情源）。
+    【为什么改】旧版走"板块清单 + 逐板块成分 ≈ **80+ 连击**" ⇒ 正踩东财"匿名高频"风控
+    （连打几十次后整段拒绝、约 30 分钟自恢复，§11.5-99）；新版与"全市场快照 / 估值"**同源同端点**，
+    **每批只抓几页** + 页间隔，分几次扫描摊平；进度由页面按"断点续抓"给出。
+    回包 `{"map", "page_start", "pages_done", "total_pages", "done"}`；失败回 None。
+    走 `fetch_industry_page()` 门面（§9-H：ui 不直连行情源）。
     """
 
-    finished = pyqtSignal(object)   # {symbol: 行业} 或 None
+    finished = pyqtSignal(object)   # 上面那个 dict，或 None（失败）
+
+    def __init__(self, page_start: int = 1, pages: int = 1, parent=None):
+        super().__init__(parent)
+        self._page_start = int(page_start)
+        self._pages = int(pages)
 
     def run(self):
         try:
-            data = fetch_industry_map()
+            data = fetch_industry_page(self._page_start, self._pages)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"行业映射后台拉取失败: {e}")
             data = None

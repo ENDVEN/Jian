@@ -38,6 +38,11 @@ from ui.workers import (ConstituentsWorker, CrossSectionWorker, IndustryMapWorke
 
 __all__ = ['ScanFlow', 'SCAN_UI_KEY']
 
+# ★v6.68：行业映射**分批**抓取 —— 东财对"匿名高频"请求有频次窗（连打几十次会整段拒绝、约 30 分钟
+#   自恢复，§11.5-99），而全市场行业要 ~56 页（单页 100 行）⇒ **每批只抓几页**、分几次扫描摊平。
+INDUSTRY_PAGES_PER_SCAN = 8                # 每次扫描最多补抓页数（1 页 = 100 只）
+INDUSTRY_PROGRESS_KEY = 'industry_fetch'   # preferences 里的断点：{next_page, pages_total}
+
 logger = logging.getLogger(__name__)
 
 SCAN_UI_KEY = 'scan_ui'          # 页面偏好键（core/preferences.DEFAULTS 里登记）
@@ -510,44 +515,76 @@ class ScanFlow:
     # ==========================================
     # ★P6 细分行业（本地缓存 industry_map.json；为空时后台抓一次，扫描只读缓存）
     # ==========================================
+    def _industry_progress(self) -> dict:
+        """行业映射的**断点**（存 `preferences`，跨重启有效）：`{next_page, pages_total}`。"""
+        prog = preferences.get(INDUSTRY_PROGRESS_KEY)
+        return prog if isinstance(prog, dict) else {}
+
+    def _set_industry_progress(self, next_page: int, pages_total: int) -> None:
+        """记下断点（上层只经本函数读写，别处禁止自己拼键）。"""
+        preferences.set(INDUSTRY_PROGRESS_KEY,
+                        {"next_page": int(next_page), "pages_total": int(pages_total)})
+
     def _maybe_fetch_industry(self) -> None:
-        """行业映射为空 ⇒ 后台抓一次全市场行业（~80+ 请求，一次性、持久缓存）；已有则跳过。"""
+        """行业映射**分批**补齐（每批 `INDUSTRY_PAGES_PER_SCAN` 页；补齐后长期缓存、不再联网）。
+
+        ★v6.68 改造（用户实测"行业一直是空的" + 探针结论 · §11.5-99）：
+          · 旧写法 = "板块清单 + 逐板块成分" ≈ **80+ 连击** ⇒ 正踩东财**匿名高频风控**（连打几十次
+            后整段拒绝、静置约 30 分钟自恢复）⇒ 几乎必然失败；
+          · 新写法 = 从**全市场列表**分页取 `f100`（与"快照 / 估值"同源同端点），**每批只抓几页** +
+            页间隔，分几次扫描摊平；**进度存 preferences** ⇒ 下次扫描**从断点续抓**；
+          · 补齐（`next_page > pages_total`）⇒ 以后不再联网（长期缓存）。
+        """
         p = self.page
-        if get_industry_store().is_loaded():
-            return
         if p._industry_worker is not None and p._industry_worker.isRunning():
             return
+        prog = self._industry_progress()
+        next_page = int(prog.get('next_page') or 1)
+        pages_total = int(prog.get('pages_total') or 0)
+        if pages_total and next_page > pages_total:
+            return                                   # 已补齐 ⇒ 只读缓存（不联网）
         job = p._industry_guard.next()
-        p._industry_worker = IndustryMapWorker(parent=p)
+        p._industry_worker = IndustryMapWorker(next_page, INDUSTRY_PAGES_PER_SCAN, parent=p)
         p._industry_worker.finished.connect(
             lambda data, token=job: self._on_industry_ready(data, token))
         p._industry_worker.start()
 
     def _on_industry_ready(self, data, token: int) -> None:
-        """行业映射回包：过守卫 → 存盘 + 重画（带上行业列）；**拿不到就出声**（绝不静默）。
+        """行业回包：过守卫 → **并入**缓存 + 记断点 + 重画；**拿不到就出声**（绝不静默）。
 
-        ★v6.68（用户 2026-09-26 实测："M2 结果里行业一直是空的，是不是我下载没弄好？"）：
-          **旧版这个分支什么都不做** ⇒ 界面上只有一列 '—'，用户只会怀疑自己操作有问题。
-          实测真因在**数据源**：东财 `clist/get` 端点对本机**直接断连**（同域名单点报价却 HTTP 200），
-          而细分板块唯一来源就是它 ⇒ 映射永远为空、`industry_map.json` 从不落盘 —— **不是下载没弄好、
-          也不是这里代码错**。⇒ 修法：**把失败与出路写在回执上**（追加而非覆盖）。
+        ★v6.68：旧版拿到空就**什么都不做**（界面只剩一列 '—'，用户只能怀疑自己）⇒ 现在失败与出路
+          都写在回执上；分批抓取则"并入 + 记断点"（下一批从断点继续，不覆盖已抓到的好数据）。
         """
         p = self.page
         if not p._industry_guard.accept(token):
             return
-        if data:
-            get_industry_store().replace(data)
+        payload = data if isinstance(data, dict) else {}
+        got = payload.get('map') or {}
+        pages_done = int(payload.get('pages_done') or 0)
+        if got or pages_done:
+            store = get_industry_store()
+            store.merge(got)                         # ★分批 ⇒ **并入**（不是整体替换）
+            prog = self._industry_progress()
+            nxt = int(prog.get('next_page') or 1) + pages_done
+            total = int(payload.get('total_pages') or prog.get('pages_total') or 0)
+            self._set_industry_progress(nxt, total)
             self.refresh()
+            if total and nxt > total:                # 补齐 ⇒ 说一声（用户知道以后不用再等）
+                if '行业映射已补齐' not in (p.lbl_receipt.text() or ''):
+                    p.lbl_receipt.setText(
+                        (p.lbl_receipt.text() or '')
+                        + f" · ✅ 行业映射已补齐（{store.coverage()} 只）")
             return
-        # 失败（None / 空表）：**可见回执 + 出路**（"再点一次开始扫描"就会重试 ——
-        #   `_maybe_fetch_industry` 在缓存为空时**每次扫描完成都跑**，缓存命中也算）
-        _note = (' · ⚠ 行业映射未取到（东财板块接口不可用或返回空）—— 该列暂显 \'—\'；'
-                 '再点一次「▶ 开始扫描」会重试')
+        # 失败（None / 空）：**可见回执 + 出路**（下次扫描会从断点继续 —— 缓存命中也算）
+        _note = (" · ⚠ 行业映射未取到（东财接口暂时不可用）—— 该列暂显 '—'；"
+                 "再点一次「▶ 开始扫描」会重试（从断点续抓）")
         if '行业映射未取到' not in (p.lbl_receipt.text() or ''):
             p.lbl_receipt.setText((p.lbl_receipt.text() or '') + _note)
-        _tip = ('行业 = 细分板块，来自东财「行业板块成分」接口（约 80+ 次请求，抓一次长期缓存）。\n'
+        _tip = ('行业 = 细分板块，取自东财全市场列表的「所属行业」字段（分页抓取：单页 100 行、'
+                '全市场约 56 页 ⇒ 每批补几页，抓满即长期缓存）。\n'
                 '抓不到就诚实留 \'—\'，**绝不拿别的口径瞎猜板块**。\n'
-                '常见原因：东财该接口对本机临时不可用（限流/风控）—— 过一会儿再点一次「▶ 开始扫描」即可重试。')
+                '常见原因：东财对**匿名高频**请求有"频次窗"（连打几十次会整段拒绝、约 30 分钟自恢复）'
+                '—— 过一会儿再点一次「▶ 开始扫描」即可从断点继续。')
         p.lbl_receipt.setToolTip(((p.lbl_receipt.toolTip() or '') + '\n' + _tip).strip())
 
     def _on_failed(self, job_id: int, reason: str) -> None:

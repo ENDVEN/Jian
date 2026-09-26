@@ -2421,6 +2421,9 @@ try:
     class _StubValWorker(_QObjectV):
         finished = _pyqtSignalV(object)
 
+        def __init__(self, *args, **kwargs):
+            super().__init__()                # ★v6.68：容纳 IndustryMapWorker(page_start, pages, parent=…)
+
         def start(self):
             pass                              # 不联网、不回包 ⇒ 估值列保持 '—'
 
@@ -2641,6 +2644,56 @@ try:
               and '重试' in _scan.lbl_receipt.text()
               and '基线回执' in _scan.lbl_receipt.text()          # 追加，不覆盖原回执
               and '东财' in _scan.lbl_receipt.toolTip())
+
+        # ★v6.68：行业映射改**分批 + 断点续抓**（旧写法 80+ 连击正踩东财匿名高频风控，§11.5-99）
+        _prog_back68 = preferences.get('industry_fetch')
+        _started_ind68 = []
+
+        class _StubIndWorker(_QObjectV):
+            finished = _pyqtSignalV(object)
+
+            def __init__(self, page_start=1, pages=1, parent=None):
+                super().__init__()
+                _started_ind68.append((int(page_start), int(pages)))
+
+            def start(self):
+                pass
+
+            def isRunning(self):
+                return False
+
+        _sflow4.IndustryMapWorker = _StubIndWorker
+        preferences.set('industry_fetch', {'next_page': 1, 'pages_total': 0})
+        # ⚠ 单例 `path` 默认指向**用户真实库** ⇒ 必须换到临时文件，否则下面的断言会把
+        #   假行业写进用户的 industry_map.json（本轮就被"防污染自检"当场抓到 ✓ 这是它该干的活）。
+        import tempfile as _tmp68                          # noqa: E402
+        _ind_path_back68 = _istore6.path
+        _istore6.path = os.path.join(_tmp68.mkdtemp(prefix='jian_ind_flow68_'),
+                                     'industry_map.json')
+        _istore6._map = {}
+        _started_ind68.clear()
+        _scan._flow._maybe_fetch_industry()
+        check("★ v6.68：行业走**分批**抓取（每批几页，不再是一次性几十次连击）",
+              _started_ind68 == [(1, _sflow4.INDUSTRY_PAGES_PER_SCAN)])
+        _scan.lbl_receipt.setText('基线')
+        _scan._flow._on_industry_ready(
+            {'map': {'600000': '银行'}, 'page_start': 1, 'pages_done': 2,
+             'total_pages': 3, 'done': False}, _scan._industry_guard.next())
+        _prog68 = preferences.get('industry_fetch') or {}
+        check("★ v6.68：一批回包 ⇒ **并入**缓存（不是整体替换）+ 断点推进",
+              _istore6.get('600000') == '银行' and _prog68.get('next_page') == 3
+              and _prog68.get('pages_total') == 3)
+        _scan._flow._on_industry_ready(
+            {'map': {'600519': '白酒'}, 'page_start': 3, 'pages_done': 1,
+             'total_pages': 3, 'done': True}, _scan._industry_guard.next())
+        _started_ind68.clear()
+        _scan._flow._maybe_fetch_industry()
+        check("★ v6.68：补齐后**不再联网**（长期缓存）+ 回执说一声",
+              _started_ind68 == [] and '行业映射已补齐' in _scan.lbl_receipt.text())
+        _istore6._map = {}                                  # 清场
+        _istore6.path = _ind_path_back68                    # 还回真实路径 + 重读真实库
+        _istore6.load()
+        preferences.set('industry_fetch', _prog_back68 or {})
 
         # ---- ★P7：列拖拽换序（只改视觉序，逻辑 item(r,c) 不变）+ 持久化 + 非法拒绝 ----
         _n7 = _scan.table.columnCount()
@@ -4559,6 +4612,48 @@ try:
     from data.industry_store import IndustryStore as _IS6
     _ist6 = _IS6(path=os.path.join(_tmp_p3.mkdtemp(prefix="jian_ind_"), "industry_map.json"))
     check("★ P6：空表 is_loaded=False、get 返回 ''", _ist6.is_loaded() is False and _ist6.get('600000') == '')
+    # ★v6.68：行业映射**分页直取**（东财列表 `f100`）+ 分批合并 —— 替掉"逐板块 80+ 连击"（§11.5-99）
+    import tempfile as _tf68  # noqa: E402
+
+    import data.akshare_feed as _af68  # noqa: E402
+    from data.sync_service import fetch_industry_page as _fip68  # noqa: E402
+
+    _pages68 = {
+        1: ([{'f12': '600000', 'f14': '浦发银行', 'f100': '银行'},
+             {'f12': '600519', 'f14': '贵州茅台', 'f100': '白酒'}], 150),
+        2: ([{'f12': '000001', 'f14': '平安银行', 'f100': '银行'},
+             {'f12': 'BAD', 'f14': '怪码', 'f100': '银行'},
+             {'f12': '600001', 'f14': '无行业', 'f100': '-'}], 150),
+    }
+    _real_page68 = _af68.AkShareFeed._push2_clist_page
+    _af68.AkShareFeed._push2_clist_page = staticmethod(
+        lambda page, pz: _pages68.get(page, ([], 150)))
+    try:
+        _r68 = _fip68(1, 2, sleep_fn=lambda _s: None, interval=0)
+    finally:
+        _af68.AkShareFeed._push2_clist_page = _real_page68
+    check("★ v6.68：分页直取只收「6 位数字码 + 有行业名」的行（怪码 / '-' 被过滤）",
+          _r68['map'] == {'600000': '银行', '600519': '白酒', '000001': '银行'})
+    check("★ v6.68：分页边界（total=150、单页 100 ⇒ 抓满 2 页即 done、不多打）",
+          _r68['pages_done'] == 2 and _r68['total_pages'] == 2 and _r68['done'] is True)
+    _af68.AkShareFeed._push2_clist_page = staticmethod(
+        lambda page, pz: (_ for _ in ()).throw(RuntimeError('模拟风控')))
+    try:
+        _r68b = _fip68(1, 2, sleep_fn=lambda _s: None, interval=0)
+    finally:
+        _af68.AkShareFeed._push2_clist_page = _real_page68
+    check("★ v6.68：单页失败 ⇒ 空 map + done=False（**绝不上抛**；页面保留旧缓存并出声）",
+          _r68b['map'] == {} and _r68b['pages_done'] == 0 and _r68b['done'] is False)
+
+    from data.industry_store import IndustryStore as _IS68  # noqa: E402
+    _st68 = _IS68(path=os.path.join(_tf68.mkdtemp(prefix='jian_ind68_'), 'industry_map.json'))
+    _st68.merge({'600000': '银行', '600519': '白酒'})
+    _st68.merge({'000001': '银行', '600000': '', '600002': ' '})    # 空值不得覆盖 / 入库
+    check("★ v6.68：`merge` 分批并入（**空值不覆盖已有**、空名不入库）",
+          _st68.coverage() == 3 and _st68.get('600000') == '银行' and _st68.get('000001') == '银行')
+    check("★ v6.68：`merge` 落盘可回读（断点续抓靠它长期缓存）",
+          _IS68(path=_st68.path).coverage() == 3)
+
     _ist6.replace({'600000': '银行', '600519': '白酒', 'BAD': ''})
     check("★ P6：replace 落盘并过滤空值；get/as_map/coverage 一致",
           _ist6.get('600000') == '银行' and _ist6.coverage() == 2
