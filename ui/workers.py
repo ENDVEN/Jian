@@ -516,6 +516,55 @@ class CacheCleanWorker(QThread):
         self.finished.emit(text or '清理完成')
 
 
+class UpdateCheckWorker(QThread):
+    """★v6.76 / §7-B13 S2-7：**手动检查更新**（后台）—— 明确回答「已是最新 / 有新版」。
+
+    【为什么与 `core/updater.UpdateCheckerThread` 不合并】那一个是**启动时静默侦察**（只在有新版时
+      发信号、断网无声）；手动检查必须**总有回执**（"已是最新 1.56" 也是一个答案）。两者读同一个
+      `settings.UPDATE_CHECK_URL`、同一套版本比较口径（这里直接复用它的比较函数，不另写一份）。
+    """
+
+    finished = pyqtSignal(str)   # 人话回执（无论有没有新版、无论成不成功都有话说）
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        try:
+            text = '已取消（未检查）' if self._cancel else self._check()
+        except Exception as e:  # noqa: BLE001 —— 断网/404/JSON 坏都必须给用户一句话
+            logger.warning(f"手动检查更新失败: {type(e).__name__}: {e}")
+            text = f'检查更新失败（网络或云端配置问题，不影响使用）：{type(e).__name__}: {e}'
+        logger.info(f"检查更新：{text}")
+        self.finished.emit(text)
+
+    @staticmethod
+    def _check() -> str:
+        import json
+        import urllib.request
+
+        from config import settings
+        from core.updater import UpdateCheckerThread
+
+        req = urllib.request.Request(
+            settings.UPDATE_CHECK_URL,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+        remote = str((data or {}).get('version') or '').strip()
+        notes = str((data or {}).get('notes') or '').strip()
+        if not remote:
+            return '云端没有可用的版本信息（不影响使用）'
+        if UpdateCheckerThread()._is_newer(remote, settings.APP_VERSION):
+            return (f"发现新版本 {remote}（当前 {settings.APP_VERSION}）"
+                    + (f" —— {notes[:120]}" if notes else ''))
+        return f"已是最新（当前 {settings.APP_VERSION}）"
+
+
 class BacktestRunWorker(QThread):
     """回测计算（市场回测页）。
 

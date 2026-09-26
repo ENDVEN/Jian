@@ -93,8 +93,7 @@ GROUPS = (
     Group('storage', '存储与维护', '数据目录 · 缓存 · 日志 · 配置备份', '🗄'),
     Group('keys', '快捷键与交互', '现有交互一览（v1 只读，不做假开关）', '⌨',
           todo='S2-6 接入：先只读列出现有键位（双击跳转 / 滚轮缩放 / 拖拽换序…），预留 `keybinding` 类型'),
-    Group('about', '关于与更新', '版本 · 检查更新 · 反馈', 'ℹ',
-          todo='S2-7 接入：版本号 · 检查更新（复用 `core/updater`）· 反馈入口'),
+    Group('about', '关于与更新', '版本 · 检查更新 · 反馈', 'ℹ'),
 )
 
 # ==========================================
@@ -191,6 +190,73 @@ def _import_config():
     return str(sm.import_config(path).get('text') or '')
 
 
+# ==========================================
+# ★v6.76 S2-7：关于与更新
+#   ⚠ 两个链接与 `version.json` 的 `url`（Releases 页）保持一致；换仓库时三处一起改。
+# ==========================================
+RELEASES_URL = 'https://github.com/ENDVEN/Jian/releases'
+ISSUES_URL = 'https://github.com/ENDVEN/Jian/issues'
+
+
+def _version_text():
+    from config import settings
+    return f"{settings.APP_NAME} v{settings.APP_VERSION}"
+
+
+def _update_check_worker(parent=None):
+    from ui.workers import UpdateCheckWorker
+    return UpdateCheckWorker(parent=parent)
+
+
+def _open_url(url: str) -> None:
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QDesktopServices
+    QDesktopServices.openUrl(QUrl(url))
+
+
+def _open_releases():
+    _open_url(RELEASES_URL)
+    return f"已打开发布页（新版下载在这里）：{RELEASES_URL}"
+
+
+def _open_issues():
+    _open_url(ISSUES_URL)
+    return f"已打开反馈页（问题/建议都收）：{ISSUES_URL}"
+
+
+def _open_logs():
+    import os
+
+    from config import settings
+    path = os.path.join(settings.USER_DATA_DIR, 'logs')
+    os.makedirs(path, exist_ok=True)
+    _open_url('file:///' + path.replace('\\', '/'))
+    return f"已打开日志目录：{path}（排障时把 app.log 发我即可）"
+
+
+def _copy_diag():
+    """复制**诊断信息**到剪贴板（版本/平台/网络策略/登录/额度/退避）—— **零请求、无凭据值**。"""
+    import platform
+
+    from PyQt6.QtWidgets import QApplication
+
+    from config import settings
+    from data.sync_service import network_self_check
+    lines = [f'{settings.APP_NAME} v{settings.APP_VERSION}',
+             f'平台：{platform.platform()}',
+             f'Python：{platform.python_version()}']
+    try:
+        lines.append(network_self_check(probe=False))     # ⚠ 零请求：复制诊断不该花额度
+    except Exception as e:                                # noqa: BLE001
+        lines.append(f'（自检报告不可用：{type(e).__name__}）')
+    text = '\n'.join(lines)
+    try:
+        QApplication.clipboard().setText(text)
+    except Exception as e:                                # noqa: BLE001
+        return f'复制失败（剪贴板不可用）：{type(e).__name__}'
+    return '诊断信息已复制到剪贴板（版本 / 平台 / 网络策略 / 登录 / 额度 / 退避；**不含任何凭据值**）'
+
+
 def _apply_log_level(value) -> None:
     """★v6.75 S2-5：日志级别**改完立即生效**（root 与各 handler 一起调）。
 
@@ -260,6 +326,32 @@ _ITEMS_V1 = (
                   ('proxy', '只用系统代理（不降级）')),
          tip='必须走代理的网络选"只用系统代理"；默认"自动"只在代理报错时才降级一次。'),
     # ---- ★v6.73 S2-1：东财登录（凭据只落本机、加密保存；**日志/界面永不回显值**）----
+    # ---- ★v6.76 S2-7：关于与更新（版本 / 检查更新 / 发布页 / 反馈 / 诊断 / 日志目录）----
+    Item('about.version', 'about', '当前版本', KIND_READONLY, default='—',
+         where='readonly:config.settings.APP_VERSION（版本号唯一出处）',
+         readonly=True, value_fn=_version_text,
+         tip='版本号在 `config/settings.py`、`version.json`、git 提交首词三处同步（§9-A）。'),
+    Item('about.check_update', 'about', '检查更新', KIND_ACTION, default='检查更新',
+         where='action:ui/workers.UpdateCheckWorker（读 UPDATE_CHECK_URL 比对）',
+         worker=_update_check_worker,
+         tip='启动时是静默检查；这里手动查一次，**一定有回执**（已是最新也是一个答案）。'),
+    Item('about.releases', 'about', '打开发布页', KIND_ACTION, default='打开发布页',
+         where='action:QDesktopServices（GitHub Releases）',
+         action=_open_releases,
+         tip='新版安装包与更新说明都在这页。'),
+    Item('about.feedback', 'about', '反馈问题/建议', KIND_ACTION, default='打开反馈页',
+         where='action:QDesktopServices（GitHub Issues）',
+         action=_open_issues,
+         tip='遇到问题先点「复制诊断信息」，连同描述一起贴上去 —— 我更容易定位。'),
+    Item('about.copy_diag', 'about', '复制诊断信息', KIND_ACTION, default='复制到剪贴板',
+         where='action:ui/settings_registry._copy_diag（版本 / 平台 / 自检报告；零请求）',
+         action=_copy_diag,
+         tip='把"环境 + 网络策略 + 登录/额度/退避"一把复制，**不含任何凭据值**。'),
+    Item('about.open_logs', 'about', '打开日志目录', KIND_ACTION, default='打开日志文件夹',
+         where='action:USER_DATA_DIR/logs（app.log 轮转 5MB×3）',
+         action=_open_logs,
+         tip='排障时把 app.log 发我；也可在「存储与维护」里调日志级别为 DEBUG 再复现。'),
+
     # ---- ★v6.75 S2-5：存储与维护（数据目录 / 缓存清理 / 日志级别 / 配置导出导入）----
     Item('storage.open_dir', 'storage', '数据目录', KIND_ACTION, default='打开文件夹',
          where='action:config.settings.USER_DATA_DIR（系统文件管理器打开）',

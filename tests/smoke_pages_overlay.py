@@ -5699,6 +5699,52 @@ try:
 except Exception as _e82:  # noqa: BLE001
     check(f"§7-B13 S2-5 断言整段抛异常: {type(_e82).__name__}: {_e82}", False)
 
+# ==========================================
+# §7-B13 · S2-7 + S2-8（★v6.76）：**关于与更新** + 设置中心**收口**
+#   收口判据：① 每组要么有项、要么写明"哪一步接进来"（不许空组无说明）；② 全项类型合法 + 落点齐全。
+# ==========================================
+print("\n== §7-B13 · S2-7/S2-8：关于与更新 + 设置中心收口 ==")
+try:
+    import pathlib as _pl83  # noqa: E402
+
+    from config import settings as _st83  # noqa: E402
+    from ui import settings_registry as _sr83  # noqa: E402
+    from ui.views.settings_view import SettingsView as _SV83  # noqa: E402
+    from ui.workers import UpdateCheckWorker as _UCW83  # noqa: E402
+
+    check("★ S2-7：关于与更新 = 6 项（版本 / 检查更新 / 发布页 / 反馈 / 诊断 / 日志目录）",
+          _SV83().count_rows('about') == len(_sr83.items('about')) == 6)
+    check("★ S2-7：版本动态现算（== `APP_NAME + APP_VERSION`），不写死字面量",
+          str(_sr83.get_value(_sr83.find('about.version'))) == f'{_st83.APP_NAME} v{_st83.APP_VERSION}')
+    check("★ S2-7：检查更新走**异步通道**（后台查、**一定有回执**）且可取消",
+          callable(_sr83.find('about.check_update').worker)
+          and callable(getattr(_UCW83, 'cancel', None)))
+    _diag83 = _sr83._copy_diag()                    # ⚠ 零请求（内部 probe=False）
+    check("★ S2-7：诊断信息**零请求**、**不含凭据值**（版本/平台/策略/登录数/额度）",
+          ('已复制' in _diag83) or ('剪贴板不可用' in _diag83))
+    check("★ S2-7：发布页链接与 `version.json` 的 url **同源**（换仓库三处一起改）",
+          _sr83.RELEASES_URL in _pl83.Path('version.json').read_text(encoding='utf-8'))
+
+    _groups83 = _sr83.groups()
+    check("★ S2-8 收口：**没有「空组且无说明」**（暂跳的两组也写明哪一步接）",
+          [g.gid for g in _groups83 if not _sr83.items(g.gid) and not g.todo] == [])
+    _counts83 = {g.gid: len(_sr83.items(g.gid)) for g in _groups83}
+    check("★ S2-8 收口：已接内容的组 ≥5（账号/下载/默认/存储/关于），暂跳组都有 todo 说明",
+          sum(1 for v in _counts83.values() if v) >= 5
+          and all((_sr83.group_of(g) or object()).todo for g in ('appearance', 'keys')))
+    _kinds83 = (_sr83.KIND_TOGGLE, _sr83.KIND_NUMBER, _sr83.KIND_ENUM,
+                _sr83.KIND_READONLY, _sr83.KIND_ACTION)
+    check("★ S2-8 收口：全项**类型合法 + 落点齐全**（无半成品项）",
+          all(i.kind in _kinds83 and i.where for i in _sr83.items())
+          and all(_sr83.find(k) is not None for k in
+                  ('em.login', 'storage.clear_cache', 'about.check_update')))
+    check("★ S2-8：设置页只有一个编辑面（三处旧入口不再持有第二套；`open_group` 派发）",
+          'open_group(' in _pl83.Path('ui/widgets/download_queue_panel.py').read_text(encoding='utf-8')
+          and 'DownloadSettingsDialog' not in _pl83.Path('ui/views/data_manager.py').read_text(
+              encoding='utf-8'))
+except Exception as _e83:  # noqa: BLE001
+    check(f"§7-B13 S2-7/S2-8 断言整段抛异常: {type(_e83).__name__}: {_e83}", False)
+
 print("\n== 发布物一致性：version.json 可解析 + 版本号三处同步 ==")
 try:
     import json as _json17  # noqa: E402
