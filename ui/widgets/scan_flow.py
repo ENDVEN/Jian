@@ -524,13 +524,31 @@ class ScanFlow:
         p._industry_worker.start()
 
     def _on_industry_ready(self, data, token: int) -> None:
-        """行业映射回包：过守卫 → 存盘 + 重画（带上行业列）；None ⇒ 那列继续 '—'。"""
+        """行业映射回包：过守卫 → 存盘 + 重画（带上行业列）；**拿不到就出声**（绝不静默）。
+
+        ★v6.68（用户 2026-09-26 实测："M2 结果里行业一直是空的，是不是我下载没弄好？"）：
+          **旧版这个分支什么都不做** ⇒ 界面上只有一列 '—'，用户只会怀疑自己操作有问题。
+          实测真因在**数据源**：东财 `clist/get` 端点对本机**直接断连**（同域名单点报价却 HTTP 200），
+          而细分板块唯一来源就是它 ⇒ 映射永远为空、`industry_map.json` 从不落盘 —— **不是下载没弄好、
+          也不是这里代码错**。⇒ 修法：**把失败与出路写在回执上**（追加而非覆盖）。
+        """
         p = self.page
         if not p._industry_guard.accept(token):
             return
         if data:
             get_industry_store().replace(data)
             self.refresh()
+            return
+        # 失败（None / 空表）：**可见回执 + 出路**（"再点一次开始扫描"就会重试 ——
+        #   `_maybe_fetch_industry` 在缓存为空时**每次扫描完成都跑**，缓存命中也算）
+        _note = (' · ⚠ 行业映射未取到（东财板块接口不可用或返回空）—— 该列暂显 \'—\'；'
+                 '再点一次「▶ 开始扫描」会重试')
+        if '行业映射未取到' not in (p.lbl_receipt.text() or ''):
+            p.lbl_receipt.setText((p.lbl_receipt.text() or '') + _note)
+        _tip = ('行业 = 细分板块，来自东财「行业板块成分」接口（约 80+ 次请求，抓一次长期缓存）。\n'
+                '抓不到就诚实留 \'—\'，**绝不拿别的口径瞎猜板块**。\n'
+                '常见原因：东财该接口对本机临时不可用（限流/风控）—— 过一会儿再点一次「▶ 开始扫描」即可重试。')
+        p.lbl_receipt.setToolTip(((p.lbl_receipt.toolTip() or '') + '\n' + _tip).strip())
 
     def _on_failed(self, job_id: int, reason: str) -> None:
         p = self.page

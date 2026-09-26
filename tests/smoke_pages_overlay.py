@@ -2632,6 +2632,16 @@ try:
               all(_scan.table.item(r, 3).text() == '—' for r in range(_scan.table.rowCount())))
         _istore6._map = _saved6                          # 还原单例，不污染真实缓存
 
+        # ★v6.68（用户实测"行业一直是空的，是不是我下载没弄好"）：**失败必须说出来**。
+        #   旧版拿不到映射时那个分支什么都不做 ⇒ 界面只剩一列 '—'，用户只会怀疑自己。
+        _scan.lbl_receipt.setText('基线回执')
+        _scan._flow._on_industry_ready(None, _scan._industry_guard.next())
+        check("★ v6.68：行业映射取不到 ⇒ 回执**说出来**（不静默）+ 给出路（再扫一次会重试）",
+              '行业映射未取到' in _scan.lbl_receipt.text()
+              and '重试' in _scan.lbl_receipt.text()
+              and '基线回执' in _scan.lbl_receipt.text()          # 追加，不覆盖原回执
+              and '东财' in _scan.lbl_receipt.toolTip())
+
         # ---- ★P7：列拖拽换序（只改视觉序，逻辑 item(r,c) 不变）+ 持久化 + 非法拒绝 ----
         _n7 = _scan.table.columnCount()
         _scan._flow.apply_column_order(list(reversed(range(_n7))))     # 完全倒序
