@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-                             QStackedWidget, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                             QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from ui import settings_registry as reg
 from ui.widgets.settings_render import build_control
@@ -41,6 +41,29 @@ _SEP_QSS = "background:#F2F5F9;"
 _STATUS_QSS = "font-size:12px; color:#5B6472; padding:2px 2px 0 2px;"
 
 logger = logging.getLogger(__name__)
+
+
+def open_group(parent, gid: str = 'download') -> bool:
+    """★v6.74 / **S2-2**：**跳到设置页的某个分组** —— 旧「⚙ 下载设置」等入口的**唯一去向**。
+
+    【为什么要这个函数】S2 定案要求"**不新开第二套编辑面**"（§9-D 防两套值漂移）：旧入口都保留，
+      但一律**跳到设置页**（同一个编辑面）。找不到主窗口时**明确告诉用户去哪**（不静默）。
+    返回是否真的跳成功（False 时已弹提示）。
+    """
+    win = parent.window() if parent is not None else None
+    page = getattr(win, 'page_settings', None)
+    switch = getattr(win, 'switch_to', None)
+    if page is None or not callable(switch):
+        if isinstance(parent, QWidget):       # 有父件 ⇒ 明确告诉用户去哪（不静默）
+            QMessageBox.information(parent, '设置在哪',
+                                    '请在主界面**左栏最下方**打开「⚙ 设置」，'
+                                    '参数在「下载与取数」一组里（一处调、处处生效）。')
+        else:                                 # 无父件（测试 / 异常路径）⇒ 只记日志，绝不弹窗
+            logger.info('未找到设置页（无主窗口）—— 请在左栏「⚙ 设置 → 下载与取数」里调整')
+        return False
+    switch('settings')                      # 切到设置页
+    page.show_group(gid)                    # 并定位到目标分组
+    return True
 
 
 class SettingsView(QWidget):

@@ -35,7 +35,6 @@ from data.market_db import DataLakeManager
 from data.sync_service import (MarketSyncService, ZONE_KLINE, ZONE_KLINE_RAW,
                                ZONE_INDEX)
 from ui.dialogs.bulk_download import BulkDownloadDialog
-from ui.dialogs.download_settings import DownloadSettingsDialog
 from ui.workers import ScanWorker
 
 # 分区中文名（顺序即左侧清单顺序）
@@ -228,14 +227,9 @@ class DataManagerView(QWidget):
         self.lbl_selected.setStyleSheet("font-size: 12px; color: #5B6472;")
         ops.addWidget(self.lbl_selected)
         ops.addSpacing(10)
-        # ★v1.45：独立的“同步间隔”旋钮已去掉 —— 参数收进全局下载偏好（一处调、处处生效）。
-        self.btn_settings = QPushButton("⚙ 下载设置…")
-        self.btn_settings.setStyleSheet(FLAT_QSS_WIDE)
-        self.btn_settings.setToolTip(
-            "间隔 / 抖动 / 连续失败熍断 / 跳过已最新 / 并发数 —— 全局统一，"
-            "改一次对所有下载入口生效（含批量预下载、全市场筛选/广度统计）。")
-        self.btn_settings.clicked.connect(self._open_settings)
-        ops.addWidget(self.btn_settings)
+        # ★v6.74 S2-2（用户拍板 2026-09-27）：本页的「⚙ 下载设置…」入口**直接删除**（不预留给"跳设置页"）
+        #   —— 参数本来就是**全局**的，需要时去左栏「⚙ 设置 → 下载与取数」改即可；
+        #   少一个按钮 = 少一处"两套值漂移"的面（§9-D）。下载设置的入口**只保留下载列表面板那一处**。
         ops.addStretch()
 
         self.btn_sync = QPushButton("🔄 更新到最新")
@@ -571,10 +565,6 @@ class DataManagerView(QWidget):
             f"已提交到后台（任务 #{job_id}，{len(names)} 只）—— "
             f"进度见底部下载条与「详情」，本页可以继续勾选与浏览。"
             if job_id else "没有可提交的任务（清单为空，或同样的任务已在队列里）。")
-
-    def _open_settings(self):
-        """打开全局下载设置对话框（间隔/并发等一处调、处处生效）。"""
-        DownloadSettingsDialog(self).exec()
 
     def _on_hub_finished(self, job_id: int, stats: dict) -> None:
         """本页发起的后台任务跑完 ⇒ 刷新分区清单。

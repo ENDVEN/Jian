@@ -31,7 +31,6 @@ from data.akshare_feed import INDEX_PRESETS
 from data.sync_service import (ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX,
                                abort_reason_text, estimate_seconds,
                                format_duration, friendly_constituent_message)
-from ui.dialogs.download_settings import DownloadSettingsDialog
 from ui.download_hub import download_policy_from_prefs
 from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
                                        mono_font_css)   # ★v1.46 §10-15 开源等宽栈
@@ -103,22 +102,10 @@ class BulkDownloadDialog(QDialog):
                            "border: 1px solid #FFE082; border-radius: 6px; padding: 8px 10px;")
         root.addWidget(warn)
 
-        # ---------- ⚙ 全局下载设置入口（v1.45：参数集中，一处调处处生效）----------
-        set_row = QHBoxLayout()
-        set_row.setSpacing(8)
-        self.btn_settings = QPushButton("⚙ 下载设置…")
-        self.btn_settings.setStyleSheet(_FLAT_BTN)
-        self.btn_settings.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_settings.setToolTip(
-            "间隔 / 抖动 / 连续失败熍断 / 跳过已最新 / 并发数 —— 全局统一，"
-            "改一次对所有下载入口生效（含数据管理、全市场筛选/广度统计）。")
-        self.btn_settings.clicked.connect(self._open_settings)
-        set_row.addWidget(self.btn_settings)
-        lbl_set = QLabel("间隔 / 抖动 / 熍断 / 跳过 / 并发已收进全局设置（不再逐页各调各的）")
-        lbl_set.setStyleSheet("font-size: 11.5px; color: #8A94A6;")
-        set_row.addWidget(lbl_set)
-        set_row.addStretch()
-        root.addLayout(set_row)
+        # ★v6.74 S2-2（用户拍板 2026-09-27）：本弹窗的「⚙ 下载设置…」入口**直接删除**（不预留"跳设置页"）
+        #   —— 节流参数是**全局**的，需要时去左栏「⚙ 设置 → 下载与取数」改；
+        #   下载设置的入口**只保留下载列表面板那一处**（少一个按钮 = 少一处漂移面，§9-D）。
+        #   ⚠ 本弹窗的**预估值**仍按当前全局偏好实时算（见 `_refresh_estimate`），不需要手动刷新入口。
 
         # ---------- ⚡ 预设（§7-B1/B2 D6-2）：一键填好"全市场扫描就绪"底座 ----------
         preset_row = QHBoxLayout()
@@ -459,11 +446,6 @@ class BulkDownloadDialog(QDialog):
             "上限估算：按每只都发一次请求算。\n"
             "已是最新的标的（本地末日 >= 最近一个已收盘定稿的交易日）会被自动跳过、不发请求，\n"
             "所以实际通常明显更快 —— 周末 / 节假日 / 盘中批量同步几乎瞬时完成。")
-
-    def _open_settings(self):
-        """打开全局下载设置对话框；关闭后刷新预估（间隔可能变了）。"""
-        DownloadSettingsDialog(self).exec()
-        self._refresh_estimate()
 
     def _start(self):
         symbols = self._collect_symbols()

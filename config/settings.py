@@ -167,7 +167,7 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #             ④ 关窗 `main_window._shutdown_background_threads()` 统一 cancel+wait 所有 QThread。
 #          smoke 879 / 732。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.54"
+APP_VERSION = "1.55"
 
 # ==========================================
 # 界面配置 (UI Settings)

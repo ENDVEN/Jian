@@ -5536,6 +5536,40 @@ try:
 except Exception as _e79:  # noqa: BLE001
     check(f"§7-B13 S2-1b 断言整段抛异常: {type(_e79).__name__}: {_e79}", False)
 
+# ==========================================
+# §7-B13 · S2-2（★v6.74）：**下载与取数**收进设置页 —— 三处旧入口跳本页 + 旧对话框降级
+#   用户口径："不新开第二套编辑面"（§9-D）；UI 从简 ⇒ 只做**入口收口**，不重排视觉。
+# ==========================================
+print("\n== §7-B13 · S2-2：三处旧「⚙ 下载设置」入口 → 跳设置页（同一编辑面）==")
+try:
+    import pathlib as _pl80  # noqa: E402
+
+    from ui import settings_registry as _sr80  # noqa: E402
+    from ui.views.settings_view import SettingsView as _SV80  # noqa: E402
+    from ui.views.settings_view import open_group as _og80  # noqa: E402
+
+    _paths80 = {'数据管理页': 'ui/views/data_manager.py',
+                '预下载弹窗': 'ui/dialogs/bulk_download.py',
+                '下载队列面板': 'ui/widgets/download_queue_panel.py'}
+    _src80 = {k: _pl80.Path(v).read_text(encoding='utf-8') for k, v in _paths80.items()}
+    check("★ S2-2（用户拍板）：下载设置入口**只留下载列表面板**（数据管理页 / 预下载弹窗入口已删净）",
+          "open_group(" in _src80['下载队列面板']
+          and not any(k in _src80['数据管理页'] + _src80['预下载弹窗']
+                      for k in ('open_group(', 'btn_settings', 'DownloadSettingsDialog')))
+    _dssrc80 = _pl80.Path('ui/dialogs/download_settings.py').read_text(encoding='utf-8')
+    check("★ S2-2：旧对话框**头部已标降级**（无入口兼容壳，待 §7-B14 删除）+ 指回注册表",
+          '已降级' in _dssrc80 and 'settings_registry' in _dssrc80)
+    check("★ S2-2：跳转函数**可安全回退**（无主窗口 ⇒ 回 False，不静默、不弹窗卡测试）",
+          _og80(None) is False)
+    _view80 = _SV80()
+    check("★ S2-2：「下载与取数」组 = 5 个节流项 + 3 个补全项（旧对话框那 5 项一处不落）",
+          _view80.count_rows('download') == len(_sr80.items('download')) >= 8
+          and all(_sr80.find(k) is not None for k in
+                  ('download.interval', 'download.jitter', 'download.circuit_breaker',
+                   'download.concurrency', 'download.skip_fresh')))
+except Exception as _e80:  # noqa: BLE001
+    check(f"§7-B13 S2-2 断言整段抛异常: {type(_e80).__name__}: {_e80}", False)
+
 print("\n== 发布物一致性：version.json 可解析 + 版本号三处同步 ==")
 try:
     import json as _json17  # noqa: E402

@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect,
                              QPushButton, QSizePolicy, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
-from ui.dialogs.download_settings import DownloadSettingsDialog
+from ui.views.settings_view import open_group   # ★v6.74 S2-2：旧「⚙ 下载设置」→ 跳设置页
 from ui.download_hub import (STATUS_CANCELLED, STATUS_DONE, STATUS_LABELS,
                              STATUS_QUEUED, STATUS_RUNNING)
 from ui.widgets.custom_widgets import FLAT_QSS   # ★v6.70 §9-F③ 样式唯一出口
@@ -374,5 +374,5 @@ class DownloadQueuePanel(QFrame):
         self.refresh()
 
     def _open_settings(self) -> None:
-        """打开全局下载设置对话框（挂到主窗口，避免面板隐藏时变孤儿）。"""
-        DownloadSettingsDialog(self.window()).exec()
+        """★v6.74 S2-2：**跳到设置页「下载与取数」**（挂主窗口找设置页；面板隐藏也不会开成孤儿）。"""
+        open_group(self.window() or self, 'download')

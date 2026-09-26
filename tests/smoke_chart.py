@@ -4723,8 +4723,10 @@ try:
           "ThrottlePolicy(" not in _bulk8 and "spin_interval" not in _bulk8)
     check("★ 数据管理页已去掉独立间隔旋钮（防两套值漂移）",
           "spin_interval" not in _dm8 and "ThrottlePolicy(" not in _dm8)
-    check("★ 三处入口打开同一个 DownloadSettingsDialog（不各存一份编辑面）",
-          all("DownloadSettingsDialog" in t for t in (_bulk8, _dm8, _qp8)))
+    check("★ v6.74 S2-2（用户拍板）：下载设置入口只留**下载列表面板**；数据管理页 / 预下载弹窗已删净",
+          "open_group(" in _qp8
+          and not any("open_group(" in t or "btn_settings" in t or "DownloadSettingsDialog" in t
+                      for t in (_bulk8, _dm8)))
     check("★ 设置对话框写盘键形正确（preferences.set('download_prefs', {5 项})）",
           'preferences.set("download_prefs"' in _set8
           and all(f'"{k}"' in _set8 for k in
