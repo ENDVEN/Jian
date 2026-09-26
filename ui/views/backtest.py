@@ -58,6 +58,7 @@ from data.formula_store import (SOURCE_BACKTEST, get_formula_store, make_formula
 #      但**任何联网抓取**都必须走 MarketSyncService（见下方 worker）。
 from data.akshare_feed import is_index_symbol, is_stock_code
 from data.strategy_store import StrategyStore
+from ui.settings_registry import get_setting   # ★v6.74 S2-4：默认区间取设置页（唯一真源）
 from ui.widgets.custom_widgets import (FLAT_QSS, LINE_COMBO_QSS, NoWheelComboBox,
                                         NoWheelDateEdit)
 from ui.widgets.formula_library import FormulaLibraryDialog
@@ -295,6 +296,9 @@ class SingleStockBacktestView(QWidget):
         run_lay.addWidget(self._hint_icon(
             "回测数据最早可回溯到 2016-01-01（与引擎 DEFAULT_START_DATE 同源）。"
             "改完区间直接点摘要条右侧「▶ 开始回测」。"))
+        # ★v6.74 S2-4：**默认区间来自设置页**（「回测与扫描默认」组）—— 页内改只影响本次任务。
+        #   ⚠ 必须放在**起止日期控件建好之后**（处理函数会写 `date_start/date_end`，早调会 AttributeError）
+        self._apply_default_range()
         root.addWidget(range_bar)
 
         # ---------- ③.5 预览横幅（§7-A4：仅在"只读回放历史存档"时出现）----------
@@ -707,6 +711,17 @@ class SingleStockBacktestView(QWidget):
     # ==========================================
     def select_symbol(self):
         self.flow.select_symbol()
+
+    def _apply_default_range(self) -> None:
+        """★v6.74 S2-4：把设置页「默认回测区间」应用为**本次默认**（页内改只影响本次任务）。
+
+        【为什么要显式应用一次】只 `setCurrentIndex` 而不触发处理函数 ⇒ 文本变了、起止日期没变，
+          页面自相矛盾。这里**文本与日期一起落地**（走同一个处理函数，口径唯一）。
+        """
+        want = str(get_setting('defaults.range_preset', _PRESET_ORDER[0]) or _PRESET_ORDER[0])
+        idx = _PRESET_ORDER.index(want) if want in _PRESET_ORDER else 0
+        self.cmb_range_preset.setCurrentIndex(idx)
+        self._on_range_preset(self.cmb_range_preset.currentText())
 
     def _on_range_preset(self, preset: str):
         self.flow._on_range_preset(preset)

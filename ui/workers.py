@@ -486,6 +486,36 @@ class NetSelfCheckWorker(QThread):
         self.finished.emit(text or '（已取消）')
 
 
+class CacheCleanWorker(QThread):
+    """★v6.75 / §7-B13 S2-5：**缓存清理**（后台跑 —— 只删"可再生成"的东西）。
+
+    【纪律】删除范围由 `data/storage_maintenance` 定义（**唯一实现处**：轮转日志 + `*.tmp`；
+      数据湖 / 回测存档 / 截图 / 交易库 / **登录凭据**一律不碰）。本类只负责"别卡界面"。
+    """
+
+    finished = pyqtSignal(str)   # 人话回执
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        try:
+            if self._cancel:
+                text = '已取消（未清理任何文件）'
+            else:
+                from data.storage_maintenance import clear_cache
+                text = str(clear_cache().get('text') or '')
+        except Exception as e:  # noqa: BLE001 —— 清理失败要给用户一句话，不能空回
+            logger.warning(f"缓存清理失败: {type(e).__name__}: {e}")
+            text = f'缓存清理失败：{type(e).__name__}: {e}'
+        logger.info(f"缓存清理：{text}")
+        self.finished.emit(text or '清理完成')
+
+
 class BacktestRunWorker(QThread):
     """回测计算（市场回测页）。
 

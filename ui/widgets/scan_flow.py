@@ -55,19 +55,8 @@ INDUSTRY_PROGRESS_KEY = 'industry_fetch'   # preferences 里的断点：{next_pa
 logger = logging.getLogger(__name__)
 
 
-def _setting(key: str, fallback):
-    """读**设置页注册表**里声明的一项（★v6.74）。
-
-    【为什么要它】默认值只在 `ui/settings_registry.py` 声明一次 ⇒ 页面**不许写第二份默认**，
-      否则就会出现"设置页显示 A、实际按 B 跑"的漂移（§9-D 唯一真源）。
-    """
-    item = reg.find(key)
-    if item is None:
-        return fallback
-    try:
-        return reg.get_value(item)
-    except Exception:                                            # noqa: BLE001
-        return fallback
+# ★v6.74：读设置项一律走注册表的唯一出口（默认值只声明一次，页面不许写第二份，§9-D）
+_setting = reg.get_setting
 
 
 SCAN_UI_KEY = 'scan_ui'          # 页面偏好键（core/preferences.DEFAULTS 里登记）
@@ -468,6 +457,7 @@ class ScanFlow:
         self._refresh_chips()
         self.refresh(resize=True)          # ★新扫描 ⇒ 重测一次列宽（排序/切日期不再重测）
         self._auto_archive(outcome)         # ★P4：非缓存的新扫描落一份 kind=M2 快照
+        self._maybe_note_data_gap(outcome)  # ★v6.74 S2-4：数据不足很多 ⇒ 提示先预下载（设置可关）
         # ★v6.74（用户拍板）：**扫描先出结果，行业/估值在后台按轮补到表里**（见 scan_enrich）。
         #   两条旧路径降级为**兜底**：补全被关掉 / 池子为空时才走；
         #   分页通道（全市场 56 页）只在兜底或用户显式打开 `em.legacy_paging` 时才跑。
@@ -510,6 +500,29 @@ class ScanFlow:
         if not p._valuation or p._valuation_date is None:
             return None
         return p._valuation if pd.Timestamp(stamp).normalize() == p._valuation_date else None
+
+    def _maybe_note_data_gap(self, outcome) -> None:
+        """★v6.74 S2-4：**首次扫描提示**（设置页可关）——很多标的「数据不足」时给下一步建议。
+
+        【为什么要有它】"扫完发现一大半是「数据不足」"是新用户最常见的困惑：那通常意味着
+          **本地还没下过这批票的历史**（首次扫描），而不是条件写错了。
+        ⚠ 只**追加**一句到回执（不动扫描结论）；判据取 `counts.insufficient`（>20% 且 ≥5 只）。
+        """
+        if not bool(_setting('defaults.first_scan_hint', True)):
+            return
+        p = self.page
+        counts = getattr(getattr(outcome, 'result', None), 'counts', None) or {}
+        try:
+            total = int(counts.get('total') or 0)
+            bad = int(counts.get('insufficient') or 0)
+        except (TypeError, ValueError):
+            return
+        if not total or bad < max(5, int(total * 0.2)):
+            return
+        p.lbl_receipt.setText(
+            (p.lbl_receipt.text() or '')
+            + f' · ⚠ {bad}/{total} 只「数据不足」（多为本地还没下过这些票的历史）—— '
+              f'建议先到「🗄 数据管理」预下载，或在设置里调默认区间')
 
     def _maybe_fetch_valuation(self, outcome) -> None:
         """新扫描且看的就是数据最新交易日 ⇒ 后台拉一次全市场当前估值（非阻塞、不连累扫描）。"""

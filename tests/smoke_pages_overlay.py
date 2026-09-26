@@ -5570,6 +5570,135 @@ try:
 except Exception as _e80:  # noqa: BLE001
     check(f"§7-B13 S2-2 断言整段抛异常: {type(_e80).__name__}: {_e80}", False)
 
+# ==========================================
+# §7-B13 · S2-4（★v6.74）：**回测与扫描默认**（默认区间 / 自动存档 / 首次扫描提示）
+#   口径：默认值只声明在注册表；页面**读它**（不写第二份默认）；落在**既有偏好键**上，不另造真源。
+# ==========================================
+print("\n== §7-B13 · S2-4：回测与扫描默认（默认区间 / 自动存档 / 首次提示）==")
+try:
+    import pathlib as _pl81  # noqa: E402
+
+    from core.preferences import DEFAULTS as _DEFS81  # noqa: E402
+    from ui import settings_registry as _sr81  # noqa: E402
+    from ui.views.settings_view import SettingsView as _SV81  # noqa: E402
+
+    check("★ S2-4：三个默认真项齐全（默认区间 / 自动存档 / 首次扫描提示）",
+          all(_sr81.find(k) is not None for k in
+              ('defaults.range_preset', 'archive.auto', 'defaults.first_scan_hint')))
+    _bt81 = _pl81.Path('ui/views/backtest.py').read_text(encoding='utf-8')
+    _rp81 = _sr81.find('defaults.range_preset')
+    check("★ S2-4：默认区间选项与 M1 快捷区间**同一份清单**（防两处漂移）",
+          all(str(v) in _bt81 for v, _lbl in _rp81.choices))
+    check("★ S2-4：M1 页**真读它**（`_apply_default_range` ⇒ 文本与日期一起落地，页面不矛盾）",
+          '_apply_default_range()' in _bt81 and 'get_setting(' in _bt81
+          and 'self._on_range_preset(self.cmb_range_preset.currentText())' in _bt81)
+    _ac81 = _sr81.find('archive.auto')
+    check("★ S2-4：自动存档项落在**既有偏好键**（`backtest_archive.auto`，不另造第二份真源）",
+          _ac81.where == 'backtest_archive.auto'
+          and bool(_DEFS81.get('backtest_archive', {}).get('auto', True)) is bool(_ac81.default))
+    _sfsrc81 = _pl81.Path('ui/widgets/scan_flow.py').read_text(encoding='utf-8')
+    check("★ S2-4：首次扫描提示**受设置控制**且只追加（不动扫描结论）",
+          "_setting('defaults.first_scan_hint'" in _sfsrc81
+          and '_maybe_note_data_gap(outcome)' in _sfsrc81)
+    check("★ S2-4：页面读设置一律走**注册表唯一出口**（`_setting = reg.get_setting`，无第二份默认）",
+          '_setting = reg.get_setting' in _sfsrc81)
+    _view81 = _SV81()
+    check("★ S2-4：「回测与扫描默认」组 = 3 项（原先那行 todo 已撤）",
+          _view81.count_rows('defaults') == len(_sr81.items('defaults')) == 3)
+except Exception as _e81:  # noqa: BLE001
+    check(f"§7-B13 S2-4 断言整段抛异常: {type(_e81).__name__}: {_e81}", False)
+
+# ==========================================
+# §7-B13 · S2-5（★v6.75）：**存储与维护**（数据目录 / 缓存清理 / 日志级别 / 配置导出导入）
+#   口径：清理**只清可再生成的**（轮转日志 + *.tmp），数据湖/存档/凭据绝不碰；
+#   本段用**临时目录 + 内存桩**验，绝不接触用户真实数据与偏好。
+# ==========================================
+print("\n== §7-B13 · S2-5：存储与维护（缓存清单/清理 + 日志级别 + 配置导出导入）==")
+try:
+    import json as _json82  # noqa: E402
+    import logging as _lg82  # noqa: E402
+    import pathlib as _pl82  # noqa: E402
+    import tempfile as _tf82  # noqa: E402
+
+    from data import storage_maintenance as _sm82  # noqa: E402
+    from ui import settings_registry as _sr82  # noqa: E402
+    from ui.views.settings_view import SettingsView as _SV82  # noqa: E402
+    from ui.workers import CacheCleanWorker as _CCW82  # noqa: E402
+
+    with _tf82.TemporaryDirectory() as _d82:
+        os.makedirs(os.path.join(_d82, 'logs'), exist_ok=True)
+        os.makedirs(os.path.join(_d82, 'data_lake'), exist_ok=True)
+        for _name82, _body82 in (('app.log', 'live'), ('app.log.1', 'old'), ('app.log.2', 'old')):
+            with open(os.path.join(_d82, 'logs', _name82), 'w', encoding='utf-8') as _f82:
+                _f82.write(_body82)
+        with open(os.path.join(_d82, 'junk.tmp'), 'w', encoding='utf-8') as _f82:
+            _f82.write('tmp')
+        with open(os.path.join(_d82, 'data_lake', 'keep.parquet'), 'w', encoding='utf-8') as _f82:
+            _f82.write('DATA')
+        _items82 = _sm82.cache_items(_d82)
+        check("★ S2-5：清单**只**列轮转日志 + `*.tmp`（正在写的 `app.log` 不算）",
+              sorted(i['name'] for i in _items82) == ['app.log.1', 'app.log.2', 'junk.tmp'])
+        _res82 = _sm82.clear_cache(_d82)
+        check("★ S2-5：清理只删「可再生成」的 ⇒ **数据湖与当前日志原样保留**（红线）",
+              _res82['removed'] == 3
+              and os.path.exists(os.path.join(_d82, 'data_lake', 'keep.parquet'))
+              and os.path.exists(os.path.join(_d82, 'logs', 'app.log')))
+
+    class _Mem82:
+        """内存偏好桩（**不碰用户真实 preferences**）。"""
+
+        def __init__(self, data=None):
+            self.d = dict(data or {})
+
+        def get(self, key, default=None):
+            return self.d.get(key, default)
+
+        def set(self, key, value):
+            self.d[key] = value
+
+    with _tf82.TemporaryDirectory() as _d82b:
+        _p82 = os.path.join(_d82b, 'cfg.json')
+        _r82 = _sm82.export_config(_p82, prefs=_Mem82(
+            {'download_prefs': {'interval': 0.5}, 'em_auth': {'secret': 1},
+             'em_request_budget': {'auth': 1}}))
+        _doc82 = _json82.loads(open(_p82, encoding='utf-8').read())
+        check("★ S2-5：导出是合法 JSON 且**过滤凭据/额度类键**（换机备份不该带这些）",
+              _r82['ok'] and 'download_prefs' in _doc82['preferences']
+              and not any(k in _doc82['preferences'] for k in ('em_auth', 'em_request_budget')))
+        _p82b = os.path.join(_d82b, 'with_secret.json')
+        with open(_p82b, 'w', encoding='utf-8') as _f82b:
+            _json82.dump({'preferences': {'download_prefs': {'interval': 0.9},
+                                          'em_auth': {'secret': 1}}}, _f82b)
+        _mem82 = _Mem82()
+        _r82b = _sm82.import_config(_p82b, prefs=_mem82)
+        check("★ S2-5：导入**绝不写入凭据类键**（文件里带着也不写）+ 合并其余",
+              _r82b['ok'] and 'em_auth' not in _mem82.d
+              and abs(float(_mem82.d['download_prefs']['interval']) - 0.9) < 1e-9)
+        check("★ S2-5：坏文件**说人话**（不是本软件的配置 ⇒ 明确告知，绝不半写入）",
+              _sm82.import_config(os.path.join(_d82b, 'nope.json'), prefs=_Mem82())['ok'] is False)
+
+    check("★ S2-5：设置页「存储与维护」= 6 项（数据目录/清单/清理/日志级别/导出/导入）",
+          _SV82().count_rows('storage') == len(_sr82.items('storage')) == 6)
+    check("★ S2-5：清理走**异步动作通道**（`worker` ⇒ 不卡界面）+ 可取消（关窗不漏线程）",
+          callable(_sr82.find('storage.clear_cache').worker)
+          and callable(getattr(_CCW82, 'cancel', None)))
+    _back_pref82 = _sr82.preferences
+    _sr82.preferences = _Mem82()
+    try:
+        _sr82.set_value(_sr82.find('storage.log_level'), 'WARNING')
+        _lv82 = _lg82.getLogger().level
+        _sr82.set_value(_sr82.find('storage.log_level'), 'INFO')
+    finally:
+        _sr82.preferences = _back_pref82
+        _lg82.getLogger().setLevel(_lg82.INFO)          # ⚠ 收尾：把日志级别还回去
+    check("★ S2-5：日志级别**改完即时生效**（root 与 handler 一起调）",
+          _lv82 == _lg82.WARNING and _lg82.getLogger().level == _lg82.INFO)
+    check("★ S2-5：数据目录动作存在且**同步**（打开文件夹很快，不必起线程）",
+          callable(_sr82.find('storage.open_dir').action)
+          and not callable(getattr(_sr82.find('storage.open_dir'), 'worker', None)))
+except Exception as _e82:  # noqa: BLE001
+    check(f"§7-B13 S2-5 断言整段抛异常: {type(_e82).__name__}: {_e82}", False)
+
 print("\n== 发布物一致性：version.json 可解析 + 版本号三处同步 ==")
 try:
     import json as _json17  # noqa: E402

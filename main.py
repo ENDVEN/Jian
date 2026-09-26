@@ -27,7 +27,13 @@ def _attach_log_file() -> None:
                                       maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8')
         handler.setFormatter(logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-        handler.setLevel(logging.INFO)
+        # ★v6.75 S2-5：级别取设置页（`storage.log_level`，唯一真源）—— 改完即时生效，重启靠这里恢复
+        from core.preferences import preferences as _prefs
+        _level = getattr(logging,
+                         str((_prefs.get('storage') or {}).get('log_level') or 'INFO').upper(),
+                         logging.INFO)
+        handler.setLevel(_level)
+        logging.getLogger().setLevel(_level)
         logging.getLogger().addHandler(handler)
         logging.info(f"日志已落文件（轮转 5MB×3）: {os.path.join(log_dir, 'app.log')}")
     except Exception as e:                                # noqa: BLE001 —— 落盘失败不该拦启动

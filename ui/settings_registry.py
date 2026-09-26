@@ -89,10 +89,8 @@ GROUPS = (
     Group('download', '下载与取数', '全局节流参数 —— 一处调、处处生效', '⬇'),
     Group('appearance', '外观与个性化', '主题 · 强调色 · 涨跌配色 · 字体 · 密度', '🎨',
           todo='S2-3 接入：需先把全站硬编码颜色**令牌化**（`ui/theme.py`），分壳/卡片/表格 → 图表两批'),
-    Group('defaults', '回测与扫描默认', '新任务的默认值（可被页面临时覆盖）', '📐',
-          todo='S2-4 接入：默认区间 · 自动存档 · 首次扫描提示'),
-    Group('storage', '存储与维护', '数据目录 · 缓存 · 日志 · 配置备份', '🗄',
-          todo='S2-5 接入：数据目录（打开/迁移）· 缓存清理 · 日志级别 · 配置导出导入（不含凭据）'),
+    Group('defaults', '回测与扫描默认', '新任务的默认值（可被页面临时覆盖）', '📐'),
+    Group('storage', '存储与维护', '数据目录 · 缓存 · 日志 · 配置备份', '🗄'),
     Group('keys', '快捷键与交互', '现有交互一览（v1 只读，不做假开关）', '⌨',
           todo='S2-6 接入：先只读列出现有键位（双击跳转 / 滚轮缩放 / 拖拽换序…），预留 `keybinding` 类型'),
     Group('about', '关于与更新', '版本 · 检查更新 · 反馈', 'ℹ',
@@ -141,6 +139,72 @@ def _self_check_worker(parent=None):
     """★v6.74 S2-1b：异步动作的**线程工厂**（页面只负责"起 + 收结果"，见 `settings_view`）。"""
     from ui.workers import NetSelfCheckWorker
     return NetSelfCheckWorker(parent=parent)
+
+
+# ==========================================
+# ★v6.75 S2-5：存储与维护的取数/动作
+# ==========================================
+def _open_data_dir():
+    """打开数据目录（**同步动作**，快）—— 让用户看得见文件在哪。"""
+    import os
+
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QDesktopServices
+
+    from config import settings
+    path = settings.USER_DATA_DIR
+    os.makedirs(path, exist_ok=True)
+    QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+    return f"已在文件管理器打开数据目录：{path}"
+
+
+def _cache_text():
+    from data import storage_maintenance as sm
+    return sm.cache_text()
+
+
+def _cache_clean_worker(parent=None):
+    from ui.workers import CacheCleanWorker
+    return CacheCleanWorker(parent=parent)
+
+
+def _export_config():
+    """导出设置（**不含凭据**）—— 同步动作（写一个 JSON 很快）。"""
+    from PyQt6.QtWidgets import QFileDialog
+
+    from data import storage_maintenance as sm
+    path, _f = QFileDialog.getSaveFileName(None, '导出设置（不含凭据）',
+                                           sm.EXPORT_FILE_NAME, 'JSON (*.json)')
+    if not path:
+        return '已取消导出'
+    return str(sm.export_config(path).get('text') or '')
+
+
+def _import_config():
+    """导入设置（合并；**跳过凭据类**）。"""
+    from PyQt6.QtWidgets import QFileDialog
+
+    from data import storage_maintenance as sm
+    path, _f = QFileDialog.getOpenFileName(None, '导入设置（不含凭据）', '', 'JSON (*.json)')
+    if not path:
+        return '已取消导入'
+    return str(sm.import_config(path).get('text') or '')
+
+
+def _apply_log_level(value) -> None:
+    """★v6.75 S2-5：日志级别**改完立即生效**（root 与各 handler 一起调）。
+
+    重启后由 `main._attach_log_file()` 读同一个偏好恢复（唯一真源 = `storage.log_level`）。
+    """
+    import logging as _logging
+    level = getattr(_logging, str(value or 'INFO').upper(), _logging.INFO)
+    root = _logging.getLogger()
+    root.setLevel(level)
+    for handler in root.handlers:
+        try:
+            handler.setLevel(level)
+        except Exception:                                     # noqa: BLE001
+            pass
 
 
 # ==========================================
@@ -196,6 +260,40 @@ _ITEMS_V1 = (
                   ('proxy', '只用系统代理（不降级）')),
          tip='必须走代理的网络选"只用系统代理"；默认"自动"只在代理报错时才降级一次。'),
     # ---- ★v6.73 S2-1：东财登录（凭据只落本机、加密保存；**日志/界面永不回显值**）----
+    # ---- ★v6.75 S2-5：存储与维护（数据目录 / 缓存清理 / 日志级别 / 配置导出导入）----
+    Item('storage.open_dir', 'storage', '数据目录', KIND_ACTION, default='打开文件夹',
+         where='action:config.settings.USER_DATA_DIR（系统文件管理器打开）',
+         action=_open_data_dir,
+         tip='数据湖 / 回测存档 / 截图 / 偏好 / 凭据都在这一个目录里。',
+         help='程序与数据**物理隔离**：软件更新/重装不碰这里。\n'
+              '⚠ 删这里的文件等于删数据（凭据文件删了就要重新登录）。'),
+    Item('storage.cache_info', 'storage', '可清理内容', KIND_READONLY, default='—',
+         where='readonly:data/storage_maintenance.cache_text（**只列清单，不删**）',
+         readonly=True, value_fn=_cache_text,
+         tip='只统计**可再生成**的东西：轮转日志 + 残留临时文件（数据湖/存档/凭据一律不算）。'),
+    Item('storage.clear_cache', 'storage', '清理缓存', KIND_ACTION, default='立即清理',
+         where='action:data/storage_maintenance.clear_cache（只删轮转日志与 *.tmp）',
+         worker=_cache_clean_worker,
+         tip='删掉轮转日志与残留临时文件；**数据湖 / 回测存档 / 登录凭据一律不动**。',
+         help='为什么只清这些：那些才是"删了能再生成、且删了不心疼"的东西。\n'
+              '要删数据请去「🗄 数据管理」（那里有分区级删除与键入确认）。'),
+    Item('storage.log_level', 'storage', '日志级别', KIND_ENUM, default='INFO',
+         where='storage.log_level',
+         choices=(('INFO', 'INFO（默认，只记关键信息）'),
+                  ('DEBUG', 'DEBUG（排障用，日志会變多）'),
+                  ('WARNING', 'WARNING（只记警告与错误）')),
+         tip='改完**立即生效**；日志落在 ~/.jian_data/logs/app.log（轮转 5MB×3）。',
+         help='遇到"抓不到数/界面异常"想让我排障时，切成 DEBUG 再复现一次，\n'
+              '然后把 app.log 发我（或直接说"看日志"）。'),
+    Item('storage.export_config', 'storage', '导出设置', KIND_ACTION, default='导出为文件…',
+         where='action:data/storage_maintenance.export_config（JSON，**不含凭据**）',
+         action=_export_config,
+         tip='把设置导出成一份 JSON（换机/备份用）；凭据**从不导出**。'),
+    Item('storage.import_config', 'storage', '导入设置', KIND_ACTION, default='从文件导入…',
+         where='action:data/storage_maintenance.import_config（合并；跳过凭据类）',
+         action=_import_config,
+         tip='从导出的 JSON 合并回来（不删你现有的键；凭据类键会被跳过）。'),
+
     Item('em.tier', 'account', '当前档位', KIND_READONLY, default='—',
          where='readonly:data/em_market.current_tier（登录档 = 常速 / 匿名档 = 慢速分批）',
          readonly=True, value_fn=_tier_text,
@@ -221,6 +319,22 @@ _ITEMS_V1 = (
          where='action:data/em_auth.clear（删本机凭据 + 回到匿名慢速档）',
          action=_do_logout,
          tip='清除本机保存的凭据（不影响你浏览器里的登录状态）。'),
+    # ---- ★v6.74 S2-4：回测与扫描默认（新任务的默认值；页内临时改只影响本次）----
+    Item('defaults.range_preset', 'defaults', '默认回测区间', KIND_ENUM, default='近3个月',
+         where='defaults.range_preset',
+         choices=(('近3个月', '近3个月'), ('近6个月', '近6个月'), ('近1年', '近1年'),
+                  ('近3年', '近3年'), ('近5年', '近5年'), ('全部(2016起)', '全部（2016 起）')),
+         tip='新打开「回测」页时的默认区间；页内随时可改（只影响那一次）。',
+         help='选项与 `ui/views/backtest.py` 的快捷区间**同一份清单**（改这里不影响引擎口径）。\n'
+              '数据最早只到 2016-01-01（`core/backtest.DEFAULT_START_DATE`），所以没有更早的档。'),
+    Item('archive.auto', 'defaults', '自动存档回测/扫描结果', KIND_TOGGLE, default=True,
+         where='backtest_archive.auto',
+         tip='每次回测/扫描成功后自动落一份不可变快照（可在「运行历史」里查看/复用/删除）。',
+         help='关掉后仍可在结果区手动「💾 存为历史快照」；已存的不会被删。'),
+    Item('defaults.first_scan_hint', 'defaults', '首次扫描提示', KIND_TOGGLE, default=True,
+         where='defaults.first_scan_hint',
+         tip='扫描结果里若有很多标的「数据不足」，回执会提示"建议先预下载"。',),
+
     Item('em.selfcheck', 'account', '网络自检', KIND_ACTION, default='开始自检',
          where='action:data/em_market.self_check（策略 / 代理 / DNS / 登录 / 额度 / 退避 + 1 个探测）',
          worker=_self_check_worker,
@@ -236,6 +350,7 @@ ITEMS = list(_ITEMS_V1)
 _AFTER_SET = {
     'net.force_ipv4': lambda _v: _apply_net(),
     'net.proxy_mode': lambda _v: _apply_net(),
+    'storage.log_level': lambda v: _apply_log_level(v),      # ★v6.75 S2-5：改完即时生效
 }
 
 
@@ -267,6 +382,22 @@ def find(key: str):
         if i.key == key:
             return i
     return None
+
+
+def get_setting(key: str, fallback=None):
+    """★v6.74：按**设置项键**取当前值（页面读默认值一律走它）。
+
+    【为什么要它】默认值只在注册表声明一次 ⇒ 页面不许写第二份默认（§9-D 唯一真源）；
+      取不到/坏了 ⇒ 回落 `fallback`（绝不因一个设置项坏掉而拦页面）。
+    """
+    item = find(key)
+    if item is None:
+        return fallback
+    try:
+        return get_value(item)
+    except Exception as e:                                    # noqa: BLE001
+        logger.warning(f"读设置项失败({key}): {type(e).__name__}: {e}")
+        return fallback
 
 
 def group_of(gid: str):
