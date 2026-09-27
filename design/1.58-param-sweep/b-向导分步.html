@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>B · 向导分步 —— 参数稳健性研究（样式草案）</title>
+<link rel="stylesheet" href="_style.css">
+<style>
+  .steps{display:flex;gap:8px;margin-bottom:14px}
+  .steps .s{flex:1;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  .steps .s.on{border-color:var(--accent);background:var(--accent-bg)}
+  .steps .s.done{border-color:#C8E6C9;background:#EDF7ED}
+  .steps .s b{display:block;font-size:12.5px;margin-bottom:2px}
+  .steps .s span{font-size:11.5px;color:var(--text2)}
+  .coach{border-left:3px solid var(--accent);background:#F7FBFF;border-radius:8px;
+    padding:9px 12px;font-size:12.5px;color:var(--text2);margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="nav">📊 资金与表现</div>
+    <div class="nav">📝 交易流水</div>
+    <div class="nav">💡 深度复盘</div>
+    <div class="nav">📈 市场行情</div>
+    <div class="nav on">📐 市场回测</div>
+    <div class="nav">🗄 数据管理</div>
+    <div class="grow"></div>
+    <div class="nav pin">⚙ 设置</div>
+  </aside>
+
+  <main class="main">
+    <div class="subtabs">
+      <span class="tab">单股回测</span>
+      <span class="tab on">🧪 参数研究（稳健性）</span>
+      <span class="tab">运行历史</span>
+    </div>
+
+    <div class="steps">
+      <div class="s done"><b>① 设参数</b><span>标的 · 配方 · 网格 · 内外区间</span></div>
+      <div class="s done"><b>② 跑两段</b><span>样本内 → 样本外（各一遍）</span></div>
+      <div class="s on"><b>③ 读图</b><span>平台 / 尖峰 / 邻域 / 滚动 IC</span></div>
+      <div class="s"><b>④ 选参与落盘</b><span>候选表 → 存快照 / 导出</span></div>
+    </div>
+
+    <div class="coach">
+      <strong>这一步在教你"怎么看"，而不是"该选哪个"</strong>：
+      散点里样本内冠军跑到最右边（9.5%）却在样本外掉到 0.4% —— 这就是"挑最高分"的必然结果。
+      真正该看的是<strong>绿色平台区</strong>（邻域高、不塌）与<strong>热力图里那一整片</strong>，不是被红圈标出的那个尖峰。
+    </div>
+
+    <div class="verdict bad">
+      <span class="badge">8</span><strong>结论（本步固定显示，不可折叠）</strong>：
+      Rank IC <strong>0.12</strong> · PBO <strong>0.61</strong> ⇒
+      <strong>样本内排名无预测力；按邻域稳健 + 样本外选参。</strong>
+      <div class="kpi">
+        <div>试验次数<b>64</b></div><div>交易门槛<b>≥30</b></div>
+        <div>Rank IC<b class="bad">0.12</b></div><div>PBO<b class="bad">0.61</b></div>
+      </div>
+    </div>
+
+    <div class="grid g2">
+      <div class="card"><h3><span class="badge">6</span>散点：样本内 × 样本外</h3>
+        <div class="chart" id="b-scatter"></div></div>
+      <div class="card"><h3><span class="badge">6</span>热力图：平台（绿圈）vs 尖峰（红圈）</h3>
+        <div class="chart" id="b-heat"></div></div>
+      <div class="card"><h3><span class="badge">6</span>邻域稳健：这才是排序依据</h3>
+        <div class="chart" id="b-nb"></div></div>
+      <div class="card"><h3><span class="badge">6</span>滚动 IC：单个 IC 会骗人</h3>
+        <div class="chart" id="b-roll"></div></div>
+    </div>
+
+    <div class="row" style="margin:4px 0 14px">
+      <span class="btn ghost">← 回到②重新跑</span>
+      <span class="btn">进入④ 选参与落盘 →</span>
+      <span class="hint">⚠ 进入④之后<strong>样本外只允许再看一次</strong>（红线①：反复挑选会让样本外失效）</span>
+    </div>
+
+    <div class="card">
+      <h2><span class="badge">7</span><span class="badge">9</span>第 ④ 步预览：候选表（按邻域稳健排）与研究快照</h2>
+      <table>
+        <tr><th>参数</th><th>IS%</th><th>OOS%</th><th>邻域均</th><th>邻域最差</th><th>交易</th><th>成本</th></tr>
+        <tr class="top"><td>MA(11/41)</td><td class="num">5.2</td><td class="num">2.9</td><td class="num">1.42</td><td class="num">0.88</td><td class="num">96</td><td>平</td></tr>
+        <tr class="top"><td>MA(15/45)</td><td class="num">4.8</td><td class="num">2.6</td><td class="num">1.31</td><td class="num">0.72</td><td class="num">84</td><td>平</td></tr>
+        <tr><td>MA(7/34) 样本内冠军</td><td class="num">9.5</td><td class="num" style="color:#C62828">0.4</td>
+          <td class="num" style="color:#C62828">0.12</td><td class="num" style="color:#C62828">-1.10</td><td class="num">38</td>
+          <td style="color:#C62828">陡</td></tr>
+      </table>
+      <div class="row" style="margin-top:10px">
+        <span class="btn win">存为研究快照</span><span class="btn ghost">导出 CSV</span>
+        <span class="hint">快照存"网格 + 日期 + 引擎版本" ⇒ 以后能复现同一结果</span>
+      </div>
+    </div>
+
+    <div class="explain">
+      <strong>B · 向导分步 —— 拆解与落点</strong>
+      <table>
+        <tr><th>#</th><th>部件</th><th>这版的做法</th><th>落点</th></tr>
+        <tr><td>①②③④⑤</td><td>步骤 ① 与 ②</td><td>每步一屏：先填参数（含组合数与耗时预警），再跑两段</td><td><code>sweep_plan</code> + <code>ParamSweepWorker</code></td></tr>
+        <tr><td>⑥</td><td>步骤 ③ 读图</td><td><strong>配教学文案</strong>（"看平台不看尖峰"），四图并列</td><td><code>ui/widgets/sweep_chart.py</code></td></tr>
+        <tr><td>⑦⑨</td><td>步骤 ④ 选参与落盘</td><td>候选表 + 快照；<strong>进入前提示"样本外只看一次"</strong></td><td><code>sweep_stats</code> + <code>sweep_archive</code></td></tr>
+        <tr><td>⑧</td><td>结论条</td><td>贯穿②③④步顶部，不可折叠</td><td><code>sweep_stats</code>（红线③）</td></tr>
+      </table>
+      <p class="foot">样式草案（示意数据）。方案书：<code>docs/JIAN_SWEEP_PLAN.md</code></p>
+    </div>
+  </main>
+</div>
+<script src="_charts.js"></script>
+<script>
+  PS.scatter(document.getElementById('b-scatter'));
+  PS.heat(document.getElementById('b-heat'));
+  PS.neighbors(document.getElementById('b-nb'));
+  PS.rollIC(document.getElementById('b-roll'));
+</script>
+</body>
+</html>

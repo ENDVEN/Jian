@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>C · 三栏分析台 —— 参数稳健性研究（样式草案）</title>
+<link rel="stylesheet" href="_style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="nav">📊 资金与表现</div>
+    <div class="nav">📝 交易流水</div>
+    <div class="nav">💡 深度复盘</div>
+    <div class="nav">📈 市场行情</div>
+    <div class="nav on">📐 市场回测</div>
+    <div class="nav">🗄 数据管理</div>
+    <div class="grow"></div>
+    <div class="nav pin">⚙ 设置</div>
+  </aside>
+
+  <main class="main">
+    <div class="subtabs">
+      <span class="tab">单股回测</span>
+      <span class="tab on">🧪 参数研究（稳健性）</span>
+      <span class="tab">运行历史</span>
+    </div>
+
+    <!-- ⑧ 结论条：固定最上方、不可折叠（红线③） -->
+    <div class="verdict bad">
+      <span class="badge">8</span><strong>结论（同屏、不可折叠）</strong>：
+      Rank IC = <strong>0.12</strong> ⇒ 样本内排名对样本外<strong>几乎没有预测力</strong>；
+      PBO = <strong>0.61</strong>（&gt;0.5 ⇒ 这套选参流程≈抛硬币）。
+      <strong>请按「邻域稳健 + 样本外」选参，不要按样本内冠军选。</strong>
+      <div class="kpi">
+        <div>试验次数<b>324</b></div>
+        <div>样本内区间<b>2010-01 ~ 2017-12</b></div>
+        <div>样本外区间<b>2018-01 ~ 2026-09</b></div>
+        <div>Rank IC<b class="bad">0.12</b></div>
+        <div>PBO<b class="bad">0.61</b></div>
+        <div>样本内冠军→样本外<b class="bad">9.5% → 0.4%</b></div>
+      </div>
+    </div>
+
+    <div class="grid g3">
+      <!-- 左栏：参数与运行 -->
+      <div>
+        <div class="card">
+          <h2><span class="badge">1</span><span class="badge">2</span>标的与公式</h2>
+          <div class="field">标的 <select><option>600519 贵州茅台</option><option>000001 平安银行</option></select></div>
+          <div class="field">配方 <select><option>均线趋势（含参数）</option><option>动量+量能</option></select></div>
+          <p class="hint">该公式可扫描参数：<span class="chip">n（短窗）</span><span class="chip">m（长窗）</span></p>
+        </div>
+
+        <div class="card">
+          <h3><span class="badge">3</span>参数网格</h3>
+          <div class="field">n 范围 <input class="input" value="3 ~ 31"> 步长 <input class="input" value="4"></div>
+          <div class="field">m 范围 <input class="input" value="12 ~ 47"> 步长 <input class="input" value="5"></div>
+          <p class="hint">组合数 <strong>8 × 8 = 64</strong>（示例；上限 2000 组、每维 ≤15 档）<br>
+            预计耗时 ≈ <strong>6 秒</strong>（64 组 × 2 段 × 50ms）</p>
+        </div>
+
+        <div class="card">
+          <h3><span class="badge">4</span>样本内 / 样本外</h3>
+          <div class="field">内 <input class="input" value="2010-01-01">~<input class="input" value="2017-12-31"></div>
+          <div class="field">外 <input class="input" value="2018-01-01">~<input class="input" value="2026-09-26"></div>
+          <p class="hint">默认 70 / 30 自动切；<strong>样本外只允许验一次</strong>（反复看就污染了，红线①）</p>
+        </div>
+
+        <div class="card">
+          <h3><span class="badge">5</span>运行</h3>
+          <div class="row"><span class="btn">▶ 跑样本内</span><span class="btn win">▶ 跑样本外</span>
+            <span class="btn ghost">中断</span></div>
+          <p class="hint" style="margin:8px 0 4px">已跑 41 / 64 组 · 剩余约 3 秒</p>
+          <div class="bar"><i style="width:64%"></i></div>
+          <p class="hint" style="margin-top:6px">结果增量落盘（关掉软件可续跑）· 分段收益一并保存（PBO 靠它，不重跑）</p>
+        </div>
+      </div>
+
+      <!-- 中栏：主图 -->
+      <div>
+        <div class="card">
+          <h2><span class="badge">6</span>主图区（可切视图）
+            <span class="hint" style="float:right">样本内 324 组 × 样本外 324 组</span></h2>
+          <div class="row" style="margin-bottom:8px">
+            <span class="chip">① 散点 IS × OOS</span><span class="chip">② 参数热力图</span>
+            <span class="chip">③ 邻域稳健</span><span class="chip">④ 滚动 IC</span>
+          </div>
+          <div class="chart" id="c-scatter"></div>
+          <div class="legend">
+            <span><i style="background:#7C8AA0"></i>参数组合</span>
+            <span><i style="background:#E65100"></i>样本内冠军（崩塌）</span>
+            <span><i style="background:#2E7D32"></i>稳健平台区（推荐）</span>
+            <span><i style="background:#C9D3E0"></i>零线 / 中位线</span>
+          </div>
+        </div>
+
+        <div class="grid g2">
+          <div class="card"><h3>② 参数热力图：找平台，别看尖峰</h3><div class="chart" id="c-heat"></div></div>
+          <div class="card"><h3>③ 邻域稳健排序（真正的排序键）</h3><div class="chart" id="c-nb"></div></div>
+        </div>
+        <div class="card"><h3>④ 滚动 IC（12 折 walk-forward）：单个 Rank IC 会骗人</h3>
+          <div class="chart" id="c-roll"></div></div>
+      </div>
+
+      <!-- 右栏：候选与结论 -->
+      <div>
+        <div class="card">
+          <h2><span class="badge">7</span>候选表 <span class="hint">（按邻域稳健排）</span></h2>
+          <table>
+            <tr><th>参数</th><th>IS%</th><th>OOS%</th><th>邻域均</th><th>邻域差</th><th>交易</th><th>成本</th></tr>
+            <tr class="top"><td>MA(11/41)</td><td class="num">5.2</td><td class="num">2.9</td><td class="num">1.42</td><td class="num">0.88</td><td class="num">96</td><td>平</td></tr>
+            <tr class="top"><td>MA(15/45)</td><td class="num">4.8</td><td class="num">2.6</td><td class="num">1.31</td><td class="num">0.72</td><td class="num">84</td><td>平</td></tr>
+            <tr class="top"><td>MA(7/33)</td><td class="num">6.1</td><td class="num">2.1</td><td class="num">1.18</td><td class="num">0.64</td><td class="num">141</td><td>略陡</td></tr>
+            <tr><td>MA(11/57)</td><td class="num">3.9</td><td class="num">1.8</td><td class="num">1.05</td><td class="num">0.41</td><td class="num">62</td><td>平</td></tr>
+            <tr><td>MA(19/41)</td><td class="num">3.2</td><td class="num">0.9</td><td class="num">0.71</td><td class="num">-0.20</td><td class="num">48</td><td>平</td></tr>
+            <tr><td>MA(7/34)</td><td class="num">9.5</td><td class="num" style="color:#C62828">0.4</td>
+              <td class="num" style="color:#C62828">0.12</td><td class="num">-1.10</td><td class="num">38</td><td>陡</td></tr>
+          </table>
+          <p class="hint" style="margin-top:8px">最后一行是<strong>样本内冠军</strong>：本页把它排在末尾 —— 因为它的邻域全塌、交易数偏低、
+            成本一调就崩。这就是"按对的口径选参"长什么样。</p>
+        </div>
+
+        <div class="card">
+          <h2><span class="badge">9</span>研究快照</h2>
+          <p class="hint">2026-09-27 02:10 · MA趋势 · 64 组 · IC 0.12 · PBO 0.61（本页）<br>
+            2026-09-26 23:40 · 动量+量能 · 81 组 · IC 0.28 · PBO 0.34<br>
+            2026-09-24 21:05 · MA趋势 · 64 组 · IC 0.09 · PBO 0.72</p>
+          <div class="row"><span class="btn win">存为研究快照</span><span class="btn ghost">导出 CSV</span></div>
+          <p class="hint" style="margin-top:6px">快照里存"网格 + 日期 + 引擎版本" ⇒ 任何时候能复现同一结果。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="explain">
+      <strong>C · 三栏分析台 —— 部件拆分与落点</strong>
+      <table>
+        <tr><th>#</th><th>部件</th><th>做什么</th><th>数据 / 落点</th></tr>
+        <tr><td>①②</td><td>标的与公式条</td><td>选标的 / 配方；列出<strong>可扫描参数</strong></td><td><code>formula_store</code> + <code>probe_missing_parameters</code></td></tr>
+        <tr><td>③</td><td>网格编辑区</td><td>每维范围步长；实时算组合数与预计耗时</td><td><code>core/sweep_plan.py</code>（纯计算）</td></tr>
+        <tr><td>④</td><td>IS/OOS 区间条</td><td>两段日期；默认 70/30</td><td>交易日历 + <code>sweep_plan</code></td></tr>
+        <tr><td>⑤</td><td>运行面板</td><td>跑内 / 跑外 / 中断 / 进度 / 可续跑</td><td><code>ui/workers.ParamSweepWorker</code></td></tr>
+        <tr><td>⑥</td><td>主图区（4 视图）</td><td>散点 / 热力图 / 邻域 / 滚动 IC</td><td><code>ui/widgets/sweep_chart.py</code></td></tr>
+        <tr><td>⑦</td><td>候选表</td><td>按<strong>邻域稳健</strong>排；含 OOS / 交易数 / 成本敏感性</td><td><code>core/sweep_stats.py</code> 排序键</td></tr>
+        <tr><td>⑧</td><td>结论条</td><td>IC / PBO / 日期 / 试验数 <strong>同屏且不可折叠</strong></td><td><code>sweep_stats</code>（红线③）</td></tr>
+        <tr><td>⑨</td><td>研究快照</td><td>落盘历史 + 复现</td><td><code>data/sweep_archive.py</code></td></tr>
+      </table>
+      <p class="foot">这是<strong>样式草案</strong>（数据为示意），不是产品代码。方案书见 <code>docs/JIAN_SWEEP_PLAN.md</code>。</p>
+    </div>
+  </main>
+</div>
+<script src="_charts.js"></script>
+<script>
+  PS.scatter(document.getElementById('c-scatter'));
+  PS.heat(document.getElementById('c-heat'));
+  PS.neighbors(document.getElementById('c-nb'));
+  PS.rollIC(document.getElementById('c-roll'));
+</script>
+</body>
+</html>

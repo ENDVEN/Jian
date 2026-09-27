@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>参数稳健性研究 · 样式草案（导航 / 样例图总览 / 修订历史）</title>
+<!-- design/1.58-param-sweep/index.html · v4 · 2026-09-28
+     本目录 = 「参数稳健性研究」的**唯一设计目录**（惯例：design/<APP版本号>-<特性>/，一个特性一个目录；
+     迭代只在本目录内 改文件 / 补文件 / 删文件，**不新建 -v2 目录**）。
+     修订：v1 三版起草(a/b/c) → v2 选定 P2 双栏 → v3 两张新图落位 + 5 项决议锁定 + 目录归位
+           → **v4：① 修复 `el(id)` 拼错导致的"图大面积不显示"（改为自带 `_node()`）
+                  ② 把 6 张样例图**全部**放回本页（上一版被我削到只剩 2 张）** -->
+<link rel="stylesheet" href="_style.css">
+<style>
+  .hero{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:12px}
+  .hero h1{margin:0 0 6px;font-size:17px}
+  .named td:first-child{width:225px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  .v{font-weight:700}
+  .shot{margin-bottom:12px}
+  .shot h3{margin:0 0 6px;font-size:13px;display:flex;align-items:baseline;flex-wrap:wrap;gap:6px}
+  .shot .cap{color:var(--text3);font-size:11.5px;margin:5px 0 0}
+</style>
+</head>
+<body>
+<div class="main" style="max-width:1180px;margin:0 auto">
+
+  <div class="hero">
+    <h1>🧪 参数稳健性研究 · 样式草案 <span class="chip">当前 v4</span></h1>
+    <p class="lead">主方案 = <strong>P2「双栏可折叠」</strong>（左栏研究设置可折叠 / 右栏结果区独立滚动）；
+      入口 = 「📐 市场回测」子页签的<strong>第 2 位</strong>（单股回测与全市场筛选之间）。
+      本目录同时留档 v1 三版（A 单页 / B 向导 / C 三栏）。</p>
+    <div class="row">
+      <a class="btn" href="p2-双栏可折叠.html">打开 P2 · 双栏可折叠（v3 迭代版）→</a>
+      <a class="btn ghost" href="a-单页研究台.html">A 单页（v1 留档）</a>
+      <a class="btn ghost" href="b-向导分步.html">B 向导（v1 留档）</a>
+      <a class="btn ghost" href="c-三栏分析台.html">C 三栏（v1 留档）</a>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       一、样例图总览（★ v4：6 张全放回来，每张标"它在页面里的位置"）
+       ============================================================ -->
+  <div class="card">
+    <h2>一、样例图总览（6 张全在这儿 · 每张标了它在产品里的位置）</h2>
+    <p class="lead">上一版我把本页从"样例图总览"改成了"只看两张新图"，削掉了 4 张 —— 本轮全部放回。
+      <span class="hint">点任一页面的实际效果见 P2；数据均为示意。</span></p>
+
+    <div class="grid g2">
+      <div class="shot">
+        <h3>① 散点：样本内 × 样本外（冠军崩塌）<span class="map-note">P2 右栏 · 主图区（v1 就有）</span></h3>
+        <div class="chart" id="i-scatter"></div>
+        <p class="cap">看"样本内高分 ⇒ 样本外还剩多少"：橙色实心点是样本内冠军（9.5% → 0.4%），
+          绿框是稳健平台区（该选这里）。</p>
+      </div>
+      <div class="shot">
+        <h3>② 参数热力图：找平台，别看尖峰<span class="map-note">P2 右栏 · 网格（v1 就有）</span></h3>
+        <div class="chart" id="i-heat"></div>
+        <p class="cap">蓝=年化（只表达大小，避开红涨绿跌）· 绿虚线框=一整片都不错的<strong>平台</strong> ·
+          橙圈=自己高、邻居全塌的<strong>尖峰</strong>（噪声）。</p>
+      </div>
+      <div class="shot">
+        <h3>③ 邻域稳健排序（真正的排序键）<span class="map-note">P2 右栏 · 网格（v1 就有）</span></h3>
+        <div class="chart" id="i-nb"></div>
+        <p class="cap">条形 = 邻域均值（3×3）· 竖线 = 邻域最差；排序按这个，**不看**样本内冠军。</p>
+      </div>
+      <div class="shot">
+        <h3>④ 滚动 IC（12 折 walk-forward）<span class="map-note">P2 右栏 · 全宽（v1 就有）</span></h3>
+        <div class="chart" id="i-roll"></div>
+        <p class="cap">单个 Rank IC 会骗人：看它**跨折的分布**，多数折低于门槛 ⇒ 该参数化不稳定。</p>
+      </div>
+      <div class="shot">
+        <h3>⑤ 上证指数切块全景（预设样本区间）<span class="map-note">P2 右栏顶部 · 全宽（v3 新）</span></h3>
+        <div class="chart" id="i-regime"></div>
+        <p class="cap">红=上涨段 / 绿=下跌段 / 灰=震荡段；下面两个括号是当前预设的<strong>样本内 / 样本外</strong>。
+          点色块就能换配对（一次点击 = "牛→熊"这种成对区间）。</p>
+      </div>
+      <div class="shot">
+        <h3>⑥ 交易次数分布 + 门槛<span class="map-note">P2 左栏第 5 步 · 滑块正下方 · 紧凑版（v3 新）</span></h3>
+        <div class="chart compact" id="i-hist"></div>
+        <p class="cap">灰=未达门槛、蓝=进入候选；红线是滑到你选的门槛。底部一行给出"还剩几组 + 中位数"——
+          专治"我不知道该填多少"。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- 修订历史 ---------- -->
+  <div class="card">
+    <h2>二、修订历史（都在本目录内迭代）</h2>
+    <table>
+      <tr><th>版本</th><th>日期</th><th>改了什么</th><th>涉及文件</th></tr>
+      <tr><td class="v">v1</td><td>2026-09-27</td>
+        <td>起草三版布局供选：A 单页研究台 / B 向导分步 / C 三栏分析台（各含上面 ①–④ 四张图）</td>
+        <td><code>a-单页研究台.html</code> · <code>b-向导分步.html</code> · <code>c-三栏分析台.html</code> · <code>_style.css</code> · <code>_charts.js</code></td></tr>
+      <tr><td class="v">v2</td><td>2026-09-27</td>
+        <td>按用户 5 条意见定案：C 三栏<strong>过宽 ⇒ 改两栏</strong>（第三栏并入右栏、右栏滚动）· 左栏<strong>可折叠</strong>·
+          入口放 <strong>M1/M2 之间</strong> · 策略<strong>只列 M1 已保存配方</strong> · 区间给<strong>预设切片</strong> + 门槛<strong>交用户调并配引导</strong></td>
+        <td><code>p2-双栏可折叠.html</code>（新增）· <code>_style.css</code> / <code>_charts.js</code>（追加）</td></tr>
+      <tr><td class="v">v3</td><td>2026-09-28</td>
+        <td>① 两张新图<strong>落位定案并写明理由</strong> · ② 用户点头的 <strong>5 项决议锁进页面</strong> ·
+          ③ 目录命名回归本仓惯例（合并 <code>param-sweep-v2/</code> → 本目录并删掉多建目录）</td>
+        <td><code>p2-双栏可折叠.html</code> · <code>_charts.js</code> · <code>_style.css</code> · <code>index.html</code></td></tr>
+      <tr><td class="v">v4</td><td>2026-09-28</td>
+        <td><strong>修两个"图大面积不显示"的真 bug</strong>（静态看不出来，靠 node 无头真跑才抓到）：
+          ① 新增两张图误用 <code>el(id)</code> —— v1 里 <code>el</code> 只是参数名 ⇒
+          <code>ReferenceError</code>，脚本中断、后面所有图都不画；改为自带 <code>_node()</code>（同时收 id 与元素）·
+          ② v1 的四张图<strong>收的是 DOM 元素、不是 id 字符串</strong>（传字符串会
+          <code>TypeError: Cannot create property 'innerHTML' on string</code>）⇒ 给 <code>PS2</code> 加一层
+          id 兼容包装（<code>PS</code> 保持原样，a/b/c 三页不受影响）·
+          ③ <strong>本页把 6 张样例图全部放回</strong>（上一版被我削到只剩 2 张）</td>
+        <td><code>_charts.js</code> · <code>index.html</code>（本页）</td></tr>
+      <tr><td class="v">—</td><td>2026-09-28</td>
+        <td><strong>新增自检手段（已固化为本目录常驻资产）</strong>：<code>node design/1.58-param-sweep/_check.js</code>
+          —— 抽 id 建 DOM 桩 → 真跑各页内联脚本 → 检查每个 <code>class="chart"</code> 是否真画出
+          <code>&lt;svg&gt;</code>（路径用 <code>__dirname</code> 自动识别，改目录名也不会失效）。
+          当前结果：<code>index</code> 6/6 · <code>p2</code> 6/6 · <code>a/b/c</code> 各 4/4 ·
+          <code>PS</code>（v1 命名空间）按"传元素"方式仍可用。⚠ <strong>下次改设计稿请先跑它，别靠肉眼看</strong>。</td>
+        <td><code>_check.js</code>（本目录 · 下划线前缀 = 非入口资产）</td></tr>
+    </table>
+    <p class="hint">迭代规则：改动落在<strong>同一个文件</strong>上（版本号写进文件头注释）；不用了直接删，不再开新目录。</p>
+  </div>
+
+  <!-- ---------- 两张新图放哪儿 ---------- -->
+  <div class="card">
+    <h2>三、两张新图放哪儿（你说"决定权交给我" —— 这是我的定案）</h2>
+    <table>
+      <tr><th>图</th><th>位置</th><th>为什么</th></tr>
+      <tr><td>⑤ <strong>上证指数切块全景</strong></td><td><strong>右栏顶部 · 全宽</strong>（第一张卡，在散点之上）</td>
+        <td>① 620px 宽的图塞进 306px 的左栏会糊；② 它是<strong>结果的上下文</strong>——
+          看散点时能同时看到"样本外落在哪种市场环境"；③ 图上<strong>点色块即可换配对</strong>，
+          于是左栏第 4 步只留"选哪一对"+已选区间确认</td></tr>
+      <tr><td>⑥ <strong>交易次数分布</strong></td><td><strong>左栏第 5 步 · 滑块正下方</strong>（紧凑版 ≈300px）</td>
+        <td>它唯一用途是回答"<strong>我该填多少</strong>"—— 手在门槛滑块上时答案必须在眼前；
+          放右栏会与滑块分离。故做紧凑版：8 根柱 + 门槛线 + "门槛 30 ⇒ 41/64 组通过 · 中位数 46"一行</td></tr>
+    </table>
+  </div>
+
+  <!-- ---------- 5 项决议 ---------- -->
+  <div class="card">
+    <h2>四、已锁定的 5 项决议（你点头，页面已按此呈现）</h2>
+    <table>
+      <tr><th>#</th><th>决议</th><th>页面上的体现</th></tr>
+      <tr><td>1</td><td>左栏<strong>默认展开</strong>；首次跑完两段<strong>自动收起一次</strong>并提示可展开（状态记住）</td>
+        <td>左栏顶部 coach + 第 6 步运行说明</td></tr>
+      <tr><td>2</td><td>门槛滑块默认 <strong>30</strong>，旁边给"中位数 46 ⇒ 建议 25~50"</td>
+        <td>第 5 步 + 图⑥ 底部</td></tr>
+      <tr><td>3</td><td>预设切片由<strong>离线脚本</strong>算（可复现、可重算）</td>
+        <td>第 4 步「按上证指数重新切块」+ 图⑤ 底部口径说明</td></tr>
+      <tr><td>4</td><td>默认预设 = <strong>震荡 → 震荡（常态）</strong></td>
+        <td>第 4 步首项（标"默认"）+ 结论条区间 IS 2016-01~2017-12 / OOS 2021-09~2023-12</td></tr>
+      <tr><td>5</td><td>v1 三版<strong>留档不删</strong>，实现只走 P2</td>
+        <td>本页顶部三个留档链接</td></tr>
+    </table>
+  </div>
+
+  <!-- ---------- 命名惯例 ---------- -->
+  <div class="card">
+    <h2>五、目录与文件命名惯例（照本仓既有惯例）</h2>
+    <table class="named">
+      <tr><th>对象</th><th>惯例</th><th>既有实例</th></tr>
+      <tr><td>设计目录</td><td><code>design/&lt;APP版本号&gt;-&lt;特性英文名&gt;/</code> —— <strong>一个特性一个目录</strong>，
+        版本号是"做这次设计的 APP 版本"，<strong>不是迭代号</strong></td>
+        <td><code>1.22-backtest-ui/</code> · <code>1.24-desk-sidebar-ui/</code> · <code>1.37-backtest-history/</code> ·
+          <code>1.46-run-history-ui/</code> · <code>1.54-settings-page/</code></td></tr>
+      <tr><td>本目录</td><td>按惯例 = <code>design/1.58-param-sweep/</code>（与 <code>1.54-settings-page/</code> 同辈）</td>
+        <td><code>design/1.58-param-sweep/</code></td></tr>
+      <tr><td>迭代方式</td><td><strong>改同一个文件</strong>（版本写文件头注释）／<strong>补文件</strong>／<strong>删掉不用的文件</strong>
+        —— 不新建 <code>-v2</code> 目录</td>
+        <td>本次：<code>p2-双栏可折叠.html</code> 迭代 · 追加两张图 · 删掉误建的 <code>param-sweep-v2/</code></td></tr>
+      <tr><td>入口 / 变体 / 资产</td><td><code>index.html</code> / <code>&lt;变体&gt;-&lt;中文名&gt;.html</code> / <code>_*.css</code>·<code>_*.js</code></td>
+        <td><code>index.html</code> · <code>p2-双栏可折叠.html</code> · <code>_style.css</code> · <code>_charts.js</code></td></tr>
+    </table>
+    <p class="hint">共享资产纪律：v3/v4 的样式与图表一律<strong>追加</strong>在 <code>_style.css</code> / <code>_charts.js</code> 末尾
+      （只增不改）⇒ a/b/c 三页观感一字不变。</p>
+  </div>
+
+  <!-- ---------- 下一步 ---------- -->
+  <div class="card">
+    <h2>六、下一步</h2>
+    <p class="lead">你看过这版没问题 ⇒ 我按你的要求把「参数稳健性研究」写进 <code>JIAN_RULES.md</code>
+      作为<strong>后续优化开发方向</strong>（§7-B15）：红线 3 条 · 口径 5 轴 · 流程 6 步 · 落点文件 8 个 ·
+      护栏断言 14 条 · 分期（MVP 先做）。写进去之后再按 §9 的版本与提交纪律开工。</p>
+    <p class="hint">方案书（实现级）：<code>docs/JIAN_SWEEP_PLAN.md</code> —— 已同步到 v3 口径（本轮 bug 修复属实现细节，不回写方案书）。</p>
+  </div>
+
+  <p class="foot">样式草案 v4（数据为示意）· 目录惯例：<code>design/&lt;APP版本号&gt;-&lt;特性&gt;/</code> · 迭代只在目录内</p>
+</div>
+<script src="_charts.js"></script>
+<script>
+  // ①–④（v1 四张图）
+  PS2.scatter('i-scatter');
+  PS2.heat('i-heat');
+  PS2.neighbors('i-nb');
+  PS2.rollIC('i-roll');
+  // ⑤⑥（v3 两张新图）
+  PS2.regimeTimeline('i-regime', {is: [2016, 2018], oos: [2021.9, 2023.95], name: '震荡 → 震荡（常态）'});
+  PS2.tradeHist('i-hist', {thr: 30, compact: true});
+</script>
+</body>
+</html>

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>P2 · 双栏可折叠 —— 参数稳健性研究（v3 迭代版）</title>
+<!-- design/1.58-param-sweep/p2-双栏可折叠.html · v4 · 2026-09-28
+     （v4 仅修正：目录按惯例更名 1.54-param-sweep → **1.58-param-sweep**；页面内容仍为 v3 定案版，
+       另修复了共享图表脚本 `_charts.js` 里两个"图全不画"的 bug —— 见同目录 index.html 修订历史）
+     ▸ 本文件是 **P2 的迭代版**（同一文件反复迭代，不新建目录 —— 按本仓既有惯例：
+       design/<APP版本号>-<特性>/ 一个特性一个目录，迭代=改文件/补文件/删文件）
+     ▸ v2（2026-09-27）：按用户 5 条意见从 C 三栏改为两栏 + 左栏可折叠 + 右栏滚动
+     ▸ v3（2026-09-28）：① 两张新图**落位定案并写明理由**（切块→右栏顶部 / 次数分布→左栏滑块下）
+                        ② 用户已点头的 5 项决议**锁进页面**（默认预设、门槛默认与建议、折叠时机、
+                           切块由离线脚本算、v1 三版留档）
+                        ③ 目录命名回归既有惯例（合并 param-sweep-v2 → 本目录） -->
+<link rel="stylesheet" href="_style.css">
+</head>
+<body>
+<div class="app">
+  <!-- 应用左轨（★ 参数研究**不在这里**：它是「市场回测」的子页签） -->
+  <aside class="rail">
+    <div class="nav">📊 资金与表现</div>
+    <div class="nav">📝 交易流水</div>
+    <div class="nav">💡 深度复盘</div>
+    <div class="nav">📈 市场行情</div>
+    <div class="nav on">📐 市场回测</div>
+    <div class="nav">🗄 数据管理</div>
+    <div class="grow"></div>
+    <div class="nav pin">⚙ 设置</div>
+  </aside>
+
+  <main class="main">
+    <!-- ★ 子页签：新页插在「单股回测」与「全市场筛选」之间（用户指定的位置） -->
+    <div class="subtabs">
+      <span class="tab">📈 单股回测</span>
+      <span class="tab on">🧪 参数研究 <span class="hint">（新 · M1 的延伸）</span></span>
+      <span class="tab">🌐 全市场筛选</span>
+      <span class="tab">📊 广度统计</span>
+      <span class="tab">🗂 运行历史</span>
+    </div>
+
+    <!-- ⑧ 结论条：顶部固定、不可折叠（红线③） -->
+    <div class="verdict bad">
+      <span class="badge">8</span><strong>结论（同屏、不可折叠）</strong>：
+      Rank IC <strong>0.12</strong> · PBO <strong>0.61</strong> · 样本内冠军 <strong>9.5% → 0.4%</strong> ⇒
+      <strong>样本内排名无预测力；请按「邻域稳健 + 样本外」选参。</strong>
+      <span class="hint">（本页没有"一键找最优参数"按钮）</span>
+      <div class="kpi">
+        <div>试验次数<b>64</b></div><div>样本内<b>2016-01 ~ 2017-12</b></div>
+        <div>样本外<b>2021-09 ~ 2023-12</b></div><div>Rank IC<b class="bad">0.12</b></div>
+        <div>PBO<b class="bad">0.61</b></div>
+      </div>
+    </div>
+
+    <!-- ================= 主结构：左栏可折叠（收起后全给右栏） ================= -->
+    <div class="layout">
+
+      <!-- ---------- 左栏：研究设置 ---------- -->
+      <section class="panel" id="sweep-panel">
+        <div class="panel-head">
+          <b>研究设置</b>
+          <button class="collapse-btn" title="收起左栏（跑完内/外后常收起来看结果）"
+                  onclick="togglePanel()">«</button>
+        </div>
+
+        <div class="panel-body">
+          <div class="coach">按顺序填 5 步即可 ▶ 运行；<strong>跑完样本内 / 样本外</strong>后本栏会
+            <strong>自动收起一次</strong>（把空间全给右边结果，可点 <strong>»</strong> 再展开，状态会记住）。</div>
+
+          <!-- ① 标的 -->
+          <div class="sec">
+            <h4><span class="step-no">1</span>标的</h4>
+            <div class="field"><label>标的</label>
+              <select><option>600519 贵州茅台</option><option>000001 平安银行</option></select></div>
+            <p class="hint">也可从「📈 市场行情」页直接带入当前标的。</p>
+          </div>
+
+          <!-- ② 策略（只列 M1 已保存的配方） -->
+          <div class="sec">
+            <h4><span class="step-no">2</span>策略（函数）</h4>
+            <div class="field"><label>配方</label>
+              <select><option>均线趋势（含参数 n, m）</option>
+                <option>动量 + 量能（含参数 n）</option></select></div>
+            <p class="hint">本页<strong>只列出你在「单股回测」里保存过的配方</strong>（当前 7 个）——
+              不在这里写新函数，省掉本页一半的信息量。<a href="#">去 M1 配置 →</a></p>
+            <p class="hint">该配方可扫描参数：<span class="chip">n（短窗）</span><span class="chip">m（长窗）</span>
+              <span class="chip gray">若无参数 ⇒ 本页灰掉并说明</span></p>
+          </div>
+
+          <!-- ③ 参数网格 -->
+          <div class="sec">
+            <h4><span class="step-no">3</span>参数网格</h4>
+            <div class="field"><label>n</label>
+              <input class="input sm" value="3"><span class="hint">~</span>
+              <input class="input sm" value="31"><span class="hint">步长</span>
+              <input class="input sm" value="4"></div>
+            <div class="field"><label>m</label>
+              <input class="input sm" value="12"><span class="hint">~</span>
+              <input class="input sm" value="47"><span class="hint">步长</span>
+              <input class="input sm" value="5"></div>
+            <p class="hint">组合数 <strong>8 × 8 = 64</strong> · 预计 <strong>6 秒</strong>
+              （64 组 × 2 段 × 50ms）<br>上限：≤2000 组 · 每维 ≤15 档（超了会拦住并给建议）</p>
+          </div>
+
+          <!-- ④ 样本区间：预设切片（★ 全景图在**右栏顶部**，见那里） -->
+          <div class="sec">
+            <h4><span class="step-no">4</span>样本区间（预设）</h4>
+            <div class="selectbox on"><b>震荡 → 震荡（常态）<span class="chip">默认</span></b>
+              <div class="why">样本内 2016-01~2017-12（前段震荡上行）· 样本外 2021-09~2023-12（后段震荡箱体）
+                —— 同样环境、不同时点，最贴近"平时"</div></div>
+            <div class="selectbox"><b>牛 → 熊（压力测试）</b>
+              <div class="why">样本内 = 上涨段 · 样本外 = 随后下跌段 ⇒ 问"牛市里赚钱的参数，熊市还灵吗"</div></div>
+            <div class="selectbox"><b>熊 → 牛（反转测试）</b>
+              <div class="why">样本内 = 2018 下跌段 · 样本外 = 2019-01~2021-08 上涨段</div></div>
+            <div class="selectbox"><b>时间对折</b>
+              <div class="why">样本内 = 2016-01~2021-06 · 样本外 = 2021-07~2026-09</div></div>
+            <div class="selectbox"><b>某一年份区间</b>
+              <div class="why">直接按年份选：2019 / 2021 / 2023 …（适合"我就想看某一年"）</div></div>
+            <div class="selectbox"><b>自定义</b>
+              <div class="why">自己填两段起止日期（默认给你 70 / 30 的建议切分）</div></div>
+            <p class="hint" style="margin:6px 0">已选：<strong>震荡 → 震荡（常态）</strong> ·
+              IS 2016-01~2017-12 · OOS 2021-09~2023-12</p>
+            <div class="row" style="margin-bottom:8px">
+              <span class="btn ghost">按上证指数重新切块</span>
+              <span class="hint">离线脚本先算、结果缓存本机 ⇒ 可复现</span>
+            </div>
+            <p class="hint">段落在时间轴上长什么样、彼此宽窄如何 ⇒
+              <strong>看右栏顶部「⓪ 区间全景」那张图（图①）</strong>，并可<strong>直接点色块换配对</strong>。
+              这里只留"选哪一对"——因为全景图有 620px 宽，塞进 306px 的左栏会糊。</p>
+          </div>
+
+          <!-- ⑤ 交易次数门槛（滑块 + 紧凑分布图 = 图② 的家） -->
+          <div class="sec">
+            <h4><span class="step-no">5</span>交易次数门槛
+              <span class="map-note">图② 的位置：本步滑块正下方</span></h4>
+            <div class="thr-row">门槛 <b id="thr-val">30</b> 次
+              <span class="hint">（拖到你觉得合适为止）</span></div>
+            <input type="range" min="5" max="120" value="30" step="5"
+                   oninput="onThreshold(this.value)">
+            <div class="row" style="margin:6px 0">
+              <span class="chip">当前保留 <strong id="thr-kept">41</strong>/64 组</span>
+              <span class="hint">本次分布中位数 46 ⇒ <strong>建议 25~50</strong></span>
+            </div>
+            <div class="chart compact" id="p2-hist"></div>
+            <p class="hint" style="margin-top:6px">为什么图② 就放在滑块下面：<strong>手在门槛上时，答案要在眼前</strong>
+              —— 一眼看到"中位数 46 / 最少 8 / 最多 96"，不必来回翻页。</p>
+            <div class="coach"><strong>「交易次数门槛」是什么？</strong>
+              一组参数在样本内总共买卖了多少次。<br>
+              · 次数<strong>太少</strong>（个位数）：结果几乎由一个巧合决定（严苛策略常见，一年可能就几次机会）；<br>
+              · 次数<strong>够多</strong>（普适策略常是一年 60~70 次）：统计上才站得住。<br>
+              · <strong>不知道该填多少？</strong>看上面图② 的中位数，从它附近起步即可 —— 不必懂量化。</div>
+            <p class="hint">门槛<strong>只做筛选、不参与稳健性排序</strong>（改门槛只换成员、不换顺序），
+              设太高会把本来不错的低频策略也筛掉。</p>
+          </div>
+
+          <!-- ⑥ 运行 -->
+          <div class="sec">
+            <h4><span class="step-no">6</span>运行</h4>
+            <div class="row"><span class="btn">▶ 跑样本内</span><span class="btn win">▶ 跑样本外</span>
+              <span class="btn ghost">中断</span></div>
+            <p class="hint" style="margin:8px 0 4px">已跑 41/64 · 剩余约 3 秒</p>
+            <div class="bar"><i style="width:64%"></i></div>
+            <p class="hint" style="margin-top:6px">结果增量落盘（可续跑）· 分段收益一并保存（PBO 靠它，不重跑）<br>
+              <strong>首次跑完两段 ⇒ 本栏自动收起一次</strong>并提示"可点 » 展开"。</p>
+          </div>
+        </div>
+
+        <!-- 收起后的窄条（图标 + 展开按钮） -->
+        <div class="strip">
+          <span class="ic" title="标的：600519">🎯</span>
+          <span class="ic" title="策略：均线趋势（n, m）">ƒ</span>
+          <span class="ic" title="网格：64 组">▦</span>
+          <span class="ic" title="区间：震荡→震荡（IS 2016-01~2017-12 / OOS 2021-09~2023-12）">🗓</span>
+          <span class="ic" title="门槛：30 次 ⇒ 41/64 组">⚖</span>
+          <button class="collapse-btn" title="展开设置" onclick="togglePanel()">»</button>
+        </div>
+      </section>
+
+      <!-- ---------- 右栏：可上下滚动（全景图 + 图表 + 候选表 + 快照） ---------- -->
+      <section class="scrollcol">
+
+        <!-- ★ 图① 的家：右栏顶部、全宽 -->
+        <div class="card">
+          <h2><span class="badge">⓪</span>区间全景（上证指数切块）
+            <span class="map-note">图① 的位置：右栏顶部 · 全宽</span></h2>
+          <p class="lead">点任一<strong>色块</strong> ⇒ 该段设为<strong>样本内</strong>、紧随其后的一段自动设为
+            <strong>样本外</strong>（"牛→熊"就是一次点击）；<strong>Shift + 点</strong> ⇒ 只设样本外。
+            红=上涨段 / 绿=下跌段 / 灰=震荡段（A 股口径，与行情页一致）。</p>
+          <div class="chart" id="p2-regime"></div>
+          <div class="legend">
+            <span><i style="background:#FBE0DD;border:1px solid #C62828"></i>单边上涨 / 震荡上行</span>
+            <span><i style="background:#DDEEE1;border:1px solid #2E7D32"></i>单边下跌</span>
+            <span><i style="background:#EDF0F4;border:1px solid #7C8AA0"></i>震荡箱体</span>
+            <span><i style="background:#1976D2"></i>当前样本内</span>
+            <span><i style="background:#E65100"></i>当前样本外</span>
+          </div>
+          <p class="hint" style="margin-top:6px">切块由 <code>scripts/analyze_index_regimes.py</code>
+            按上证指数<strong>离线现算并缓存</strong>（示例条目；本机点「重新切块」重算，可复现）。<br>
+            为什么放右栏：它是<strong>结果的上下文</strong> —— 看散点时能同时看到"样本外落在哪种市场环境"，
+            且 620px 的图只有全宽才读得清。</p>
+        </div>
+
+        <div class="card">
+          <h2><span class="badge">6</span>主图区（可切视图）
+            <span class="hint" style="float:right">样本内 64 组 × 样本外 64 组</span></h2>
+          <div class="row" style="margin-bottom:8px">
+            <span class="chip sel">① 散点 IS × OOS</span><span class="chip">② 参数热力图</span>
+            <span class="chip">③ 邻域稳健</span><span class="chip">④ 滚动 IC</span>
+          </div>
+          <div class="chart" id="p2-scatter"></div>
+          <div class="legend">
+            <span><i style="background:#7C8AA0"></i>参数组合</span>
+            <span><i style="background:#E65100"></i>样本内冠军（崩塌）</span>
+            <span><i style="background:#2E7D32"></i>稳健平台区（推荐）</span>
+            <span><i style="background:#C9D3E0"></i>零线 / 中位线</span>
+          </div>
+        </div>
+
+        <div class="grid g2">
+          <div class="card"><h3>② 参数热力图：找平台，别看尖峰</h3><div class="chart" id="p2-heat"></div></div>
+          <div class="card"><h3>③ 邻域稳健排序（真正的排序键）</h3><div class="chart" id="p2-nb"></div></div>
+        </div>
+        <div class="card"><h3>④ 滚动 IC（12 折 walk-forward）：单个 Rank IC 会骗人</h3>
+          <div class="chart" id="p2-roll"></div></div>
+
+        <div class="card">
+          <h2><span class="badge">7</span>候选表 <span class="hint">（排序 = 邻域均值 ↓ · OOS ↓ · |Δ| ↑）</span></h2>
+          <table>
+            <tr><th>参数</th><th>IS%</th><th>OOS%</th><th>邻域均</th><th>邻域最差</th><th>交易</th><th>过门槛</th><th>成本</th></tr>
+            <tr class="top"><td>MA(11/41)</td><td class="num">5.2</td><td class="num">2.9</td><td class="num">1.42</td>
+              <td class="num">0.88</td><td class="num">96</td><td>✓</td><td>平</td></tr>
+            <tr class="top"><td>MA(15/45)</td><td class="num">4.8</td><td class="num">2.6</td><td class="num">1.31</td>
+              <td class="num">0.72</td><td class="num">84</td><td>✓</td><td>平</td></tr>
+            <tr class="top"><td>MA(7/33)</td><td class="num">6.1</td><td class="num">2.1</td><td class="num">1.18</td>
+              <td class="num">0.64</td><td class="num">141</td><td>✓</td><td>略陡</td></tr>
+            <tr><td>MA(11/57)</td><td class="num">3.9</td><td class="num">1.8</td><td class="num">1.05</td>
+              <td class="num">0.41</td><td class="num">62</td><td>✓</td><td>平</td></tr>
+            <tr class="out"><td>MA(3/17)</td><td class="num">7.9</td><td class="num">—</td><td class="num">0.63</td>
+              <td class="num">-0.55</td><td class="num">9</td><td style="color:#C62828">✗ 未达门槛</td><td>—</td></tr>
+            <tr class="out"><td>MA(7/34) <span class="hint">样本内冠军</span></td><td class="num">9.5</td>
+              <td class="num" style="color:#C62828">0.4</td><td class="num" style="color:#C62828">0.12</td>
+              <td class="num" style="color:#C62828">-1.10</td><td class="num">38</td><td>✓</td>
+              <td style="color:#C62828">陡</td></tr>
+          </table>
+          <p class="hint" style="margin-top:8px">
+            两处刻意设计：① <strong>门槛把你选出的"太少交易"参数标灰并排除</strong>（这里 9 次那组）；
+            ② <strong>样本内冠军仍被排到末尾</strong> —— 它过了门槛，但邻域全塌、成本一调就崩。
+            这就是"由用户定门槛、由稳健性定排序"的分工。</p>
+        </div>
+
+        <div class="card">
+          <h2><span class="badge">9</span>研究快照</h2>
+          <p class="hint">2026-09-27 02:10 · MA趋势(11/41 平台) · 64 组 · IC 0.12 · PBO 0.61（本页）<br>
+            2026-09-26 23:40 · 动量+量能 · 81 组 · IC 0.28 · PBO 0.34<br>
+            2026-09-24 21:05 · MA趋势 · 64 组 · IC 0.09 · PBO 0.72</p>
+          <div class="row"><span class="btn win">存为研究快照</span><span class="btn ghost">导出 CSV</span></div>
+          <p class="hint" style="margin-top:6px">快照存"配方 + 网格 + 区间预设 + 门槛 + 引擎版本" ⇒ 任何时候能复现同一结果。</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- 部件说明 + v3 修订记录（拆解用；真实版不显示） -->
+    <div class="explain">
+      <strong>P2 · 双栏可折叠 —— 部件拆分与落点</strong>
+      <table>
+        <tr><th>#</th><th>部件</th><th>这版怎么做</th><th>落点</th></tr>
+        <tr><td>①②③④⑤⑥</td><td>左栏「研究设置」（可折叠）</td>
+          <td>顺序：标的 → 策略（<strong>只列 M1 已保存配方</strong>）→ 网格 → 样本区间（预设）→ 门槛 → 运行</td>
+          <td><code>core/sweep_plan.py</code> · <code>ui/views/param_sweep.py</code> · <code>ui/workers.py</code></td></tr>
+        <tr><td>⓪</td><td>区间全景（上证切块）</td><td><strong>右栏顶部、全宽、可点色块换配对</strong></td>
+          <td><code>core/index_regimes.py</code> · <code>scripts/analyze_index_regimes.py</code></td></tr>
+        <tr><td>⑤b</td><td>交易次数分布</td><td><strong>左栏第 5 步滑块正下方（紧凑版）</strong></td>
+          <td><code>core/sweep_stats.py</code></td></tr>
+        <tr><td>⑥⑦⑨</td><td>图表 / 候选表 / 快照</td><td>全部落在<strong>右栏并独立滚动</strong></td>
+          <td><code>ui/widgets/sweep_chart.py</code> · <code>data/sweep_archive.py</code></td></tr>
+        <tr><td>⑧</td><td>结论条</td><td>顶部固定、不可折叠（红线③）</td><td><code>core/sweep_stats.py</code></td></tr>
+        <tr><td>—</td><td>左栏折叠</td><td>照 <code>ui/views/trading_desk.py</code> 范式 + 记住状态</td>
+          <td><code>sweep_ui.panel_collapsed</code></td></tr>
+      </table>
+
+      <p style="margin:10px 0 4px"><strong>两张新图为什么放这儿（本轮我定的位置）</strong></p>
+      <table>
+        <tr><th>图</th><th>位置</th><th>理由</th></tr>
+        <tr><td>① 上证切块全景</td><td><strong>右栏顶部 · 全宽</strong></td>
+          <td>620px 宽的图塞进 306px 左栏会糊；且它是<strong>结果的上下文</strong>（读散点时要能对照"样本外处在哪种市场环境"）。
+            左栏第 4 步只留"选哪一对"+ 已选区间文字确认，并可在此处点选。</td></tr>
+        <tr><td>② 交易次数分布</td><td><strong>左栏第 5 步 · 滑块正下方</strong></td>
+          <td>它的唯一用途是回答"<strong>我该填多少</strong>"—— 手在滑块上时答案必须在眼前；放到右栏会与滑块分离。
+            为此专门做了<strong>紧凑版</strong>（≈300px 宽：8 根柱 + 门槛线 + 中位数/保留组数一行）。</td></tr>
+      </table>
+
+      <p style="margin:10px 0 4px"><strong>v3 修订记录（用户已点头、锁进本页）</strong></p>
+      <p>① 左栏<strong>默认展开</strong>；<strong>首次跑完两段自动收起一次</strong>并提示可展开（状态记住）·
+        ② 门槛默认 <strong>30</strong>，旁边显示"中位数 46 ⇒ 建议 25~50" ·
+        ③ 切块由<strong>离线脚本</strong>算（可复现、可重算）·
+        ④ 默认预设 = <strong>震荡 → 震荡（常态）</strong> ·
+        ⑤ v1 三版（<code>a-/b-/c-</code>）<strong>留档不删</strong>，实现只走本页（P2）。</p>
+      <p class="foot">样式草案 v3（数据为示意）· 目录惯例：<code>design/&lt;APP版本号&gt;-&lt;特性&gt;/</code>，
+        迭代只改目录内文件（本页 = P2 的迭代版，未新建 -v2 目录）· 方案书：<code>docs/JIAN_SWEEP_PLAN.md</code> · 导航：<code>index.html</code></p>
+    </div>
+  </main>
+</div>
+
+<script src="_charts.js"></script>
+<script>
+  function togglePanel(){
+    document.getElementById('sweep-panel').classList.toggle('collapsed');
+  }
+  function onThreshold(v){
+    document.getElementById('thr-val').textContent = v;
+    // 示意：门槛上升 ⇒ 保留组数下降（真实实现由 core/sweep_stats.py 现算）
+    document.getElementById('thr-kept').textContent = Math.max(2, Math.round(64 * (1 - (v - 5) / 140)));
+  }
+  // 图①：当前预设 = 震荡 → 震荡（常态）⇒ IS 2016-01~2017-12 / OOS 2021-09~2023-12
+  PS2.regimeTimeline('p2-regime', {is: [2016, 2018], oos: [2021.9, 2023.95], name: '震荡 → 震荡（常态）'});
+  // 图②：左栏紧凑版（滑块默认 30）
+  PS2.tradeHist('p2-hist', {thr: 30, compact: true});
+  PS2.scatter('p2-scatter');
+  PS2.heat('p2-heat');
+  PS2.neighbors('p2-nb');
+  PS2.rollIC('p2-roll');
+</script>
+</body>
+</html>

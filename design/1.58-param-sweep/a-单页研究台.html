@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A · 单页研究台 —— 参数稳健性研究（样式草案）</title>
+<link rel="stylesheet" href="_style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="nav">📊 资金与表现</div>
+    <div class="nav">📝 交易流水</div>
+    <div class="nav">💡 深度复盘</div>
+    <div class="nav">📈 市场行情</div>
+    <div class="nav on">📐 市场回测</div>
+    <div class="nav">🗄 数据管理</div>
+    <div class="grow"></div>
+    <div class="nav pin">⚙ 设置</div>
+  </aside>
+
+  <main class="main">
+    <div class="subtabs">
+      <span class="tab">单股回测</span>
+      <span class="tab on">🧪 参数研究（稳健性）</span>
+      <span class="tab">运行历史</span>
+    </div>
+
+    <div class="verdict bad">
+      <span class="badge">8</span><strong>结论</strong>：Rank IC <strong>0.12</strong> · PBO <strong>0.61</strong> ·
+      样本内冠军 <strong>9.5% → 样本外 0.4%</strong> ⇒
+      <strong>样本内排名无预测力，请按「邻域稳健 + 样本外」选参。</strong>
+      <span class="hint">（本页没有"一键找最优参数"按钮 —— 那是过拟合生成器，见方案书红线②）</span>
+    </div>
+
+    <div class="card">
+      <h2><span class="badge">1</span><span class="badge">2</span><span class="badge">3</span><span class="badge">4</span><span class="badge">5</span>参数与运行（一条搞定）</h2>
+      <div class="row">
+        <span class="field">标的 <select><option>600519 贵州茅台</option></select></span>
+        <span class="field">配方 <select><option>均线趋势（n, m）</option></select></span>
+        <span class="field">n <input class="input" value="3~31 / 4"></span>
+        <span class="field">m <input class="input" value="12~47 / 5"></span>
+        <span class="field">内 <input class="input" value="2010-01 ~ 2017-12"></span>
+        <span class="field">外 <input class="input" value="2018-01 ~ 2026-09"></span>
+        <span class="btn">▶ 跑内</span><span class="btn win">▶ 跑外</span><span class="btn ghost">中断</span>
+        <span class="hint">64 组 · 预计 6 秒</span>
+      </div>
+      <p class="hint" style="margin:8px 0 4px">已跑 41/64 · 剩余约 3 秒 · 结果增量落盘（可续跑）· 分段收益已保存（PBO 靠它，不重跑）</p>
+      <div class="bar"><i style="width:64%"></i></div>
+    </div>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3><span class="badge">6</span>散点：样本内 × 样本外（冠军崩塌）</h3>
+        <div class="chart" id="a-scatter"></div>
+      </div>
+      <div class="card">
+        <h3><span class="badge">6</span>参数热力图：平台 vs 尖峰</h3>
+        <div class="chart" id="a-heat"></div>
+      </div>
+      <div class="card">
+        <h3><span class="badge">6</span>邻域稳健（排序键）</h3>
+        <div class="chart" id="a-nb"></div>
+      </div>
+      <div class="card">
+        <h3><span class="badge">6</span>滚动 IC（12 折）</h3>
+        <div class="chart" id="a-roll"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="badge">7</span>候选表 <span class="hint">（排序键 = 邻域均值 ↓ · OOS ↓ · |Δ| ↑；硬门槛 = 交易 ≥30 且内外年化 &gt;0）</span></h2>
+      <table>
+        <tr><th>参数组合</th><th>IS 年化%</th><th>OOS 年化%</th><th>一致性差 |Δ|</th>
+          <th>邻域均值</th><th>邻域最差</th><th>交易次数</th><th>OOS 胜率</th><th>成本敏感性</th><th>标记</th></tr>
+        <tr class="top"><td>MA(11/41)</td><td class="num">5.2</td><td class="num">2.9</td><td class="num">2.3</td>
+          <td class="num">1.42</td><td class="num">0.88</td><td class="num">96</td><td class="num">54%</td><td>平</td><td><span class="chip">候选</span></td></tr>
+        <tr class="top"><td>MA(15/45)</td><td class="num">4.8</td><td class="num">2.6</td><td class="num">2.2</td>
+          <td class="num">1.31</td><td class="num">0.72</td><td class="num">84</td><td class="num">52%</td><td>平</td><td><span class="chip">候选</span></td></tr>
+        <tr class="top"><td>MA(7/33)</td><td class="num">6.1</td><td class="num">2.1</td><td class="num">4.0</td>
+          <td class="num">1.18</td><td class="num">0.64</td><td class="num">141</td><td class="num">51%</td><td>略陡</td><td><span class="chip">候选</span></td></tr>
+        <tr><td>MA(11/57)</td><td class="num">3.9</td><td class="num">1.8</td><td class="num">2.1</td>
+          <td class="num">1.05</td><td class="num">0.41</td><td class="num">62</td><td class="num">50%</td><td>平</td><td></td></tr>
+        <tr><td>MA(19/41)</td><td class="num">3.2</td><td class="num">0.9</td><td class="num">2.3</td>
+          <td class="num">0.71</td><td class="num" style="color:#C62828">-0.20</td><td class="num">48</td><td class="num">49%</td><td>平</td><td></td></tr>
+        <tr><td>MA(7/34) <span class="hint">样本内冠军</span></td><td class="num">9.5</td>
+          <td class="num" style="color:#C62828">0.4</td><td class="num">9.1</td>
+          <td class="num" style="color:#C62828">0.12</td><td class="num" style="color:#C62828">-1.10</td>
+          <td class="num">38</td><td class="num">44%</td><td style="color:#C62828">陡</td><td><span class="chip">慎用</span></td></tr>
+      </table>
+      <p class="hint" style="margin-top:8px">注意最后一行：<strong>样本内最高的那组被排到末尾</strong>（邻域塌陷 + 交易数偏低 + 成本敏感）。
+        这正是"修正口径"之后的排序长什么样。</p>
+    </div>
+
+    <div class="explain">
+      <strong>A · 单页研究台 —— 拆解与落点</strong>
+      <table>
+        <tr><th>#</th><th>部件</th><th>单页版的取舍</th><th>落点</th></tr>
+        <tr><td>①②③④⑤</td><td>压缩为一条"仪表条"</td><td>密度换空间；适合熟手，缺点是窄屏会挤</td><td><code>core/sweep_plan.py</code> + <code>ParamSweepWorker</code></td></tr>
+        <tr><td>⑥</td><td>四张图同屏（2×2）</td><td>不用切换就能比对"平台/尖峰/邻域/滚动"</td><td><code>ui/widgets/sweep_chart.py</code></td></tr>
+        <tr><td>⑦</td><td>全宽大表（10 列）</td><td>列多不怕，反正横向有空间</td><td><code>core/sweep_stats.py</code></td></tr>
+        <tr><td>⑧</td><td>结论条（顶部）</td><td><strong>不可折叠</strong>（红线③）</td><td><code>sweep_stats</code></td></tr>
+      </table>
+      <p class="foot">样式草案（示意数据）。方案书：<code>docs/JIAN_SWEEP_PLAN.md</code></p>
+    </div>
+  </main>
+</div>
+<script src="_charts.js"></script>
+<script>
+  PS.scatter(document.getElementById('a-scatter'));
+  PS.heat(document.getElementById('a-heat'));
+  PS.neighbors(document.getElementById('a-nb'));
+  PS.rollIC(document.getElementById('a-roll'));
+</script>
+</body>
+</html>

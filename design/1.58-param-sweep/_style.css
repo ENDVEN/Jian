@@ -1,0 +1,154 @@
+/* design/param-sweep/_style.css —— 三版共用的视觉语言（与主程序同一套观感）
+   口径：白卡片 / 浅灰底 / 圆角 14 / 强调蓝 #1976D2；危险红 #C62828；警告橙 #E65100
+   字体只点开源栈（§10-15） */
+:root{
+  --bg:#F5F7FA; --card:#FFFFFF; --line:#E6EAF0; --line2:#F2F5F9;
+  --text:#20242C; --text2:#616B7A; --text3:#8A94A6;
+  --accent:#1976D2; --accent-bg:#E8F1FB;
+  --ok:#2E7D32; --warn:#E65100; --danger:#C62828; --warn-bg:#FFF8E1; --danger-bg:#FDECEA;
+  --radius:14px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:13px/1.6 "Noto Sans CJK SC","Source Han Sans SC","Microsoft YaHei",sans-serif;}
+a{color:var(--accent);text-decoration:none}
+.app{display:flex;min-height:100vh}
+
+/* ---------- 应用外壳（左轨 + 内容） ---------- */
+.rail{width:186px;background:#fff;border-right:1px solid var(--line);padding:14px 10px;
+  display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+.rail .nav{padding:9px 11px;border-radius:10px;color:var(--text2);font-size:13px}
+.rail .nav.on{background:var(--accent);color:#fff;font-weight:600}
+.rail .grow{flex:1}
+.rail .nav.pin{border-top:1px solid var(--line2);margin-top:6px}
+.main{flex:1;padding:16px 18px 40px}
+.subtabs{display:flex;gap:6px;margin:0 0 14px}
+.subtabs .tab{padding:6px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;
+  color:var(--text2);font-size:12.5px}
+.subtabs .tab.on{border-color:var(--accent);color:var(--accent);background:var(--accent-bg);font-weight:600}
+
+/* ---------- 卡片 / 标题 ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:14px 16px;margin-bottom:12px}
+.card h2{margin:0 0 8px;font-size:14.5px}
+.card h3{margin:0 0 6px;font-size:13px;color:var(--text2);font-weight:600}
+.lead{color:var(--text2);font-size:12.5px;margin:0 0 10px}
+.hint{color:var(--text3);font-size:12px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:280px 1fr 300px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* ---------- 部件编号徽标（拆解用） ---------- */
+.badge{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;
+  border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;
+  margin-right:6px;vertical-align:1px}
+.badge.gray{background:var(--text3)}
+
+/* ---------- 控件（只示意，不带逻辑） ---------- */
+.field{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12.5px;color:var(--text2)}
+.input,select{border:1px solid var(--line);border-radius:9px;padding:5px 9px;background:#fff;
+  font:inherit;color:var(--text);min-width:96px}
+.btn{border:0;border-radius:9px;padding:7px 14px;background:var(--accent);color:#fff;
+  font:inherit;font-weight:600;cursor:default}
+.btn.ghost{background:#fff;border:1px solid var(--line);color:var(--text2);font-weight:500}
+.btn.win{background:#fff;border:1px solid var(--accent);color:var(--accent);font-weight:600}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;
+  background:var(--accent-bg);color:var(--accent);margin-right:6px}
+
+/* ---------- 表 ---------- */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line2);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--text2);font-weight:600;background:#FBFCFE}
+tr.top td{background:#F7FBFF}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---------- 结论 / 警示条（不可折叠） ---------- */
+.verdict{border-radius:12px;padding:10px 12px;font-size:12.5px;margin-bottom:12px;
+  border:1px solid var(--line);background:#fff}
+.verdict.bad{background:var(--danger-bg);border-color:#F5C6C0}
+.verdict.warn{background:var(--warn-bg);border-color:#FFE082}
+.verdict.ok{background:#EDF7ED;border-color:#C8E6C9}
+.verdict b{font-weight:700}
+.kpi{display:flex;gap:16px;flex-wrap:wrap;margin-top:6px}
+.kpi div{font-size:12px;color:var(--text2)}
+.kpi b{display:block;font-size:17px;color:var(--text);font-variant-numeric:tabular-nums}
+.kpi b.bad{color:var(--danger)}
+.kpi b.ok{color:var(--ok)}
+
+/* ---------- 进度 ---------- */
+.bar{height:7px;border-radius:999px;background:var(--line2);overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent);width:40%}
+
+/* ---------- 图容器 ---------- */
+.chart{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px}
+.chart svg{display:block;width:100%;height:auto}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--text2);margin-top:6px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+
+/* ---------- 部件说明表（每版末尾） ---------- */
+.explain{background:#FBFCFE;border:1px dashed var(--line);border-radius:12px;padding:12px 14px;
+  font-size:12px;color:var(--text2)}
+.explain table{margin-top:6px}
+.explain td,.explain th{padding:5px 7px}
+.tag{font-size:11px;color:var(--text3);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.foot{margin:14px 0 0;font-size:11.5px;color:var(--text3)}
+
+/* ============================================================
+   ▼ v3 增量（2026-09-28 · 参数研究 P2「双栏可折叠」）
+   纪律：**只增不改**上面的三版共用样式 ⇒ a/b/c 三页观感一字不变
+   （折叠交互照 ui/views/trading_desk.py 的范式：set_panel_collapsed + 记住状态）
+   ============================================================ */
+.rail{flex:0 0 186px}
+.main{min-width:0}
+.subtabs .tab.new{border-style:dashed;border-color:var(--accent);color:var(--accent)}
+
+/* ---------- 主结构：左栏（可折叠） + 右栏（独立滚动） ---------- */
+.layout{display:flex;gap:12px;align-items:flex-start}
+.panel{flex:0 0 306px;width:306px;background:#fff;border:1px solid var(--line);
+  border-radius:var(--radius);overflow:hidden;transition:flex-basis .16s ease,width .16s ease}
+.panel.collapsed{flex:0 0 46px;width:46px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:11px 12px;border-bottom:1px solid var(--line2);background:#FBFCFE}
+.panel-head b{font-size:13px}
+.collapse-btn{border:1px solid var(--line);background:#fff;border-radius:8px;width:26px;height:24px;
+  cursor:pointer;color:var(--text2);font-size:13px;line-height:1}
+.collapse-btn:hover{border-color:var(--accent);color:var(--accent)}
+.panel-body{padding:11px 12px 14px;max-height:calc(100vh - 236px);overflow-y:auto}
+.panel.collapsed .panel-head b,.panel.collapsed .collapse-btn{display:none}
+.panel.collapsed .panel-body{display:none}
+.panel .strip{display:none}
+.panel.collapsed .strip{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0}
+.panel.collapsed .strip .ic{font-size:17px;color:var(--text2)}
+.scrollcol{flex:1;min-width:0;max-height:calc(100vh - 236px);overflow-y:auto;padding-right:4px}
+.scrollcol::-webkit-scrollbar{width:9px}
+.scrollcol::-webkit-scrollbar-thumb{background:#CFD8E3;border-radius:9px}
+
+/* ---------- 左栏步骤 / 控件（窄栏专用：输入框不许撑破 306px） ---------- */
+.sec{padding:10px 0 12px;border-bottom:1px dashed var(--line2)}
+.sec:last-child{border-bottom:0;padding-bottom:2px}
+.sec h4{margin:0 0 7px;font-size:12.5px;font-weight:700}
+.step-no{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;
+  border-radius:6px;background:var(--accent-bg);color:var(--accent);font-size:11.5px;font-weight:700;
+  margin-right:6px;padding:0 5px}
+.field>label{flex:0 0 62px;color:var(--text2)}
+.panel .input,.panel select{flex:1;min-width:0}
+.input.sm{flex:0 0 66px;min-width:0}
+.selectbox{border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:#fff;
+  margin-bottom:6px;font-size:12.5px;color:var(--text2)}
+.selectbox.on{border-color:var(--accent);background:var(--accent-bg);color:var(--text)}
+.selectbox b{color:var(--text);font-size:12.5px}
+.selectbox .why{color:var(--text3);font-size:11.5px}
+.coach{border-left:3px solid var(--accent);background:#F7FBFF;border-radius:8px;
+  padding:8px 10px;font-size:12px;color:var(--text2);margin:7px 0}
+.thr-row{display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--text2)}
+.thr-row b{font-size:16px;color:var(--text);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent)}
+
+/* ---------- v3 补充 ---------- */
+tr.out td{color:var(--text3)}
+.chart.compact{padding:4px}
+.map-note{display:inline-block;font-size:11px;color:var(--accent);border:1px dashed var(--accent);
+  border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:1px;font-weight:500}
+
