@@ -13,11 +13,11 @@
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **`1.57`**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / commit 首词 `1.57` ✅）。**push 状态（实测）**：`origin/main = 98ee9e3`（**1.53，已在远端**）；本地 `1.54` / `1.55` / `1.56` / `1.57` 四条**均在远端之上（快进、无分叉）**，**待推**（push 须用户当次同意）。⚠ 教训：曾误把**已推送**的旧 1.53 用 `--amend` 改写（造成分叉，坑 = §11.5-105）；旧提交留存 `backup-pre-amend-1.53b`（= `98ee9e3`），被改写的中间态留存 `backup-1.53-amended`（`caf67c7`） |
-| 文档版本 | **v6.75**（v6.74 新骨干 + **§7-B15 参数稳健性研究立项**：设计定案 = `design/1.58-param-sweep/`，方案书 = `docs/JIAN_SWEEP_PLAN.md`；**仍待开工**） |
-| 最近三版 | **`1.57`** 关于与更新 · 设置中心收口 · **`1.56`** 存储与维护 · 回测与扫描默认 · **`1.55`** 设置页收口（自检 / 下载入口精简） |
-| **当前主线** | **§7-B13 设置中心 · 路径表推进**：**S2-0 骨架 ✅ 已落地**（左轨最下方 `⚙ 设置` + S2 双栏 + 注册表 7 真项，overlay **781** 全绿）⇒ **S2 全收口 ✅**（S2-0/1/2/4/5/7/8 已落地；S2-3 外观 / S2-6 快捷键按用户口径暂跳，并在组内写明"哪一步接进来"）。同期：**§7-B14 大扫除**（第一次盘点待触发）· **§7-B15 参数稳健性研究**（**`2026-09-28` 用户点头定案** ⇒ 设计稿 `design/1.58-param-sweep/` · 方案书 `docs/JIAN_SWEEP_PLAN.md`；**未开工**）。 |
-| **断点** | **v6.73**：用户实测"抓一半就失败"→ **v6.72 修了 IPv6/代理两层**（`net_env` + `em_market` 传输层，overlay 767 / chart 889 全绿）后**仍失败** ⇒ 再做 **P0 判据实验**（同刻对照）：**带 Cookie `clist`/`ulist` = HTTP 200 + 真实数据**（`003816→电力`、`600000` f2/f5/f9 全有），**匿名 = 同刻 RST** ⇒ **门槛是"登录态"，不是 IP 封禁**（与 v6.68 一致）。**立项：登录=常速 / 不登录=现有慢速档**。已落地 `data/em_auth.py`（DPAPI 加密存 `~/.jian_data/em_cookie.json` · 登录判据 `ut/ct/pi` 三件齐 · 粘贴解析 · **每日预算** prevent 风控 · 日志永不回显凭据）。**P1 待接**：`em_market` 双档 Session（登录优先 + 失败自动回退匿名）+ 粘贴入口（`ui/dialogs/em_login.py`）+ 档位参数（登录档行业每批 3→10 页）+ 断言文档。**同期立项**：**§7-B13 设置中心**（四版样式在 `design/settings-page/`，**待用户选风格**）、**§7-B14 系统级架构优化/垃圾清理/文件瘦身**（触发判据与执行顺序已写死）。**待办**：① **§7-B13 设置中心 S2 全收口 ✅**（S2-0/1/2/4/5/7/8 已落地；S2-3 外观 / S2-6 快捷键按用户口径**暂跳**且组内写明"哪一步接进来"）⇒ **下一步**：**§7-B14 大扫除**（触发盘点：红榜文件 / 兼容壳 / 双真源 / 文档漂移）+ 待用户同意后 push（本地已积 4 条）；⚠ 运行历史页那个「自动存档」复选框**用户拍板保留**（美观搭配；与设置页同一键）；② **`1.54` 已提交 · 待推**（方案 B：不动远端）；③ §9-F③ 阶段二（灰蓝是否统一）待拍板。**下一步要点（用户口径）**：① 扫描**先出结果**、补全后台跑；② **不调低每日额度**（将来要扫全 A）；③ 绝不做"多账号轮换 / 换 IP 绕限 / 并发抢跑"。 |
+| APP 版本 | **`1.59`**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / commit 首词 `1.59` ✅ 本地已提交）。**push 状态（实测 2026-09-29）**：`origin/main = 17f535a`（**1.58，已在远端**——1.54–1.58 待推积压**已清零**，用户已自行推送）；本地 `1.59`（§7-B14 大扫除第一轮）**待推**（push 须用户当次同意）。⚠ 1.58 提交时 APP_VERSION 曾停在 1.57（三处漂移），已随 1.59 顺推归一；教训见 §7-B14 台账。 |
+| 文档版本 | **v6.76**（§7-B14 大扫除第一轮**已执行**：批0–4 落地，台账 = `docs/JIAN_CLEANUP.md`；**§7-B15 参数稳健性研究仍待开工**，设计定案 = `design/1.58-param-sweep/`，方案书 = `docs/JIAN_SWEEP_PLAN.md`） |
+| 最近三版 | **`1.59`** §7-B14 大扫除（删壳 / 过渡壳处置 / 拆 styles）· **`1.58`** 参数稳健性研究 · 样式设计 · 可行性分析 · **`1.57`** 关于与更新 · 设置中心收口 |
+| **当前主线** | **§7-B14 大扫除第一轮 ✅ 已执行（`1.59`）**：批0 垃圾清理 → 批1 删 `download_settings` 壳 → 批2 过渡壳处置（noqa 16→6）→ 批3 样式族拆 `ui/widgets/styles.py` → 批4 文档对齐；台账 = `docs/JIAN_CLEANUP.md`。**下一步 = §7-B15 参数稳健性研究 MVP**（**`2026-09-28` 用户点头定案** ⇒ 设计稿 `design/1.58-param-sweep/` · 方案书 `docs/JIAN_SWEEP_PLAN.md`；**未开工**，约 1–2 轮）。 |
+| **断点** | **v6.76 / `1.59`（2026-09-29）**：§7-B14 四条触发判据实测三条达标（红榜 30≥8 · 再导出壳 16≥10 · 文档漂移 ≥5）⇒ 第一轮执行完毕：① 删根目录 `_tmp_real_probe2.py` + 旧 `screenshots/`；② 删 `ui/dialogs/download_settings.py`（§10-9 / S2-2 冒烟断言改指设置页渲染件，新增 `SettingsView.control_of` 只读查询）；③ 过渡壳全撤（`download_hub`→`download_jobs`、`trading_desk`×3、`review`、`annotation_layer`、`backtest_panes`→直连 `custom_widgets`；**保留** `data_feed` 门面 / `sync_service` 防环 / `review_layout` 预留 / `annotation_shapes` 活命名空间）；④ 样式族拆 `ui/widgets/styles.py`（**356 非空**；`custom_widgets` 1072→**759**，同名再导出零 noqa，冒烟源码级断言改指 styles）；⑤ 顺手还两笔：1.58 设计稿 `Consolas` 违 §10-15（换开源栈）、S2-1b 探测断言隔离（§11.5-90 族）。**验收**：chart **890/0** · overlay **858/1**（唯一失败=提交前版本号自愈项；overlay 偶发 fastfail 经 HEAD worktree 基线复测确认**与改动无关**，§11.5-102）。**待办**：① `1.59` 本地已提交**待推**（push 须用户当次同意）；② **下一步 = B15 MVP**；③ 红榜 P2 拆法未排期（登记不返工，`JIAN_CLEANUP.md` §四）；④ §9-F③ 阶段二（灰蓝是否统一）待拍板。 |
 | ⏸ 另拍 | 下载偏快档（放宽到 K>3 或降 interval）仍待实测后另拍 → 见 §7-B11 与 §11.6 顶部。 |
 
 ### 📚 文档地图（先看这里，再定点检索）
@@ -129,75 +129,73 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 
 → **要看"某个文件到底是干什么的、纪律钉在哪"**：`docs/JIAN_CODEMAP.md`
 
-**体积红黑榜（v6.50 实测）· 口径与纪律：**
+**体积红黑榜（★1.59 全量重测）· 口径与纪律：**
 - **只给 ≥400 行的文件标行数（v6.16 用户拍板）**：行数的唯一用途是"提醒哪个文件快膨胀到
   不该再堆功能"，逐个文件维护精确数字只会定期返工（v6.15 那批实测已有 10+ 处对不上）。
   **<400 行的文件在 §4 一律不标数字**；要看体积请现测（口径 = **非空行**）。
 - **业务文件 ≥400 行（★v1.46 现测 = 本轮动过的文件；其余仍是 v1.45 的数。涨落史不抄在这里，
   只存"现在多长 + 再长怎么拆"；顺序大致降序）**：
-  `ui/views/backtest.py` **941**（再长把"预览回放态"整块搬 `ui/widgets/backtest_preview.py`）>
-  ⚠ `ui/widgets/custom_widgets.py` **1072**（★v6.71 再涨：§9-F③ 把按钮样式收口成
-    `flat_qss()` 生成器 + 五命名变体（+57）……全站样式公共件都在这；**登记不返工**，
-    但样式族已集齐（combo / date / flat / outline / chip / segment / tab）
-    ⇒ 下一步单独立一轮拆 `ui/widgets/styles.py`（本文件 re-export 兼容），再加东西前先拆）>
+  `ui/views/backtest.py` **955**（再长把"预览回放态"整块搬 `ui/widgets/backtest_preview.py`）>
+  ⚠ `ui/widgets/custom_widgets.py` **759**（★1.59 / §7-B14 批3：**样式族已拆出**
+    `ui/widgets/styles.py`（356 非空，<400 不标数）—— QSS 常量 / QSS 生成器 / 字体栈定义只此一处，
+    本文件保留控件与工厂并对公开名做同名再导出（零 noqa）；再长按"图表控件 / 布局容器"继续拆）>
   ⚠ `ui/widgets/backtest_history_ui.py` **815**（★v1.46 重做：四态占比条 `ScanStatBar` +
     条件代码块 `SectionCard` + 换行动作行 + 净值图外套 `chart_card`；**已越 800**，再长把
     `ScanStatBar` / `SectionCard` / `MiniEquityChart` 拆 `ui/widgets/history_parts.py`）>
-  ⚠ `core/cross_section.py` **655**（已按「阈值/掩码 → 读数 → 结果 → 主入口」天然分段；
+  ⚠ `core/cross_section.py` **689**（已按「阈值/掩码 → 读数 → 结果 → 主入口」天然分段；
     **处置不变**：新增优先另起模块，收口时按 `scan_filters` / `scan_io` 拆）>
   ⚠ `ui/widgets/desk_layout.py` **616**（再长拆出配方页 `build_formula_page`）>
-  ⚠ `ui/widgets/annotation_layer.py` **613**（场景 I/O 可再拆进 `annotation_draw_session.py`）>
-  ⚠ `data/sync_service.py` **817**（v1.40 日历新鲜度 + v1.43 `failure_hint` + v1.44/1.45 spot 秒补 +
+  ⚠ `ui/widgets/annotation_layer.py` **612**（场景 I/O 可再拆进 `annotation_draw_session.py`）>
+  ⚠ `data/sync_service.py` **834**（v1.40 日历新鲜度 + v1.43 `failure_hint` + v1.44/1.45 spot 秒补 +
     v1.47 复权自愈 + v6.67 除权闸门 + **v6.68 `fetch_industry_page` 门面**；再长把"失败分类与人话文案"
     抽成 `data/fetch_messages.py`）>
   ⚠ `ui/widgets/chart_host.py` **585**（新设施是宿主级可复用件 §9-U；再长拆 `divider_drag.py`）>
   ⚠ `data/annotations.py` **524**（**再加新类型前**先把 kind 常量表拆成 `data/annotation_kinds.py`）>
-  ⚠ `ui/views/data_manager.py` **546**（**已破 500**；v1.43 交队列未净减、v1.45 删独立间隔旋钮换⚙入口、
+  ⚠ `ui/views/data_manager.py` **537**（**已破 500**；v1.43 交队列未净减、v1.45 删独立间隔旋钮换⚙入口、
     **v6.71 §9-F③ 删私有 `_FLAT_QSS` 副本⇒净减 2**；再长拆"分区清单 / 同步操作条"两件）>
   ⚠ **新** `ui/main_window.py` **442**（★v6.71 越线 + ★v6.73 S2-0 加导航入口与设置页：退出守卫
     `_exiting` / `_paint_stopping`（**`ExcludeUserInputEvents`**）/ `_wait_downloads_to_stop` + 关窗收线程；
     本文件定位就是"只做装配与分发"，再长把【导航按钮轨 + 角标 + 事件过滤】抽成 `ui/desk_nav_rail.py`）>
-  ★**设置类四件**：`ui/settings_registry.py` **312**（设置项唯一真源；支持**动态只读** `value_fn`
+  ★**设置类四件**：`ui/settings_registry.py` **507**（设置项唯一真源；支持**动态只读** `value_fn`
     与**动作项** `action`）· `ui/views/settings_view.py` **219** · `ui/widgets/settings_render.py` **80**
     （类型→控件工厂，五类）· `ui/dialogs/em_login.py` **128**（登录唯一入口）
     —— **新设置一律进这四件，别在页面里手写**
   ⚠ `data/em_market.py` **496**（双档取数 + 每日额度闸门 + 全局最小间隔 + S2-1b 自检；
     **再加通道先分文件**——候选：`em_selfcheck.py`）
-  ⚠ `data/akshare_feed.py` **617** / `data/sync_service.py` **828**（都是老越线；**再加门面函数先想分件**）
-  ⚠ `ui/widgets/scan_flow.py` **816**（★v6.74 补全调度接线后越线：**再加流程先拆**——
+  ⚠ `data/akshare_feed.py` **617** / `data/sync_service.py` **834**（都是老越线；**再加门面函数先想分件**）
+  ⚠ `ui/widgets/scan_flow.py` **828**（★v6.74 补全调度接线后越线：**再加流程先拆**——
     候选拆法 = "范围解析 / 补全调度 / 回执文案" 三件）
   ★**新** `ui/widgets/scan_enrich.py` **149**（扫描后按轮补全：分轮 / 停止条件 / 渐进刷新）
     —— **补全类改动一律进它**（别再往 `scan_flow` 里堆）
-  ⚠ `ui/views/trading_desk.py` **500**（★v1.43 纠偏：旧写"345 已退出 400 线"是 1.23 的数，
+  ⚠ `ui/views/trading_desk.py` **499**（★v1.43 纠偏：旧写"345 已退出 400 线"是 1.23 的数，
     1.24/1.34 之后重新越线；再长继续往 `desk_*.py` 外搬）>
   `core/backtest.py` **495** > `data/akshare_feed.py` **597**（★v6.69 **东财取数整块搬出** ⇒ 回落，只留日线/
     花名册/成分股门面）> `data/em_market.py` **264**（东财两通道 + ★v6.72 **传输层**：IPv4/代理降级/失败分类）>
   `data/em_throttle.py` **169**（失败退避：★v6.74 **按通道分桶** + 失败后至少静默 60s
     + ★v6.72 代理类固定冷却 / 抗抖动连击 + `describe_all()`）>
   ★**新** `data/net_env.py` **109**（网络策略唯一出口：地址族限定 IPv4 + 代理指纹 + 可回退开关）>
-  ⚠ `ui/workers.py` **626**（★v1.45 越线 + ★v6.69 三个后台 worker 加 `cancel()`
+  ⚠ `ui/workers.py` **688**（★v1.45 越线 + ★v6.69 三个后台 worker 加 `cancel()`
     + **★v6.71 §9-F② `SyncWorker` 两路径各记一行 `symbols_attempted`**
     + ★v6.74 S2-1b `NetSelfCheckWorker`（网络自检，**可取消**）；
     **仍是全 app 唯一 QThread 处**；再长按 worker 类拆 `ui/workers_download.py`）>
-  ✅ **退榜** `ui/download_hub.py` **411**（★v6.71 / §4 登记的拆法已执行：`DownloadJob` +
-    状态常量 + `hub_of` + `SingleSyncGate` 搬入新 `ui/download_jobs.py`（159）；
-    hub 本体只留“排队 + 串行执行 + 广播”，**旧 `from ui.download_hub import ...` 全部走再导出 ⇒ 零改动**；
-    **二次修改 +33**：孤儿线程跑完自清 `_release_orphan()` + 续传幂等 `continue_unfinished()`）>
+  ⚠ `ui/download_hub.py` **430**（★1.59 / §7-B14 批2：过渡**再导出已撤** —— 外部一律直连
+    `ui/download_jobs`（DownloadJob / 状态常量 / SingleSyncGate / hub_of），hub 本体只留
+    “排队 + 串行执行 + 广播” + 孤儿自清 / 续传幂等；**重回红榜，勿再往里堆**）>
   ⚠ `ui/widgets/breadth_flow.py` **607**（★v1.46 纠偏：§7-B12 之后长期未测；收口时与
     `scan_flow` 一起把"范围解析→体检接线→重跑等待"收进 `ReadinessFlow`）>
   ⚠ `ui/widgets/scan_flow.py` **728**（★v1.46 纠偏 + ★v6.69 行业每批 3 页/退避守卫/失败回执收口；
     再长把"行业与估值两条后台抓取"抽成 `ui/widgets/scan_sources.py`）>
   ⚠ `ui/widgets/desk_watch.py` **481** > ⚠ `ui/widgets/backtest_result.py` **478** >
-  ⚠ `ui/dialogs/bulk_download.py` **527**（v1.43 交队列后不再持有线程；v1.45 删四个旋钮后回落；
+  ⚠ `ui/dialogs/bulk_download.py` **510**（v1.43 交队列后不再持有线程；v1.45 删四个旋钮后回落；
     **v1.66 加「复权口径」= 一个分区一个任务**；再长拆"来源区 / 口径与参数区"两件）>
   ⚠ `ui/widgets/desk_data.py` **562**（★v1.47 价格接缝 + ★v6.66 回执带口径 + ★v6.67 一次同步两个口径
     （`SYNC_ZONES`/`_gate_for`）；再长把"体检判据"抽成 `ui/widgets/desk_health.py`）>
   `core/database.py` **435** > ⚠ `data/backtest_archive.py` **533**（★v1.46：scan 记录显式分组 +
     `filter_options` + 淘汰按范围分组；再长把 `build_*` 拆 `archive_build.py`）>
   ⚠ `ui/widgets/desk_formula.py` **422** >
-  ⚠ `ui/widgets/backtest_panes.py` **419**（★v1.43 纠偏：旧写"395 在线内"已越线）>
+  ⚠ `ui/widgets/backtest_panes.py` **418**（★v1.43 纠偏：旧写"395 在线内"已越线）>
   ⚠ `ui/widgets/backtest_flow.py` **435**（再长把"存档接线"抽成伴生件）>
-  ⚠ `ui/widgets/readiness_flow.py` **511**（★v1.46：历史不足可见说明 +更新不覆盖结果区
+  ⚠ `ui/widgets/readiness_flow.py` **512**（★v1.46：历史不足可见说明 +更新不覆盖结果区
     +`scope_snapshot/mark_archived` +体检结束回调；★v6.66：+`SYNC_CALIBER_LABEL` 口径进回执；
     再长按「体检渲染 / 下载编排」拆）。
   ✅ 未越线但曾经很长的：`ui/widgets/annotation_shapes.py` 296（v6.29 拆出 `annotation_layouts.py`）、
@@ -514,12 +512,18 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 **验收口径（计划）**：① 页面由注册表驱动（**加一项设置不改页面** —— 机器断言）；② 每项能"恢复默认"，且**改完即时生效或明确说需重启**；
 ③ 落点唯一（同一项不许两处可改）；④ 深色主题切换后无硬编码颜色残留（与主题主案同批）。
 
-### B14 · 🧹 系统级架构优化 / 垃圾清理 / 文件瘦身（**立项 · 待排期** · `2026-09-26` 用户提出）
+### B14 · 🧹 系统级架构优化 / 垃圾清理 / 文件瘦身（**第一轮已执行 `1.59` · 2026-09-29** · `2026-09-26` 用户提出）
 **为什么现在提**：功能在快速累积 ⇒ 已出现"**再导出壳 / 临时兼容层 / 旧对话框与新页面并存**"，
 **再不动就会变成"改一处要读三处"**。用户要求**一次性写进纪律**，但**不许因此拖慢主线**。
 **触发判据（任一满足即启动；先量后动）**：① §11.7 红榜（>400 行）文件 ≥ **8** 个；
 ② "再导出/兼容壳"（`# noqa: F401` 转出）≥ **10** 处；③ **有两套编辑面/两个真源**的设置项 ≥ **3** 个（§9-D 类漂移）；
 ④ 文档与实况漂移 ≥ **5** 处（§11.7 末条）。
+**★第一轮执行记录（`1.59` · 2026-09-29）**：实测 ①30≥8 ✅ ②16≥10 ✅ ④≥5 ✅（③1<3 未触发）⇒ 五批全做：
+批0 删根目录 `_tmp_real_probe2.py` + 旧 `screenshots/1.23-steps-5-6`；批1 删 `download_settings.py`（4 处冒烟断言迁移，
+`SettingsView` 新增 `control_of()` 只读查询）；批2 过渡壳 16→**6**（余 = `data_feed` 门面 ×4 / `sync_service` 防环 /
+`review_layout` 预留，**有意保留**）；批3 样式族拆 **`ui/widgets/styles.py`**（356 非空，`custom_widgets` 1072→759，
+同名再导出零 noqa）；批4 文档对齐（本节 / §4 / §11.4 / §11.6 / §11.7 / CODEMAP / HISTORY）。
+**台账与逐项证据 → `docs/JIAN_CLEANUP.md`**。遗留：红榜 P2 拆法未排期（登记不返工）。
 **盘点口径（每轮固定四问）**：谁在用（AST / grep 引用计数）· 有没有**第二个真源** · 是不是**历史兼容层** · 删了谁会红。
 **执行顺序（**纯删除、绝不顺手改行为**）**：冻结 → 量（出清单，**人审**）→ 分批删（**每批跑两份冒烟全绿**）→
 台账 `docs/JIAN_CLEANUP.md`（删了什么 / 凭什么能删 / 证据）→ 文档回写。**每批只做 1 个主题**（防"大爆炸式改动"）。
@@ -809,8 +813,9 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
      `::drop-down` / `::down-arrow` …），Qt 会用默认度量重绘子控件，必然导致
      **图标样式漂移** 与 **热区与视觉错位**（历史 Bug：风控行上箭头只有右半边能点，
      长期未解）。
-     → 要美化就写**完整**的 QSS，且必须收敛到 `custom_widgets.py` 统一导出，
-     由所有调用方共用，**绝不在业务页面就地 `setStyleSheet`**。
+     → 要美化就写**完整**的 QSS，且必须收敛到 `ui/widgets/styles.py` 统一导出
+     （★1.59 拆出；`custom_widgets` 同名再导出兼容），由所有调用方共用，
+     **绝不在业务页面就地 `setStyleSheet`**。
    - **尺寸要给足**：窄控件会挤压箭头/下拉按钮，同样造成热区异常；
      数值控件最小宽度不得小于 72px。
    - **新增任何输入控件后自检**：① 与同类控件图标是否一致？② 上下/下拉按钮整块是否
@@ -947,8 +952,9 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 - **10-15 字体版权纪律（v1.46 立 · 用户 2026-09-25 拍板）**：界面字体**只许点名开源 / 免费商用**字体；
   **禁止**在 QSS / `QFont` 里写微软雅黑、宋体、Consolas 等**系统专有字体** ——
   即使用户本机装了、即使"只是引用个字体名"，**截图 / 分发 / 跨平台都可能构成商业侵权风险**。
-  - **唯一出口 = `ui/widgets/custom_widgets.py`**：`UI_FONT_STACK`（界面栈）/ `UI_MONO_STACK`（等宽栈，
-    代码块经 `mono_font_css()` 取）/ `apply_ui_font(widget)`（在页面根钉一整棵子树）/
+  - **唯一出口 = `ui/widgets/styles.py`（★1.59 / §7-B14 批3 拆出；`custom_widgets` 同名再导出兼容）**：
+    `UI_FONT_STACK`（界面栈）/ `UI_MONO_STACK`（等宽栈，代码块经 `mono_font_css()` 取）/
+    `apply_ui_font(widget)`（在页面根钉一整棵子树）/
     `ui_painter_font(pt)`（**手绘 / 表格项**的磅值版：只换字体族，磅值语义不变 ⇒ 零版式漂移）/
     `ui_font_status()`（启动日志**实测报告**本机用上了哪一款）。业务页面**禁止**再写字体族字面量。
     ⚠ **`ui/` 与 `design/` 样板**都有源码级断言盯着"专有字体名不许进 QSS/QFont"（`smoke_pages_overlay` 末段）。
@@ -1008,7 +1014,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 加一个公式函数 | `core/formula/runtime.py`：`FUNCTIONS` 注册 + `ARITY` 声明元数 |
 | 改回测撮合 / 风控 / **成交时点与 T+1** | **`core/backtest.py` 一处**（`_run_on_signals` 是纯函数）；UI 行 = `ui/views/backtest.py`「🎯 成交模型」。⚠ 别在页面里重算口径 |
 | 加技术指标（画图）/ 加数据湖 zone / 加用户偏好 | `core/indicators.py` `REGISTRY`+`OUTPUTS` ／ `data/market_db.py` `self.zones`（**另两处登记见 §11.7**）／ `core/preferences.py` `DEFAULTS` |
-| 数值控件外观·宽度·界面字体 | **`ui/widgets/custom_widgets.py` 唯一出口**（禁就地 `setStyleSheet`、禁 `setFixedWidth`、禁专有字体名 §10-15） |
+| QSS 样式 / 界面字体定义 | **`ui/widgets/styles.py` 唯一定义处**（★1.59 拆出）；控件本体与数值工厂 = `ui/widgets/custom_widgets.py`（禁就地 `setStyleSheet`、禁 `setFixedWidth`、禁专有字体名 §10-15） |
 | 后台下载 / 队列 / 进度呈现 / 单只互斥 | **`ui/download_hub.py`（唯一真源）** + `SingleSyncGate`；⚠ 弹窗与页面不得自己持有 `SyncWorker`；测前打桩不 `start()` |
 | 给页面加后台任务 | `ui/workers.py`（全 app 唯一 QThread 处）+ 公共件 `JobGuard`（禁各写 `_token`） |
 | 行情同步 / 节流 / 失败分类文案 / 定稿判据 | **`data/sync_service.py` 一处**（`ThrottlePolicy` / `abort_reason_text` / `DAILY_SETTLE_HHMM`）；「最近交易日」→ `data/trade_calendar.py` |
@@ -1131,6 +1137,25 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 
 
 ### 11.6 当前"下一步做什么"的推荐顺序（历史刷新**倒序**排列：主清单之下**第一块就是最新**）
+
+> ✅ **已落地（v6.76 · §7-B14 大扫除第一轮 · `1.59` · 2026-09-29 · 用户拍板"问题全做，之后做 B15"）**
+> 四条触发判据实测三条达标（红榜 30≥8 · 再导出壳 16≥10 · 文档漂移 ≥5；双编辑面 1<3 未触发）⇒ 五批执行：
+> ① **批0 垃圾**：删根目录 `_tmp_real_probe2.py`（自带"跑完即删"）与旧 `screenshots/1.23-steps-5-6/`（§9-C 挂账）。
+> ② **批1 删壳**：`ui/dialogs/download_settings.py` 删除（S2-2 已无入口）；§10-9 宽度断言改验**设置页渲染件**
+>   （`SettingsView` 新增 `control_of(key)` 只读查询，`_controls` 随 reload 清空）；S2-2 段换"文件已删 + 全 ui/ 无残留"
+>   负向断言；smoke_chart 的"写盘键形"改钉注册表落点（`where=download_prefs.<子键>`）。
+> ③ **批2 过渡壳 16→6**：`download_hub`（SingleSyncGate/hub_of/STATUS_*）· `trading_desk`×3 · `review` ·
+>   `annotation_layer` · `backtest_panes` 的再导出全撤、调用方直连真源；**有意保留**：`data_feed`×4（解析门面）、
+>   `sync_service`（防 import 环）、`review_layout`（预留接线）、`annotation_shapes`（活命名空间，全部自用）。
+> ④ **批3 拆 styles**：`ui/widgets/styles.py`（**356 非空**）= QSS 常量 / QSS 生成器 / 字体栈唯一定义处；
+>   `custom_widgets` 1072→**759**（总行 1288→928），对公开名做 `import X as X` 显式同名再导出（**零 noqa**）；
+>   §10-15 / §9-F③ 源码级断言改指 styles + 新增"定义不许回流 / 再导出同对象"两条护栏。
+> ⑤ **顺手还两笔**：1.58 设计稿 `index.html` 的 `Consolas` 违 §10-15 → 换开源等宽栈；
+>   S2-1b 探测断言隔离（前段退避残留会让它假红，§11.5-90 族）。
+> ⑥ **验收**：`smoke_chart` **890/0**；`smoke_pages_overlay` **858/1**（唯一失败 = 提交前"备注首词=版本号"自愈项）；
+>   overlay 偶发 fastfail 连崩 3 次 ⇒ 按 §11.5-102 拉 **HEAD worktree 基线**复测，HEAD 同点同频崩 ⇒ **存量问题、与改动无关**。
+> ⑦ **版本**：1.58 提交时 `APP_VERSION`/`version.json` 曾停 1.57（三处漂移）⇒ 已随 `1.59` 顺推归一。
+> **下一步 = §7-B15 参数稳健性研究 MVP**（设计 v3 已定案，约 1–2 轮）。
 
 > ✅ **已落地（v6.74 · 新骨干：行业"按池补全" + 补全调度器 + 通道化退避 + B 档 · 2026-09-27 用户拍板）**
 > 用户原话："不能先针对普通数据进行一个扫描，然后这些需要东财请求的隔一段时间就自动刷新补全到
@@ -1335,16 +1360,16 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       机器护栏在 `smoke_pages_overlay` 末段（读 HEAD 的 `%s`）。
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
 - [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**890 项**，纯组件、离屏）
-- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**854 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
+- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**859 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
       并在其收尾的防污染自检名单里**加上任何新写的 `~/.jian_data/*.json`**（现在有 annotations /
       formula_library / watchlist / backtest_strategies / **preferences（1.23 起）** / **backtest_results（1.37 起）** /
       **scan_strategies（1.46 P3 起）** / **industry_map（1.46 P6 起）** 八个）
 - [ ] **改了复盘页（`ui/views/review.py`）/ `ui/widgets/review_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**854 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
+      `py tests/smoke_pages_overlay.py`（**859 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
       公共面被改名、**把薄壳写成空函数**、宏观/微观**分栏退化成写死的 5:4 平铺**、
       分栏高度不落 `review_ui.v_sizes`，都会立刻红）
 - [ ] **改了全市场筛选页（`ui/views/scan_view.py`）/ `ui/widgets/scan_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**854 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
+      `py tests/smoke_pages_overlay.py`（**859 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
       ⚠ 六条最容易顺手改坏的：① **常驻行必须 ≤3**（粗筛阈值收在抽屉里，别往结果区上方加行）；
       ② **阈值"内核 ⇄ 界面"换算只许在 `ScanFilterPane` 一处**（界面亿元/% ⇄ 内核元/小数，
       换手率/市值**关闭时必须是 None**，变成 0 = 误杀一片）；
@@ -1355,7 +1380,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ⑥ **缺数据闸门不许删**（`_confirm_scan_with_gaps`：体检有缺口/未完成 ⇒ 二次确认才能扫，
         选「否」不得启动任何线程；本地齐了不打扰）
 - [ ] **改了广度统计页（`ui/views/breadth_view.py`）/ `ui/widgets/breadth_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**854 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
+      `py tests/smoke_pages_overlay.py`（**859 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
       ⚠ 七条最容易顺手改坏的：① **常驻行必须 ≤3**（⚡/⟳ 收在摘要条，别往结果区上方加行）；
       ② **双窗格必须 x 联动**（`ChartHost` 编排，禁止页面自己 `addPlot` 拼副图，§10-12）；
       ③ **广度占比的分母 = 有效样本**（命中+未命中）—— 换成"全市场只数" = 系统性压低且看不出来；
@@ -1403,7 +1428,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] **改了 `QComboBox` / `QDateEdit` / `QDateTimeEdit` 的样式吗？**
       → 只能用 `custom_widgets` 的常量（`::drop-down` 与 `::down-arrow` 必须成对，否则箭头消失）；
       改完跑 `py tests/smoke_chart.py` 看**箭头像素断言**（§11.5-17）
-- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**854 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；四条离屏打桩见 §11.5-20 与 §11.5-79（★第④条 v1.42 补：**异步回测与后台下载也不许写真目录** —— 看到"只有几条真实数据类断言红"先问“有没有东西正在写”），**别删**）
+- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**859 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；四条离屏打桩见 §11.5-20 与 §11.5-79（★第④条 v1.42 补：**异步回测与后台下载也不许写真目录** —— 看到"只有几条真实数据类断言红"先问“有没有东西正在写”），**别删**）
 - [ ] **新加了"往用户数据目录写文件"的功能吗？** → ① 用 `tmp + os.replace` 原子写；② 给 `tests/smoke_pages_overlay.py` 的收尾自检加一行文件名（§11.7 上一条）；③ 单条坏数据必须**跳过自己**而不是拖垮整库；
       ④ ⚠ 若它会**自动落盘**（"记住上次"类偏好，如 `backtest_ui` / `desk_ui`）→ **必须在冒烟脚本里
       把偏好单例的 `path` 重定向到临时目录**（只给 `Preferences.save` 打桩**实测不够**，仍被写脏过一次），
@@ -1414,7 +1439,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ③ 关键概念有没有**示例弹窗**？④ 术语有没有换成**用户量纲**（"1 跳"→"0.01 元"、
       "当根"→"当天"）？参数是否只在**有意义的档位**才出现？
       （§10-10 追加条款 / §11.5-22；参考 `fill_mode_oneliner` + `ui/dialogs/fill_model_help.py`）
-- [ ] **改了后台下载（`ui/download_hub.py` / `ui/widgets/download_bar.py` / `download_queue_panel.py`）或四个下载入口（`bulk_download` / `data_manager` / `readiness_flow` / `main_window.downloads`）吗？** → 跑 `py tests/smoke_pages_overlay.py`（**854 项**，含「§7-B11 后台下载」段）。⚠ 四条红线：
+- [ ] **改了后台下载（`ui/download_hub.py` / `ui/widgets/download_bar.py` / `download_queue_panel.py`）或四个下载入口（`bulk_download` / `data_manager` / `readiness_flow` / `main_window.downloads`）吗？** → 跑 `py tests/smoke_pages_overlay.py`（**859 项**，含「§7-B11 后台下载」段）。⚠ 四条红线：
   ① **测前必须把 `download_hub.SyncWorker` 打桩为不 `start()`**（否则跑测试 = 真下载，写脏数据湖并撞 §11.5-79）；
   ② **进度真源只能在 hub**，页面/弹窗/下载条都是投影（只认自己那个 `job_id`）；
   ③ **弹窗与页面不得自己持有 `SyncWorker`**（旧版 `_try_stop_worker` 已退役，有源码级断言盯着）；
@@ -1433,14 +1458,14 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ⚠ 因为 `DownloadJob` / 状态常量 / `SingleSyncGate` 已拆到 `ui/download_jobs.py`（v6.71），
       改这些字段去新文件；`download_hub` 里只留“排队 + 串行执行 + 广播”。
 - [ ] **改了按钮样式 / 新增行内动作按钮吗？**（★v6.71 / §9-F③）→ 只许从
-      `custom_widgets` 取：`flat_qss()` 生成器与 `FLAT_QSS` / `FLAT_QSS_WIDE` / `FLAT_QSS_SMALL` /
-      `FLAT_QSS_DANGER` / `OUTLINE_QSS`；**不许再开私有 `_FLAT_QSS` 副本**（有源码级护栏扫全 `ui/`），
+      **`ui/widgets/styles.py`** 取：`flat_qss()` 生成器与 `FLAT_QSS` / `FLAT_QSS_WIDE` / `FLAT_QSS_SMALL` /
+      `FLAT_QSS_DANGER` / `OUTLINE_QSS`（`custom_widgets` 同名再导出可用但定义在 styles）；**不许再开私有 `_FLAT_QSS` 副本**（有源码级护栏扫全 `ui/`），
       也不许把不同形状（文字型 vs 描边型）强成一张脸 —— 那是视觉变更不是结构统一
 - [ ] **改了数值控件（宽度/步长/样式）吗？** → 一律走 `custom_widgets.double_spin/int_spin` 工厂（v1.42），
       **不许 `setFixedWidth` 钉死宽度**（会把"0.6"截成"0"）；改完跑 `smoke_pages_overlay` 的「§10-9 宽度」段
       （它验"文本区放得下 0.6"+ 全 ui/ 无 `setFixedWidth(64)`）
 - [ ] **动了字体 / 字号 / 代码块等宽字体吗？**（§10-15 字体版权纪律）→ **只能**经
-      `custom_widgets` 的 `UI_FONT_STACK` / `UI_MONO_STACK` / `apply_ui_font()` / `mono_font_css()`；
+      **`ui/widgets/styles.py`** 的 `UI_FONT_STACK` / `UI_MONO_STACK` / `apply_ui_font()` / `mono_font_css()`；
       **绝不许**在页面 QSS / `QFont` 里出现**专有字体名**（微软雅黑 / 宋体 / Consolas …）。
       想确认本机到底用上哪一款 → 看启动日志的 `ui_font_status()` 那行（**没装开源中文字体就回落系统默认**，
       这不算错，但也别假装对齐了样板）

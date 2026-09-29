@@ -76,7 +76,7 @@ DEFAULTS = {
     "backtest_archive": {"auto": True},
     # v1.45（§7-B11 后续 · 续）：**全局下载偏好** —— 批量下载节流参数的**唯一真源**。
     #   所有批量下载入口（数据管理 / 预下载弹窗 / M2/M3）均经 `DownloadHub.submit` 读这一份，
-    #   “一处调、处处生效”（编辑面 = `ui/dialogs/download_settings.py`）。字段：
+    #   “一处调、处处生效”（编辑面 = 设置页「下载与取数」组 · `ui/settings_registry.py`）。字段：
     #   {"interval": 0.6,      # 每请求发起间隔（秒）——串行：每只前等；并发：**全局**发起间隔
     #    "jitter": True,        # 随机抖动开关（±30%），打散固定频率特征
     #    "circuit_breaker": 12, # 连续失败多少次熍断（“疑似限流”）

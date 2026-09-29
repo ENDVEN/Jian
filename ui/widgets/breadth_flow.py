@@ -33,7 +33,7 @@ from data.market_db import DataLakeManager
 from data.scan_store import kline_zone_dir
 from data.sync_service import ZONE_INDEX
 from data.watchlist_store import WatchlistStore
-from ui.download_hub import SingleSyncGate
+from ui.download_jobs import SingleSyncGate   # ★1.59：真源直连（不再经 hub 再导出）
 from ui.widgets.breadth_chart import DEFAULT_CHART_TYPE, DEFAULT_INDEX_STYLE
 from ui.widgets.breadth_layout import DEFAULT_INDEX_CODE, DEFAULT_RANGE, RANGE_PRESETS
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL

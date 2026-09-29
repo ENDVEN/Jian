@@ -25,7 +25,7 @@ from core.utils import (MINUTE_DEPTH_DAYS, MINUTE_PERIODS, is_minute_period,
 from data.sync_service import (ADJUST_QFQ, ZONE_KLINE, ZONE_KLINE_RAW, ZONE_MIN,
                                adjust_label, friendly_fetch_message, minute_key,
                                zone_for_adjust)
-from ui.download_hub import SingleSyncGate
+from ui.download_jobs import SingleSyncGate   # ★1.59：真源直连（不再经 hub 再导出）
 from ui.workers import SingleSyncWorker
 
 # 一级周期档位：日/周/月/**分钟**（选"分钟"才出现二级档位 —— 参数只在有意义的档位出现，§10-10）

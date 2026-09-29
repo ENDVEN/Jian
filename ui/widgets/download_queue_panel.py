@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ui.views.settings_view import open_group   # ★v6.74 S2-2：旧「⚙ 下载设置」→ 跳设置页
-from ui.download_hub import (STATUS_CANCELLED, STATUS_DONE, STATUS_LABELS,
-                             STATUS_QUEUED, STATUS_RUNNING)
+from ui.download_jobs import (STATUS_CANCELLED, STATUS_DONE, STATUS_LABELS,
+                              STATUS_QUEUED, STATUS_RUNNING)   # ★1.59：真源直连（不再经 hub 再导出）
 from ui.widgets.custom_widgets import FLAT_QSS   # ★v6.70 §9-F③ 样式唯一出口
 
 PANEL_WIDTH = 490                    # 与样板一致（490px）

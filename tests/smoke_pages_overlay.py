@@ -4184,22 +4184,29 @@ except Exception as _e11:  # noqa: BLE001
 #   ⇒ 同一件事两个尺寸，正是 §10-9「同类控件同一张脸 + 数值控件最小宽度 ≥ 72px」被破。
 #   修法：宽度收成 `custom_widgets.double_spin / int_spin` 唯一工厂（**只给下限、不钉死宽度**）。
 # ==========================================
-print("\n== §10-9 · 数值控件宽度工厂（v1.42 · v1.45 已迁到下载设置对话框）==")
+print("\n== §10-9 · 数值控件宽度工厂（v1.42 · ★1.59 起验设置页渲染件：旧下载设置对话框已删）==")
 try:
     import pathlib as _pl12
 
     from core.preferences import DEFAULTS as _PDEF12  # noqa: E402
     from core.preferences import preferences as _prefs12  # noqa: E402
-    from ui.dialogs.download_settings import DownloadSettingsDialog as _DSD12  # noqa: E402
+    from ui import settings_registry as _sr12  # noqa: E402
+    from ui.views.settings_view import SettingsView as _SV12  # noqa: E402
     from ui.widgets.custom_widgets import SPIN_MIN_WIDTH as _SMW12  # noqa: E402
     from ui.widgets.custom_widgets import double_spin as _dsp12, int_spin as _isp12
 
-    # v1.45：间隔/熍断旋钮已从两页搬进全局下载设置对话框 —— 宽度断言改验它的控件。
-    _set12 = _DSD12()
+    # ★1.59/§7-B14：旧 download_settings 对话框已删 —— 宽度断言改验**设置页**渲染出的真控件
+    #   （控件一律出自 `settings_render` 工厂 ⇒ 这组断言同时守住"注册表渲染件也走全站工厂"）。
+    _view12 = _SV12()
 
     # ---- ① 真判据：文本区**放得下当前值**（不是"宽度看着顺眼"）----
-    for _tag12, _spin12 in (("下载设置 间隔(秒)", _set12.spin_interval),
-                            ("下载设置 连续失败熍断", _set12.spin_breaker)):
+    for _tag12, _key12 in (("设置页 请求间隔(秒)", "download.interval"),
+                           ("设置页 连续失败熔断", "download.circuit_breaker")):
+        _spin12 = _view12.control_of(_key12)
+        check(f"★ {_tag12}：注册表渲染出数值控件（control_of 命中、出自工厂家族）",
+              _spin12 is not None and hasattr(_spin12, "lineEdit"))
+        if _spin12 is None:
+            continue
         _spin12.resize(_spin12.sizeHint())
         app.processEvents()
         _need12 = _spin12.fontMetrics().horizontalAdvance(_spin12.text())
@@ -4216,13 +4223,21 @@ try:
     #     改过间隔就**假红**（非产品 bug：规格与用户数据混在了同一条断言里）。
     _cur_int12 = float((_prefs12.get("download_prefs") or {}).get(
         "interval", _PDEF12["download_prefs"]["interval"]))       # ★v6.74 兜底也取**规格常量**
+    _itv12 = _sr12.find("download.interval")
+    _spin_iv12 = _view12.control_of("download.interval")
     check("★ v6.74（B 档）：间隔规格常量 0.5、范围 0~10、步长 0.1、预填==已存偏好（口径原样+隔离）",
           abs(float(_PDEF12["download_prefs"]["interval"]) - 0.5) < 1e-9
-          and (_set12.spin_interval.minimum(), _set12.spin_interval.maximum()) == (0.0, 10.0)
-          and abs(_set12.spin_interval.singleStep() - 0.1) < 1e-9
-          and abs(_set12.spin_interval.value() - _cur_int12) < 1e-9)
+          and (_spin_iv12.minimum(), _spin_iv12.maximum()) == (0.0, 10.0)
+          and abs(_spin_iv12.singleStep() - 0.1) < 1e-9
+          and abs(_spin_iv12.value() - _cur_int12) < 1e-9)
+    check("★ 间隔项落点唯一（where=download_prefs.interval）且渲染件范围与注册表一致",
+          _itv12 is not None and _itv12.where == "download_prefs.interval"
+          and (_spin_iv12.minimum(), _spin_iv12.maximum())
+          == (float(_itv12.lo), float(_itv12.hi)))
+    _spin_cc12 = _view12.control_of("download.concurrency")
     check("★ 并发框范围 1~4（K≤4，与不封 IP 取向一致）",
-          (_set12.spin_concurrency.minimum(), _set12.spin_concurrency.maximum()) == (1, 4))
+          _spin_cc12 is not None
+          and (_spin_cc12.minimum(), _spin_cc12.maximum()) == (1, 4))
 
     # ---- ③ 工厂自身的契约（新页面误用也能被发现）----
     _probe12 = _dsp12(value=1.0, lo=0.0, hi=9.9, decimals=1)
@@ -4242,14 +4257,14 @@ try:
           not _bad12)
     _bulk12 = _pl12.Path('ui/dialogs/bulk_download.py').read_text(encoding='utf-8')
     _dm12b = _pl12.Path('ui/views/data_manager.py').read_text(encoding='utf-8')
-    _set12src = _pl12.Path('ui/dialogs/download_settings.py').read_text(encoding='utf-8')
-    check("★ 下载参数已收进设置对话框：bulk/data_manager 不再各自放间隔旋钮，"
-          "download_settings 走工厂、不钉死宽度（否则又会出现“这页 64、那页 82”）",
+    _render12 = _pl12.Path('ui/widgets/settings_render.py').read_text(encoding='utf-8')
+    check("★ 下载参数唯一编辑面=设置页：bulk/data_manager 不再各自放间隔旋钮，"
+          "渲染工厂走全站工厂、不钉死宽度（否则又会出现“这页 64、那页 82”）",
           'spin_interval' not in _bulk12 and 'spin_interval' not in _dm12b
-          and 'double_spin(' in _set12src
-          and 'spin_interval.setFixedWidth' not in _set12src
-          and 'NoWheelDoubleSpinBox()' not in _set12src)
-    _set12.deleteLater()
+          and 'double_spin(' in _render12
+          and 'setFixedWidth' not in _render12
+          and 'NoWheelDoubleSpinBox()' not in _render12)
+    _view12.deleteLater()
 except Exception as _e12:  # noqa: BLE001
     check(f"§10-9 数值控件宽度断言整段抛异常: {type(_e12).__name__}: {_e12}", False)
 
@@ -4267,8 +4282,9 @@ try:
     import re as _re13
 
     from ui import download_hub as _dhub13  # noqa: E402
-    from ui.download_hub import (STATUS_DONE, STATUS_QUEUED, STATUS_RUNNING,  # noqa: E402
-                                DownloadHub)
+    from ui.download_jobs import (STATUS_DONE, STATUS_QUEUED,  # noqa: E402  ★1.59 真源直连
+                                  STATUS_RUNNING)
+    from ui.download_hub import DownloadHub
     from PyQt6.QtWidgets import (QDialog as _QDialog13,  # noqa: E402
                                  QLabel as _QLabel13,
                                  QProgressBar as _QProgressBar13,
@@ -4509,7 +4525,7 @@ try:
         app.processEvents()
 
         # ---- ⑭ 单只互斥收敛成唯一公共件 SingleSyncGate ----
-        from ui.download_hub import SingleSyncGate  # noqa: E402
+        from ui.download_jobs import SingleSyncGate  # noqa: E402  # ★1.59 真源直连
 
         hub6 = DownloadHub()
         hub6.submit("批量占住 600519", ["600519"], origin="t")
@@ -4697,6 +4713,7 @@ try:
 
     from data.sync_service import ThrottlePolicy as _TP19  # noqa: E402
     from ui import download_hub as _dh19  # noqa: E402
+    from ui import download_jobs as _dj19  # noqa: E402  # ★1.59：真源直连（hub 过渡再导出已撤）
     from ui import workers as _wk19  # noqa: E402
     from ui.widgets.download_queue_panel import DownloadQueuePanel as _QP19  # noqa: E402
 
@@ -4777,7 +4794,7 @@ try:
     _j19 = _hub19.jobs()[0]
     _j19.stats = {"symbols_attempted": ["B3", "B1", "B5"], "symbols_failed": ["B5"],
                   "ok": 2, "fail": 1, "skipped": 0}
-    _j19.status = _dh19.STATUS_CANCELLED
+    _j19.status = _dj19.STATUS_CANCELLED
     check("★ 续传按**真没碰过**算（乱序样本）：期望 [B2, B4]、实测 %s（旧的 symbols[done:] 会错切成 [B4, B5]）"
           % _j19.unprocessed(), _j19.unprocessed() == ["B2", "B4"])
     check("★ `rest_count()` 不构集合也能对上（面板每拍都算，不能埋 O(n)）",
@@ -4790,8 +4807,8 @@ try:
           and _n19.force_full is _j19.force_full and _n19.policy is _j19.policy)
     check("★ 任务名用人话（动作 + 对象，不甩“断点续传”这类术语，§10-10）",
           _n19 is not None and _n19.label.startswith("继续未完成 ·"))
-    _j19b = _dh19.DownloadJob(id=9001, label="已全部跑完", symbols=["Z1", "Z2"],
-                              status=_dh19.STATUS_CANCELLED,
+    _j19b = _dj19.DownloadJob(id=9001, label="已全部跑完", symbols=["Z1", "Z2"],
+                              status=_dj19.STATUS_CANCELLED,
                               stats={"symbols_attempted": ["Z2", "Z1"]})
     _hub19._jobs.append(_j19b)
     check("★ 已全部碰过 ⇒ 不投空任务（返回 0）", _hub19.continue_unfinished(_j19b.id) == 0)
@@ -4799,16 +4816,16 @@ try:
 
     # ---- ④ 面板判据：被中断才给「继续」，“完成但有失败”不得误判 ----
     _panel19 = _QP19(_hub19)
-    _btn19 = _panel19._row_action({"id": 1, "status": _dh19.STATUS_CANCELLED,
-                                   "failed": 1, "rest": 2}, _dh19.STATUS_CANCELLED)
+    _btn19 = _panel19._row_action({"id": 1, "status": _dj19.STATUS_CANCELLED,
+                                   "failed": 1, "rest": 2}, _dj19.STATUS_CANCELLED)
     check("★ 被中断且还有没轮到的 ⇒ 行内按钮是「继续 2 只」（失败那批仍由底部「只重试失败」兼顾）",
           _btn19.text() == "继续 2 只" and "同一份参数" in _btn19.toolTip())
-    _btn2 = _panel19._row_action({"id": 2, "status": _dh19.STATUS_DONE,
-                                  "failed": 3, "rest": 0}, _dh19.STATUS_CANCELLED)
+    _btn2 = _panel19._row_action({"id": 2, "status": _dj19.STATUS_DONE,
+                                  "failed": 3, "rest": 0}, _dj19.STATUS_CANCELLED)
     check("★ “完成但有失败”被 `_state_of` 映射成同一个橙色档 ⇒ 绝不可当成可续传（只能重试失败）",
           _btn2.text() == "只重试失败")
-    _btn3 = _panel19._row_action({"id": 3, "status": _dh19.STATUS_DONE,
-                                  "failed": 0, "rest": 5}, _dh19.STATUS_DONE)
+    _btn3 = _panel19._row_action({"id": 3, "status": _dj19.STATUS_DONE,
+                                  "failed": 0, "rest": 5}, _dj19.STATUS_DONE)
     check("★ 正常完成（即使数字上有差）不给续传入口，不给“看得到却没用”的按钮",
           _btn3.text() == "" or not hasattr(_btn3, "text"))
 
@@ -4818,8 +4835,8 @@ try:
     _nid19b = _hub19.continue_unfinished(_j19.id)
     check("★ 上一次续传**还在途** ⇒ 再点只把它还回来（不重投同一批：白抓 / `force_full` 时整段重下）",
           _nid19b == _nid19 and len(_hub19.jobs()) == 3)
-    _btn4 = _panel19._row_action({"id": 4, "status": _dh19.STATUS_CANCELLED, "failed": 0,
-                                  "rest": 2, "continued": True}, _dh19.STATUS_CANCELLED)
+    _btn4 = _panel19._row_action({"id": 4, "status": _dj19.STATUS_CANCELLED, "failed": 0,
+                                  "rest": 2, "continued": True}, _dj19.STATUS_CANCELLED)
     check("★ 已续传的旧行 ⇒ 按钮变**不可点**的「已续传」（旧版会一直挂着可点的「继续 N 只」）",
           _btn4.text() == "已续传" and not _btn4.isEnabled())
 
@@ -5040,10 +5057,18 @@ try:
                     break
     check(f"★ §10-15：ui/ 与 design/ 样板都无「专有字体名写进 QSS/QFont」"
           f"（越界 {len(_hits15)} 处：{_hits15[:3]}）", not _hits15)
-    _cw15 = _pl15.Path("ui/widgets/custom_widgets.py").read_text(encoding="utf-8")
+    _cw15 = _pl15.Path("ui/widgets/styles.py").read_text(encoding="utf-8")
     check("★ §10-15：字体仍只有**一个出口**（界面栈 / 等宽栈 / 磅值版 / 页面根钉一次 / 状态自检）",
           all(_n in _cw15 for _n in ("UI_FONT_STACK", "UI_MONO_STACK", "apply_ui_font",
                                      "ui_painter_font", "mono_font_css", "ui_font_status")))
+    # ★1.59/§7-B14 批3：样式族拆到 styles.py —— 字体定义**不许**搬回 custom_widgets，
+    #   且 custom_widgets 的同名再导出必须仍是同一对象（调用方零改动的契约）。
+    import ui.widgets.custom_widgets as _cwmod15  # noqa: E402
+    import ui.widgets.styles as _st15  # noqa: E402
+    check("★ §10-15：字体定义只在 styles.py（custom_widgets 无定义、再导出同一对象）",
+          'def ui_font(' not in _pl15.Path("ui/widgets/custom_widgets.py").read_text(encoding="utf-8")
+          and _cwmod15.UI_FONT_STACK is _st15.UI_FONT_STACK
+          and _cwmod15.apply_ui_font is _st15.apply_ui_font)
 except Exception as _e15:  # noqa: BLE001
     check(f"§10-15 字体断言整段抛异常: {type(_e15).__name__}: {_e15}", False)
 
@@ -5065,11 +5090,17 @@ try:
              if _req.search(r"(?m)^_FLAT_QSS\s*=", p.read_text(encoding="utf-8", errors="ignore"))]
     check(f"★ §9-F③：`ui/` 内不再有任何私有 `_FLAT_QSS =` 定义（越界 {_priv}）", not _priv)
 
-    _cwq = _plq.Path("ui/widgets/custom_widgets.py").read_text(encoding="utf-8")
+    _cwq = _plq.Path("ui/widgets/styles.py").read_text(encoding="utf-8")
     check("★ §9-F③：样式只有一个出口 = `flat_qss()` 生成器 + 五个命名变体",
           all(_n in _cwq for _n in ("def flat_qss(", "FLAT_QSS = flat_qss()",
                                     "FLAT_QSS_WIDE", "FLAT_QSS_SMALL", "FLAT_QSS_DANGER",
                                     "OUTLINE_QSS =")))
+    # ★1.59/§7-B14 批3：flat 家族定义随样式族拆进 styles.py —— 定义不许回流，再导出同对象。
+    import ui.widgets.custom_widgets as _cwmodq  # noqa: E402
+    import ui.widgets.styles as _stq  # noqa: E402
+    check("★ §9-F③：flat 定义只在 styles.py（custom_widgets 无定义、再导出同一对象）",
+          'def flat_qss(' not in _plq.Path("ui/widgets/custom_widgets.py").read_text(encoding="utf-8")
+          and _cwmodq.FLAT_QSS is _stq.FLAT_QSS)
     _bpq = _plq.Path("ui/widgets/backtest_panes.py").read_text(encoding="utf-8")
     check("★ §9-F③：`backtest_panes` 只 import、不再**定义** `FLAT_QSS`（归属漂移已退役）",
           not _req.search(r"(?m)^FLAT_QSS\s*=", _bpq))
@@ -5508,13 +5539,17 @@ try:
           'ipv4' in _r79['dns'] and 'ipv6' in _r79['dns'])
     _back_ulist79 = _em79.ulist_page
     _em79.ulist_page = lambda codes: [{'f12': '600000', 'f14': '浦发银行', 'f2': 10.0}]
+    _back_cool79 = _em79.em_throttle.is_cooling
+    # ★1.59：本断言只验「探测命中 ⇒ 结论正常」—— 退避状态**隔离**（前面对配段可能留有
+    #   真实失败残留 ⇒ is_cooling 偶发 True 会让本条假红；「受限」分支紧随其后单独验）。
+    _em79.em_throttle.is_cooling = lambda *a, **k: False
     try:
         _ok79 = _em79.self_check(probe=True)
     finally:
         _em79.ulist_page = _back_ulist79
+        _em79.em_throttle.is_cooling = _back_cool79
     check("★ S2-1b：连通性探测**只问 1 只票**（命中 ⇒ ok + 毫秒 + 结论「正常」）",
           _ok79['probe'].get('ok') is True and '正常' in _em79._verdict(_ok79))
-    _back_cool79 = _em79.em_throttle.is_cooling
     _em79.em_throttle.is_cooling = lambda *a, **k: True
     _cool79 = _em79.self_check(probe=False)
     _em79.em_throttle.is_cooling = _back_cool79
@@ -5556,11 +5591,14 @@ try:
           "open_group(" in _src80['下载队列面板']
           and not any(k in _src80['数据管理页'] + _src80['预下载弹窗']
                       for k in ('open_group(', 'btn_settings', 'DownloadSettingsDialog')))
-    _dssrc80 = _pl80.Path('ui/dialogs/download_settings.py').read_text(encoding='utf-8')
-    check("★ S2-2：旧对话框**头部已标降级**（无入口兼容壳，待 §7-B14 删除）+ 指回注册表",
-          '已降级' in _dssrc80 and 'settings_registry' in _dssrc80)
     check("★ S2-2：跳转函数**可安全回退**（无主窗口 ⇒ 回 False，不静默、不弹窗卡测试）",
           _og80(None) is False)
+    # ★1.59/§7-B14：旧对话框**文件已删** —— 负向断言钉死"不许回来"
+    #   （判据收到"写错会长什么样"的代码形状：文件不存在 + 全 ui/ 无残留指称；§11.5-101）
+    _ds_left80 = [str(p) for p in _pl80.Path('ui').rglob('*.py')
+                  if 'DownloadSettingsDialog' in p.read_text(encoding='utf-8')]
+    check("★ §7-B14 批1：旧下载设置对话框已删（文件不存在 + 全 ui/ 无 DownloadSettingsDialog 残留）",
+          not _pl80.Path('ui/dialogs/download_settings.py').exists() and not _ds_left80)
     _view80 = _SV80()
     check("★ S2-2：「下载与取数」组 = 5 个节流项 + 3 个补全项（旧对话框那 5 项一处不落）",
           _view80.count_rows('download') == len(_sr80.items('download')) >= 8

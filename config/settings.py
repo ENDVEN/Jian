@@ -96,6 +96,7 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #   1.45 = §7-B11 后续（续）· 统一下载设置入口（用户：“预下载里调的间隔/并发，M2/M3/数据管理怎么同步？”）：
 #          ① 批量下载节流参数（间隔/抖动/熍断/跳过/并发）收进**一份全局偏好** preferences.download_prefs（唯一真源）；
 #          ② 新建 `ui/dialogs/download_settings.py` 统一点设置对话框（唯一编辑面），预下载弹窗/数据管理/队列面板三处入口都开它；
+#             （★1.59/§7-B14 注：该对话框 S2-2 摘除入口、1.59 删除文件 —— 编辑面现 = 设置页「下载与取数」注册表组）
 #          ③ **删掉**预下载弹窗与数据管理页各自的间隔/抖动/熍断/跳过旋钮（防“两套值”漂移）；M2/M3 自动跟随全局；
 #          ④ `DownloadHub.submit` 无策略⇒走 `download_policy_from_prefs()`；有策略⇒完全尊重。smoke 848 / 636。
 #   1.46 = §7-B12 M2/M3 结果表增强 + 配置资产化 + 接入运行历史（P1–P8 全落地）+ 三处实测修复：
@@ -167,7 +168,7 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #             ④ 关窗 `main_window._shutdown_background_threads()` 统一 cancel+wait 所有 QThread。
 #          smoke 879 / 732。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.57"
+APP_VERSION = "1.59"
 
 # ==========================================
 # 界面配置 (UI Settings)

@@ -4717,7 +4717,6 @@ try:
 
     _bulk8 = _src8("ui", "dialogs", "bulk_download.py")
     _dm8 = _src8("ui", "views", "data_manager.py")
-    _set8 = _src8("ui", "dialogs", "download_settings.py")
     _qp8 = _src8("ui", "widgets", "download_queue_panel.py")
     check("★ 预下载弹窗已去掉私有旋钮：不再构造 ThrottlePolicy / 不再有 spin_interval",
           "ThrottlePolicy(" not in _bulk8 and "spin_interval" not in _bulk8)
@@ -4727,10 +4726,15 @@ try:
           "open_group(" in _qp8
           and not any("open_group(" in t or "btn_settings" in t or "DownloadSettingsDialog" in t
                       for t in (_bulk8, _dm8)))
-    check("★ 设置对话框写盘键形正确（preferences.set('download_prefs', {5 项})）",
-          'preferences.set("download_prefs"' in _set8
-          and all(f'"{k}"' in _set8 for k in
-                  ("interval", "jitter", "circuit_breaker", "skip_fresh", "concurrency")))
+    # ★1.59/§7-B14：旧设置对话框已删 —— "写盘键形"改钉**注册表落点**（唯一编辑面 = 设置页）：
+    #   5 个节流项必须齐，且 where 全部落到 download_prefs.<子键>（写盘形状由注册表唯一负责）。
+    from ui import settings_registry as _sr8b  # noqa: E402
+
+    _dl8 = {k: _sr8b.find(f"download.{k}") for k in
+            ("interval", "jitter", "circuit_breaker", "skip_fresh", "concurrency")}
+    check("★ 设置页注册表落点键形正确（5 项齐 + where=download_prefs.<同名子键>）",
+          all(v is not None for v in _dl8.values())
+          and all(_dl8[k].where == f"download_prefs.{k}" for k in _dl8))
 except Exception as _e8:  # noqa: BLE001
     check(f"§7-B11 后续 统一下载设置入口断言整段抛异常: {type(_e8).__name__}: {_e8}", False)
 

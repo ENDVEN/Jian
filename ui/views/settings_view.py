@@ -76,6 +76,7 @@ class SettingsView(QWidget):
         self._btns: dict = {}
         self._pages: dict = {}
         self._rows: dict = {}          # gid -> [row, ...]（断言 / reload 用）
+        self._controls: dict = {}      # item.key -> 控件（只读查询 control_of；断言 / reload 用）
         self._status: QLabel = None
 
         root = QHBoxLayout(self)
@@ -194,6 +195,7 @@ class SettingsView(QWidget):
         lay.addWidget(desc, 1)
 
         control = build_control(item, self._on_change)
+        self._controls[item.key] = control
         lay.addWidget(control, 0, Qt.AlignmentFlag.AlignRight)
         return row
 
@@ -283,6 +285,7 @@ class SettingsView(QWidget):
             self._stack.removeWidget(w)
             w.deleteLater()
         self._rows.clear()
+        self._controls.clear()
         self._pages.clear()
         for g in reg.groups():
             page = self._build_group_page(g)
@@ -302,3 +305,11 @@ class SettingsView(QWidget):
     def count_rows(self, gid: str) -> int:
         """该分组渲染出的**设置行数**（= 注册表项数；断言"加一行即多一行"就用它）。"""
         return len(self._rows.get(gid) or [])
+
+    def control_of(self, key: str):
+        """按注册表 key 取**已渲染的控件**（只读查询；找不到返回 None）。
+
+        ★1.59 / §7-B14：旧 `download_settings` 对话框删除后，宽度/范围这类
+        "对真控件"的断言改从设置页取（控件一律出自 `settings_render` 工厂）。
+        """
+        return self._controls.get(key)

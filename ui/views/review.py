@@ -35,8 +35,8 @@ from ui.widgets.review_charts import ReviewCharts
 from ui.widgets.review_editor import ReviewEditor
 from ui.widgets.review_flow import ReviewFlow
 from ui.widgets.review_layout import ReviewLayout
-from ui.widgets.review_playback import (MAX_ANCHOR_GAP_DAYS,  # noqa: F401
-                                        PLAYBACK_CONTEXT_DAYS, ReviewPlayback)
+from ui.widgets.review_playback import PLAYBACK_CONTEXT_DAYS, ReviewPlayback
+# ★1.59/§7-B14：MAX_ANCHOR_GAP_DAYS 曾在此再导出、已无消费者 ⇒ 撤（真源 review_playback）
 
 # 偏好键：复盘页界面状态（与 `backtest_ui` / `desk_ui` 同源做法：记住上次）
 REVIEW_UI_KEY = "review_ui"

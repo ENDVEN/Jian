@@ -34,7 +34,8 @@ from data.sync_service import (ZONE_KLINE, abort_reason_text,
                                estimate_seconds, format_duration,
                                friendly_constituent_message)
 from data.trade_calendar import latest_settled_trading_day, trading_days_between
-from ui.download_hub import download_policy_from_prefs, hub_of
+from ui.download_hub import download_policy_from_prefs
+from ui.download_jobs import hub_of   # ★1.59：真源直连
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 
 # ★v6.66（用户 2026-09-25 问："回测里更新到最近交易日，怎么保证是前复权还是不复权？"）

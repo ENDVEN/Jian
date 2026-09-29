@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLa
                              QProgressBar, QPushButton, QSizePolicy, QVBoxLayout,
                              QWidget)
 
-from ui.download_hub import STATUS_CANCELLED, STATUS_DONE, STATUS_QUEUED, STATUS_RUNNING
+from ui.download_jobs import STATUS_CANCELLED, STATUS_DONE, STATUS_QUEUED, STATUS_RUNNING   # ★1.59：真源直连
 from ui.widgets.custom_widgets import (FLAT_QSS,          # ★v6.70 §9-F③ 样式唯一出口
                                         SYNC_ACTION_LABEL)
 

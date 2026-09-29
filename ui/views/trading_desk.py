@@ -69,15 +69,14 @@ from ui.widgets.chart_style import apply_pokorny_style
 from ui.widgets.chip_mru import normalize_recent
 from ui.widgets.desk_annotations import DeskAnnotations
 from ui.widgets.desk_chips import DeskChips
-from ui.widgets.desk_data import (MINUTE_SEGMENTS, PERIOD_CHOICES,  # noqa: F401
-                                  PERIOD_GROUP_MIN, PERIOD_GROUPS, DeskData)
+# ★1.59/§7-B14：MINUTE_SEGMENTS / PERIOD_CHOICES 曾在此再导出、已无消费者 ⇒ 撤（真源 desk_data）
+from ui.widgets.desk_data import PERIOD_GROUP_MIN, PERIOD_GROUPS, DeskData
 from ui.widgets.desk_formula import DeskFormula
-from ui.widgets.desk_layers import (DEFAULT_VISIBLE_BARS,  # noqa: F401
-                                    SUB_PLOT_HEIGHT, DeskLayers)
+# ★1.59/§7-B14：DEFAULT_VISIBLE_BARS 同上 ⇒ 撤（真源 desk_layers）
+from ui.widgets.desk_layers import SUB_PLOT_HEIGHT, DeskLayers
 from ui.widgets.desk_layout import RAIL_ITEMS, DeskLayout
 from ui.widgets.layer_model import LayerModel
-from ui.widgets.desk_panel import (PANEL_DEFAULT_WIDTH,  # noqa: F401
-                                   RAIL_TOTAL_WIDTH, DeskPanelController)
+from ui.widgets.desk_panel import PANEL_DEFAULT_WIDTH, RAIL_TOTAL_WIDTH, DeskPanelController
 from ui.widgets.desk_readout import DeskReadout
 from ui.widgets.desk_watch import DeskWatch
 

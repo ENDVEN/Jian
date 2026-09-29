@@ -57,7 +57,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 ├── docs/                # 【文档归档：给"未来的我"读；app 不 import，人看】（v6.32 分层重构新增）
 │   ├── JIAN_HISTORY.md       # 时间线：版本叙事（v5.1→v6.32）+ §8 完整 changelog（**历史数字冻结**）
 │   ├── JIAN_PLAYBOOK.md      # §11.5「最容易踩的坑」全量清单（**编号不变**）
-│   └── JIAN_ARCHIVE.md       # 已完结的 6 份主案（§7-B3…B9）+ 旧审计发现（§9 版本子节）+ §11.6 历史块
+│   ├── JIAN_ARCHIVE.md       # 已完结的 6 份主案（§7-B3…B9）+ 旧审计发现（§9 版本子节）+ §11.6 历史块
+│   ├── JIAN_SWEEP_PLAN.md    # §7-B15 参数稳健性研究 · 实现级方案书（设计 v3 已定案）
+│   └── JIAN_CLEANUP.md       # ★1.59 新增：§7-B14 大扫除台账（触发判据 / 清单 / 分批与证据）
 ├── config/
 │   └── settings.py      #     全局常量：APP_NAME、APP_VERSION=1.28(跟随 git，与 version.json 同步)、颜色、
 │                        #      INITIAL_CAPITAL=1e6、USER_DATA_DIR=~/.jian_data、UPDATE_CHECK_URL
@@ -168,8 +170,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #      **进度唯一真源**（页面与弹窗只做投影）；★v6.70 `_ORPHAN_WORKERS` =
     │                    #      退出超时的 worker 挂处（摘 parent 后由模块级列表握住引用，防崩）。
     │                    #      ⚠ **★v6.71 / §4 拆件**：`DownloadJob`、任务状态常量、`hub_of`、
-    │                    #      `SingleSyncGate` 已搬去下面的 `download_jobs.py`（本文件 re-export
-    │                    #      ⇒ 旧 import 路径零改动）；本文件只剩“排队 + 串行执行 + 广播”
+    │                    #      `SingleSyncGate` 已搬去下面的 `download_jobs.py`；
+    │                    #      **★1.59：hub 的过渡 re-export 已撤 ⇒ 外部一律直连 `ui.download_jobs`**；
+    │                    #      本文件只剩“排队 + 串行执行 + 广播”
     │                    #      + `is_busy_for` / `last_finished` / `_settle_activity`（取消后也要收角标）；
     │                    #      任务快照与回执文案仍只走 `abort_reason_text` + `failure_hint`
     ├── download_jobs.py # ★**v6.71 新增**（§4 体积债：从 `download_hub.py` 拆出，**纯搬家零行为改动**）：
@@ -185,11 +188,14 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #      ConstituentsWorker(成分股)/FuturesImportWorker(交割单)/
     │                    #      CrossSectionWorker(M2/M3：分块+进度+取消+job_id 回包)
     │                    #      + **JobGuard 竞态守卫**（只接受最新一次任务的回包，§9-O5）
-    ├── widgets/         # custom_widgets.py(K线图元/NoWheel控件族/悬浮删除/SPINBOX_QSS
+    ├── widgets/         # ★1.59 新增 styles.py(**全站 QSS / 字体栈唯一定义处**：SPINBOX_QSS /
+│                    #   combo·flat·outline·chip·segment·accord·recipe 全家族 / UI_FONT_STACK；
+│                    #   custom_widgets 对其公开名做同名再导出)
+│                    # custom_widgets.py(K线图元/NoWheel控件族/悬浮删除/数值控件工厂
     │                    #   + ★v1.42 **数值控件唯一工厂**：`SPIN_MIN_WIDTH=72` + `double_spin()/int_spin()`
     │                    #     （只给 minimumWidth、**绝不 setFixedWidth** —— 钉死宽度会把"0.6"截成"0"）
-    │                    #   + ★v1.46 **界面字体唯一出口**（§10-15 字体版权纪律）：`UI_FONT_STACK` /
-    │                    #     `UI_MONO_STACK` / `apply_ui_font()` / `mono_font_css()` / `ui_font_status()`
+    │                    #   + ★v1.46 界面字体出口（§10-15 字体版权纪律）：**★1.59 起定义在 styles.py**：
+    │                    #     `UI_FONT_STACK` / `UI_MONO_STACK` / `apply_ui_font()` / `ui_font_status()`
     │                    #     —— **禁止点名专有字体**（雅黑/宋体/Consolas）；**只"点菜"不"捆绑"**：
     │                    #     一款都没装 ⇒ 回落系统默认（不报错、不显方框）
     │                    #   + ★v1.43 `download_bar.py`（底部下载条：空闲 hide、长文案进 tooltip、
@@ -394,11 +400,11 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | 加一个技术指标（画图用，非公式） | `core/indicators.py`：`REGISTRY` + `OUTPUTS` |
 | 加一个数据湖 zone | `data/market_db.py` 的 `self.zones` 字典 |
 | 加一个用户偏好 | `core/preferences.py`：`DEFAULTS` 加 key 即可 |
-| 改数值控件外观 | `ui/widgets/custom_widgets.py` 的 `SPINBOX_QSS`（**唯一可改点**，勿就地写 QSS，§10-9） |
+| 改数值控件外观 | `ui/widgets/styles.py` 的 `SPINBOX_QSS`（**唯一可改点**，勿就地写 QSS，§10-9；`custom_widgets` 同名再导出） |
 | 改数值控件**宽度/步长**（截字、箭头热区） | **`custom_widgets.SPIN_MIN_WIDTH` + `double_spin()` / `int_spin()` 唯一工厂**（v1.42/§10-9）：只给 `minimumWidth`、**绝不 `setFixedWidth`**（钉死宽度会把"0.6"截成"0"，真实事故）。步长跟小数位自适应；要特殊步长用 `step=` 参数，**不要回退到就地钉宽度**；有源码级断言盯着 `setFixedWidth(64)` |
-| 改**界面字体 / 字号 / 等宽（代码块）字体** | **`ui/widgets/custom_widgets.py` 一处**（v1.46/1.47 · **§10-15 字体版权纪律**）：`UI_FONT_STACK` / `UI_MONO_STACK` / `apply_ui_font(widget)` / `ui_painter_font(pt)` / `mono_font_css()` / `ui_font_status()`。**禁止**在页面 QSS 或 `QFont` 里写字体族字面量，**尤其禁止专有字体名**（雅黑 / 宋体 / Consolas / Arial）；本机实际用上哪一款看启动日志（有源码级断言扫全 `ui/` 守门） |
+| 改**界面字体 / 字号 / 等宽（代码块）字体** | **`ui/widgets/styles.py` 一处**（v1.46/1.47 上收 · **★1.59 拆到 styles** · **§10-15 字体版权纪律**）：`UI_FONT_STACK` / `UI_MONO_STACK` / `apply_ui_font(widget)` / `ui_painter_font(pt)` / `mono_font_css()` / `ui_font_status()`。**禁止**在页面 QSS 或 `QFont` 里写字体族字面量，**尤其禁止专有字体名**（雅黑 / 宋体 / Consolas / Arial）；本机实际用上哪一款看启动日志（有源码级断言扫全 `ui/` 守门） |
 | 改**后台下载 / 队列 / 进度呈现**（v1.43/§7-B11） | 任务与调度 = **`ui/download_hub.py`（唯一真源）**：串行 K=1、去重入队（键含 `min_date`/档力度）、`cancel/retry_failures`、**`continue_unfinished`（★v6.71 续传真没碰过的那批）**、退出 `shutdown(on_tick=…)`；**任务的形状与文案 = `ui/download_jobs.py`（★v6.71 拆出）**；底部条 = `ui/widgets/download_bar.py`；队列面板 = `ui/widgets/download_queue_panel.py`（非模态）；主窗口接线 = `main_window.py` 的 `self.downloads` / `show_download_queue()` / `closeEvent`。**⚠ 弹窗与页面不得自己持有 `SyncWorker`**（进度一律订阅 `job_progress/job_finished` 做投影）；**⚠ 测前必须把 `download_hub.SyncWorker` 打桩为不 `start()`**（否则跑测试=真下载，写脏数据湖并撞 §11.5-79） |
-| 改**单只同步与批量下载的互斥**（v1.43 收口） | **`ui/download_jobs.py` 的 `SingleSyncGate`（唯一实现，别再手写 `note_single/release_single`；★v6.71 从 hub 拆出，旧 import 路径仍可用）**：`blocked_by(sym, zone)` 问一句 → `hold(sym, zone)` 占位（幂等）→ `release()` 释放（可重复调）。四个调用点：`desk_data.py` / `backtest_flow.py`（指数 + 个股两个 gate）/ `breadth_flow.py`。⚠ 漏释放 = 该标的**永久**被判"有人在抓"（界面上看不出原因），`smoke_pages_overlay` 有源码级断言钉住"只有 hub 里能出现 `note_single(`" |
+| 改**单只同步与批量下载的互斥**（v1.43 收口） | **`ui/download_jobs.py` 的 `SingleSyncGate`（唯一实现，别再手写 `note_single/release_single`；★v6.71 从 hub 拆出；★1.59 起 hub 不再再导出 ⇒ **直连本模块**）**：`blocked_by(sym, zone)` 问一句 → `hold(sym, zone)` 占位（幂等）→ `release()` 释放（可重复调）。四个调用点：`desk_data.py` / `backtest_flow.py`（指数 + 个股两个 gate）/ `breadth_flow.py`。⚠ 漏释放 = 该标的**永久**被判"有人在抓"（界面上看不出原因），`smoke_pages_overlay` 有源码级断言钉住"只有 hub 里能出现 `note_single(`" |
 | 改回测区间档位 | `ui/views/backtest.py` 的 `_PRESET_ORDER` + `_date_from_preset`（含 2016 下沿） |
 | 改 Dashboard 日历热力图 | `ui/widgets/calendar_heatmap.py`（纯手绘控件）+ `dashboard.py` 的 `_prepare_calendar` / `_render_calendar` |
 | 增删/清理数据湖缓存 | 原语在 `data/market_db.py`；页面在 `ui/views/data_manager.py`（⚠ 删完要 `_rescan` 刷新） |
@@ -451,5 +457,5 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | 改回测结果导出 | CSV：**`ui/widgets/backtest_export.py`** 的 `compose_result_csv`（参数快照+逐笔，**不写逐日净值**；页面留同名转发）+ `build_daily_series`（逐日净值+买卖点共同源，供 xlsx）；**xlsx（内嵌净值曲线图+买卖点，openpyxl）：`ui/widgets/backtest_xlsx.py`**（可见「净值曲线」只放图 + 隐藏「净值数据」放逐日行；`_build_workbook` 与存盘解耦）；PNG 报告图：**`ui/widgets/backtest_report.py`**（离屏 grab）；标签/配色/风控文案只改 **`core/backtest.py`**（三处同源）。⚠ CSV 纯文本不能内嵌图，“看图”靠 xlsx/PNG |
 | 改回测历史存档 | 存储 = **`data/backtest_archive.py`**（`BacktestArchive` save/list/load/set_pinned/delete + `_evict` 滞动淘汰 + uuid 文件名防注入 + 单文件≤2MB；不可变快照 + `_index.json` 轻量索引，**读路径不写盘**；`sample_equity` **端点保底 + 并入成交日**）；**版式/渲染 = `ui/widgets/backtest_history_ui.py`**（`HistoryFilterBar`/`HistoryTable`/`MiniEquityChart`/`HistoryPreviewPane`/`HistorySettingsBar`）；**页面薄壳 = `ui/views/backtest_history.py`**（市场回测页第4子页，列表+预览+载入查看/复用/重跑/**送行情页 —— 仅 M1**（M2/M3 是统计口径、不针对个股，v1.46 P8 按用户拍板撤销；`_on_send_to_market` 动作层仍自校验 kind）/★/删）；接线在 `backtest_flow._auto_archive`/`archive_now`（存 `build_record(result, _last_meta, config=_frozen_config(), source=)`，`_last_config` 在 `start_backtest` **发起瞬间定格**）；M1 视图 `show_archived`（只读回放：现场保存/恢复 + 预览期禁导出 + `_preview_bar`）/`exit_preview`/`load_archive_config`/`save_to_history`（导出菜单「💾 存为历史快照」）；结果区 `_render_equity` 见 `buy_at`/`sell_at` 列即画买卖点散点；开关键 `backtest_archive.auto`。⚠ 新增写用户目录文件→防污染自检名单已含 `backtest_results` |
 | 判断"这笔是赚还是亏"（任何着色/正负号/标记色） | **`core/utils.record_net_amount(record)`**（v6.9）—— 净额 = 平仓盈亏 − 手续费的**唯一取值口径**。**禁止**再手写 `net_profit > 0` 或 `net_profit - commission`（§5.3-B / §9-P1） |
-| 改下拉/日期等复合控件的外观 | **`ui/widgets/custom_widgets.py`**：用生成器 `combo_qss()` / `date_edit_qss()` 造新变体，或直接引用 8 个具名常量（`COMBO_QSS` / `COMBO_QSS_SMALL` / `COMBO_QSS_ACCENT` / `COMBO_QSS_EDIT` / `COMBO_QSS_EDIT_OK` / `LINE_COMBO_QSS` / `DATEEDIT_QSS_WARN` / `DIALOG_INPUT_QSS`）。**业务页面禁止就地 setStyleSheet**，且 `::drop-down` 与 `::down-arrow` 必须成对（v6.9：否则箭头消失，§10-9） |
+| 改下拉/日期等复合控件的外观 | **`ui/widgets/styles.py`**（★1.59 起）：用生成器 `combo_qss()` / `date_edit_qss()` 造新变体，或直接引用 8 个具名常量（`COMBO_QSS` / `COMBO_QSS_SMALL` / `COMBO_QSS_ACCENT` / `COMBO_QSS_EDIT` / `COMBO_QSS_EDIT_OK` / `LINE_COMBO_QSS` / `DATEEDIT_QSS_WARN` / `DIALOG_INPUT_QSS`）。**业务页面禁止就地 setStyleSheet**，且 `::drop-down` 与 `::down-arrow` 必须成对（v6.9：否则箭头消失，§10-9） |
 | **给图表加自适应坐标轴**（刻度随缩放变密/换格式、纵轴跟随可视区间） | **`ui/widgets/adaptive_axis.py`（§7-B4 · v6.15）一处**：`attach_date_axis(pane, dates / texts, y_provider=…)`、`follow_y(pane, provider)`、`attach_all(host, dates, providers_by_pane)`。页面只写 `provider(i0, i1) -> (lo, hi)`（回答"这个窗格在可视区间内数值范围是多少"）。**禁止再手写 `setTicks` / `setYRange`**；日期格式梯子只在该文件的 `choose_date_format`（将来分钟线只改这里） |

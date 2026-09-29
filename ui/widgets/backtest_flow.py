@@ -32,7 +32,7 @@ from data.akshare_feed import is_index_symbol, is_stock_code
 from data.backtest_archive import SOURCE_AUTO, SOURCE_MANUAL, BacktestArchive, build_record
 from data.sync_service import ZONE_INDEX, ZONE_KLINE, friendly_fetch_message
 from data.trade_calendar import latest_settled_trading_day
-from ui.download_hub import SingleSyncGate
+from ui.download_jobs import SingleSyncGate   # ★1.59：真源直连（不再经 hub 再导出）
 from ui.workers import BacktestRunWorker, CalendarWorker, SingleSyncWorker
 
 logger = logging.getLogger(__name__)

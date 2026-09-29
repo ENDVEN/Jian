@@ -36,8 +36,9 @@ from ui.widgets.annotation_items import (_ClickableText, _RegionBand, connect, h
                                          infinite, points_to_xy)
 # ★v6.29（§4 处置）：上下文对象 + 落点 + 回读 + 回归几何统一搬进 `annotation_layouts`。
 #   ⚠ 这几个名字**历史上在本文件定义**（交互层/冒烟仍从 `shapes` 取，如
-#     `shapes.PlaceCtx` / `shapes.DrawCtx`）⇒ 这里**再导出**一份（§11.7：公共面不改名）。
-from ui.widgets.annotation_layouts import (DrawCtx, PlaceCtx,  # noqa: F401
+#     `shapes.PlaceCtx` / `shapes.DrawCtx`）⇒ 保留经本模块可达（★1.59：全部为规格表自用，
+#     noqa 已摘；annotation_layer 仍以 `shapes.DrawCtx/PlaceCtx` 引用）。
+from ui.widgets.annotation_layouts import (DrawCtx, PlaceCtx,
                                            fit_from_x, normalize_reg_channel, place_band,
                                            place_box, place_channel, place_extremes,
                                            place_fan, place_hray, place_head_shoulder,

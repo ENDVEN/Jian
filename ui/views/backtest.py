@@ -60,13 +60,14 @@ from data.akshare_feed import is_index_symbol, is_stock_code
 from data.strategy_store import StrategyStore
 from ui.settings_registry import get_setting   # ★v6.74 S2-4：默认区间取设置页（唯一真源）
 from ui.widgets.custom_widgets import (FLAT_QSS, LINE_COMBO_QSS, NoWheelComboBox,
-                                        NoWheelDateEdit)
+                                        NoWheelDateEdit, hint_icon,
+                                        mini_label)   # ★1.59：构件真源直连（不再经 panes 转手）
 from ui.widgets.formula_library import FormulaLibraryDialog
 # 1.22 / §9-L：本页已把「编辑卡片 + 抽屉 / 摘要条 / 结果区 / 导出 / 运行流程」拆出独立模块，
 #   自己只做装配与接线（视图层四件套的落点见各模块 docstring）。
 from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, ConditionPane,
                                        EditDrawer, FillPane, FunctionPane, IndexPane,
-                                       RiskPane, hint_icon, mini_label)
+                                       RiskPane)
 from ui.widgets.backtest_summary_bar import SummaryBar
 from ui.widgets.backtest_result import BacktestResultArea
 from ui.widgets.backtest_flow import BacktestFlow

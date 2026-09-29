@@ -41,10 +41,10 @@ from data.sync_service import (DEFAULT_DOWNLOAD_CONCURRENCY, ZONE_KLINE,
 from ui.workers import SyncWorker
 
 # ★v6.70 / §4 体积债：任务形状、状态口径、单只互斥已拆到 `ui/download_jobs.py`
-#   （纯搬家）。这里**再导出**一遍 ⇒ 既有 `from ui.download_hub import ...` 零改动。
-from ui.download_jobs import (DownloadJob, SingleSyncGate, hub_of,  # noqa: F401
-                              STATUS_QUEUED, STATUS_RUNNING, STATUS_DONE,
-                              STATUS_CANCELLED, STATUS_LABELS,
+#   （纯搬家）。★1.59/§7-B14：这里的**过渡再导出已撤** —— 外部调用方一律直连
+#   `ui.download_jobs`（SingleSyncGate / hub_of / 状态常量），本文件只 import 自用部分。
+from ui.download_jobs import (DownloadJob, STATUS_QUEUED, STATUS_RUNNING,
+                              STATUS_DONE, STATUS_CANCELLED, STATUS_LABELS,
                               FINISHED_STATUSES, KEEP_FINISHED)
 
 
@@ -62,7 +62,7 @@ def download_policy_from_prefs(prefs=None) -> ThrottlePolicy:
     """★v1.45 / §7-B11 后续：从**全局下载偏好**构造节流策略（批量下载的唯一真源）。
 
     所有批量 submit（数据管理 / 预下载弹窗 / M2/M3）均经 `DownloadHub.submit` 读同一份，
-    “一处调、处处生效”（编辑面 = `ui/dialogs/download_settings.py`）。
+    “一处调、处处生效”（编辑面 = 设置页「下载与取数」组 · `ui/settings_registry.py`）。
     【字段映射】`jitter: bool`(勾) → float 0.3/0.0；`concurrency` 夹进 [1, 4]（K≤4，与
     “宁可慢也不封 IP”一致）；其余逐项直读。
     【容错】偏好缺键/脏值 ⇒ 逐项回落默认（“锦上添花”原则，绝不让偏好坏了阻断下载）。

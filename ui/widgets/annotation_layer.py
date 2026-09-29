@@ -39,10 +39,9 @@ from data.annotations import (AUTO_TEXT_KINDS, DEFAULT_COLOR, KIND_LABELS, PERIO
                               price_text, requires_text)
 from ui.widgets import annotation_shapes as shapes
 from ui.widgets.annotation_draw_session import DrawSession
-# ⚠ 下面这几个名字**历史上在本文件定义**，既有 import（含冒烟脚本）仍从此处取 ⇒ 再导出一份，
-#    真源已搬到 `annotation_items`（§11.7：公共面改名会立刻红，所以只搬实现不改名）。
-from ui.widgets.annotation_items import (FIB_COLORS, FIB_LEVEL_WIDTH,  # noqa: F401
-                                         LINE_WIDTH, PREVIEW_COLOR, SELECTED_COLOR,
+# 绘制常量真源在 `annotation_items`（v6.29 搬家）。★1.59/§7-B14：曾为兼容再导出的
+#   FIB_COLORS / FIB_LEVEL_WIDTH 已无消费者 ⇒ 撤；其余均为本层自用（不再标 noqa）。
+from ui.widgets.annotation_items import (LINE_WIDTH, PREVIEW_COLOR, SELECTED_COLOR,
                                          SELECTED_WIDTH, TRENDLINE_SPAN, _ClickableText,
                                          pixel_scale)
 

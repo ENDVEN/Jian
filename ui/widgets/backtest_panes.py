@@ -34,13 +34,13 @@ from config import settings
 from core.backtest import FILL_CLOSE, FILL_MODE_LABELS, FILL_NEXT_OPEN, FILL_TRIGGER
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.condition_gate import ConditionGate
-# ⚠ 后 4 个是**再导出**：`mini_label` / `hint_icon` / `TAB_QSS_*` 的**定义**已于 v6.21
-# 上收到 `custom_widgets.py`（§7-B6 STEP 1，样式/构件单一来源）。这里 import 进来只为
-# **保持既有导入路径不变** —— `ui/views/backtest.py` 仍从本模块 import 它们，断言零改动。
-from ui.widgets.custom_widgets import (COMBO_QSS, FLAT_QSS, NoWheelComboBox,  # noqa: F401
+# 样式/构件真源 = `custom_widgets.py`（v6.21 §7-B6 STEP 1 上收）。★1.59/§7-B14：
+#   曾为兼容而标 noqa 的"再导出"已撤 —— 下列名字现在**本模块自用**，
+#   外部调用方（backtest.py 等）一律直连 custom_widgets。
+from ui.widgets.custom_widgets import (COMBO_QSS, FLAT_QSS, NoWheelComboBox,
                                        NoWheelDoubleSpinBox, SPINBOX_QSS,
-                                       TAB_QSS_OFF, TAB_QSS_ON,  # noqa: F401（再导出）
-                                       hint_icon, mini_label)    # noqa: F401（再导出）
+                                       TAB_QSS_OFF, TAB_QSS_ON,
+                                       hint_icon, mini_label)
 from ui.widgets.function_segments import FunctionSegments
 
 # ==========================================
