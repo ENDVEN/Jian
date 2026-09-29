@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>方案B · 函数总库「全局浮窗」（非模态 · 随处可达）</title>
+<!-- design/1.60-formula-hub/b-全局浮窗.html · v1 · 2026-09-29
+     不新增导航位：行情页 / 回测页 / M2·M3 摘要条各给一个「ƒ 库」入口，
+     唤起一个**非模态浮窗**（位置记忆、可边看图边翻函数）。编辑器做成紧凑单列。
+     对照范本 = §7-B11 的非模态下载队列面板（不冻屏、不绑弹窗生命周期）。 -->
+<link rel="stylesheet" href="_style.css">
+<style>
+  .desk-mock{background:#fff;border:1px solid var(--line);border-radius:var(--radius);min-height:600px;position:relative;overflow:hidden}
+  .desk-top{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);background:#F7F9FC}
+  .desk-top .fake{height:26px;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .stage-note{position:absolute;left:16px;bottom:14px;color:var(--text3);font-size:11.5px;max-width:340px}
+  .entry-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .flist{display:flex;flex-direction:column;gap:6px}
+  .fitem{border:1px solid var(--line);border-radius:10px;padding:7px 10px;cursor:pointer}
+  .fitem.on{border-color:var(--accent);background:var(--accent-bg)}
+  .fitem .nm{font-weight:600;display:flex;gap:6px;align-items:center}
+  .fitem .meta{color:var(--text3);font-size:11px;margin-top:2px}
+  .fcode{font-family:var(--mono);font-size:12px;background:#FBFCFE;border:1px solid var(--line2);
+    border-radius:9px;padding:8px 10px;white-space:pre-wrap;margin:6px 0}
+</style>
+</head>
+<body>
+<div class="main"><div class="wrap">
+  <div class="row" style="margin-bottom:12px">
+    <h2 style="margin:0;font-size:16px">ƒ 函数总库</h2>
+    <span class="chip ghost">方案B · 全局浮窗（非模态）</span>
+    <span class="hint">三个功能页各给一个「ƒ 库」入口；浮窗可边看图边翻，位置记忆</span>
+  </div>
+
+  <div class="card">
+    <h3>入口设计（三个功能页各一处，同一浮窗）</h3>
+    <div class="entry-row">
+      <span class="chip ghost">📈 行情页 · 工具行右端「ƒ 库」</span>
+      <span class="chip ghost">📐 回测页 M1 · 摘要条「ƒ 库」</span>
+      <span class="chip ghost">🌐 扫描页 M2/M3 · 摘要条「ƒ 库」</span>
+    </div>
+  </div>
+
+  <!-- 背景做一行假行情页工具行，浮窗压在其上 -->
+  <div class="desk-mock">
+    <div class="desk-top">
+      <div class="fake" style="width:120px">600519 ▾</div>
+      <div class="fake" style="width:90px">日 ▾</div>
+      <div class="fake" style="width:90px">前复权 ▾</div>
+      <span class="grow"></span>
+      <button class="btn small" id="open-float" style="position:relative">ƒ 库</button>
+    </div>
+    <div class="stage-note">↑ 示意：行情页工具行；点「ƒ 库」唤起右侧浮窗（真实实现为 QWidget 非模态浮层，
+      记忆位置与开合状态到 desk_ui 偏好）。</div>
+
+    <div class="float" id="float-panel">
+      <div class="fhead">
+        <b>ƒ 函数总库</b>
+        <input id="q" class="input" style="flex:1;padding:4px 9px" placeholder="搜索…">
+        <button class="btn small" id="btn-close">✕</button>
+      </div>
+      <div class="fbody">
+        <!-- 列表态 -->
+        <div id="v-list">
+          <div class="row" style="margin-bottom:8px">
+            <select id="src" style="flex:1">
+              <option value="all">全部来源</option><option value="market">行情配方</option>
+              <option value="backtest">回测页</option><option value="scan">扫描页</option>
+            </select>
+            <button class="btn small primary" id="btn-new">＋ 新建</button>
+          </div>
+          <div class="flist" id="list"></div>
+        </div>
+        <!-- 详情态 -->
+        <div id="v-detail" style="display:none">
+          <div class="row" style="margin-bottom:6px">
+            <button class="btn small flat" id="btn-back">← 返回列表</button>
+            <span class="grow"></span>
+            <button class="btn small" id="btn-edit">✏ 编辑</button>
+          </div>
+          <div class="nm" style="font-weight:700" id="d-name">—</div>
+          <div class="hint" id="d-meta"></div>
+          <div id="d-segs"></div>
+          <div class="row" style="margin-top:8px">
+            <button class="btn small primary" id="send-here">载入到本页</button>
+            <button class="btn small danger" id="btn-del">🗑</button>
+          </div>
+        </div>
+        <!-- 编辑态 -->
+        <div id="v-edit" style="display:none">
+          <div class="row" style="margin-bottom:6px">
+            <button class="btn small flat" id="btn-back2">← 返回详情</button>
+            <span class="grow"></span>
+            <button class="btn small" id="btn-check">🔎 检测</button>
+            <button class="btn small primary" id="btn-save">💾 保存</button>
+          </div>
+          <input id="e-name" class="input" style="width:100%;margin-bottom:6px">
+          <textarea id="e-code" class="code" style="min-height:130px" spellcheck="false"></textarea>
+          <div id="e-result"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h3>方案B 要点</h3>
+    <div class="hint">① 零导航侵入 —— 左轨不动；② 管理动作本来就是"跨页"动作，浮窗从哪页开都一样；
+      ③ 空间紧凑：列表 → 详情 → 编辑 三态单列切换；④ 复用下载队列面板的"非模态 + 位置记忆"范式，实现成本低。
+      ⚠ 代价：编辑长函数时窗口偏小；浮窗与主窗口的生命周期管理要照 §11.5-81/82 的口径做。</div>
+  </div>
+</div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+var FN = [
+ {id:'f1', name:'MACD 多头动能', src:'market', params:'P1(12), P2(26), P3(9)',
+  segs:[{t:'DIF:=EMA(C,12)-EMA(C,26);', g:'sub1'},{t:'DEA:=EMA(DIF,9);', g:'sub1'},{t:'MACD:(DIF-DEA)*2,COLORSTICK;', g:'sub1'}],
+  refs:['M1「MACD 金叉」'], st:'ok', used:'2026-09-29 09:12', upd:'2026-09-28 21:40'},
+ {id:'f2', name:'均线多头排列', src:'market', params:'',
+  segs:[{t:'MA5:MA(C,5);', g:'main'},{t:'MA10:MA(C,10);', g:'main'}], refs:[], st:'ok', used:'2026-09-28 15:02', upd:'2026-09-20 11:20'},
+ {id:'f3', name:'缩量回踩二十日线', src:'scan', params:'',
+  segs:[{t:'CROSS(MA(C,20),L) AND V<MA(V,5);', g:'—'}], refs:['M2/M3「回踩买点」'], st:'ok', used:'2026-09-27 20:15', upd:'2026-09-27 20:15'},
+ {id:'f4', name:'晨星探底（改）', src:'market', params:'',
+  segs:[{t:'XX:MA(C,(;', g:'main'}], refs:[], st:'err', used:'', upd:'2026-09-29 08:55'}
+];
+var SRC = {market:'行情配方', backtest:'回测页', scan:'扫描页'};
+var cur = '', mode = 'list';
+
+function el(id){ return document.getElementById(id); }
+function joinCode(f){ return f.segs.map(function(s){ return s.t; }).join('\n'); }
+function toast(msg){
+  var t = el('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(function(){ t.classList.remove('show'); }, 2000);
+}
+var KNOWN = ['MA','EMA','SMA','REF','HHV','LLV','COUNT','SUM','IF','EVERY','CROSS','BARSLAST','ABS','MAX','MIN','COUNT_TRUE','STICKLINE','DRAWICON'];
+function callsOn(s){ /* 大写标识符后跟"("的调用名；不用正则字面量（自检的括号粗检对 /…(/ 敏感） */
+  var names = [], last = '';
+  for (var i = 0; i < s.length; i++){
+    var ch = s[i];
+    if (/[A-Za-z0-9_]/.test(ch)) last += ch;
+    else { if (ch === '(' && /^[A-Z][A-Z0-9_]*$/.test(last)) names.push(last); last = ''; }
+  }
+  return names;
+}
+function mockCheck(text){
+  var depth = 0, lines = String(text || '').split('\n');
+  for (var li = 0; li < lines.length; li++){
+    var s = lines[li];
+    for (var i = 0; i < s.length; i++){
+      if (s[i] === '(') depth++; else if (s[i] === ')') depth--;
+    }
+    var calls = callsOn(s);
+    for (var c = 0; c < calls.length; c++){
+      var fn = calls[c];
+      if (KNOWN.indexOf(fn) < 0) return {st:'err', msg:'✗ 第 ' + (li+1) + ' 行：不认识的函数「' + fn + '」'};
+    }
+  }
+  if (depth !== 0) return {st:'err', msg:'✗ 括号不配对（差 ' + depth + ' 个右括号）'};
+  return {st:'ok', msg:'✓ 语法通过'};
+}
+function renderList(){
+  var q = (el('q').value || '').trim().toLowerCase();
+  var src = el('src').value;
+  var rows = FN.filter(function(f){
+    if (src !== 'all' && f.src !== src) return false;
+    return !q || (f.name + ' ' + joinCode(f)).toLowerCase().indexOf(q) >= 0;
+  });
+  el('list').innerHTML = rows.map(function(f){
+    return '<div class="fitem" onclick="openDetail(\'' + f.id + '\')">'
+      + '<div class="nm">' + f.name
+      + (f.st === 'err' ? ' <span class="chip err">✗</span>' : (f.st === 'warn' ? ' <span class="chip warn">⚠</span>' : ''))
+      + (f.refs.length ? ' <span class="chip gray">引用 ' + f.refs.length + '</span>' : '') + '</div>'
+      + '<div class="meta">' + SRC[f.src] + ' · ' + f.segs.length + ' 段 · ' + (f.used ? '用过 ' + f.used.slice(5, 10) : '未使用') + '</div></div>';
+  }).join('') || '<div class="hint">没有匹配的函数</div>';
+}
+function openDetail(id){
+  cur = id; mode = 'detail';
+  var f = FN.filter(function(x){ return x.id === id; })[0];
+  el('d-name').textContent = f.name;
+  el('d-meta').textContent = SRC[f.src] + ' · ' + f.segs.length + ' 段 · 更新 ' + f.upd
+    + (f.refs.length ? ' · 被 ' + f.refs.length + ' 个方案引用' : '');
+  el('d-segs').innerHTML = f.segs.map(function(s, i){
+    return '<div class="fcode">' + s.t + '</div>';
+  }).join('');
+  syncMode();
+}
+function syncMode(){
+  el('v-list').style.display = mode === 'list' ? '' : 'none';
+  el('v-detail').style.display = mode === 'detail' ? '' : 'none';
+  el('v-edit').style.display = mode === 'edit' ? '' : 'none';
+}
+el('open-float').addEventListener('click', function(){ el('float-panel').style.display = ''; renderList(); });
+el('btn-close').addEventListener('click', function(){ el('float-panel').style.display = 'none'; });
+el('q').addEventListener('input', renderList);
+el('src').addEventListener('change', renderList);
+el('btn-new').addEventListener('click', function(){
+  FN.push({id:'n' + Date.now(), name:'未命名函数', src:'market', params:'',
+    segs:[{t:'MA5:MA(C,5);', g:'main'}], refs:[], st:'unknown', used:'', upd:'刚刚'});
+  renderList(); toast('已新建（示意）');
+});
+el('btn-back').addEventListener('click', function(){ mode = 'list'; syncMode(); });
+el('btn-back2').addEventListener('click', function(){ mode = 'detail'; syncMode(); });
+el('btn-edit').addEventListener('click', function(){
+  var f = FN.filter(function(x){ return x.id === cur; })[0];
+  el('e-name').value = f.name; el('e-code').value = joinCode(f);
+  el('e-result').innerHTML = ''; mode = 'edit'; syncMode();
+});
+el('btn-check').addEventListener('click', function(){
+  var r = mockCheck(el('e-code').value);
+  el('e-result').innerHTML = '<div class="result ' + r.st + '">' + r.msg + '</div>';
+});
+el('btn-save').addEventListener('click', function(){
+  var r = mockCheck(el('e-code').value);
+  if (r.st === 'err'){ el('e-result').innerHTML = '<div class="result err">' + r.msg + '</div>'; return; }
+  var f = FN.filter(function(x){ return x.id === cur; })[0];
+  f.name = (el('e-name').value || '').trim() || f.name;
+  f.segs = el('e-code').value.split('\n').filter(function(s){ return s.trim(); })
+    .map(function(s){ return {t:s.trim(), g:f.segs[0] ? f.segs[0].g : 'main'}; });
+  f.st = 'ok'; f.upd = '刚刚';
+  mode = 'detail'; openDetail(cur); toast('已保存（示意）');
+});
+el('send-here').addEventListener('click', function(){
+  toast('已载入到当前页（示意）—— 载入即 touch used_at，自动恢复也认它');
+});
+el('btn-del').addEventListener('click', function(){
+  var f = FN.filter(function(x){ return x.id === cur; })[0];
+  if (f.refs.length){ toast('⚠ 被 ' + f.refs.length + ' 个方案引用 —— 需键入确认（示意）'); return; }
+  FN = FN.filter(function(x){ return x.id !== cur; });
+  mode = 'list'; syncMode(); renderList(); toast('已删除');
+});
+
+window.__selftest = function(){
+  var out = [];
+  el('float-panel').style.display = ''; renderList();
+  var nB = (el('list').innerHTML.match(/class=.fitem/g) || []).length;
+  out.push(['列表渲染', nB === FN.length]);
+  el('q').value = 'MACD'; renderList();
+  out.push(['搜索过滤', (el('list').innerHTML.match(/class=.fitem/g) || []).length === 1]);
+  el('q').value = ''; renderList();
+  openDetail('f1');
+  out.push(['详情切换', el('d-name').textContent === 'MACD 多头动能']);
+  el('btn-edit').click();
+  out.push(['编辑态', el('v-edit').style.display === '']);
+  el('e-code').value = 'XX:MA(C,(;'; el('btn-check').click();
+  out.push(['语法报错', el('e-result').innerHTML.indexOf('err') >= 0]);
+  return out;
+};
+
+el('float-panel').style.display = ''; renderList();
+</script>
+</body>
+</html>

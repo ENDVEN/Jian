@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>方案A · 函数总库「双栏管理台」（独立导航页）</title>
+<!-- design/1.60-formula-hub/a-双栏管理台.html · v1 · 2026-09-29
+     主推方案：左轨新增「ƒ 函数库」页（落位建议 = 📐市场回测 与 🗄数据管理 之间，待拍板）。
+     左 = 函数列表（搜索 / 来源筛选 / 排序）；右 = 详情（查看态）⇄ 编辑器（编辑态）。
+     图表与回测的"运行"仍只在功能页 —— 本页只做 资产管理（增删查改 / 语法体检 / 互送）。 -->
+<link rel="stylesheet" href="_style.css">
+<style>
+  .detail-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .detail-head .nm{font-size:15px;font-weight:700}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 2px}
+  .refs li{margin:3px 0;color:var(--text2)}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="rail">
+    <div class="nav">📊 资金与表现</div>
+    <div class="nav">📝 交易流水</div>
+    <div class="nav">💡 深度复盘</div>
+    <div class="nav">📈 行情工作台</div>
+    <div class="nav">📐 市场回测</div>
+    <div class="nav on new">ƒ 函数库</div>
+    <div class="nav">🗄 数据管理</div>
+    <div class="grow"></div>
+    <div class="nav pin">⚙ 设置</div>
+  </div>
+
+  <div class="main"><div class="wrap">
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0;font-size:16px">ƒ 函数总库</h2>
+      <span class="chip ghost">方案A · 双栏管理台</span>
+      <span class="hint">管理只在这里；图表叠加 / 回测运行 / 全市场扫描仍在各自功能页</span>
+    </div>
+
+    <div class="hub">
+      <!-- ============ 左：列表 ============ -->
+      <div class="panel">
+        <input id="q" class="input" style="width:100%" placeholder="搜索名称 / 参数 / 函数文本…">
+        <div class="row" style="margin-top:8px" id="src-chips">
+          <span class="chip on ghost" data-src="all">全部</span>
+          <span class="chip ghost" data-src="market">行情配方</span>
+          <span class="chip ghost" data-src="backtest">回测页</span>
+          <span class="chip ghost" data-src="scan">扫描页</span>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <span class="hint">排序</span>
+          <select id="sort" style="flex:1">
+            <option value="used">最近使用</option>
+            <option value="name">名称</option>
+            <option value="refs">被引用数</option>
+          </select>
+        </div>
+        <div class="list" id="list"></div>
+        <div class="divider"></div>
+        <div class="row">
+          <button class="btn primary" id="btn-new">＋ 新建函数</button>
+          <button class="btn" id="btn-checkall" title="对全部函数跑一遍语法检测（引擎 = core/formula）">🩺 全库体检</button>
+        </div>
+        <div class="hint" style="margin-top:8px" id="list-stat">共 5 个函数</div>
+      </div>
+
+      <!-- ============ 右：详情 / 编辑器 ============ -->
+      <div class="panel" id="detail-panel">
+        <!-- ===== 查看态 ===== -->
+        <div id="view-detail">
+          <div class="detail-head">
+            <span class="nm" id="d-name">—</span>
+            <span id="d-src"></span>
+            <span id="d-st"></span>
+            <span class="grow"></span>
+            <button class="btn small" id="btn-edit">✏ 编辑</button>
+          </div>
+          <div class="kv"><b>函数段</b><span id="d-segn"></span></div>
+          <div class="kv"><b>参数</b><span class="mono" id="d-params">—</span></div>
+          <div class="kv"><b>最近使用</b><span id="d-used">—</span></div>
+          <div class="kv"><b>更新于</b><span id="d-upd">—</span></div>
+
+          <div class="divider"></div>
+          <h3>函数段（每段可指定主图 / 副图 1-3）</h3>
+          <div id="d-segs"></div>
+
+          <h3 style="margin-top:12px">被引用（只读；删除前会先提示）</h3>
+          <ul class="refs" id="d-refs" style="margin:4px 0 0;padding-left:18px"></ul>
+
+          <div class="divider"></div>
+          <div class="actions">
+            <button class="btn primary" id="send-market">📈 送行情页</button>
+            <button class="btn primary" id="send-backtest">📐 送回测页（M1）</button>
+            <button class="btn primary" id="send-scan">🌐 送扫描页（M2/M3）</button>
+            <span class="grow"></span>
+            <button class="btn flat" id="btn-copy">⧉ 复制一份</button>
+            <button class="btn danger" id="btn-del">🗑 删除</button>
+          </div>
+          <div class="hint">「送 ↗」= 切到对应页并载入该函数（回填函数段与参数）；执行（跑图 / 跑回测 / 跑扫描）都在那边完成。</div>
+        </div>
+
+        <!-- ===== 编辑态 ===== -->
+        <div id="view-editor" style="display:none">
+          <div class="detail-head">
+            <span class="nm">编辑函数</span>
+            <span class="grow"></span>
+            <button class="btn small" id="btn-cancel">取消</button>
+          </div>
+          <div class="kv"><b>名称</b><input id="e-name" class="input" style="width:280px"></div>
+          <h3 style="margin-top:10px">函数段（一段一行；空行分段）</h3>
+          <textarea id="e-code" class="code" spellcheck="false"></textarea>
+          <div class="row" style="margin-top:8px">
+            <span class="hint">默认目标窗格</span>
+            <select id="e-target">
+              <option value="main">主图</option><option value="sub1">副图 1</option>
+              <option value="sub2">副图 2</option><option value="sub3">副图 3</option>
+            </select>
+            <span class="grow"></span>
+            <button class="btn" id="btn-check">🔎 检测语法</button>
+            <button class="btn primary" id="btn-save">💾 保存到函数库</button>
+          </div>
+          <div class="hint">真实实现调 <code>FormulaEngine.validate / parse</code>：报错给人话 + 位置；已知但不实现的绘图函数 = 非阻断提示（§11.5-14）。</div>
+          <div id="e-result"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>方案A 要点</h3>
+      <div class="hint">① 独立导航页 = 函数有了"中立的家"，与行情/回测/扫描三处平级互送；
+        ② 左右双栏照 S2 设置页范式（一屏一函数、大留白）；③ 编辑器常驻右栏（查看 ⇄ 编辑零跳转）；
+        ④ 「全库体检」为升级项：一次跑完所有函数的语法检测，列表直接标 ✗/⚠。
+        ⚠ 代价：左轨多一个导航位（设置页"永不上移"的口径不受影响）。</div>
+    </div>
+  </div></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<!-- 删除确认（§10-10：中危=红色+二次确认；被引用时升级=键入确认词） -->
+<div class="modal" id="del-modal"><div class="box">
+  <h4>删除函数「<span id="del-name"></span>」？</h4>
+  <div class="hint" id="del-warn" style="margin-bottom:10px"></div>
+  <div id="del-typed-row" style="display:none;margin-bottom:10px">
+    <span class="hint">该函数正被方案引用。请键入 <b style="color:var(--danger)">删除</b> 确认：</span>
+    <input id="del-typed" class="input" style="width:120px;margin-left:6px">
+  </div>
+  <div class="row">
+    <span class="grow"></span>
+    <button class="btn" id="del-cancel">取消</button>
+    <button class="btn" id="del-ok" style="background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600">删除</button>
+  </div>
+</div></div>
+
+<script>
+/* ===== 样例数据（公开教科书级公式，非用户私有样例 §10-6） ===== */
+var FN = [
+ {id:'f1', name:'MACD 多头动能', src:'market', params:'P1(12), P2(26), P3(9)',
+  segs:[{t:'DIF:=EMA(C,12)-EMA(C,26);', g:'sub1'},{t:'DEA:=EMA(DIF,9);', g:'sub1'},{t:'MACD:(DIF-DEA)*2,COLORSTICK;', g:'sub1'}],
+  refs:['M1 策略「MACD 金叉」','M1 策略「MACD 回踩」'], st:'ok', used:'2026-09-29 09:12', upd:'2026-09-28 21:40'},
+ {id:'f2', name:'均线多头排列', src:'market', params:'',
+  segs:[{t:'MA5:MA(C,5);', g:'main'},{t:'MA10:MA(C,10);', g:'main'},{t:'MA20:MA(C,20);', g:'main'},{t:'MA60:MA(C,60);', g:'main'}],
+  refs:[], st:'ok', used:'2026-09-28 15:02', upd:'2026-09-20 11:20'},
+ {id:'f3', name:'缩量回踩二十日线', src:'scan', params:'',
+  segs:[{t:'VOL5:=MA(V,5);', g:'—'},{t:'CROSS(MA(C,20),L) AND V<VOL5;', g:'—'}],
+  refs:['M2/M3 方案「回踩买点」'], st:'ok', used:'2026-09-27 20:15', upd:'2026-09-27 20:15'},
+ {id:'f4', name:'乖离率副图', src:'backtest', params:'N(6)',
+  segs:[{t:'BIAS:(C-MA(C,6))/MA(C,6)*100;', g:'sub2'}],
+  refs:[], st:'warn', note:'含已知但本期不实现的绘图函数 ⇒ 非阻断提示', used:'2026-09-25 10:03', upd:'2026-09-25 10:03'},
+ {id:'f5', name:'晨星探底（改）', src:'market', params:'',
+  segs:[{t:'DRAWICON(CROSS(LOW,MA(C,10)),LOW,1);', g:'main'},{t:'XX:MA(C,(;', g:'main'}],
+  refs:[], st:'err', used:'', upd:'2026-09-29 08:55'}
+];
+var SRC = {market:'行情配方', backtest:'回测页', scan:'扫描页'};
+var GT = {main:'主图', sub1:'副图1', sub2:'副图2', sub3:'副图3', '—':'—'};
+var cur = 'f1', editing = false, filterSrc = 'all';
+
+/* ===== 迷你检测器（设计稿示意；真实实现 = FormulaEngine.validate/parse） ===== */
+var KNOWN = ['MA','EMA','SMA','REF','HHV','LLV','COUNT','SUM','IF','EVERY','CROSS',
+             'BARSLAST','ABS','MAX','MIN','COUNT_TRUE','STICKLINE','DRAWICON'];
+function callsOn(s){ /* 本行的函数调用名（大写标识符后跟"("）；不用正则字面量（自检的括号粗检对 /…(/ 敏感） */
+  var names = [], last = '';
+  for (var i = 0; i < s.length; i++){
+    var ch = s[i];
+    if (/[A-Za-z0-9_]/.test(ch)) last += ch;
+    else { if (ch === '(' && /^[A-Z][A-Z0-9_]*$/.test(last)) names.push(last); last = ''; }
+  }
+  return names;
+}
+function mockCheck(text){
+  var depth = 0, lines = String(text || '').split('\n'), err = '';
+  for (var li = 0; li < lines.length; li++){
+    var s = lines[li];
+    for (var i = 0; i < s.length; i++){
+      if (s[i] === '(') depth++;
+      else if (s[i] === ')') depth--;
+      if (depth < 0){ err = '第 ' + (li+1) + ' 行：括号不配对（多了右括号）——先检查这一行的括号'; depth = 0; }
+    }
+    if (err) break;
+    var calls = callsOn(s);
+    for (var c = 0; c < calls.length; c++){
+      var fn = calls[c];
+      if (KNOWN.indexOf(fn) < 0){
+        err = '第 ' + (li+1) + ' 行：不认识的函数「' + fn + '」——检查拼写，或它属于本期未实现的绘图函数（将登记为非阻断提示）'; break;
+      }
+    }
+    if (err) break;
+  }
+  if (!err && depth !== 0) err = '括号不配对（还差 ' + depth + ' 个右括号）';
+  if (err) return {st:'err', msg:'✗ ' + err};
+  if (/DRAW(BAND|TEXT|ARC)/.test(text)) return {st:'warn', msg:'⚠ 语法通过；DRAWBAND / DRAWTEXT 等本期不实现，载入时将忽略并提示（非阻断）'};
+  return {st:'ok', msg:'✓ 语法通过（' + lines.filter(function(s){return s.trim();}).length + ' 段）'};
+}
+function joinCode(f){ return f.segs.map(function(s){ return s.t; }).join('\n'); }
+
+/* ===== 渲染 ===== */
+function el(id){ return document.getElementById(id); }
+function stChip(st){
+  if (st === 'ok') return '<span class="chip ok">✓ 语法通过</span>';
+  if (st === 'warn') return '<span class="chip warn">⚠ 有提示</span>';
+  if (st === 'err') return '<span class="chip err">✗ 语法错误</span>';
+  return '<span class="chip gray">未检测</span>';
+}
+function visible(){
+  var q = (el('q').value || '').trim().toLowerCase();
+  return FN.filter(function(f){
+    if (filterSrc !== 'all' && f.src !== filterSrc) return false;
+    if (!q) return true;
+    return (f.name + ' ' + f.params + ' ' + joinCode(f)).toLowerCase().indexOf(q) >= 0;
+  });
+}
+function renderList(){
+  var rows = visible();
+  var key = el('sort').value;
+  rows = rows.slice().sort(function(a, b){
+    if (key === 'name') return a.name < b.name ? -1 : 1;
+    if (key === 'refs') return b.refs.length - a.refs.length;
+    return (b.used || '').localeCompare(a.used || '');
+  });
+  el('list').innerHTML = rows.map(function(f){
+    return '<div class="item' + (f.id === cur ? ' on' : '') + '" onclick="pick(\'' + f.id + '\')">'
+      + '<div class="nm">' + f.name + (f.refs.length ? ' <span class="chip gray">引用 ' + f.refs.length + '</span>' : '') + '</div>'
+      + '<div class="meta"><span>' + SRC[f.src] + '</span><span>' + f.segs.length + ' 段</span>'
+      + '<span>' + (f.used ? '用过 ' + f.used.slice(5, 10) : '未使用') + '</span>'
+      + (f.st === 'err' ? '<span class="chip err">✗</span>' : (f.st === 'warn' ? '<span class="chip warn">⚠</span>' : ''))
+      + '</div></div>';
+  }).join('') || '<div class="hint">没有匹配的函数</div>';
+  el('list-stat').textContent = '共 ' + FN.length + ' 个函数 · 显示 ' + rows.length + ' 个';
+}
+function renderDetail(){
+  var f = FN.filter(function(x){ return x.id === cur; })[0];
+  if (!f){ el('d-name').textContent = '—'; return; }
+  el('d-name').textContent = f.name;
+  el('d-src').innerHTML = '<span class="chip ghost">' + SRC[f.src] + '</span>';
+  el('d-st').innerHTML = stChip(f.st);
+  el('d-segn').textContent = f.segs.length + ' 段';
+  el('d-params').textContent = f.params || '—';
+  el('d-used').textContent = f.used || '—（从未载入）';
+  el('d-upd').textContent = f.upd;
+  el('d-segs').innerHTML = f.segs.map(function(s, i){
+    return '<div class="seg"><div class="head"><b>#' + (i+1) + '</b>'
+      + '<span class="chip ghost">' + GT[s.g] + '</span></div><pre>' + s.t + '</pre></div>';
+  }).join('');
+  el('d-refs').innerHTML = f.refs.length
+    ? f.refs.map(function(r){ return '<li>' + r + '</li>'; }).join('')
+    : '<li class="hint">暂无引用（独立的自由函数）</li>';
+}
+function toast(msg){
+  var t = el('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(function(){ t.classList.remove('show'); }, 2200);
+}
+function pick(id){ cur = id; editing = false; syncView(); renderList(); renderDetail(); }
+function syncView(){
+  el('view-detail').style.display = editing ? 'none' : '';
+  el('view-editor').style.display = editing ? '' : 'none';
+  if (editing){
+    var f = FN.filter(function(x){ return x.id === cur; })[0];
+    el('e-name').value = f.name; el('e-code').value = joinCode(f);
+    el('e-target').value = f.segs[0] && GT[f.segs[0].g] ? f.segs[0].g : 'main';
+    el('e-result').innerHTML = '';
+  }
+}
+
+/* ===== 交互接线 ===== */
+el('q').addEventListener('input', renderList);
+el('sort').addEventListener('change', renderList);
+Array.prototype.forEach.call(document.querySelectorAll('#src-chips .chip'), function(ch){
+  ch.addEventListener('click', function(){
+    filterSrc = ch.getAttribute('data-src');
+    Array.prototype.forEach.call(document.querySelectorAll('#src-chips .chip'), function(x){ x.style.background = ''; });
+    ch.style.background = 'var(--accent-bg)'; ch.style.color = 'var(--accent)';
+    renderList();
+  });
+});
+el('btn-new').addEventListener('click', function(){
+  FN.push({id:'n' + Date.now(), name:'未命名函数', src:'market', params:'',
+    segs:[{t:'MA5:MA(C,5);', g:'main'}], refs:[], st:'unknown', used:'', upd:'刚刚'});
+  cur = FN[FN.length-1].id; editing = true; syncView(); renderList(); renderDetail();
+});
+el('btn-checkall').addEventListener('click', function(){
+  var bad = 0;
+  FN.forEach(function(f){ var r = mockCheck(joinCode(f)); f.st = r.st; if (r.st === 'err') bad++; });
+  renderList(); renderDetail();
+  toast('全库体检完成：' + FN.length + ' 个函数，' + bad + ' 个语法错误');
+});
+el('btn-edit').addEventListener('click', function(){ editing = true; syncView(); });
+el('btn-cancel').addEventListener('click', function(){ editing = false; syncView(); });
+el('btn-check').addEventListener('click', function(){
+  var r = mockCheck(el('e-code').value);
+  el('e-result').innerHTML = '<div class="result ' + r.st + '">' + r.msg + '</div>';
+});
+el('btn-save').addEventListener('click', function(){
+  var name = (el('e-name').value || '').trim();
+  if (!name){ toast('名称不能为空'); return; }
+  var r = mockCheck(el('e-code').value);
+  el('e-result').innerHTML = '<div class="result ' + r.st + '">' + r.msg + '</div>';
+  if (r.st === 'err'){ toast('语法未通过，先看检测结果'); return; }
+  var f = FN.filter(function(x){ return x.id === cur; })[0];
+  f.name = name; f.params = f.params;
+  f.segs = el('e-code').value.split('\n').filter(function(s){ return s.trim(); })
+    .map(function(s){ return {t:s.trim(), g: el('e-target').value}; });
+  f.st = r.st; f.upd = '刚刚';
+  editing = false; syncView(); renderList(); renderDetail();
+  toast('已保存到函数库（真实实现 = formula_store.upsert，同名覆盖）');
+});
+[['send-market','📈 已切到行情工作台并载入该函数（示意）'],
+ ['send-backtest','📐 已切到回测页 M1 并回填函数段与参数（示意）'],
+ ['send-scan','🌐 已切到扫描页并回填函数（示意）']].forEach(function(pair){
+  el(pair[0]).addEventListener('click', function(){ toast(pair[1] + ' —— 执行仍在功能页完成'); });
+});
+el('btn-copy').addEventListener('click', function(){
+  var f = FN.filter(function(x){ return x.id === cur; })[0];
+  FN.push(JSON.parse(JSON.stringify(f)));
+  FN[FN.length-1].name = f.name + ' 副本'; FN[FN.length-1].refs = [];
+  toast('已复制一份「' + f.name + ' 副本」'); renderList();
+});
+el('btn-del').addEventListener('click', function(){
+  var f = FN.filter(function(x){ return x.id === cur; })[0];
+  el('del-name').textContent = f.name;
+  var referenced = f.refs.length > 0;
+  el('del-warn').textContent = referenced
+    ? '⚠ 该函数被 ' + f.refs.length + ' 个方案引用；删除后那些方案将失去函数（会先列出来）。'
+    : '该函数没有被任何方案引用，删除后不可恢复。';
+  el('del-typed-row').style.display = referenced ? '' : 'none';
+  el('del-typed').value = '';
+  el('del-modal').classList.add('show');
+});
+el('del-cancel').addEventListener('click', function(){ el('del-modal').classList.remove('show'); });
+el('del-ok').addEventListener('click', function(){
+  var f = FN.filter(function(x){ return x.id === cur; })[0];
+  if (f.refs.length && (el('del-typed').value || '') !== '删除'){ toast('请键入「删除」确认'); return; }
+  FN = FN.filter(function(x){ return x.id !== cur; });
+  cur = FN.length ? FN[0].id : '';
+  el('del-modal').classList.remove('show');
+  editing = false; syncView(); renderList(); renderDetail();
+  toast('已删除');
+});
+
+/* ===== 自检钩子（node / _check.py 无头真跑用） ===== */
+window.__selftest = function(){
+  var out = [];
+  renderList(); renderDetail();
+  var nA = (el('list').innerHTML.match(/class=.item/g) || []).length;
+  out.push(['列表渲染', nA === FN.length]);
+  el('q').value = 'MACD'; renderList();
+  out.push(['搜索过滤', (el('list').innerHTML.match(/class=.item/g) || []).length === 1]);
+  el('q').value = ''; renderList();
+  pick('f5');
+  out.push(['选中切换', el('d-name').textContent === '晨星探底（改）']);
+  editing = true; syncView();
+  out.push(['编辑态切换', el('view-editor').style.display === '']);
+  el('e-code').value = 'XX:MA(C,(;';
+  el('btn-check').click();
+  out.push(['语法报错可见', el('e-result').innerHTML.indexOf('err') >= 0]);
+  el('e-code').value = 'MA5:MA(C,5);';
+  el('btn-check').click();
+  out.push(['语法通过可见', el('e-result').innerHTML.indexOf('result ok') >= 0]);
+  return out;
+};
+
+renderList(); renderDetail();
+</script>
+</body>
+</html>

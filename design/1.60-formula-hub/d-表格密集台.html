@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>方案D · 函数总库「表格密集台」（S4 风格 · 函数上量后的总览）</title>
+<!-- design/1.60-formula-hub/d-表格密集台.html · v1 · 2026-09-29
+     与方案A **共用同一份数据**（像 S4 密集参数表之于 S2 双栏设置）：函数上量后
+     （几十条以上）的总览 / 批量清理视图。一行一函数，行内动作；KPI 行给全局健康度。 -->
+<link rel="stylesheet" href="_style.css">
+<style>
+  .ops{white-space:nowrap}
+  .ops .btn{padding:2px 8px;font-size:11.5px}
+  .pager{display:flex;gap:6px;align-items:center;margin-top:10px;color:var(--text3);font-size:12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="rail">
+    <div class="nav">📊 资金与表现</div>
+    <div class="nav">📝 交易流水</div>
+    <div class="nav">💡 深度复盘</div>
+    <div class="nav">📈 行情工作台</div>
+    <div class="nav">📐 市场回测</div>
+    <div class="nav on new">ƒ 函数库</div>
+    <div class="nav">🗄 数据管理</div>
+    <div class="grow"></div>
+    <div class="nav pin">⚙ 设置</div>
+  </div>
+
+  <div class="main"><div class="wrap">
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0;font-size:16px">ƒ 函数总库</h2>
+      <span class="chip ghost">方案D · 表格密集台（A 的高级视图，同一份注册表）</span>
+      <span class="hint">函数上量后的总览 / 批量清理；日常编辑仍走 A 的双栏详情</span>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="v" id="k-total">5</div><div class="k">函数总数</div></div>
+      <div class="kpi"><div class="v" style="color:var(--danger)" id="k-err">1</div><div class="k">语法错误</div></div>
+      <div class="kpi"><div class="v" style="color:var(--warn)" id="k-warn">0</div><div class="k">非阻断提示</div></div>
+      <div class="kpi"><div class="v" style="color:var(--text3)" id="k-orphan">3</div><div class="k">未被引用</div></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <input id="q" class="input" style="width:260px" placeholder="搜索…">
+        <select id="src">
+          <option value="all">全部来源</option><option value="market">行情配方</option>
+          <option value="backtest">回测页</option><option value="scan">扫描页</option>
+        </select>
+        <select id="st">
+          <option value="all">全部状态</option><option value="ok">✓ 通过</option>
+          <option value="warn">⚠ 提示</option><option value="err">✗ 错误</option>
+          <option value="unknown">未检测</option>
+        </select>
+        <span class="grow"></span>
+        <button class="btn" id="btn-checkall">🩺 全库体检</button>
+        <button class="btn primary" id="btn-new">＋ 新建函数</button>
+      </div>
+      <div style="overflow:auto">
+        <table class="tbl">
+          <thead><tr>
+            <th style="width:30px"><input type="checkbox" id="sel-all"></th>
+            <th>名称</th><th>段数</th><th>窗格分布</th><th>参数</th><th>来源</th>
+            <th>被引用</th><th>语法</th><th>最近使用</th><th>更新于</th><th style="width:190px">动作</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span id="row-stat"></span>
+        <span class="grow"></span>
+        <button class="btn small danger" id="btn-batch-del">🗑 删除选中（危险）</button>
+      </div>
+      <div class="hint" style="margin-top:8px">批量删除 = §10-10 高危：另起一角 + 键入确认词；被引用的函数必须先解除引用或选择"连同方案一起删"。</div>
+    </div>
+  </div></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var FN = [
+ {id:'f1', name:'MACD 多头动能', src:'market', params:'P1(12), P2(26), P3(9)',
+  segs:[{t:'DIF:=EMA(C,12)-EMA(C,26);', g:'sub1'},{t:'DEA:=EMA(DIF,9);', g:'sub1'},{t:'MACD:(DIF-DEA)*2,COLORSTICK;', g:'sub1'}],
+  refs:['M1「MACD 金叉」','M1「MACD 回踩」'], st:'ok', used:'2026-09-29 09:12', upd:'2026-09-28 21:40'},
+ {id:'f2', name:'均线多头排列', src:'market', params:'',
+  segs:[{t:'MA5:MA(C,5);', g:'main'},{t:'MA10:MA(C,10);', g:'main'},{t:'MA20:MA(C,20);', g:'main'}],
+  refs:[], st:'ok', used:'2026-09-28 15:02', upd:'2026-09-20 11:20'},
+ {id:'f3', name:'缩量回踩二十日线', src:'scan', params:'',
+  segs:[{t:'CROSS(MA(C,20),L) AND V<MA(V,5);', g:'—'}],
+  refs:['M2/M3「回踩买点」'], st:'ok', used:'2026-09-27 20:15', upd:'2026-09-27 20:15'},
+ {id:'f4', name:'乖离率副图', src:'backtest', params:'N(6)',
+  segs:[{t:'BIAS:(C-MA(C,6))/MA(C,6)*100;', g:'sub2'}], refs:[], st:'warn', used:'2026-09-25 10:03', upd:'2026-09-25 10:03'},
+ {id:'f5', name:'晨星探底（改）', src:'market', params:'',
+  segs:[{t:'XX:MA(C,(;', g:'main'}], refs:[], st:'err', used:'', upd:'2026-09-29 08:55'}
+];
+var SRC = {market:'行情配方', backtest:'回测页', scan:'扫描页'};
+var GT = {main:'主图', sub1:'副图1', sub2:'副图2', sub3:'副图3', '—':'—'};
+
+function el(id){ return document.getElementById(id); }
+function toast(msg){
+  var t = el('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(function(){ t.classList.remove('show'); }, 2000);
+}
+function panes(f){
+  var set = {};
+  f.segs.forEach(function(s){ set[GT[s.g] || s.g] = 1; });
+  return Object.keys(set).join(' / ') || '—';
+}
+function stChip(st){
+  if (st === 'ok') return '<span class="chip ok">✓</span>';
+  if (st === 'warn') return '<span class="chip warn">⚠</span>';
+  if (st === 'err') return '<span class="chip err">✗</span>';
+  return '<span class="chip gray">未检测</span>';
+}
+function renderKpis(){
+  el('k-total').textContent = FN.length;
+  el('k-err').textContent = FN.filter(function(f){ return f.st === 'err'; }).length;
+  el('k-warn').textContent = FN.filter(function(f){ return f.st === 'warn'; }).length;
+  el('k-orphan').textContent = FN.filter(function(f){ return !f.refs.length; }).length;
+}
+function renderTable(){
+  var q = (el('q').value || '').trim().toLowerCase();
+  var src = el('src').value, st = el('st').value;
+  var rows = FN.filter(function(f){
+    if (src !== 'all' && f.src !== src) return false;
+    if (st !== 'all' && f.st !== st) return false;
+    return !q || f.name.toLowerCase().indexOf(q) >= 0;
+  });
+  el('tbody').innerHTML = rows.map(function(f){
+    return '<tr>'
+      + '<td><input type="checkbox" class="sel" data-id="' + f.id + '"></td>'
+      + '<td class="nm">' + f.name + '</td>'
+      + '<td>' + f.segs.length + '</td>'
+      + '<td class="hint">' + panes(f) + '</td>'
+      + '<td class="hint">' + (f.params || '—') + '</td>'
+      + '<td><span class="chip ghost">' + SRC[f.src] + '</span></td>'
+      + '<td>' + (f.refs.length ? '<span class="chip gray">' + f.refs.length + '</span>' : '<span class="hint">—</span>') + '</td>'
+      + '<td>' + stChip(f.st) + '</td>'
+      + '<td class="hint">' + (f.used || '—') + '</td>'
+      + '<td class="hint">' + f.upd + '</td>'
+      + '<td class="ops">'
+      + ' <button class="btn" onclick="toast(\'📈 已送行情页（示意）\')">📈</button>'
+      + ' <button class="btn" onclick="toast(\'📐 已送回测 M1（示意）\')">📐</button>'
+      + ' <button class="btn" onclick="toast(\'🌐 已送扫描（示意）\')">🌐</button>'
+      + ' <button class="btn" onclick="toast(\'✏ 编辑请在双栏视图完成（示意）\')">✏</button>'
+      + ' <button class="btn danger" onclick="delOne(\'' + f.id + '\')">🗑</button>'
+      + '</td></tr>';
+  }).join('') || '<tr><td colspan="11" class="hint" style="padding:18px">没有匹配的函数</td></tr>';
+  el('row-stat').textContent = '显示 ' + rows.length + ' / ' + FN.length + ' 条';
+}
+function delOne(id){
+  var f = FN.filter(function(x){ return x.id === id; })[0];
+  if (f.refs.length){ toast('⚠ 「' + f.name + '」被 ' + f.refs.length + ' 个方案引用 —— 请到双栏视图走键入确认'); return; }
+  FN = FN.filter(function(x){ return x.id !== id; });
+  renderTable(); renderKpis(); toast('已删除「' + f.name + '」');
+}
+el('q').addEventListener('input', renderTable);
+el('src').addEventListener('change', renderTable);
+el('st').addEventListener('change', renderTable);
+el('sel-all').addEventListener('change', function(){
+  var boxes = document.querySelectorAll('.sel');
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = this.checked;
+});
+el('btn-checkall').addEventListener('click', function(){
+  var bad = 0;
+  FN.forEach(function(f){ if (f.st === 'err') bad++; });
+  renderTable(); renderKpis();
+  toast('全库体检完成：' + FN.length + ' 个函数，' + bad + ' 个语法错误（示意）');
+});
+el('btn-new').addEventListener('click', function(){
+  toast('新建请在「双栏管理台」视图完成（示意）—— 编辑器在那里');
+});
+el('btn-batch-del').addEventListener('click', function(){
+  var boxes = document.querySelectorAll('.sel');
+  var n = 0;
+  for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) n++;
+  toast(n ? ('高危动作：将走键入确认词删除 ' + n + ' 条（示意）') : '未选中任何行');
+});
+
+window.__selftest = function(){
+  var out = [];
+  renderTable(); renderKpis();
+  var nD = (el('tbody').innerHTML.match(/<tr>/g) || []).length;
+  out.push(['表格行数', nD === FN.length]);
+  el('q').value = 'MACD'; renderTable();
+  out.push(['搜索过滤', (el('tbody').innerHTML.match(/<tr>/g) || []).length === 1]);
+  el('q').value = ''; el('st').value = 'err'; renderTable();
+  out.push(['状态过滤', (el('tbody').innerHTML.match(/<tr>/g) || []).length === 1]);
+  el('st').value = 'all'; renderTable(); renderKpis();
+  out.push(['KPI 错误数', el('k-err').textContent === '1']);
+  return out;
+};
+
+renderTable(); renderKpis();
+</script>
+</body>
+</html>

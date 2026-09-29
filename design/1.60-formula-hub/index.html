@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>函数总库（Formula Hub）· 样式设计稿（现状盘点 / 统一模型 / 方案对比）</title>
+<!-- design/1.60-formula-hub/index.html · v1 · 2026-09-29
+     本目录 = 「函数总库」的**唯一设计目录**（惯例：design/<APP版本号>-<特性>/，一个特性一个目录；
+     迭代只在本目录内 改文件 / 补文件 / 删文件，不新建 -v2 目录）。
+     背景：用户 2026-09-29 提出 —— 函数散在行情配方库 / M1 策略 / M2·M3 方案三处，没有统一保管与
+     管理的地方；希望在 B15 之前先做"函数总库"把函数层打通，为 B15 减少重复工作。
+     本轮 = **样式设计**：四版交互模型 + 统一数据模型提案；选型后另出实现方案书。 -->
+<link rel="stylesheet" href="_style.css">
+<style>
+  .hero{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:12px}
+  .hero h1{margin:0 0 6px;font-size:17px}
+  table.cmp{width:100%;border-collapse:collapse;font-size:12.3px}
+  .cmp th{background:#F7F9FC;text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .cmp td{padding:7px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
+  .cmp td:first-child{font-weight:600;white-space:nowrap}
+  .flow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  .flow .n{background:var(--accent-bg);color:var(--accent);border:1px solid #BBDEFB;
+    border-radius:10px;padding:5px 12px;font-size:12.3px;font-weight:600}
+  .flow .a{color:var(--text3);font-size:12px}
+</style>
+</head>
+<body>
+<div class="main" style="max-width:1180px;margin:0 auto">
+
+  <div class="hero">
+    <h1>ƒ 函数总库（Formula Hub）· 样式设计稿 <span class="chip">当前 v1</span></h1>
+    <p class="lead">目标：给散落在三处的用户函数一个<strong>统一保管与管理的地方</strong> ——
+      增删查改、编写、语法体检、互送到各功能页；<strong>图表叠加 / 回测运行 / 全市场扫描仍在功能页完成</strong>。
+      同时为 B15 参数稳健性研究铺路（B15 的"策略选择"直接从总库取函数，不用再各处抽文本）。</p>
+    <p class="lead" style="margin-bottom:0">四版方案：<a href="a-双栏管理台.html">A 双栏管理台（主推）</a> ·
+      <a href="b-全局浮窗.html">B 全局浮窗</a> · <a href="c-右侧抽屉.html">C 右侧抽屉</a> ·
+      <a href="d-表格密集台.html">D 表格密集台</a>（A 的高级视图，同一份数据）</p>
+  </div>
+
+  <!-- ================= 现状盘点 ================= -->
+  <div class="card">
+    <h2>一、现状盘点：函数现在住在哪（2026-09-29 实测三个存储的形状）</h2>
+    <table class="cmp">
+      <tr><th style="width:150px">存储</th><th>形状（真实字段）</th><th>谁在用</th><th>痛点</th></tr>
+      <tr><td>配方库<br><code>formula_library.json</code></td>
+        <td><code>{id, name, segments:[{text, target}], params_text, source, created_at, updated_at, used_at}</code><br>
+            段级带<strong>目标窗格</strong>（main/sub1/sub2/sub3）</td>
+        <td>行情页（载入/保存/开机自动恢复）· 回测页（互送）</td>
+        <td>只在两个页面的工具栏里露出，<strong>没有总览/搜索/清理入口</strong></td></tr>
+      <tr><td>M1 策略<br><code>backtest_strategies.json</code></td>
+        <td><code>{id, name, function(拼接文本), segments?, params_text, condition_buy, condition_sell, risk, index, fill}</code> + 回测档案</td>
+        <td>回测页 M1（保存/载入/策略对比）</td>
+        <td>公式是策略的<strong>内联字段</strong>（拼接文本）—— 同一个函数在配方库和策略里各存一份，改一处不同步</td></tr>
+      <tr><td>M2/M3 方案<br><code>scan_strategies.json</code></td>
+        <td><code>{id, name, config:{scope, index_code, formula, params, thresholds, adjust}}</code></td>
+        <td>扫描页 M2/M3（共池，M2 存 M3 可载）</td>
+        <td>公式同样是<strong>内联文本</strong>；与 M1/配方库三处互不相认</td></tr>
+    </table>
+    <div class="hint" style="margin-top:8px">B15 方案书的口径"策略只列 M1 已保存配方 / 策略只来自 data/formula_store"，
+      正是因为没有统一层 —— 总库做完，B15 的"策略选择"就是"从总库挑函数"。</div>
+  </div>
+
+  <!-- ================= 统一模型提案 ================= -->
+  <div class="card">
+    <h2>二、统一数据模型提案（选型时一并拍板；实现细节在方案书定稿）</h2>
+    <div class="flow">
+      <span class="n">ƒ 函数资产<br><span class="hint">segments + params</span></span>
+      <span class="a">被引用 →</span>
+      <span class="n">行情页配方<br><span class="hint">+ 窗格目标</span></span>
+      <span class="n">M1 策略<br><span class="hint">+ 条件/风控/门控/成交</span></span>
+      <span class="n">M2/M3 方案<br><span class="hint">+ 粗筛阈值/范围</span></span>
+      <span class="n">B15 参数研究<br><span class="hint">+ 网格/区间</span></span>
+    </div>
+    <table class="cmp" style="margin-top:8px">
+      <tr><th style="width:190px">选项</th><th>做法</th><th>收益</th><th>代价</th></tr>
+      <tr><td>① 真源统一<br>（资产 / 引用分离）</td>
+        <td>新函数资产库为<strong>唯一公式真源</strong>；M1 策略 / M2M3 方案存<strong>引用 + 内联快照</strong>
+            （快照保离线可用，引用保同步与 B15 抽取）；首版做一次性幂等迁移（三处现有函数抽成资产，原文件保留兜底）</td>
+        <td>真打通：改名/改函数一处生效；删除有引用检查；B15 直接取资产</td>
+        <td>动三个存储的写入语义，迁移要谨慎（工作量最大）</td></tr>
+      <tr><td>② 统一视图<br>（分存储聚合）</td>
+        <td>总库只做<strong>聚合管理面</strong>：读三个 store 汇总展示，写入仍走各自 store</td>
+        <td>改动最小、风险低；管理体验先拿到</td>
+        <td>同一函数多副本的漂移依旧；B15 还得再做一次抽取</td></tr>
+    </table>
+    <div class="hint" style="margin-top:8px"><b>本轮倾向：①</b>（用户的原话"把整个函数层面打通"）——但迁移规模在方案书里
+      逐条列出后再开工；设计稿四版对两个选项都成立（UI 不变，换的是数据层）。</div>
+  </div>
+
+  <!-- ================= 四方案对比 ================= -->
+  <div class="card">
+    <h2>三、四版交互模型对比（点标题可打开交互原型）</h2>
+    <table class="cmp">
+      <tr><th>方案</th><th>入口 / 位置</th><th>编辑器</th><th>优点</th><th>代价</th><th>适合</th></tr>
+      <tr><td><a href="a-双栏管理台.html">A 双栏管理台</a><br><span class="chip">主推</span></td>
+        <td>左轨新增「ƒ 函数库」页（建议落位：回测与数据管理之间，待拍板）</td>
+        <td>右栏常驻（查看 ⇄ 编辑零跳转）</td>
+        <td>函数有了"中立的家"；空间充足；全库体检 / 引用管理放得下</td>
+        <td>左轨多一个导航位（设置页"永不上移"口径不受影响）</td>
+        <td>函数会持续变多的主线形态</td></tr>
+      <tr><td><a href="b-全局浮窗.html">B 全局浮窗</a></td>
+        <td>三个功能页各一个「ƒ 库」按钮，非模态浮窗（位置记忆）</td>
+        <td>紧凑单列三态</td>
+        <td>零导航侵入；边看图边翻；范本现成（下载队列面板）</td>
+        <td>编辑长函数偏挤；浮窗生命周期要照 §11.5-81/82 管</td>
+        <td>不想动导航 / 轻量管理</td></tr>
+      <tr><td><a href="c-右侧抽屉.html">C 右侧抽屉</a></td>
+        <td>任意功能页滑出（复用 EditDrawer 组件）</td>
+        <td>页签三态（列表/详情/编辑）</td>
+        <td>组件现成、实现最省；结果区一像素不动（§10-14）</td>
+        <td>没有中立的家；可发现性靠三页入口</td>
+        <td>最快落地</td></tr>
+      <tr><td><a href="d-表格密集台.html">D 表格密集台</a></td>
+        <td>同 A 的导航位，切换"卡片 / 表格"两种视图</td>
+        <td>表格只做总览与批量动作，编辑跳 A</td>
+        <td>函数上量后的体检 / 批量清理最好用（KPI 行 + 过滤器）</td>
+        <td>不适合当唯一视图（编辑体验弱）</td>
+        <td>作为 A 的进阶视图共存（S4 之于 S2 的关系）</td></tr>
+    </table>
+    <div class="hint" style="margin-top:8px">推荐组合：<strong>A（主视图）+ D（上量后的高级视图，同一份数据）</strong>；
+      若不想动导航则 B。选型后按惯例出施工路径表（每步一验收）。</div>
+  </div>
+
+  <!-- ================= 设计语言与功能边界 ================= -->
+  <div class="card">
+    <h2>四、设计语言与功能边界</h2>
+    <div class="hint">
+      · 观感 = 现行主程序：白卡 / #E6EAF0 边 / #1976D2 主蓝 / 圆角 14 / 字号 13；代码区用开源等宽栈（§10-15，连 font: 简写也不写专有名）。<br>
+      · 语法体检 = 调 <code>FormulaEngine.validate / parse</code>：错误给人话 + 位置；已知未实现的绘图函数 = 非阻断提示（§11.5-14）；<strong>绝不阻断载入存量函数</strong>。<br>
+      · 删除分级 = §10-10：未引用 → 红色二次确认；被引用 → 键入「删除」+ 引用清单列出。<br>
+      · 互送语义 = 复用既有「送去做回测」：载入（回填段与参数）+ <code>touch used_at</code>；运行永远在功能页。<br>
+      · 隐私 = §10-6：本目录样例全部为公开教科书级公式（MACD / 均线 / 乖离率），<strong>不含任何用户私有函数</strong>。
+    </div>
+  </div>
+
+  <!-- ================= 决策点 ================= -->
+  <div class="card">
+    <h2>五、待拍板决策点（选型时回答）</h2>
+    <div class="hint">
+      ① 样式：A / B / C / D（或 A+D 组合）；<br>
+      ② 若 A/D：左轨落位（建议 = 📐市场回测 与 🗄数据管理 之间）；<br>
+      ③ 数据模型：提案①（真源统一 + 引用，推荐）还是提案②（聚合视图）；<br>
+      ④ M1 的 function 拼接文本、M2/M3 的 formula 内联文本 —— 迁移时是否顺便统一成段结构（影响 B15 的参数发现精度）。
+    </div>
+  </div>
+
+  <!-- ================= 修订历史 / 自检 ================= -->
+  <div class="card">
+    <h2>六、修订历史 · 命名惯例 · 自检</h2>
+    <div class="hint">
+      · <b>v1（2026-09-29）</b>：立项 + 四版起草（A/B/C/D）+ 统一模型提案 + 现状盘点。<br>
+      · 目录 = <code>design/1.60-formula-hub/</code>（惯例：design/&lt;APP版本号&gt;-&lt;特性&gt;/，一个特性一个目录，迭代只改目录内文件）。<br>
+      · 自检：<code>node _check.js</code>（有 node 时）或 <code>py _check.py</code>（同逻辑的 Python 版，本机无 node 时用）——
+        两版做同一套检查：① 逐页真跑内联 script + 调 <code>__selftest()</code>；② getElementById 的 id 必须真实存在；
+        ③ 专有字体名不许出现在 font-family / font: 简写里（比 1.58 的检查更严，堵住简写漏检）。
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
