@@ -68,6 +68,17 @@ def main():
     setup_env()
     app = QApplication(sys.argv)
 
+    # ★1.61 / §7-B16：函数总库**一次性资产收编**（幂等）—— 把 M1 策略 / M2·M3 方案里的
+    #   公式导进资产库并写回 asset_id。必须在**各页面构造之前**做：页面随后 load 才能带上引用。
+    #   只增字段不删不改、坏条目跳过、跑过一次就短路（铁律见 data/hub_migration.py）。
+    try:
+        from data.hub_migration import ensure_hub_migration
+        _mig = ensure_hub_migration()
+        if _mig.get("migrated"):
+            logging.info(f"函数总库迁移：收编 M1 {_mig['m1']} 条 / M2·M3 {_mig['scan']} 条")
+    except Exception as _e:                            # noqa: BLE001 —— 迁移失败不拦启动（总库打开时兜底重试）
+        logging.warning(f"函数总库迁移失败（总库打开时会重试）: {type(_e).__name__}: {_e}")
+
     # 诚实报告本机**实际用上**的界面字体：开源栈命中 / 回落系统默认（§10-9 字体只此一处）。
     # 用户反馈"字体不对"时，看这一行即可判断要不要装「思源黑体 / Noto Sans CJK SC」。
     logging.info(ui_font_status())

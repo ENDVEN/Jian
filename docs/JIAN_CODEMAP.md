@@ -144,9 +144,19 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   │                    #      + friendly_fetch_message / short_fetch_reason / friendly_constituent_message
 │   │                    #      + ★v6.10 fetch_index_constituents（联网抓取唯一入口，§9-H 红线）
 │   ├── strategy_store.py#     StrategyStore：回测策略 JSON CRUD + 每标的 metrics 档案(同股对比)
-│   ├── formula_store.py #     ★v6.11/P7 公式配方库：KIND 无关的"函数段+参数+每段目标窗格"资产化
+│   ├── formula_store.py #     ★v6.11/P7 公式配方库 → **★v6.79/§7-B16 升格为「函数资产库本体」**
+│   │                    #      （KIND 无关的"函数段+参数+每段目标窗格"资产化；**不新建 store**）
 │   │                    #      + 按 name upsert / touch+last_used(开机自动恢复) / 与 strategy_store 同源；
-│   │                    #      + get_formula_store() 单例（两页面共用，防"后保存覆盖先保存"）
+│   │                    #      + 来源 `source` 四值 market/backtest/**scan**/**hub** + `hub_migration` 迁移标记；
+│   │                    #      + get_formula_store() 单例（页面/浮窗/总库共用，防"后保存覆盖先保存"）
+│   ├── hub_assets.py    #     ★v6.79/§7-B16 总库**数据层助手**（零 Qt，横跨资产库 ⇄ M1 ⇄ M2M3）：
+│   │                    #      find_by_content(内容命中，绝不按名猜) / upsert_asset(收编；同名不同内容
+│   │                    #      ⇒ 后缀 ` ·M1`/` ·扫描` **绝不覆盖用户手存配方**) / ref_counts(引用计数，
+│   │                    #      **动态算不落盘**) / stale_snapshot(快照时效 ⇒ 红线②) / delete_asset(只清
+│   │                    #      **引用它**的那一处，引用方内联快照原样保留)
+│   ├── hub_migration.py #     ★v6.79/§7-B16 一次性资产收编（幂等；`main.py` 启动 + 总库/浮窗兜底）：
+│   │                    #      **三铁律** = 老档只有 `function` ⇒ **整体一段绝不按分号猜拆** /
+│   │                    #      只增 `asset_id` 不删不改任何字段、坏条目跳过自己 / 跑 N 次 = 跑 1 次
 │   ├── annotations.py   #     ★v6.10/P6 用户标注：KIND_*（trend/hline/vline/**fib**/**text**）
 │   │                    #      + `(标的,周期,id)` 原子写 CRUD + DateAxis（日期↔bar序号映射，防漂移）
 │   │                    #      + ★v6.12 period_key（周期键规范化：任何写法→daily/weekly/monthly）
@@ -271,7 +281,8 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #        ★v6.25 **不再认识任何具体画法**：只准备 `DrawCtx` 交给规格表；
     │                    #        ★v6.26 接管绘制会话的输入（场景点击/移动）+ `commit_draw` 落库
     │                    #        + "依赖视图"类型的缩放重算钩子（甘氏扇形/斐波弧，2% 节流）)
-    │                    #   / formula_library.py(★v6.11/P7 配方库窗口：列表/预览/载入/改名/删除，两页共用)
+    │                    #   （★v6.79 已删 `formula_library.py` —— 旧配方库对话框生产零入口，
+    │                    #     职责由「函数总库」浮窗 / A 页承担；详见下方 hub_*.py）
     │                    #   / backtest_panes.py(395 ★1.22 回测页五张编辑卡片：ƒ函数/⇄条件/📉大盘/🛡风控/
     │                    #        🎯成交（纯视图）+ **EditDrawer 右侧遮罩抽屉**（遮罩 + 页签 +
     │                    #        卡片堆叠）—— 样板 A 的 L3 层；含 mini_label/hint_icon/number_spin
@@ -302,6 +313,25 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #     页面进度条与回执 = **队列的投影**（只认自己那个 `job_id`）；
     │                    #     回调**绑定各自 scope**（旧范围迟到回包/进度一律丢弃，防覆盖新提示）；
     │                    #     `constituent_failure_text()` 成分股失败人话诊断唯一出口)
+    │                    #   / **hub_*.py —— ★v6.79/§7-B16 **函数总库拆出来的 4 个模块**（同款约定：
+    │                    #     状态留页面、行为搬模块；**只管资产不管运行** = 红线①）：
+    │                    #     · hub_layout.py(251：双栏版式 = 左列表(318px) + 右「详情 ⇄ 编辑器」栈；
+    │                    #         **只造容器 `self.root`、由页面 `addWidget` 挂进去** —— 别自己
+    │                    #         再往页面上 `QLayout(page)`，§11.5-108 就是那次事故)
+    │                    #     · hub_flow.py(257：刷新/筛选/选中/编辑/保存/删除分级/复制/全库体检/送 ↗)
+    │                    #     · hub_editor.py(125：**全站唯一编辑面** —— 名称 + 函数段 + 默认窗格 +
+    │                    #         参数 + `🔎 检测语法`（真引擎 `parse_program`，**不要求先填名称**）)
+    │                    #     · formula_hub_panel.py(**统一浮窗 = 唯一非模态浮层范式** —— 两区
+    │                    #         分段：`ƒ 函数` / `📚 本页方案`；标题栏可拖 + `hub_ui` 位置/开合记忆)
+    │                    #     · hub_float_fn.py(浮窗的「ƒ 函数」区：列表 → 详情 → **紧凑编辑**
+    │                    #         三态 + 「💾 存当前函数」；行画法/编辑器/保存与 A 页**共用**)
+    │                    #     · hub_latest.py(H4 公共件「总库有更新版」的提示 + 显式更新；
+    │                    #         **M1 与 M2·M3 共用一份**，`asset_texts` 的调用只许出现在它的
+    │                    #         `apply()` 里 —— 源码级护栏钉死"载入路径不读资产内容")
+    │                    #     · 列表行画法 = hub_layout.`build_asset_row` / `asset_row_meta`
+    │                    #         （**A 页与浮窗共用一份** —— 样式分叉 = 用户看不出是同一个库）
+    │                    #   / backtest_summary_bar.py(126 ★1.22 摘要条；★v6.79 多一个**默认隐藏**的
+    │                    #       「⤒ 用最新版」= H4 显式更新动作，**不是新常驻行**)
     │                    #   / backtest_result.py(432 ★1.22 结果区（L0 主角）：KPI 四卡 + K线控制行 +
     │                    #        4 个结果页签（净值曲线 / K线买卖点+公式叠层 / 策略对比 / 成交明细）
     │                    #        + 全部图表渲染与日期轴·量程自适应；`_df`/`_draws` 由页面每次显式喂入
@@ -376,6 +406,11 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
                          #   / **breadth_view(197 ★v6.38/§7-B1/B2 STEP 5：M3 广度统计页**——状态全在页面
                          #         + 同名薄壳；版式/流程/空态/图表分居 `ui/widgets/breadth_layout|flow|
                          #         result|chart`；与 M2 共用内核 + 会话缓存，一个引擎两种视图)
+                         #   / **formula_hub(115 ★v6.79/§7-B16：ƒ 函数总库 A 管理台页**——左轨第 6 项
+                         #         （📐回测 与 🗄数据管理 之间）；状态全在页面 + 同名薄壳；
+                         #         版式/行为/编辑器分居 `ui/widgets/hub_layout|flow|editor`；
+                         #         「浮窗 / 三页载入 / 送到各页」的**路由统一在主窗口**
+                         #         （`load_into_current` / `send_asset_to_page`），页面之间不互相 import)
                          #   / data_manager(506 🗄数据管理, v5.8；★v1.43 同步类动作一律**提交后台队列**，
                          #     不再 `_set_busy` 锁住整页按钮；完成时 `_on_hub_finished` 刷清单，
                          #     不在前台则记 `_pending_rescan` 等 `showEvent` 补刷)
@@ -446,9 +481,15 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | 加"用户手绘标注"（趋势线/水平线/斐波那契/文字） | ✅ **P6 已完成（v6.10）**：模型+持久化 = `data/annotations.py`（JSON 先 / DB 可迁，API 按 `(标的,周期,id)`）；交互 = `ui/widgets/annotation_layer.py`。**加一种新标注类型** = ① `annotations.py` 加 `KIND_*` + `REQUIRED_POINTS` 条目；② `annotation_layer.py` 的 `_draw_item`/`_points_from_graphic` 各加一个分支；③ 行情页工具下拉加一项。**禁止在页面里自己 new ROII/InfiniteLine** |
 | 用户标注"存哪、怎么存" | **`data/annotations.py`**：`~/.jian_data/annotations.json`（原子写）。**坐标一律存日期字符串**（不是 bar 序号）—— 否则数据窗口一变就整体漂移（§11.5-18 同级纪律：公共件入参按最脏情况防御） |
 | 联网抓名单/成分股 | **`MarketSyncService.fetch_index_constituents()`**（v6.10 收编）—— **UI 层禁止 import `AkShareFeed`**（§9-H 红线，`tests/smoke_chart.py` 有源码级断言守门） |
-| 存/载"公式配方"（函数段 + 参数 + 每段目标窗格） | **`data/formula_store.py`**：`get_formula_store()`（**单例**，两页面共用）+ `make_formula/normalize_segments/segments_as_tuples/segments_as_texts`。⚠ 任何新页面要存公式，**必须用这个单例**，别自己 `FormulaStore()`（会互相覆盖） |
+| 存/载"公式配方"（函数段 + 参数 + 每段目标窗格） | **`data/formula_store.py`**（★v6.79 = **函数资产库本体**）：`get_formula_store()`（**单例**，页面/浮窗/总库共用）+ `make_formula/normalize_segments/segments_as_tuples/segments_as_texts`。⚠ 任何新页面要存公式，**必须用这个单例**，别自己 `FormulaStore()`（会互相覆盖）；⚠ **别绕开 `make_formula` 直接 `upsert({...})` 不带 `id`** —— 那会把 `id` 变成字符串 `'None'` 让所有资产串号（§11.5-109，已修但别再造这种调用形态） |
 | 行情页 ⇄ 回测页 互送函数 | **`ui/main_window.py`**：`send_formula_to_backtest()` / `send_formula_to_market()` / `switch_to()` —— **两个页面禁止互相 import**，一律经主窗口转交（§3 的"装配与事件分发"职责） |
-| 配方库 UI（列表/预览/载入/改名/删除） | **`ui/widgets/formula_library.py` 的 `FormulaLibraryDialog`**（两页共用；新增页面直接用，别复制一份） |
+| **函数总库（ƒ 函数库页 / 浮窗 / 更新动作）** | ★v6.79/§7-B16：资产库本体 = **`data/formula_store.py`**（扩展而非新建）；数据助手 = **`data/hub_assets.py`**（`find_by_content` 内容命中 / `upsert_asset` 收编 / `ref_counts` 引用计数 / `stale_snapshot` 时效 / `delete_asset` 删引用）；一次性收编 = **`data/hub_migration.py`**（幂等；老档**整体一段**绝不按分号猜拆）；A 页 = `ui/views/formula_hub.py` + `ui/widgets/hub_layout\|flow\|editor.py`；B 浮窗 = `ui/widgets/formula_hub_panel.py`；路由 = `ui/main_window.py`（`show_formula_hub_panel` / `load_into_current` / `send_asset_to_page` / `_restore_hub_ui`） |
+| 函数 / 方案**入口**（M1 · M2·M3 · 行情页） | **一律是「ƒ 库」按钮 → 统一浮窗**（`main_win.show_formula_hub_panel()`）。★v6.79 H6 起**页面侧只剩这一个入口**：M1 的策略下拉/保存当前/移除、M1 的「💾 存为配方」、M2/M3 的「📚 载入/💾 存为/管理」、行情页的「💾 存为配方…」、`formula_library.py` **全部已删**（`smoke_pages_overlay` 有**负向断言**钉"复活即红"）。⚠ 载入只回填**函数段 + 参数**，条件/风控/门控/成交/阈值/范围 **一字不动**（红线②） |
+| 「ƒ 库」按钮**该摆在哪**（踩过坑） | **必须常驻可见**：M1 = 摘要条右侧动作簇（`backtest_summary_bar.btn_hub` → `sig_formula_hub`）· M2/M3 = 摘要条（`scan_layout`/`breadth_layout` 的 `p.btn_hub`）· 行情页 = 顶部工具行右端（`desk_layout.build_top_bar` 的 `p.btn_hub`）。⚠ **别只放抽屉里的编辑卡片**（`pane_fn.btn_library` / `_formula_pane.btn_hub`）—— 抽屉默认关着 ⇒ 用户"根本看不到入口"（★1.61 实测事故）。抽屉里那两颗**保留**（抽屉是遮罩会盖住摘要条），两处走**同一个方法**。冒烟 ⑮ 用 `isVisibleTo(win)` 钉四页可见性（**"存在"≠"看得见"**，`hasattr` 查不出这类问题） |
+| 浮窗的「📚 本页方案」区（策略 / 筛选方案） | 路由 = `main_window.current_plan_api()`（**认当前页**：M1 = `backtest_single.strategy`，M2/M3 = `page_scan/_breadth._strategy`，其它页 = None）；页面/子页签一变必须 `panel.refresh_plans()`。三个动作直接复用桥接的 `load_plan` / `save` / `delete_plan` —— **页面侧不另写一套** |
+| 浮窗的「💾 存当前函数」 | 草稿取口 = `main_window.current_formula_draft()`（四页各有一份**只读** `current_formula_draft()`）；落在 `hub_float_fn.begin_save_current()`（**预填不落库**，还要点「💾 保存」）。⚠ 来源 `source` 由草稿带进 `save_editor_asset(default_source=...)` —— 在行情页存的公式不该被记成"总库新建" |
+| "总库有更新版"提示 / 显式更新 | 判定 = `data/hub_assets.stale_snapshot()`；共用件 = **`ui/widgets/hub_latest.LatestFunctionPrompt`**（M1 与 M2·M3 各持一个实例，只传 5 个参数：主语 / 被换的东西 / 没动的东西 / 回填函数 / 回执控件）⇒ 两处桥接只剩同名薄壳 `prompt_stale` / `stale_tip` / `apply_latest_function`。⚠ **默认保留旧版**（红线②）；护栏 = 源码级断言"读资产的**调用**只出现在 `hub_latest.apply()` 里、两个桥接文件里一个都没有" |
+| 浮窗位置 / 开合记忆 | 偏好键 **`hub_ui`**（`{"offset": [dx,dy], "open": bool, "asset_id": str}`，唯一真源 = `core.preferences.DEFAULTS`）；主窗口 `_hub_ui` / `_save_hub_ui` / `_place_hub_panel` / `_restore_hub_ui` 读写；拖动入口 = `formula_hub_panel._DragHeader`。⚠ 偏移会被 `_place_hub_panel` **夹回内容区**（不许飞走）；点 ✕ ⇒ `open=False` ⇒ 下次不弹（**自我纠正**） |
 | 载入外来公式后 | 页面侧必须做两件事：① **自动检测**（`detect_function(quiet=True)` / `_compile_formula()`），不能静默塞进去；② 回执说清**来源**（"已从回测页载入 N 段"） |
 | 在行情页显示用户函数（像 MA/BOLL） | ✅ **P4 已完成**：编辑器 `ui/dialogs/formula_overlay.py`；图层 = 行情工作台 `ui/views/trading_desk.py` 的 `_formula_layers()` + **`ui/widgets/chart_layers.py` 的 `builtin_indicator_layers()`**（内置指标）→ **同一个 `OverlayPainter`**。加新内置指标 = 在 `builtin_indicator_layers()` 多产一个 `DrawData`，**不要另开绘制分支**（D4） |
 | 改内置指标（MA/BOLL）配色 | **`ui/widgets/chart_style.py` 的 `MA_SERIES` / `BOLL_LINE_COLOR`**（v6.6 起唯一来源，原在 market.py） |

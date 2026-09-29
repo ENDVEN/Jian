@@ -5,7 +5,8 @@
 【职责】页面上的编辑器状态 ⇄ 磁盘上的策略存档之间的那层：
   · `payload()`  —— 把当前编辑器状态打包成可持久化快照（含买卖条件 / 风控 / 指数门控 /
                     成交时点 / 区间 / 标的），**签名与旧档兼容**的约定都在这里；
-  · `reload_combo()` / `on_strategy_selected()` —— 策略下拉的重建与"选用即还原"；
+  · `plans()` / `load_plan()` / `save()` / `delete_plan()` —— 策略库的列 / 载 / 存 / 删
+    （★1.61：页内那条策略下拉已退役，统一入口 = 「ƒ 库」浮窗的「📚 本页方案」区）；
   · `save()` / `delete()` —— 存/删（带走回执文案）；
   · `archive_result()` —— 回测完成后把指标归档到"当前策略或同配置策略"，供跨策略对比；
   · `render_compare()` —— 对比表 + 对比柱图（图由结果区画，数据在这里取）。
@@ -18,6 +19,11 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QInputDialog, QMessageBox, QTableWidgetItem
 
 from config import settings
+# ★1.61 / §7-B16 红线②：载入只认**内联快照**（绝不静默换函数）；资产有更新版时
+#   `stale_snapshot` 把资产带回给调用方，由它决定提示方式（提示可见、更新要显式动作）。
+from data.formula_store import SOURCE_BACKTEST, get_formula_store
+from data.hub_assets import stale_snapshot, upsert_asset
+from ui.widgets.hub_latest import LatestFunctionPrompt   # ★1.61 §7-B16 H4 公共件（M1 与 M2/M3 共用）
 
 
 class StrategyBridge:
@@ -25,6 +31,12 @@ class StrategyBridge:
 
     def __init__(self, page):
         self.page = page
+        # ★1.61 / §7-B16 H4：「总库有更新版」的提示与显式更新 —— **公共件**
+        #   （与 M2/M3 逐行相同的逻辑只此一份，见 `ui/widgets/hub_latest.py`）。
+        self._latest = LatestFunctionPrompt(
+            page, subject='本策略', noun='函数段与参数',
+            kept='买卖条件 / 风控 / 大盘门控 / 成交口径 / 区间',
+            fill=self._fill_latest, receipt='lbl_run_status')
 
     # ==========================================
     # 打包 / 还原
@@ -56,46 +68,99 @@ class StrategyBridge:
             "symbol": p.current_symbol,
         }
 
-    def reload_combo(self, keep_active: str = None):
-        """重建策略下拉（尽量保持当前选中项；首次进入自动载入第一条）。"""
-        p = self.page
-        strategies = p.store.list_strategies()
-        p.cmb_strategy.blockSignals(True)
-        p.cmb_strategy.clear()
-        for item in strategies:
-            p.cmb_strategy.addItem(str(item.get("name", "未命名")), item.get("id"))
-        idx = -1
-        if keep_active:
-            for i in range(p.cmb_strategy.count()):
-                if p.cmb_strategy.itemData(i) == keep_active:
-                    idx = i
-                    break
-        if idx >= 0:
-            p.cmb_strategy.setCurrentIndex(idx)
-        elif strategies:
-            p.cmb_strategy.setCurrentIndex(0)
-        p.cmb_strategy.blockSignals(False)
-        if idx < 0 and strategies:
-            self.on_strategy_selected(p.cmb_strategy.currentIndex())
+    def active_plan_id(self) -> str:
+        """当前生效的策略 id（空串 = 没有）—— 浮窗列表据此标「● 当前」。"""
+        return str(self.page._active_strategy_id or "")
 
-    def on_strategy_selected(self, index: int):
-        """选用某条策略 → 把快照整体还原进编辑器（旧档字段缺失一律回落默认）。"""
+    def load_plan(self, plan_id: str) -> bool:
+        """按 id 载入策略 —— 把快照整体还原进编辑器（旧档字段缺失一律回落默认）。
+
+        ★1.61 / §7-B16：**页内那条策略下拉已退役**（用户口径：M1 的「保存当前 / 移除」
+        与 M2/M3 的「载入 / 存为 / 管理」本质是同一件事 ⇒ 统一收进「ƒ 库」浮窗的方案区）。
+        本方法就是浮窗「📚 载入」的落点；`_active_strategy_id` 仍是"当前生效策略"的唯一真源。
+
+        :return: 是否真的载入（id 不存在 = False，供浮窗回执说人话）
+        """
         p = self.page
-        if index < 0:
-            p._active_strategy_id = None
-            return
-        strategy = p.store.get(p.cmb_strategy.itemData(index))
+        strategy = p.store.get(str(plan_id))
         if not strategy:
-            return
+            return False
         p._active_strategy_id = strategy.get("id")
-        self.apply_payload(strategy)
-        p.lbl_run_status.setText(f"已载入策略「{strategy.get('name')}」，请选择股票后运行。")
+        stale = self.apply_payload(strategy)     # 只读内联快照（红线②）
+        self.prompt_stale(stale)
+        p.lbl_run_status.setText(f"已载入策略「{strategy.get('name')}」，请选择股票后运行。"
+                                 f"{self.stale_tip(stale)}")
+        return True
 
-    def apply_payload(self, strategy: dict) -> None:
+    # ==========================================
+    # ★1.61 / §7-B16：**函数总库浮窗的「📚 本页方案」区**用的三件事
+    #   策略库仍在本文件；浮窗只是**另一个入口** —— 载入 / 保存 / 删除一律复用同一套实现
+    #   （页内一套、浮窗一套 = 迟早分叉，§11.5-11）。
+    # ==========================================
+    def plans(self) -> list[dict]:
+        """全部策略（浮窗列表用）。"""
+        return self.page.store.list_strategies()
+
+    @staticmethod
+    def plan_label(plan: dict) -> str:
+        """列表行的第二行文案（段数 + 条件数 + 区间）—— 与浮窗里其它行的口径一致。"""
+        segs = [s for s in (plan.get('segments') or []) if str(s).strip()]
+        if not segs and str(plan.get('function') or '').strip():
+            segs = [plan.get('function')]
+        n_cond = (len((plan.get('condition_buy') or {}).get('conditions') or [])
+                  + len((plan.get('condition_sell') or {}).get('conditions') or []))
+        return (f"{len(segs)} 段 · 条件 {n_cond} · "
+                f"{plan.get('start_date') or '—'} ~ {plan.get('end_date') or '—'}")
+
+    def delete_plan(self, plan_id: str) -> bool:
+        """按 id 删策略（浮窗用）—— 先选中再走 `delete()`（同一套二次确认与收尾）。"""
+        p = self.page
+        p._active_strategy_id = plan_id
+        self.delete()
+        return p.store.get(plan_id) is None
+
+    # ==========================================
+    # ★1.61 / §7-B16 H4：「总库有更新版」—— 提示可见 + 更新要显式动作
+    #   实现全在公共件 `ui/widgets/hub_latest.LatestFunctionPrompt`（M1 与 M2/M3 同一份口径）；
+    #   这里只留三个同名薄壳，页面与冒烟照旧调它们。
+    # ==========================================
+    def _fill_latest(self, texts, params_text: str) -> int:
+        """把最新版回填进 M1 编辑器并复检（**只碰函数段与参数**）。"""
+        p = self.page
+        p.segments.set_texts(texts)
+        p.txt_params.setText(params_text)
+        p.detect_function(quiet=True)      # 换完立刻自检：缺参 / 语法当场可见
+        return len(texts)
+
+    def stale_tip(self, stale) -> str:
+        """统一的一句人话（不点按钮 = 保持原样，这是默认动作，必须在文案里说出来）。"""
+        return self._latest.tip(stale)
+
+    def prompt_stale(self, stale) -> bool:
+        """记下待更新的资产并显隐摘要条上的「⤒ 用最新版」（None = 收起）。
+
+        ⚠ **只显隐按钮，绝不改编辑器** —— 红线②：已存方案的函数要么保持原样（默认），
+          要么由用户点一下才换成新版。这里是"提示面"，动作在 `apply_latest_function`。
+        """
+        return self._latest.prompt(stale)
+
+    def apply_latest_function(self) -> int:
+        """「⤒ 用最新版」：**只**替换函数段与参数，其余配置一字不动（红线②）。
+
+        这是**显式动作**（用户点了才发生），所以允许读资产内容；载入路径（`apply_payload`）
+        依旧只读内联快照 —— 护栏的源码级断言盯的是"读资产"这个动作只许出现在公共件里。
+
+        :return: 实际替换的段数（0 = 没有待更新的资产 / 资产内容为空）
+        """
+        return self._latest.apply()
+
+    def apply_payload(self, strategy: dict):
         """把一份配置快照（策略 payload / 历史存档 config 同构）整体还原进编辑器。
 
-        旧档字段缺失一律回落默认；与 `on_strategy_selected` 共用同一套还原口径（单一事实源）。
+        旧档字段缺失一律回落默认；与 `load_plan` 共用同一套还原口径（单一事实源）。
         不负责切标的（symbol 由调用方按需设），也不写回执（便于历史页自定义提示）。
+        ★1.61 / §7-B16 红线②：还原**只读内联快照**（`segments`/`function`），绝不静默换函数；
+        :return: 总库更新版资产（无引用 / 内容一致 / 资产已删 = None）
         """
         p = self.page
         segments = strategy.get("segments") or [str(strategy.get("function", ""))]
@@ -115,6 +180,10 @@ class StrategyBridge:
         self._apply_index_config(strategy.get("index") or {})
         # 还原成交模型 (旧策略无 fill 字段 -> 次日开盘 + 1 跳，等价改动前行为)
         p._apply_fill_config(strategy.get("fill") or {})
+        # ★1.61 / §7-B16：内联快照 vs 总库资产是否分叉（分叉 = 返回更新版资产，提示由调用方出）
+        return stale_snapshot(str(strategy.get("asset_id") or ""),
+                              [s for s in segments if str(s).strip()],
+                              str(strategy.get("params_text", "")))
 
     # ==========================================
     # 指数门控（策略快照的一个字段，读写都在这里）
@@ -161,9 +230,16 @@ class StrategyBridge:
         if not ok or not name:
             return
         payload["name"] = name
+        # ★1.61 / §7-B16：函数**收编进资产库**（内容命中即复用；同名不同内容 ⇒ 后缀新建，
+        #   绝不覆盖用户手存配方），并把引用挂到本策略 —— 引用计数 / 更新提示由此有据可查。
+        asset = upsert_asset(get_formula_store(), name,
+                             payload.get("segments"), payload.get("params_text", ""),
+                             SOURCE_BACKTEST)
+        payload["asset_id"] = asset["id"]
         strategy_id = p.store.upsert(payload)
         p._active_strategy_id = strategy_id
-        self.reload_combo(keep_active=strategy_id)
+        # 刚把当前内容存成策略 ⇒ 快照与资产的关系已重新建立，「有更新版」提示随之作废。
+        self.prompt_stale(None)
         p.lbl_run_status.setText(f"✅ 已保存策略「{name}」，下次可直接选用。")
 
     def delete(self):
@@ -178,7 +254,6 @@ class StrategyBridge:
         if reply == QMessageBox.StandardButton.Yes:
             p.store.delete(p._active_strategy_id)
             p._active_strategy_id = None
-            self.reload_combo()
             self.render_compare()
 
     def archive_result(self, summary: dict):
@@ -190,7 +265,6 @@ class StrategyBridge:
         if strategy_id:
             p.store.record_result(strategy_id, p.current_symbol or "", summary)
             p._active_strategy_id = strategy_id
-            self.reload_combo(keep_active=strategy_id)
             self.render_compare()
 
     def render_compare(self):

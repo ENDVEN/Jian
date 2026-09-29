@@ -33,9 +33,15 @@ SCHEMA_VERSION = 1
 VALID_TARGETS = ("main", "sub1", "sub2", "sub3")
 DEFAULT_TARGET = "main"
 
+# 来源标记（★1.61 / §7-B16：配方库升格为**函数资产库** —— 全站公式唯一真源）。
+#   market/backtest 是既有两值；scan = 从 M2/M3 方案导入；hub = 在总库新建。
+#   ⚠ 总库只管资产不管运行（红线①）：来源只影响展示与命名后缀，不影响任何行为。
 SOURCE_MARKET = "market"
 SOURCE_BACKTEST = "backtest"
-SOURCE_LABELS = {SOURCE_MARKET: "行情页", SOURCE_BACKTEST: "回测页"}
+SOURCE_SCAN = "scan"
+SOURCE_HUB = "hub"
+SOURCE_LABELS = {SOURCE_MARKET: "行情页", SOURCE_BACKTEST: "回测页",
+                 SOURCE_SCAN: "扫描页", SOURCE_HUB: "总库"}
 
 
 def _now() -> str:
@@ -105,7 +111,11 @@ def make_formula(name: str, segments, *, params_text: str = "",
         raise ValueError("没有可保存的函数内容（先粘贴函数并「检测」通过）")
     now = _now()
     return {
-        "id": str(formula_id) or new_id(),
+        # ⚠ 必须 `str(formula_id or "")`：`str(None)` 是**真值** `'None'`，会短路掉 `new_id()`
+        #   ⇒ 所有"不带 id 直接 upsert 的调用方"（总库保存 / 收编 / 迁移）拿到同一个 id `'None'`，
+        #   引用计数、快照时效、按 id 取件全部串号（★1.61 实测事故，冒烟 ④⑥⑦⑧ 一起红）。
+        #   调用方现在也都显式传 id 或走 make_formula，这里再兜一层（防呆铁律 §5.3-I）。
+        "id": str(formula_id or "") or new_id(),
         "name": name,
         "segments": clean,
         "params_text": str(params_text or "").strip(),
@@ -126,6 +136,9 @@ class FormulaStore:
     def __init__(self, path: str = None):
         self.path = path or os.path.join(settings.USER_DATA_DIR, FORMULA_FILE)
         self.formulas: list[dict] = []
+        # ★1.61 / §7-B16：H1 迁移标记（资产库已把 M1/M2·M3 的公式收编过一遍 ⇒ 幂等跳过）。
+        #   放在库文件顶层（与 formulas 平级），跟库一起原子写。
+        self.hub_migrated: bool = False
         self.load()
 
     # ---------------- 持久化 ----------------
@@ -141,6 +154,8 @@ class FormulaStore:
             print(f"配方库读取失败: {e}")
             return
         raw = payload.get("formulas") if isinstance(payload, dict) else payload
+        # ★1.61：迁移标记（缺 = 还没做过资产收编；读进来供 hub_migration 判断）
+        self.hub_migrated = bool(payload.get("hub_migration")) if isinstance(payload, dict) else False
         for entry in (raw or []):
             if not isinstance(entry, dict):
                 continue
@@ -154,6 +169,12 @@ class FormulaStore:
             formula["created_at"] = str(entry.get("created_at") or formula["created_at"])
             formula["updated_at"] = str(entry.get("updated_at") or formula["updated_at"])
             formula["used_at"] = str(entry.get("used_at") or "")
+            # ★1.61 / §7-B16：全库体检的结论（`hub_flow.check_all` 写 `syntax_state`）必须能读回来 ——
+            #   `make_formula` 只按"构造时认识的字段"重建条目 ⇒ 不在这里显式回填就是
+            #   **写了却读不回**：`save()` 明明落了它，重启后总库列表里的 ✗/⚠ 全没（静默不一致）。
+            state = str(entry.get("syntax_state") or "")
+            if state:
+                formula["syntax_state"] = state
             self.formulas.append(formula)
 
     def save(self) -> bool:
@@ -164,7 +185,8 @@ class FormulaStore:
         tmp = self.path + ".tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump({"version": SCHEMA_VERSION, "formulas": self.formulas},
+                json.dump({"version": SCHEMA_VERSION, "formulas": self.formulas,
+                           "hub_migration": bool(self.hub_migrated)},
                           handle, ensure_ascii=False, indent=1)
             os.replace(tmp, self.path)
             return True

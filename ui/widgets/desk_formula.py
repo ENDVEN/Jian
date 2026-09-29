@@ -27,7 +27,6 @@ from ui.dialogs.formula_overlay import FormulaOverlayDialog
 from ui.dialogs.indicator_params import IndicatorParamsDialog
 from ui.widgets.chart_layers import scale_mismatch_hint
 from ui.widgets.custom_widgets import RecipeChip
-from ui.widgets.formula_library import FormulaLibraryDialog
 from ui.widgets.layer_model import DRAFT_KEY, TARGET_LABELS, TARGET_ORDER, LayerModel
 
 
@@ -136,30 +135,10 @@ class DeskFormula:
     # ==========================================
     # 资产化 + 互送（P7 · §7-B3 P7）
     # ==========================================
-    def save_formula_as(self):
-        p = self.page
-        if not p._formula_segments:
-            QMessageBox.information(
-                p, "暂无公式",
-                "先在「✏️ 编辑公式…」里粘贴并应用一段函数，再保存为配方。")
-            return
-        name, ok = QInputDialog.getText(p, "保存为配方", "配方名称（同名即覆盖）：")
-        if not ok:
-            return
-        try:
-            formula = make_formula(name, p._formula_segments,
-                                   params_text=p._formula_params_text,
-                                   source=SOURCE_MARKET)
-        except ValueError as e:
-            QMessageBox.warning(p, "无法保存", str(e))
-            return
-        saved = p._formula_store.upsert(formula)
-        # 存完**立刻让它生效**（否则"存了却看不见"），并重建模型让新配方出现在对应分区
-        self._rebuild_model()
-        p.layer_model.set_enabled(f"formula:{saved['id']}", True)
-        p._on_layer_switch_changed()
-        self.refresh_recipe_page()
-        self._set_formula_status(True, f"✓ 已存入配方库：{saved['name']}")
+    # ★1.61 / §7-B16：`save_formula_as`（旧「💾 存为配方…」）**已删** ——
+    #   保存入口统一在「ƒ 库」浮窗（「ƒ 函数」区 →「＋ 新建 / 💾 存当前函数」→「💾 保存」）。
+    #   ⚠ 与旧行为的唯一差别：存完**不再自动叠加**到图上（红线①：总库只管资产不管运行）；
+    #     要画图到本页左栏配方页把那条配方打开即可。
 
     # ==========================================
     # 配方库页（§7-B8 R6/R13）：分区 chip 即开关，管理模式才给改名/删除
@@ -295,15 +274,26 @@ class DeskFormula:
         self.refresh_recipe_page()
 
     def open_formula_library(self):
+        """★1.61 / §7-B16：行情页配方入口改唤「函数总库」浮窗（非模态、随时可关）。
+
+        载入动作由浮窗 `sig_load` → 主窗口 `load_into_current` 路由回**当前页**（本页）；
+        编辑与管理收进「ƒ 函数库」页（落点唯一），旧 FormulaLibraryDialog 退役。
+        """
         p = self.page
-        dialog = FormulaLibraryDialog(p._formula_store, p)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        formula = dialog.selected_formula()
-        if not formula:
-            return
-        self.receive_formula(segments_as_tuples(formula), formula.get("params_text", ""),
-                             source_label=f"配方库「{formula['name']}」")
+        p.main_win.show_formula_hub_panel()
+
+    def current_formula_draft(self) -> dict:
+        """★1.61 / §7-B16：本页正在编辑的公式草稿（浮窗「💾 保存当前函数」用）。
+
+        ⚠ **只读**：不改本页任何状态。**保留每段的目标窗格**（行情页是唯一有窗格概念的一页）。
+        """
+        p = self.page
+        name = str(p.current_name or p.current_symbol or '行情')
+        return {'name_hint': f'{name} 公式',
+                'segments': [{'text': t, 'target': g}
+                             for t, g in (p._formula_segments or [])],
+                'params_text': str(p._formula_params_text or ''),
+                'source': SOURCE_MARKET}
 
     def send_formula_to_backtest(self) -> int:
         """行情页 → 回测页（由主窗口转交，两个页面互不 import）；返回送过去的段数。"""

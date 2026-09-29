@@ -26,7 +26,7 @@
     · 内置指标 → 绘图 IR（统一图层协议）→ `ui/widgets/chart_layers.py`
     · 用户标注（管线 B：持久化 + 逐个删除）→ `ui/widgets/annotation_layer.py`
     · 量能 / MACD 副图内容              → `ui/widgets/indicator_panes.py`
-    · 公式资产化 + 配方库               → `data/formula_store.py` + `ui/widgets/formula_library.py`
+    · 公式资产化 + 配方库               → `data/formula_store.py`（= 资产库本体）+ 函数总库浮窗 `formula_hub_panel.py`（★1.61 旧 `formula_library.py` 已删）
     · 数据同步（UI 不发网络）           → `ui/workers.py` → `data/sync_service.py`
   本文件**不新增任何绘图逻辑、不碰网络、不写 SQL**（§10-3）。
 
@@ -549,8 +549,7 @@ class TradingDeskView(QWidget):
                             detail: str = ""):
         return self._formula._set_formula_status(ok, message, warn=warn, detail=detail)
 
-    def save_formula_as(self):
-        return self._formula.save_formula_as()
+    # ★1.61 / §7-B16：`save_formula_as` 外壳已删 —— 保存入口 = 「ƒ 库」浮窗（见 `desk_formula`）。
 
     def open_formula_library(self):
         return self._formula.open_formula_library()

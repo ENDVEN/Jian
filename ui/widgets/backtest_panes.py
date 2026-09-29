@@ -283,13 +283,11 @@ class FunctionPane(EditPane):
         super().__init__("fn", "ƒ 函数（可多段 · 共享变量池）", "#1976D2", "ƒ 函数", parent)
 
         # —— P7：公式资产化 + 与行情页互送（与「🩺 检测」同排，都属于"对这段函数的操作"）——
-        self.btn_library = QPushButton("📚 配方库")
+        # ★1.61 / §7-B16：按钮改唤「函数总库」浮窗（编辑与管理收进总库页，落点唯一）
+        self.btn_library = QPushButton("ƒ 库")
         self.btn_library.setStyleSheet(ACTION_QSS)
-        self.btn_library.setToolTip("载入已保存的公式配方（含行情页存下的那些）")
-
-        self.btn_save_formula = QPushButton("💾 存为配方")
-        self.btn_save_formula.setStyleSheet(ACTION_QSS)
-        self.btn_save_formula.setToolTip("把下面的函数与参数存进配方库；同名即覆盖")
+        self.btn_library.setToolTip("从「函数总库」选一个函数回填到这里（非模态浮窗）；"
+                                    "函数的管理与编辑在左轨「ƒ 函数库」页")
 
         self.btn_send_market = QPushButton("📤 送到行情页")
         self.btn_send_market.setStyleSheet(SEND_QSS)
@@ -299,7 +297,7 @@ class FunctionPane(EditPane):
         self.btn_detect = QPushButton("🩺 检测")
         self.btn_detect.setStyleSheet(DETECT_QSS)
 
-        for w in (self.btn_library, self.btn_save_formula, self.btn_send_market, self.btn_detect):
+        for w in (self.btn_library, self.btn_send_market, self.btn_detect):
             self.add_head(w)
 
         self.segments = FunctionSegments(

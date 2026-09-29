@@ -199,12 +199,8 @@ class BreadthLayout:
         for chip in (p.chip_formula, p.chip_filter, p.chip_scope, p.chip_display):
             lay.addWidget(chip)
 
-        # ★v1.46 / §7-B12 P3：筛选方案「载入 / 存为 / 管理」（与 M2 共享一份方案池）。
-        p.btn_load = _flat_btn('📚 载入', '载入已保存的筛选方案（函数/参数/粗筛/范围）；M2 与 M3 共用一份方案库')
-        p.btn_save = _flat_btn('💾 存为', '把当前筛选配置存成命名方案（同名覆盖），下次一键载入')
-        p.btn_manage = _flat_btn('管理', '管理（删除）已保存的筛选方案')
-        for _b in (p.btn_load, p.btn_save, p.btn_manage):
-            lay.addWidget(_b)
+        # ★1.61 / §7-B16：旧「📚 载入 / 💾 存为 / 管理」已退役 —— 统一收进「ƒ 库」浮窗
+        #   （与 M2 同一套；两页共用一份方案池 ⇒ 入口与长相也必须同源）。
         lay.addStretch()
 
         p.lbl_receipt = QLabel('还没有扫描过 —— 选好范围与条件后点「▶ 开始扫描」')
@@ -212,6 +208,25 @@ class BreadthLayout:
         # 窄屏不撑窗：水平 Ignored ⇒ 长文本不抬高窗口最小宽度（详情走 tooltip / 结果区）
         p.lbl_receipt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         lay.addWidget(p.lbl_receipt, 1)
+
+        # ★1.61 / §7-B16 H6：**函数总库入口**（常驻可见，与 M2 同款同位置 —— 两页共用一份方案池，
+        #   入口与长相也必须同源）。此前它只长在抽屉里的公式卡片上，抽屉默认关着 ⇒ 看不到。
+        p.btn_hub = QPushButton('ƒ 库')
+        p.btn_hub.setStyleSheet(FLAT_QSS)
+        p.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_hub.setToolTip('打开「ƒ 函数总库」浮窗：选一个函数载入到本页，'
+                             '或把本页正在写的条件存进总库（管理与编辑在左轨「ƒ 函数库」页）')
+        lay.addWidget(p.btn_hub)
+
+        # ★1.61 / §7-B16 H4：「⤒ 用最新版」**默认隐藏**（与 M2 同款、同观感 —— 两页共用一份方案池，
+        #   提示与动作也必须同源）。不点它 ⇒ 方案里的函数保持原样（红线②，默认动作）。
+        p.btn_apply_latest = QPushButton('⤒ 用最新版')
+        p.btn_apply_latest.setStyleSheet(FLAT_QSS)
+        p.btn_apply_latest.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_apply_latest.setToolTip('把总库里这条函数的最新版本取过来替换筛选条件；'
+                                      '粗筛阈值 / 统计范围 / 复权口径等配置一字不动。')
+        p.btn_apply_latest.hide()
+        lay.addWidget(p.btn_apply_latest)
 
         p.bar_progress = QProgressBar()
         p.bar_progress.setRange(0, 1)

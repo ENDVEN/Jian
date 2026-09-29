@@ -56,6 +56,13 @@ class SummaryBar(QFrame):
     sig_chip_clicked = pyqtSignal(str)
     # 「⚙ 编辑配置」→ 页面打开上次用过的卡片
     sig_edit_clicked = pyqtSignal()
+    # ★1.61 / §7-B16 H4：「⤒ 用总库最新版」—— 载入的策略其函数在总库有新版本时的**显式动作**。
+    #   ⚠ 默认**保留旧版**（红线②：绝不静默改变已存方案的函数）：不点它，编辑器一字不动。
+    sig_apply_latest = pyqtSignal()
+    # ★1.61 / §7-B16 H6：「ƒ 库」= M1 的**函数总库入口**（常驻可见）。
+    #   设计稿 B 把三个功能页的入口都定在**摘要条**上；此前它只长在"抽屉里的函数卡片"上，
+    #   而抽屉默认关着 ⇒ 用户**根本看不到入口**（★1.61 实测：`btn_library.isVisible() == False`）。
+    sig_formula_hub = pyqtSignal()
 
     # (key, 图标 + 名称) —— 固定顺序 = 用户配置时的心智顺序（先函数、再条件、后风控）
     CHIPS = (
@@ -96,6 +103,31 @@ class SummaryBar(QFrame):
         self.lbl_status = QLabel("完成检测并配置买卖条件后即可运行")
         self.lbl_status.setStyleSheet("font-size: 12px; color: #1976D2;")
         lay.addWidget(self.lbl_status)
+
+        # ★1.61 / §7-B16 H4：「⤒ 用最新版」**默认隐藏** —— 只有"载入的策略其函数在总库
+        #   已有新版本"时才出现（`StrategyBridge.prompt_stale` 显隐）。它是 L4 附属级动作，
+        #   不是新常驻行（§10-14：常驻"皮"不得超三行，隐藏件不算）。
+        self.btn_apply_latest = QPushButton("⤒ 用最新版")
+        self.btn_apply_latest.setStyleSheet(_GHOST_QSS)
+        self.btn_apply_latest.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_apply_latest.setToolTip(
+            "把总库里这条函数的最新版本取过来，替换函数段与参数；"
+            "买卖条件 / 风控 / 大盘门控 / 成交口径 / 区间等配置一字不动。")
+        self.btn_apply_latest.clicked.connect(self.sig_apply_latest)
+        self.btn_apply_latest.hide()
+        lay.addWidget(self.btn_apply_latest)
+
+        # ★1.61 / §7-B16 H6：**函数总库入口**（常驻可见）—— 与「⤒ 用最新版」「⚙ 编辑配置」
+        #   同属右侧动作簇。抽屉里那个 `pane_fn.btn_library` **保留**：抽屉是遮罩，
+        #   打开时会盖住摘要条，写函数时就近取库还得靠它。
+        self.btn_hub = QPushButton("ƒ 库")
+        self.btn_hub.setStyleSheet(_GHOST_QSS)
+        self.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_hub.setToolTip(
+            "打开「ƒ 函数总库」浮窗：选一个函数载入到本页，或把本页正在写的函数存进总库。\n"
+            "（编辑与管理在左轨「ƒ 函数库」页 —— 同一个库）")
+        self.btn_hub.clicked.connect(self.sig_formula_hub)
+        lay.addWidget(self.btn_hub)
 
         self.btn_edit = QPushButton("⚙ 编辑配置")
         self.btn_edit.setStyleSheet(_GHOST_QSS)

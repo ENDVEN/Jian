@@ -13,11 +13,11 @@
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **`1.60`**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / commit 首词 `1.60` ✅ 本地已提交）。**push 状态（实测 2026-09-29）**：`origin/main = 17f535a`（**1.58，已在远端**）；本地 `1.59`（§7-B14 大扫除）+ `1.60`（§7-B16 函数总库设计稿）**两条待推**（push 须用户当次同意）。⚠ 1.58 曾漂移的版本三处已随 1.59 归一。 |
-| 文档版本 | **v6.78**（**§7-B16 选型定案**：A+B 组合 + 数据模型①；实现方案书 = `docs/JIAN_HUB_PLAN.md`，**待用户点头开工**；§7-B14 第一轮已执行 `1.59`；**§7-B15 排在 B16 施工之后**） |
-| 最近三版 | **`1.60`** 函数总库 · 立项 · 样式设计 · 四方案 · **`1.59`** 大扫除 · 删兼容壳 · 拆样式模块 · **`1.58`** 参数稳健性研究 · 样式设计 |
-| **当前主线** | **§7-B16 函数总库：选型已定案（2026-09-29 用户三项拍板）**——样式 = **A+B 组合**（左轨 A 管理台专页；M1/M2/M3 函数入口改 B 浮窗，**配置区一字不动**）+ 数据模型 = **提案① 真源统一+引用**；实现方案书 = `docs/JIAN_HUB_PLAN.md`（H0–H5 路径表），**待用户点头开工**（约 3–4 轮）⇒ 接 **§7-B15 参数稳健性研究 MVP**（方案书 `docs/JIAN_SWEEP_PLAN.md`，未开工）。 |
-| **断点** | **v6.76 / `1.59`（2026-09-29）**：§7-B14 四条触发判据实测三条达标（红榜 30≥8 · 再导出壳 16≥10 · 文档漂移 ≥5）⇒ 第一轮执行完毕：① 删根目录 `_tmp_real_probe2.py` + 旧 `screenshots/`；② 删 `ui/dialogs/download_settings.py`（§10-9 / S2-2 冒烟断言改指设置页渲染件，新增 `SettingsView.control_of` 只读查询）；③ 过渡壳全撤（`download_hub`→`download_jobs`、`trading_desk`×3、`review`、`annotation_layer`、`backtest_panes`→直连 `custom_widgets`；**保留** `data_feed` 门面 / `sync_service` 防环 / `review_layout` 预留 / `annotation_shapes` 活命名空间）；④ 样式族拆 `ui/widgets/styles.py`（**356 非空**；`custom_widgets` 1072→**759**，同名再导出零 noqa，冒烟源码级断言改指 styles）；⑤ 顺手还两笔：1.58 设计稿 `Consolas` 违 §10-15（换开源栈）、S2-1b 探测断言隔离（§11.5-90 族）。**验收**：chart **890/0** · overlay **858/1**（唯一失败=提交前版本号自愈项；overlay 偶发 fastfail 经 HEAD worktree 基线复测确认**与改动无关**，§11.5-102）。**待办**：① `1.59` 本地已提交**待推**（push 须用户当次同意）；② **下一步 = B15 MVP**；③ 红榜 P2 拆法未排期（登记不返工，`JIAN_CLEANUP.md` §四）；④ §9-F③ 阶段二（灰蓝是否统一）待拍板。 |
+| APP 版本 | **`1.62`**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / commit 首词 `1.62` ✅ **本地已提交，未推**）。**本轮（§7-B16 H0–H6 实现 + 入口位置纠错 + H5 文档回写）已提交**。**push 状态（实测 2026-09-30）**：`origin/main = 17f535a`（**1.58，已在远端**）；本地 **`1.59` / `1.60` / `1.61` / `1.62` 四条待推**（push 须用户当次同意）。 |
+| 文档版本 | **v6.80**（**§7-B16 函数总库：H0–H6 已落地**（A 管理台页 / 资产收编迁移 / **统一浮窗** / H4 显式更新动作 / 护栏6 `hub_ui` 记忆 / **H6 页面入口收口**）；**剩 H5 收口**；方案书 = `docs/JIAN_HUB_PLAN.md`；**§7-B15 排在 B16 之后**） |
+| 最近三版 | **`1.62`** 函数总库 · 统一浮窗 · 一键载入 · 入口收口 · **`1.61`** 函数总库 · 选型定案 · 实现方案书 · **`1.60`** 函数总库 · 立项 · 样式设计 · 四方案 |
+| **当前主线** | **§7-B16 函数总库：H0–H6 已落地**（左轨 `ƒ 函数库` A 管理台页 + `formula_store` 升格资产库 + 启动一次性收编 + **统一浮窗两区**（`ƒ 函数` 三态 + `📚 本页方案`）+ **H4「总库有更新版」显式更新动作** + **护栏6 `hub_ui` 位置/开合记忆** + **H6 页面侧入口全收口：每页只留一个「ƒ 库」**）——**H5 收口已完成**（文档已回写 + 版本号三处同批 `1.62` 已提交）⇒ 接 **§7-B15 参数稳健性研究 MVP**（方案书 `docs/JIAN_SWEEP_PLAN.md`，未开工）。 |
+| **断点** | **v6.80 / `1.62` 已提交未推（2026-09-30）**：§7-B16 **H0–H6 落地 + H5 文档回写**。**本轮修掉两个真阻塞**：① `ui/views/formula_hub.py` 与 `hub_layout.py` **双布局** —— Qt 里一个 widget 只容一个布局 ⇒ 第二个被**静默丢弃**（`QLayout: Attempting to add ... which already has a layout`），Hub 页整页只剩标题一行；改法照 `scan_view` 范式：`HubLayout` 只造容器 `self.root`，页面自己 `addWidget(..., 1)`。② `data/formula_store.make_formula` 的 `str(formula_id) or new_id()` —— `str(None)` 是**真值** `'None'`，短路掉 `new_id()` ⇒ **所有"不带 id 直接 upsert"的资产共用 id `'None'`**（引用计数 / 快照时效 / 按 id 取件全串号；**HEAD 里就有的潜伏 bug**，Hub 是第一个踩到的调用方，已核对用户真实配方库未受损）⇒ 改 `str(formula_id or "") or new_id()`。**H4**：M1/M2·M3 载入时若"总库有更新版" ⇒ 一句可见提示 + **默认隐藏**的「⤒ 用最新版」（**默认保留旧版**，红线②：绝不静默改变已存方案的函数）；源码级护栏钉"`asset_texts` 只许出现在显式动作里"。**护栏6**：浮窗可抓标题栏拖、位置/开合/上次选中记偏好 `hub_ui`（开机恢复；✕ 关掉就不再弹，自我纠正）。**H6（2026-09-30 追加）**：**统一浮窗** —— 用户原话大意"M1 的保存当前/移除与 M2/M3 的载入/存为/管理本质是同一件事，**样式必须统一**，否则后台打通了用户也没感知"。浮窗升级两区（`ƒ 函数` 三态 + `「💾 存当前函数」` / `📚 本页方案`），**页面侧入口全删**（M1 策略下拉+保存当前+移除、M1「存为配方」、M2/M3 三颗、行情页「存为配方…」），每页只留「ƒ 库」，冒烟加**负向断言**钉"复活即红"；重复实现全收公共件（`hub_latest` / `save_editor_asset` / `confirm_and_delete_asset` / `hub_assets.query` / `build_asset_row`）。**又修一个真缺陷**（§11.5-110）：编辑器"一行=一段"会把**含换行的段**（行情页 MACD 段）拆开 ⇒ 用户**没改一个字**、只是打开再保存，段数与窗格就被改了。**验收**：chart **891/0** · overlay **896/0**（新增 H6 四条 + 纠错三条 + 负向退役断言 + **⑮ 入口可见性两条**；overlay 偶发 fastfail 经复跑区分，§11.5-102）。**待办**：① 提交 + push（**须用户当次同意**；提交时顺推 `1.62` 三处同批）；② 下一步 = B15 MVP。 |
 | ⏸ 另拍 | 下载偏快档（放宽到 K>3 或降 interval）仍待实测后另拍 → 见 §7-B11 与 §11.6 顶部。 |
 
 ### 📚 文档地图（先看这里，再定点检索）
@@ -135,7 +135,7 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   **<400 行的文件在 §4 一律不标数字**；要看体积请现测（口径 = **非空行**）。
 - **业务文件 ≥400 行（★v1.46 现测 = 本轮动过的文件；其余仍是 v1.45 的数。涨落史不抄在这里，
   只存"现在多长 + 再长怎么拆"；顺序大致降序）**：
-  `ui/views/backtest.py` **955**（再长把"预览回放态"整块搬 `ui/widgets/backtest_preview.py`）>
+  `ui/views/backtest.py` **936**（★v6.79 加 H4「总库有更新版」接线；★v6.80 H6 删掉策略下拉/保存当前/移除与「存为配方」⇒ 回落，再加**摘要条「ƒ 库」入口**；再长把"预览回放态"整块搬 `ui/widgets/backtest_preview.py`）>
   ⚠ `ui/widgets/custom_widgets.py` **759**（★1.59 / §7-B14 批3：**样式族已拆出**
     `ui/widgets/styles.py`（356 非空，<400 不标数）—— QSS 常量 / QSS 生成器 / 字体栈定义只此一处，
     本文件保留控件与工厂并对公开名做同名再导出（零 noqa）；再长按"图表控件 / 布局容器"继续拆）>
@@ -144,7 +144,7 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
     `ScanStatBar` / `SectionCard` / `MiniEquityChart` 拆 `ui/widgets/history_parts.py`）>
   ⚠ `core/cross_section.py` **689**（已按「阈值/掩码 → 读数 → 结果 → 主入口」天然分段；
     **处置不变**：新增优先另起模块，收口时按 `scan_filters` / `scan_io` 拆）>
-  ⚠ `ui/widgets/desk_layout.py` **616**（再长拆出配方页 `build_formula_page`）>
+  ⚠ `ui/widgets/desk_layout.py` **624**（★v6.80：顶部工具行加「ƒ 库」入口；再长拆出配方页 `build_formula_page`）>
   ⚠ `ui/widgets/annotation_layer.py` **612**（场景 I/O 可再拆进 `annotation_draw_session.py`）>
   ⚠ `data/sync_service.py` **834**（v1.40 日历新鲜度 + v1.43 `failure_hint` + v1.44/1.45 spot 秒补 +
     v1.47 复权自愈 + v6.67 除权闸门 + **v6.68 `fetch_industry_page` 门面**；再长把"失败分类与人话文案"
@@ -153,9 +153,15 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   ⚠ `data/annotations.py` **524**（**再加新类型前**先把 kind 常量表拆成 `data/annotation_kinds.py`）>
   ⚠ `ui/views/data_manager.py` **537**（**已破 500**；v1.43 交队列未净减、v1.45 删独立间隔旋钮换⚙入口、
     **v6.71 §9-F③ 删私有 `_FLAT_QSS` 副本⇒净减 2**；再长拆"分区清单 / 同步操作条"两件）>
-  ⚠ **新** `ui/main_window.py` **442**（★v6.71 越线 + ★v6.73 S2-0 加导航入口与设置页：退出守卫
-    `_exiting` / `_paint_stopping`（**`ExcludeUserInputEvents`**）/ `_wait_downloads_to_stop` + 关窗收线程；
-    本文件定位就是"只做装配与分发"，再长把【导航按钮轨 + 角标 + 事件过滤】抽成 `ui/desk_nav_rail.py`）>
+  ⚠ **新** `ui/main_window.py` **655**（★v6.71 越线 + ★v6.73 S2-0 加导航入口与设置页 + ★v6.79 §7-B16
+    加 **ƒ 函数库页 + 总库浮窗属主**（`show/hide` + `hub_ui` 位置/开合记忆 + 拖动累加 + `_restore_hub_ui`）/ 载入路由 /
+    ★v6.80 H6 **两个取口** `current_formula_draft()` + `current_plan_api()` + 页面切换重刷方案区；
+    退出守卫 `_exiting` / `_paint_stopping`（**`ExcludeUserInputEvents`**）/ `_wait_downloads_to_stop` + 关窗收线程；
+    本文件定位就是"只做装配与分发"，**已明显越线** ⇒ 下一步把【导航按钮轨 + 角标 + 事件过滤】抽成
+    `ui/desk_nav_rail.py`、把【两个浮层（下载/总库）的属主与位置记忆】抽成 `ui/float_layers.py`）>
+  ⚠ **新** `ui/widgets/scan_layout.py` **411**（★v6.79 实测**新越线**；★v6.80 H6 删方案库三颗 ⇒ 回落，
+    又加摘要条「ƒ 库」⇒ 回到 411 —— **再加东西先拆**：候选 = "顶栏 / 摘要条 / 结果区"三段各自成件，
+    或把两个 `EditPane` 子类挪出去）>
   ★**设置类四件**：`ui/settings_registry.py` **507**（设置项唯一真源；支持**动态只读** `value_fn`
     与**动作项** `action`）· `ui/views/settings_view.py` **219** · `ui/widgets/settings_render.py` **80**
     （类型→控件工厂，五类）· `ui/dialogs/em_login.py` **128**（登录唯一入口）
@@ -193,7 +199,10 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   `core/database.py` **435** > ⚠ `data/backtest_archive.py` **533**（★v1.46：scan 记录显式分组 +
     `filter_options` + 淘汰按范围分组；再长把 `build_*` 拆 `archive_build.py`）>
   ⚠ `ui/widgets/desk_formula.py` **422** >
-  ⚠ `ui/widgets/backtest_panes.py` **418**（★v1.43 纠偏：旧写"395 在线内"已越线）>
+  ⚠ `ui/widgets/backtest_panes.py` **417**（★v1.43 纠偏：旧写"395 在线内"已越线；★v6.80 H6 删「存为配方」）>
+  ⚠ **新** `ui/widgets/desk_formula.py` **409**（★v6.80 实测**新越线**：公式编辑/编译/资产化/互送 + 本批新增
+    `current_formula_draft()` 并删掉 `save_formula_as`；**再加东西先拆** —— 候选 = "公式编辑/编译" 与
+    "配方页渲染" 两件）>
   ⚠ `ui/widgets/backtest_flow.py` **435**（再长把"存档接线"抽成伴生件）>
   ⚠ `ui/widgets/readiness_flow.py` **512**（★v1.46：历史不足可见说明 +更新不覆盖结果区
     +`scope_snapshot/mark_archived` +体检结束回调；★v6.66：+`SYNC_CALIBER_LABEL` 口径进回执；
@@ -210,6 +219,15 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   仍 <400 不标数字；**`ui/download_hub.py` 已越线（430，见上）**——新能力另起模块、不往弹窗与页面里堆。
 - ✅ **v1.46 新建的小件（均 <400，不标数字）**：`ui/widgets/history_kinds.py`（kind 声明式注册表，
   132 行）、`ui/views/backtest_history.py`（薄壳，267）；样板目录 `design/1.46-run-history-ui/`。
+- ✅ **v6.79 / §7-B16 新建的小件（均 <400，不标数字 —— 行数请现测；§4 只给 ≥400 的标数字）**：
+  `data/hub_assets.py`（内容命中 / 引用计数 `ref_map` / 快照时效 / 删引用，**零 Qt**）·
+  `data/hub_migration.py`（一次性收编，幂等）· `ui/views/formula_hub.py`（A 页薄壳）·
+  `ui/widgets/hub_layout.py`（版式 + **列表行唯一画法 `build_asset_row`/`asset_row_meta`**）·
+  `hub_flow.py`（行为 + **保存/删除的唯一实现**）· `hub_editor.py`（编辑面，A 页与浮窗**共用同一个**）·
+  `hub_latest.py`（**H4 公共件**：两处桥接共用）· `hub_float_fn.py`（H6 浮窗的「ƒ 函数」区三态）·
+  `formula_hub_panel.py`（统一浮窗壳：两区分段 + 「📚 本页方案」区 + 拖动/开合）。
+  **★v6.79 删除**：`ui/widgets/formula_library.py`（旧配方库对话框，生产零入口）。
+  ⚠ **补栏纪律**：再长先拆 `hub_flow`（列表 / 详情 / 编辑 / 体检 四块各自成件）。
 
 ---
 
@@ -632,7 +650,7 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 **方案书（实现级）**：`docs/JIAN_SWEEP_PLAN.md`（含 **§12 附录**：设计稿必须用 node 无头真跑自检 ——
 本轮正是靠它抓出两个"图表脚本一抛异常 ⇒ 图全不画"的 bug，肉眼看不出来）。
 
-### B16 · ƒ 函数总库（**立项 · 设计稿待选型** · `2026-09-29` 用户提出）
+### B16 · ƒ 函数总库（**H0–H6 已落地 · 剩 H5 收口** · `2026-09-29` 用户提出 / `2026-09-30` 施工）
 
 **一句话**：用户函数现在散在三处（行情配方库 `formula_library.json` / M1 策略 `backtest_strategies.json` /
 M2·M3 方案 `scan_strategies.json`），各存各的、互不相认 ⇒ 收进**一个统一管理页**：增删查改 + 编写 +
@@ -649,8 +667,63 @@ M2·M3 方案 `scan_strategies.json`），各存各的、互不相认 ⇒ 收进
 全部改 B 浮窗——**只改函数选择与管理，配置区一字不动**；行情页既有「📚 配方库」按钮改唤浮窗）；
 ② 数据模型 = **提案① 真源统一+引用**（`formula_store` 扩展为资产库本体，不新建 store；M1/M2M3 存
 `asset_id`+内联快照，载入快照优先+更新需显式确认）；③ 左轨落位 = 📐回测 与 🗄数据管理 之间。
-**实现方案书 = `docs/JIAN_HUB_PLAN.md`**（H0–H5 路径表 · 迁移设计 · 护栏 10 条），**待用户点头开工**。
+**实现方案书 = `docs/JIAN_HUB_PLAN.md`**（H0–H5 路径表 · 迁移设计 · 护栏 10 条）。
 **纪律**：迁移绝不猜拆（老档整体一段）、绝不丢字段；新增存储照"JSON 原子写 + 单例"范式。**规模**：约 3–4 轮。
+
+**★施工进度（v6.79 · 2026-09-30）**：**H0 ✅ / H1 ✅ / H2 ✅ / H3 ✅ / H4 ✅**（条件："加设置不改页面"类护栏 + 两份冒烟全绿）；
+**剩 H5** = 已在本文档完成回写（断言数 / 红榜 / HISTORY / 本表），余"提交时顺推 `1.62` 三处同批"。
+**本轮两个真 bug（都写进 §11.5 索引）**：
+1. **`str(None)` 不是空** —— `formula_store.make_formula` 的 `str(formula_id) or new_id()` ⇒ 所有"不带 id
+   直接 `upsert` "的资产共用 id `'None'`（引用计数 / 快照时效 / 按 id 取件全串号）。**HEAD 里就有的潜伏 bug**，
+   Hub 是第一个踩到的调用方 ⇒ `str(formula_id or "") or new_id()`。
+2. **一个 widget 只容一个布局** —— `formula_hub.py` 先 `QVBoxLayout(self)`、`hub_layout.py` 又
+   `QHBoxLayout(page)` ⇒ 第二个被**静默丢弃**（页面只剩标题）。照 `scan_view` 范式改成"模块只造容器"。
+**H4 定案（红线②的落地形态）**：载入时若"总库有更新版" ⇒ 一句可见提示 + **默认隐藏**的
+「**⤒ 用最新版**」按钮（L4 附属级，**不是新常驻行**）：**默认保留旧版**，点了才换函数段与参数，
+**配置区一字不动**；护栏 = 源码级断言"`asset_texts` 只许出现在 `apply_latest_function` 里"。
+**护栏6 定案（浮窗 `hub_ui`）**：抓标题栏可拖 + 位置偏移 / 开合 / 上次选中都写
+`preferences.hub_ui`（唯一真源在 `DEFAULTS`）；**开合是自我纠正的** —— 用户点 ✕ 关掉就不再弹。
+⚠ 浮动按钮"拖到内容区外"由 `_place_hub_panel` 夹回，不是允许飞走。
+
+**★H6 定案（2026-09-30 · 统一浮窗 ⇒ 页面侧入口收口）**：用户原话 ——
+"**M1 的保存当前/移除，与 M2/M3 的载入/存为/管理，本质是同一件事**；后台打通了，
+但样式不统一，用户根本感知不到背后是同一个库。**必须统一**，参照设计稿 B 做浮窗。"
+⇒ 浮窗升级为**两区**（`formula_hub_panel` 壳 + `hub_float_fn` 函数区）：
+1. **`ƒ 函数`**：列表 → 详情 → **紧凑编辑** 三态（设计稿 B 原形）+ **「💾 存当前函数」**
+   （把**页面上正在写的函数**取过来预填 —— "不能逼用户跑去总库重抄一遍"）；
+2. **`📚 本页方案`**：当前页的**策略库 / 筛选方案库**（M1=策略 · M2/M3=筛选方案）：
+   列 / 载入 / 存为 / 删除。**同一份库、同一张行脸**（`build_asset_row`/`build_plain_row` 共用）。
+**页面侧收口（全部删掉，只留一个「ƒ 库」入口）**：M1 工具栏的策略下拉 + 「保存当前」+「移除」·
+M1 函数区「💾 存为配方」· M2/M3 摘要条「📚 载入 / 💾 存为 / 管理」· 行情页「💾 存为配方…」（+其
+`save_formula_as` 外壳）· `FormulaLibraryDialog`（早已零入口）。
+**"当前页是谁"只有主窗口知道** ⇒ 两个取口在 `main_window`：`current_formula_draft()` /
+`current_plan_api()`（返回**可调用对象**，浮窗只画与转发）；页面 / 子页签一变就 `refresh_plans()`
+（否则在 M1 打开、切到 M2 还能载入 M1 的策略 = 静默错配）。
+**公共件**：`hub_latest.LatestFunctionPrompt`（H4 两处桥接共用）· `hub_flow.save_editor_asset()`
+（保存唯一实现，**带 `default_source`**：在行情页存的公式不该被记成"总库新建"）·
+`hub_flow.confirm_and_delete_asset()`（删除分级唯一实现）· `hub_assets.query()`（过滤/排序唯一口径）。
+⚠ **本轮又修一个真数据缺陷**：编辑器按"一行一段"切分，而**段的文本本身可能含换行**
+（行情页的 MACD 段就是两行）⇒ 一次"没动文本的保存"就把 1 段拆成 2 段、窗格错位。
+修法：编辑器记住"载入时的文本"，**文本一字未动 ⇒ 原样回放原分段**；改了文本才按行重排（§11.5-110）。
+**有意为之的代价**：行情页存完**不再自动叠加到图上**（红线①"总库只管资产不管运行"）——
+要画图到左栏配方页把那条配方打开。
+
+**★H6 补 · 入口位置纠错（2026-09-30 · 用户实测"我根本就没看到你做的 ƒ 库"）**：
+探针实测（`QT_QPA_PLATFORM=offscreen` 造真实主窗口）结论 —— 左轨「ƒ 函数库」按钮在、
+index 5 对、A 页 `HubLayout.root` 已挂上、`show_formula_hub_panel()` 后浮窗可见；
+**但 M1 `pane_fn.btn_library` 与 M2/M3 `_formula_pane.btn_hub` 的 `isVisible()` 都是 `False`**
+—— 它们只长在**抽屉里的编辑卡片**上，而抽屉默认关着；三页**摘要条上压根没有「ƒ 库」**，
+行情页入口也藏在左栏「ƒ」图标页里 ⇒ **功能全做好了，用户却看不见入口**。
+**修法（回到设计稿 B 的定义位）**：入口放**常驻可见**处 ——
+M1 摘要条右侧动作簇 / M2·M3 摘要条（与 `⤒ 用最新版` 同排）/ 行情页**顶部工具行右端**；
+抽屉里那两颗**保留**（抽屉是遮罩，打开时会盖住摘要条，写函数时就近取库还得靠它），
+两处走**同一个方法**（无第二套实现）。
+**冒烟补的护栏（原断言查不出这类问题）**：原断言只查 `hasattr`（"存在"），
+**存在 ≠ 看得见** ⇒ 新增 ⑮：四页逐个切过去，断言 `btn_hub.isVisibleTo(win)` 全为真
+（`isVisibleTo` 会走祖先链的显式显隐 ⇒ 能识破"藏在抽屉里"），并加一条**真点击**验证
+"入口 → 浮窗"链路闭环。⚠ 这条正是本轮事故的机器化判据，别再退回成 `hasattr`。
+**顺带澄清**：M2/M3 的「ƒ 库」高度（12px）与该页既有的 `btn_config`/`btn_prev_day` **完全一致**
+（同为 `FLAT_QSS` 行内按钮族；22px 的是 chip 药丸族）—— 是**视觉一致**，不是被压扁。
 
 ---
 ## 8. 版本演进备忘（压缩 changelog）
@@ -1041,6 +1114,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 图表样式 / 轴 / 自适应刻度 / 公式叠层 / 用户标注 | `chart_style.py`（唯一来源）· `adaptive_axis.py` · `core/formula/draw.py` + `draw_overlay.py` · `data/annotations.py` + `annotation_layer.py`（**四层不得新起并行管线**，§10-12） |
 | 全市场筛选 M2 / 广度 M3 / 就绪度体检 | `ui/views/scan_view.py` + `scan_layout`/`scan_flow`/`scan_result` · `breadth_view.py` + `breadth_*` · 共用 `data/readiness.py` + `readiness_flow.py` + `core/cross_section.py` |
 | 回测历史存档 / 运行历史页 | `data/backtest_archive.py`（存储）· `ui/widgets/backtest_history_ui.py`（渲染）· `history_kinds.py`（**kind 差异只许在声明表里**） |
+| **函数总库 / 用户函数资产** | 资产库本体 = `data/formula_store.py` · 助手 = `data/hub_assets.py` · 一次性收编 = `data/hub_migration.py` · A 页 = `ui/views/formula_hub.py` + `ui/widgets/hub_layout/flow/editor.py` · 浮窗 = `formula_hub_panel.py`；**路由只有主窗口**（`load_into_current` / `send_asset_to_page`），页面之间不互相 import（全表 → CODEMAP） |
 | 改版本号 | **三处同批同步（§9-A）**：commit 首词 · `config/settings.py:APP_VERSION` · `version.json`；备注 ≤40 字 |
 
 
@@ -1153,158 +1227,56 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - **11.5-105** 【v6.73 · Git】**已推送的历史永不 `--amend`**：本轮我据"文档里写过它还在本地"就 amend，实际用户已推，当场分叉（`ahead 1/behind 1`）。判据只认 git：`git branch -vv`（ahead/behind）+ `git log --decorate -1`（有无 `origin/main` 标签）；**文档里的 push 状态行会静默过期，不许当证据**。已推送 ⇒ 只能"追加新提交 + 顺推版本号"
 - **11.5-106** 【v6.74 · 数据】**"按代码升序补齐"会制造"什么都没抓到"的错觉**：行业分页按 `fid=f12` 补，前 10 页只覆盖 000/001/002…（深市最小代码），而沪深300 近一半是 6xxxxx ⇒ 用户实测命中 <30/300，误判成"抓取失败"。**判据**：讲覆盖率（`992/5560`）与"你这次的池子命中 N/M"，并**优先按用户关心的池子取**（`ulist` 按标的），别按全市场顺序。同时澄清：那次"不到 30"其实是**条件命中数**（`valid 296/300` ⇒ 数据是齐的）
 - **11.5-107** 【v6.74 · 退避】**一份全局冷却 = 一个通道生病、全家停摆**：`clist` 分页失败后 7 秒，日志出现"批量报价跳过（东财限流冷却中）"—— 而实测**同一时段 `ulist` 仍 HTTP 200**。⇒ 退避/闸门必须**按失败者记账**（`em_throttle` 现按 `clist/ulist/hist` 分桶），并且**失败后至少静默 60s**（0.15s 密集重试正是被 RST 的形态）
+- **11.5-108** 【v6.79 · Qt 布局】一个 widget **只容一个布局**，第二个被**静默丢弃**（`QLayout: Attempting to add ... which already has a layout`）—— 没有异常、页面只剩标题；版式模块（`*_layout.py`）只许"**造容器**"，由页面挂进去 → 全文见 `JIAN_PLAYBOOK.md`
+- **11.5-109** 【v6.79 · 数据】**`str(None)` = `'None'` 是真值** ⇒ `str(x) or 兜底()` **永远拿不到兜底**：不带 id 直接 upsert 的资产会共用 id `'None'`（引用计数 / 快照时效 / 取件全串号）→ 全文见 `JIAN_PLAYBOOK.md`
+- **11.5-110** 【v6.79 · 数据】**"一行 = 一段"的编辑器会静默改数据**：段的**文本本身可能含换行**（行情页 MACD 段就是两行）⇒ 一次"没动文本的保存"就把 1 段拆成 2 段 + 窗格错位；修法 = 记住"载入时的文本"，**未动则原样回放原分段** → 全文见 `JIAN_PLAYBOOK.md`
 
 
 
 ### 11.6 当前"下一步做什么"的推荐顺序（历史刷新**倒序**排列：主清单之下**第一块就是最新**）
 
-> ✅ **已落地（v6.77 · §7-B16 函数总库立项 + 设计稿 · `1.60` · 2026-09-29）**
-> 用户口径："整个系统没有对用户写入的函数有一个总体保管的地方……希望在做 B15 之前做一个用户函数的保存管理库，
-> 增删查改 + 编写与测试语法错误，但图表/回测功能还在对应功能页 —— 把函数层面打通，为 B15 减少重复性工作。"
-> 本轮 = **样式设计轮**：① 现状盘点（三存储形状实测，见 §7-B16 表）；② 统一模型提案（**资产/引用分离** vs 聚合视图，待拍板）；
-> ③ 四版交互模型 `design/1.60-formula-hub/`（A 双栏管理台【主推】/ B 全局浮窗 / C 右侧抽屉 / D 表格密集台）；
-> ④ 自检 = `_check.js`（node 版，本机无 node）+ `_check.py`（静态版 19 项全绿）+ **真浏览器逐页真跑**
-> （selftest A 6/6 · B 5/5 · C 4/4 · D 4/4，无水平溢出，截图人眼核验）——node 缺位时浏览器就是"真跑"证据；
-> ⑤ 顺手发现 1.58 `_style.css` 的 `font:` 简写里藏着 `Microsoft YaHei`（§10-15 检查器只认 `font-family:` ⇒ 漏检）
-> —— 新稿不抄此写法，检查器升级留给后续轮。**下一步**：用户选样式 + 拍数据模型 ⇒ 实现方案书 ⇒ 施工 ⇒ B15。
+> ✅ **已落地（v6.79 · §7-B16 函数总库 H0–H4 + H5 文档回写 · `1.61`+未提交 · 2026-09-30）**
+> 用户口径："帮我接管后续，因为我遇到问题一直过不去" ⇒ 先定位阻塞、再按方案书 H0–H5 推。
+> ① **修掉两个真阻塞**（都写进 §11.5-108/109）：`formula_hub.py`×`hub_layout.py` **双布局**（Qt 一个
+>   widget 只容一个布局 ⇒ 第二个被静默丢弃，整页只剩标题）⇒ 照 `scan_view` 范式"模块只造容器"；
+>   `formula_store.make_formula` 的 **`str(None)='None'` 是真值** ⇒ 不带 id 直接 upsert 的资产共用
+>   id `'None'`（引用计数 / 快照时效 / 按 id 取件全串号；**HEAD 潜伏 bug，Hub 首次踩到**）。
+> ② **冒烟侧三处修正**：`smoke_pages_overlay` 缺 `import json`（Hub 临时库桩用了它 ⇒ 整段被跳过）；
+>   ⑤"两库 asset_id 全置空"是 id 全为 `'None'` 时的**巧合**，正确口径 = "只清引用它的那一处"；
+>   ⑦ 把 M1 页**既有的变量池联动重绑**误判成"配置被改" ⇒ 改成先同步变量池 + 哨兵与目标共用变量名。
+> ③ **H4 落地**：M1 / M2·M3 载入时"总库有更新版" ⇒ 一句提示 + **默认隐藏**的「⤒ 用最新版」
+>   （**默认保留旧版**，红线②）；护栏 = 源码级断言"`asset_texts` 只许出现在显式动作里"。
+> ④ **护栏6 落地**：浮窗抓标题栏可拖 + 位置偏移 / 开合 / 上次选中记 `hub_ui`
+>   （开机恢复；✕ 关掉就不再弹 = 自我纠正）；`hub_ui` 进冒烟防污染名单（第 6 个键）。
+> ⑤ **验收**：`smoke_chart` **890/0** · `smoke_pages_overlay` **886/0**（Hub 段 17+4+8 条全绿）；
+>   overlay 偶发 fastfail 经复跑区分（§11.5-102，与改动无关）。
+> ⑥ **文档瘦身**：主文件 97.6k → **92.1k**（§10-14 第七次逼近硬指标）：v6.71–v6.74 四块搬
+>   `docs/JIAN_ARCHIVE.md`「三、v6.71–v6.74 更新块」。
+> ⑦ **H6 统一浮窗（用户口径："M1 的保存当前/移除与 M2/M3 的载入/存为/管理本质是同一件事，
+>   必须统一样式，否则后台打通了用户也没感知"）**：浮窗升级为两区 —— `ƒ 函数`（列表/详情/
+>   **紧凑编辑** 三态 + **「💾 存当前函数」**，照设计稿 B）+ `📚 本页方案`（当前页的策略库 /
+>   筛选方案库：列 / 载入 / 存为 / 删除）。**页面侧入口全删**（M1 策略下拉+保存当前+移除、
+>   M1 函数区「存为配方」、M2/M3 三颗、行情页「存为配方…」、`FormulaLibraryDialog`），
+>   每页只留一个「ƒ 库」。取口在 `main_window.current_formula_draft()/current_plan_api()`，
+>   页面/子页签一变就 `refresh_plans()`（否则会静默错配）。公共件：`hub_latest`（H4）·
+>   `save_editor_asset`（保存唯一实现 + `default_source`）· `confirm_and_delete_asset` ·
+>   `hub_assets.query()` · 行画法 `build_asset_row`/`build_plain_row`。
+> ⑧ **H6 顺带修的真缺陷**（§11.5-110）：编辑器"一行=一段"会把**含换行的段**（行情页 MACD 段）
+>   拆开 ⇒ 用户**一个字没改**、只是打开再保存，段数与窗格就被改了；修法 = 记住载入时文本，
+>   未动则原样回放原分段。
+> ⑨ **H6 补 · 入口位置纠错**（用户实测"我根本就没看到你做的 ƒ 库"）：功能都对、浮窗也起得来，
+>   但入口只长在**默认关着的抽屉**里（M1/M2/M3），行情页也藏在左栏「ƒ」图标页
+>   ⇒ **做完了用户看不见**。按设计稿 B 把入口挪到**常驻可见**处（M1/M2/M3 摘要条 +
+>   行情页工具行右端），抽屉里保留就近入口（同一方法）；冒烟新增 ⑮：`isVisibleTo(win)`
+>   四页全真 + 真点击闭环（**"存在"≠"看得见"** —— 原断言只有 `hasattr`，所以完全没报警）。
+> **下一步** = 提交 + push（**须用户当次同意**；提交时顺推 **`1.62`** 三处同批）⇒ 接 **§7-B15 MVP**。
 
-> ✅ **已落地（v6.76 · §7-B14 大扫除第一轮 · `1.59` · 2026-09-29 · 用户拍板"问题全做，之后做 B15"）**
-> 四条触发判据实测三条达标（红榜 30≥8 · 再导出壳 16≥10 · 文档漂移 ≥5；双编辑面 1<3 未触发）⇒ 五批执行：
-> ① **批0 垃圾**：删根目录 `_tmp_real_probe2.py`（自带"跑完即删"）与旧 `screenshots/1.23-steps-5-6/`（§9-C 挂账）。
-> ② **批1 删壳**：`ui/dialogs/download_settings.py` 删除（S2-2 已无入口）；§10-9 宽度断言改验**设置页渲染件**
->   （`SettingsView` 新增 `control_of(key)` 只读查询，`_controls` 随 reload 清空）；S2-2 段换"文件已删 + 全 ui/ 无残留"
->   负向断言；smoke_chart 的"写盘键形"改钉注册表落点（`where=download_prefs.<子键>`）。
-> ③ **批2 过渡壳 16→6**：`download_hub`（SingleSyncGate/hub_of/STATUS_*）· `trading_desk`×3 · `review` ·
->   `annotation_layer` · `backtest_panes` 的再导出全撤、调用方直连真源；**有意保留**：`data_feed`×4（解析门面）、
->   `sync_service`（防 import 环）、`review_layout`（预留接线）、`annotation_shapes`（活命名空间，全部自用）。
-> ④ **批3 拆 styles**：`ui/widgets/styles.py`（**356 非空**）= QSS 常量 / QSS 生成器 / 字体栈唯一定义处；
->   `custom_widgets` 1072→**759**（总行 1288→928），对公开名做 `import X as X` 显式同名再导出（**零 noqa**）；
->   §10-15 / §9-F③ 源码级断言改指 styles + 新增"定义不许回流 / 再导出同对象"两条护栏。
-> ⑤ **顺手还两笔**：1.58 设计稿 `index.html` 的 `Consolas` 违 §10-15 → 换开源等宽栈；
->   S2-1b 探测断言隔离（前段退避残留会让它假红，§11.5-90 族）。
-> ⑥ **验收**：`smoke_chart` **890/0**；`smoke_pages_overlay` **858/1**（唯一失败 = 提交前"备注首词=版本号"自愈项）；
->   overlay 偶发 fastfail 连崩 3 次 ⇒ 按 §11.5-102 拉 **HEAD worktree 基线**复测，HEAD 同点同频崩 ⇒ **存量问题、与改动无关**。
-> ⑦ **版本**：1.58 提交时 `APP_VERSION`/`version.json` 曾停 1.57（三处漂移）⇒ 已随 `1.59` 顺推归一。
-> **下一步 = §7-B15 参数稳健性研究 MVP**（设计 v3 已定案，约 1–2 轮）。
-
-> ✅ **已落地（v6.74 · 新骨干：行业"按池补全" + 补全调度器 + 通道化退避 + B 档 · 2026-09-27 用户拍板）**
-> 用户原话："不能先针对普通数据进行一个扫描，然后这些需要东财请求的隔一段时间就自动刷新补全到
-> 扫描后的图表里呢" ⇒ 这就是**扫描后按轮补全**；同时用户拍板 **B 档**（保留 K=2/0.5s、遇限流自动降档）、
-> **不调低每日额度**（因为将来要扫全 A）。
-> ① **行业改走"按池批量取"**（实测：`ulist` 带 Cookie 时 `f100` 与估值字段**同一个请求**返回
-> `600000→银行Ⅱ / 300750→电池`，HTTP 200）⇒ 沪深300 = **3 个请求**、全 A = **56 个**（旧分页要 56 页、
-> 且按代码序补齐时小池子"永远轮不到"，坑 = §11.5-106）。
-> ② **补全调度器** `ui/widgets/scan_enrich.py`：扫描**先出命中结果**，行业/估值**后台按轮补**——
-> 首轮延迟 2.5s（避开下载尾巴）、每轮 ≤`enrich.requests`(3) 个请求（1 请求 = 100 只）、轮间
-> `enrich.gap`(30)s、每轮回包**渐进刷新结果表**、进度写回执；**停止条件**白盒可测（问完 / 连续两轮
-> 颗粒无收即早停 / 轮次上限 / 取消）。**"问过"与"拿到"分开记** ⇒ 没有行业字段的票不会被无限重问。
-> ③ **退避按通道**（`em_throttle` 分桶 `clist/ulist/hist`；坑 = §11.5-107）+ **失败后至少静默 60s**
-> + **全局最小间隔 ≥0.8s**（跨通道一条节流线，带小抖动，装在唯一 HTTP 出口 `_do_get`）。
-> ④ **B 档**：默认 `0.5s / K=2`（用户原配置 `0.3s×K3`≈**10 请求/秒** 才是激进的）；**检测到限流 ⇒
-> 下载自动降到 1.2s / K=1**；**全市场分页默认关**（`em.legacy_paging`，仅在兜底或预热全市场时打开）。
-> ⑤ **日志落文件**（`~/.jian_data/logs/app.log` · 5MB×3 轮转）⇒ 排障不再只能靠用户复制控制台。
-> ⑥ **S2-1b 网络自检**（`data/em_market.self_check` + `ui/workers.NetSelfCheckWorker`）：8 段报告
-> （网络策略 / 代理 / DNS(A+AAAA) / 连通性 / 登录 / 档位 / 额度 / 退避）**零请求**，只在 `probe=True` 时
-> 发 **1 个** `ulist`（1 只票）验"现在能不能取到数"，**且不记退避**（诊断不该把用户关 10 分钟）；
-> 末行给**一句话结论 + 该做什么**（受限/未登录/IPv6 建议…），报告同时写进 `app.log`。
-> 为此给注册表加了**异步动作通道**（`Item.worker` ⇒ 页面 `_run_worker_action` 起 QThread + 握引用），
-> 设置页「账号与数据源」新增「**开始自检**」按钮。
-> ⑦ **S2-2 下载与取数收口**（**并入 `1.55`**）：设置页「下载与取数」= **5 节流项 + 3 补全旋钮**
-> （默认值全部取注册表）；**用户改拍 2026-09-27**：下载设置入口**只保留下载列表面板那一处**，
-> 数据管理页 / 预下载弹窗的「⚙ 下载设置…」**直接删除**（不预留跳转按钮）——
-> 少一个按钮 = 少一处漂移面（§9-D）；`ui/dialogs/download_settings.py` **降级为无入口兼容壳**
-> （头部标明 + 待 §7-B14 删除）；`open_group` 无主窗口时**回 False 并告知去哪**（测试路径不弹窗）。
-> ⚠ 行业批次**不再手工调**（由档位自动：登录 10 / 匿名 3 页）。
-> ⑧ **S2-4 回测与扫描默认**：注册表新增 3 项 —— **默认回测区间**（`defaults.range_preset`，选项与
-> M1 快捷区间**同一份清单**；M1 启动 `_apply_default_range()` 让**文本与日期一起落地**，
-> ⚠ 必须放在日期控件建好**之后**，早调 AttributeError）、**自动存档**（`archive.auto` →
-> **落既有键** `backtest_archive.auto`，不另造真源）、**首次扫描提示**（`defaults.first_scan_hint`：
-> 数据不足 >20% 且 ≥5 只 ⇒ 回执**追加**"先去数据管理预下载"，不动扫描结论）；
-> 页面读设置统一走注册表唯一出口 `reg.get_setting`（`scan_flow._setting` 已改为它的别名）。
-> ⑨ **S2-5 存储与维护**（**并入 `1.56`**）：新 `data/storage_maintenance.py`（**唯一实现处**）——
-> ① **可清理内容**（清单 + 体积，**只列不删**：轮转日志 `logs/app.log.*` + 顶层 `*.tmp`）；
-> ② **一键清理**（`ui/workers.CacheCleanWorker` 异步；**绝不碰** 数据湖 / 回测存档 / 截图 / 交易库 /
-> **登录凭据** = 数据主权红线，`NEVER_TOUCH` 常量写在模块里供审查）；③ **日志级别**
-> （改完即时生效 `_AFTER_SET`，重启由 `main._attach_log_file` 读同一键 `storage.log_level`）；
-> ④ **配置导出/导入**（JSON；导出**过滤** `em_auth`/额度/退避；导入**绝不写**凭据类键；
-> 坏文件说人话、不半写入）。⚠ 「数据目录**迁移**」未做（另拍）；「清除登录凭据」由账号分组
-> 「退出登录」承担，**不重复造**。断言 `smoke_pages_overlay` **792 → 854**、`smoke_chart` **889 → 890**。
-> ⑩ **S2-7 关于与更新 + S2-8 收口**（**并入 `1.57`**）：关于组 6 项（版本**动态现算** · **检查更新**
-> —— 手动查**必有回执**，复用 `core/updater` 的版本比较口径 · 发布页 · 反馈页 · **复制诊断信息**
-> （版本/平台/自检报告，**零请求、无凭据值**）· 日志目录）；**收口判据机器化**：没有「空组且无说明」
-> （暂跳的 appearance/keys 写明哪一步接）+ 已接内容的组 ≥5 + 全项类型合法且落点齐全 + 只有一个编辑面。
-> **§7-B13 S2 到此全部收口**（S2-3/S2-6 暂跳）；下一步 = **§7-B14 第一次大扫除盘点**。
-> ⚠ 本轮还观测到 `smoke_chart` **一次偶发假红**（`32 种逐个用真实鼠标验：拖得动（['vline']）`——
-> 鼠标拖拽模拟类断言；**复跑两次皆 890/0** ⇒ 非产品 bug，与 §11.5-102 同族：先复跑，再下结论）。
-> ⚠ 偶发 fastfail 本次实测 **2/5**（崩点仍在 v1.46 运行历史段 = §11.5-102；**非本轮引入**）。
-
-> ✅ **已落地（v6.73 · 设置中心 S2-0 骨架 + 东财登录凭据 + 版本顺推 `1.54` · 2026-09-26 用户拍板）**
-> ① **§7-B13 设置中心定案**：位置 = **左栏最下方固定**（必须加在 `addStretch()` 之后）；四版样式在
-> `design/settings-page/`（`index.html` 可对比）⇒ 用户选定 **S2「系统设置双栏」**，并写死路径表
-> **S2-0 → S2-8**（每步含交付/落点/规模 + 四条固定验收）。**S2-0 已落地**：新 `ui/settings_registry.py`
-> （**设置项唯一真源**：分组/项/类型/默认/范围/**落点**/需重启 + `get_value/set_value/reset_value`
-> 唯一读写口 + `_AFTER_SET` 即时生效钩子）、`ui/views/settings_view.py`（S2 双栏壳，**只渲染注册表**；
-> 空分组显示"哪一步接进来"而**不放假控件**）、`ui/widgets/settings_render.py`（**类型→控件唯一映射**，
-> 页面零 `if`）⇒ 核心护栏 = "**注册表加一行 ⇒ 页面自动多一行**"（S2-1…S2-7 全靠它）。
-> ② **东财登录凭据**：新 `data/em_auth.py`（DPAPI 加密存 `~/.jian_data/em_cookie.json`，`ctypes`
-> **零新依赖**；登录判据 `ut/ct/pi` **三件齐**；粘贴解析两种形态；**每日预算**防把账号点进风控；
-> 日志/回执**永不回显凭据值**）。**判据实验（同一刻对照）**：带 Cookie = 200 + 真实数据，匿名 = 同刻 RST
-> ⇒ **门槛是"登录态"，不是 IP 封禁** ⇒ 立项"登录 = 常速 / 不登录 = 现有慢速档"。
-> ③ **版本顺推 `1.53 → 1.54`**：用户拍板 **方案 B（不动远端）** —— 已推送的 `1.53`（`98ee9e3`）保持原样，
-> 本轮并作 **`1.54`** 一次提交**落在其之上**（快进、无分叉）。⚠ **血泪（坑 = §11.5-105）**：我曾在
-> **没核实是否已推送**的情况下 `--amend`，把**已发布的历史改写**了 ⇒ 本地与远端当场分叉；
-> 旧提交留存 `backup-pre-amend-1.53b`（= `98ee9e3`）、被改写的中间态留存 `backup-1.53-amended`（`caf67c7`）。
-> ④ **S2-1a 落地（= 登录 P1 收尾）**：`data/em_market.py` 接**双档**（`current_tier()` / `pages_per_scan()`
-> / `page_interval()` / `budget_blocked()` 四处**唯一出处**）—— 登录 ⇒ 每请求带 Cookie + 每批 10 页 +
-> 0.15s；匿名 ⇒ 不带 + 每批 3 页 + 0.5s（v6.69 慢速档**原样保留**）；**每日额度闸门**超了"停在缓存档"
-> （一个请求都不打，不拿账号硬试）；页数改由 `pages_per_scan()` 取（`scan_flow` 不再写死 3）。
-> UI：`ui/dialogs/em_login.py`（粘贴凭据 · 粘完即清空 · **只报条数与名字**）+ 注册表两类**新形状**
-> （动态只读 `value_fn` / 动作项 `action`）+ `settings_render` 第五个工厂（action）。
-> 断言 `smoke_pages_overlay` **781 → 792**（13 条：双档参数 / 只有登录才带 Cookie / **凭据绝不进日志** /
-> 额度用完零请求 / 动作链路 / 动态值现算）、`smoke_chart` **889** 不变。
-> ⚠ **偶发 fastfail 频率实测 1/4**（跑 4 次崩 1 次，崩点仍在 v1.46 运行历史段 = §11.5-102，与本轮改动无关）。
-
-> ✅ **已落地（v6.72 · 网络策略：IPv4 优先 / 代理降级直连 / 失败分类 / 退避抗抖动 · 2026-09-26 用户实测驱动）**
-> 用户原话："我休息了 30 分钟后，打开软件只点击了一次开始扫描，只抓取了一部分就开始出现抓取失败" ——
-> 日志是 `ProxyError('Unable to connect to proxy')`。**逐层实测（不猜）**：① 同一时刻 `curl -4`（IPv4
-> 直连）= **HTTP 200 · 0.18 秒**，而 `curl -6`（IPv6）= **000**；DNS 把 IPv6 排在前面，而
-> `requests`/`urllib3` **没有可靠的 Happy-Eyeballs 回退** ⇒ 先连 IPv6 被断就抛 `RemoteDisconnected`
-> ⇒ **额度充足也"莫名失败"**。② `requests.utils.getproxies()` = `http://127.0.0.1:7897` + WinINET
-> `ProxyEnable=1`，且 **clash-verge / verge-mihomo 正在运行并监听 7897** ⇒ 请求全程经代理，
-> 代理那一跳不稳就是 `ProxyError`。⚠ **更正 v6.68 的结论**：那轮用 `netsh winhttp show proxy`
-> （WinHTTP）判"不是代理"，而 `requests` 读的是 **WinINET + 环境变量** ⇒ **判据选错了工具**
-> （坑 = §11.5-103）。**落地**：① 新 `data/net_env.py`（网络策略唯一出口：`force_ipv4` 默认 **true**、
-> `proxy_mode` = `auto/direct/proxy`、代理指纹从 sync_service 搬来并再导出 ⇒ 无 import 环）；
-> ② `em_market` **传输层**（`_session`/`_do_get`/`_http_get`）：**代理报错才降级直连重试一次**，
-> 成功后本轮会话都直连（`direct_locked`）—— 用户工作环境**常常必须走代理**，所以**绝不默认绕过**；
-> ③ `em_throttle`：代理类失败走 `note_proxy_failure`（**固定 5 分钟** + 文案"去查代理、重试无用"），
-> **不算限流**（限流才是 10→20→40→60 指数退避）；④ **抗抖动**：`note_success` 改为**连续两次成功
-> 才清零**（实测同一秒 `冷却 → 清零 → 再冷却` ⇒ 旧口径让退避形同虚设，坑 = §11.5-104）；
-> ⑤ `main.py` 启动即 `net_env.apply()` 并打印策略；行业失败 tooltip 带"当前网络策略"。
-> 断言 `smoke_chart` **879 → 889**、`smoke_pages_overlay` **766 → 767**。
-> ⚠ **真机留痕**：实施后连打仍失败 —— **这几小时的诊断探测本身把东财频次窗打光过**
-> （`curl -4` 曾 200，随后连打即拒）⇒ 验收必须"**静置 ~30 分钟后再点一次扫描**"。
-
-> ✅ **已落地（v6.71 · §7 下面的 P3 技术债四件 · 2026-09-26 用户拍板“全做 / 配色不动 / 超时静默兜底”）**
-> ① **§9-F③ 按钮样式收口**：定义上收 `custom_widgets.flat_qss()` 生成器 + 五命名变体
-> （`FLAT_QSS` / `_WIDE` / `_SMALL` / `_DANGER` + 正名的 `OUTLINE_QSS`）；`backtest_panes` 不再定义、
-> 5 处 import 改指、4 处私有副本清零。**“观感零变化”是量出来的**：五处新旧 QSS 逐声明比对（忽略空白与
-> 顺序）全等，另有源码级护栏盯“再开私有副本 / 借道 import”。⚠ 纠偏：“4 处配色漂移”里只 1 处真是配色、
-> 1 处是几何（padding/圆角）、1 处是**同名不同物**（描边按钮不是 flat）。
-> ② **§9-F① 退出守卫**：`shutdown()` 改**分片等待 + `on_tick`** 刷「正在停止…已等 N 秒」，`_closing` 期间
-> `submit()` 拒收，`closeEvent` 加 `_exiting` 重入闸门；超时按拍板**静默兜底**（摘 parent +
-> `_ORPHAN_WORKERS` 握引用 + warning），不做“强制退出”对话框。
-> ③ **§9-F② 一键续传**：`SyncWorker` 两路径记 `symbols_attempted` ⇒ `DownloadJob.unprocessed()` /
-> `rest_count()`（O(1)，面板每拍都算）/ `hub.continue_unfinished()`；队列面板被中断那行给「继续 N 只」
-> （判据用**原始状态**：`_state_of` 会把“完成但有失败”映射到同一橙档，拿它判“被中断”就误判了）。
-> ④ **§4 拆件**：`DownloadJob` + 状态常量 + `hub_of` + `SingleSyncGate` → 新 `ui/download_jobs.py`（159 非空）
-> ⇒ `download_hub.py` 430→378 **退红榜**；hub 里 re-export ⇒ 调用方与既有断言零改动。
-> **新增坑 §11.5-101 / 102**（负向断言被自己注释引爆；**冒烟也会偶发 fastfail** —— 本轮实测 HEAD 基线
-> 同频 2/5 崩在同一行，所以“先拉 worktree 数频率”才能区分是不是自己改坏的）。
-> 断言 `smoke_pages_overlay` **732 → 766**（含**二次修改** 5 条：退出等待的输入闸门 / 孤儿线程自清 /
-> 续传幂等 + 旧行收口）、`smoke_chart` **879** 不变；全仓 `compileall` ✓；
-> 行数只回写越线项（`custom_widgets` 1072 / `workers` 600 / 新越线 `main_window` 423，见 §4）。
-> **APP 仍 `1.53`**：没 push 就不 bump（§9-A）。
+> **v6.77（§7-B16 立项 + 设计稿四方案 · `1.60`）与 v6.76（§7-B14 大扫除第一轮 · `1.59`）**
+> **→ 详情已搬 `docs/JIAN_ARCHIVE.md`「三、v6.76–v6.77 更新块」**（全过程与断言数在 `docs/JIAN_HISTORY.md` §8 那两行 · 数字冻结）。
+> **v6.74 / v6.73 / v6.72 / v6.71 四个更新块**（新骨干：行业「按池补全」+ 补全调度器 + 通道化退避 ·
+> 设置中心 S2-0 骨架 + 东财登录凭据 · 网络策略 IPv4/代理降级直连 · §9-F P3 技术债四件）
+> **→ 详情已搬 `docs/JIAN_ARCHIVE.md`「三、v6.71–v6.74 更新块」**（v6.79 按 §10-14 搬走 · 数字冻结）。
+> 仍现行、必须记住的口径：§7-B11 五条 · §7-B13 路径表 · §11.5-103/104/107。
 
 > **v6.70（主文件瘦身第六次超线）→ 详情见 `docs/JIAN_HISTORY.md` §8（v6.70 条）**
 > 一句话：99,839 字符（工具口径 101.3k ⇒ **直接拒读**）⇒ 搬走 §11.4 全表（→ CODEMAP）、
@@ -1390,16 +1362,16 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       机器护栏在 `smoke_pages_overlay` 末段（读 HEAD 的 `%s`）。
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
 - [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**890 项**，纯组件、离屏）
-- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**859 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
+- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**896 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
       并在其收尾的防污染自检名单里**加上任何新写的 `~/.jian_data/*.json`**（现在有 annotations /
       formula_library / watchlist / backtest_strategies / **preferences（1.23 起）** / **backtest_results（1.37 起）** /
       **scan_strategies（1.46 P3 起）** / **industry_map（1.46 P6 起）** 八个）
 - [ ] **改了复盘页（`ui/views/review.py`）/ `ui/widgets/review_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**859 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
+      `py tests/smoke_pages_overlay.py`（**896 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
       公共面被改名、**把薄壳写成空函数**、宏观/微观**分栏退化成写死的 5:4 平铺**、
       分栏高度不落 `review_ui.v_sizes`，都会立刻红）
 - [ ] **改了全市场筛选页（`ui/views/scan_view.py`）/ `ui/widgets/scan_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**859 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
+      `py tests/smoke_pages_overlay.py`（**896 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
       ⚠ 六条最容易顺手改坏的：① **常驻行必须 ≤3**（粗筛阈值收在抽屉里，别往结果区上方加行）；
       ② **阈值"内核 ⇄ 界面"换算只许在 `ScanFilterPane` 一处**（界面亿元/% ⇄ 内核元/小数，
       换手率/市值**关闭时必须是 None**，变成 0 = 误杀一片）；
@@ -1410,7 +1382,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ⑥ **缺数据闸门不许删**（`_confirm_scan_with_gaps`：体检有缺口/未完成 ⇒ 二次确认才能扫，
         选「否」不得启动任何线程；本地齐了不打扰）
 - [ ] **改了广度统计页（`ui/views/breadth_view.py`）/ `ui/widgets/breadth_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**859 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
+      `py tests/smoke_pages_overlay.py`（**896 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
       ⚠ 七条最容易顺手改坏的：① **常驻行必须 ≤3**（⚡/⟳ 收在摘要条，别往结果区上方加行）；
       ② **双窗格必须 x 联动**（`ChartHost` 编排，禁止页面自己 `addPlot` 拼副图，§10-12）；
       ③ **广度占比的分母 = 有效样本**（命中+未命中）—— 换成"全市场只数" = 系统性压低且看不出来；
@@ -1458,7 +1430,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] **改了 `QComboBox` / `QDateEdit` / `QDateTimeEdit` 的样式吗？**
       → 只能用 `custom_widgets` 的常量（`::drop-down` 与 `::down-arrow` 必须成对，否则箭头消失）；
       改完跑 `py tests/smoke_chart.py` 看**箭头像素断言**（§11.5-17）
-- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**859 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；四条离屏打桩见 §11.5-20 与 §11.5-79（★第④条 v1.42 补：**异步回测与后台下载也不许写真目录** —— 看到"只有几条真实数据类断言红"先问“有没有东西正在写”），**别删**）
+- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**896 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；四条离屏打桩见 §11.5-20 与 §11.5-79（★第④条 v1.42 补：**异步回测与后台下载也不许写真目录** —— 看到"只有几条真实数据类断言红"先问“有没有东西正在写”），**别删**）
 - [ ] **新加了"往用户数据目录写文件"的功能吗？** → ① 用 `tmp + os.replace` 原子写；② 给 `tests/smoke_pages_overlay.py` 的收尾自检加一行文件名（§11.7 上一条）；③ 单条坏数据必须**跳过自己**而不是拖垮整库；
       ④ ⚠ 若它会**自动落盘**（"记住上次"类偏好，如 `backtest_ui` / `desk_ui`）→ **必须在冒烟脚本里
       把偏好单例的 `path` 重定向到临时目录**（只给 `Preferences.save` 打桩**实测不够**，仍被写脏过一次），
@@ -1469,7 +1441,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ③ 关键概念有没有**示例弹窗**？④ 术语有没有换成**用户量纲**（"1 跳"→"0.01 元"、
       "当根"→"当天"）？参数是否只在**有意义的档位**才出现？
       （§10-10 追加条款 / §11.5-22；参考 `fill_mode_oneliner` + `ui/dialogs/fill_model_help.py`）
-- [ ] **改了后台下载（`ui/download_hub.py` / `ui/widgets/download_bar.py` / `download_queue_panel.py`）或四个下载入口（`bulk_download` / `data_manager` / `readiness_flow` / `main_window.downloads`）吗？** → 跑 `py tests/smoke_pages_overlay.py`（**859 项**，含「§7-B11 后台下载」段）。⚠ 四条红线：
+- [ ] **改了后台下载（`ui/download_hub.py` / `ui/widgets/download_bar.py` / `download_queue_panel.py`）或四个下载入口（`bulk_download` / `data_manager` / `readiness_flow` / `main_window.downloads`）吗？** → 跑 `py tests/smoke_pages_overlay.py`（**896 项**，含「§7-B11 后台下载」段）。⚠ 四条红线：
   ① **测前必须把 `download_hub.SyncWorker` 打桩为不 `start()`**（否则跑测试 = 真下载，写脏数据湖并撞 §11.5-79）；
   ② **进度真源只能在 hub**，页面/弹窗/下载条都是投影（只认自己那个 `job_id`）；
   ③ **弹窗与页面不得自己持有 `SyncWorker`**（旧版 `_try_stop_worker` 已退役，有源码级断言盯着）；
@@ -1508,7 +1480,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       临时探针与输出**用完即删**；删文件同批 `git rm`
 - [ ] **动了数据源/落盘护栏吗？（`data/akshare_feed.py` 的 `drop_unusable_price_rows` /
       `em_volume_to_shares`、`data/sync_service.py` 的取数分区）** → 跑 `py tests/smoke_chart.py`
-      （**889 项**：非正价行必须被拦下、兜底源成交量必须 ×100 成「股」、量纲接缝判据不许误报
+      （**890 项**：非正价行必须被拦下、兜底源成交量必须 ×100 成「股」、量纲接缝判据不许误报
       单日放量/不许漏报持续换单位）；⚠ **降级到兜底源时必须在出口统一量纲**（§9-V：单位不一致
       会让同一分区里同时存在"手/股"两种单位，量能副图出现 100× 台阶）
 - [ ] **动了 K 线图元（`CandlestickItem`）或其它"图形绘制"吗？** → ⚠ 记住：**"数据对不对"与

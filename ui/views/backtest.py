@@ -62,7 +62,6 @@ from ui.settings_registry import get_setting   # ★v6.74 S2-4：默认区间取
 from ui.widgets.custom_widgets import (FLAT_QSS, LINE_COMBO_QSS, NoWheelComboBox,
                                         NoWheelDateEdit, hint_icon,
                                         mini_label)   # ★1.59：构件真源直连（不再经 panes 转手）
-from ui.widgets.formula_library import FormulaLibraryDialog
 # 1.22 / §9-L：本页已把「编辑卡片 + 抽屉 / 摘要条 / 结果区 / 导出 / 运行流程」拆出独立模块，
 #   自己只做装配与接线（视图层四件套的落点见各模块 docstring）。
 from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, ConditionPane,
@@ -173,7 +172,6 @@ class SingleStockBacktestView(QWidget):
         self._setup_ui()
         self._sync_index_enabled(False)
         self._set_condition_enabled(False)
-        self._reload_strategy_combo()
         self._sync_fill_controls()
         self._restore_ui_state()   # 打开页面即恢复上次展开的卡片
         self._refresh_summary()
@@ -225,26 +223,10 @@ class SingleStockBacktestView(QWidget):
         sep1.setFixedHeight(20)
         toolbar.addWidget(sep1)
 
-        # —— 策略组 ——
-        self.cmb_strategy = NoWheelComboBox()
-        self.cmb_strategy.setPlaceholderText("选用已保存策略")
-        self.cmb_strategy.setMinimumWidth(170)
-        self.cmb_strategy.setFixedHeight(ctrl_height)
-        self.cmb_strategy.setStyleSheet(self._ctrl_qss)
-        self.cmb_strategy.currentIndexChanged.connect(self.strategy.on_strategy_selected)
-        toolbar.addWidget(self.cmb_strategy)
-        self.btn_save_strategy = QPushButton("保存当前")
-        self.btn_save_strategy.setFixedHeight(ctrl_height)
-        self.btn_save_strategy.setStyleSheet(self._flat_qss)
-        self.btn_save_strategy.clicked.connect(self.save_strategy)
-        toolbar.addWidget(self.btn_save_strategy)
-        self.btn_del_strategy = QPushButton("移除")
-        self.btn_del_strategy.setFixedHeight(ctrl_height)
-        self.btn_del_strategy.setStyleSheet(self._flat_qss)
-        self.btn_del_strategy.setToolTip("删除当前选中的策略")
-        self.btn_del_strategy.clicked.connect(self.delete_strategy)
-        toolbar.addWidget(self.btn_del_strategy)
-
+        # —— 策略库（★1.61 / §7-B16：页内那条「下拉 + 保存当前 + 移除」已退役）——
+        #   用户口径："M1 的保存当前/移除，与 M2/M3 的载入/存为/管理本质是同一件事" ⇒
+        #   统一收进「ƒ 库」浮窗的「📚 本页方案」区（同一个库、同一张行脸，用户才认得出是一回事）。
+        #   本页函数区那个「ƒ 库」按钮即入口（见 `pane_fn.btn_library`）。
         toolbar.addStretch()
         toolbar.addWidget(
             self._hint_icon("低频配置按使用频率收进下面那条「摘要」：点任意胶囊即展开对应设置；"
@@ -256,8 +238,17 @@ class SingleStockBacktestView(QWidget):
         self.summary = SummaryBar()
         self.lbl_run_status = self.summary.lbl_status
         self.btn_run = self.summary.btn_run
+        # ★1.61 / §7-B16 H4：摘要条上的「⤒ 用最新版」（**默认隐藏**；显隐由
+        #   `StrategyBridge.prompt_stale` 管）—— 与 M2/M3 页同名同义，桥接里一处口径。
+        self.btn_apply_latest = self.summary.btn_apply_latest
+        # ★1.61 / §7-B16 H6：摘要条上的「ƒ 库」（常驻可见）—— 三页同名同义，便于断言"看得见"
+        self.btn_hub = self.summary.btn_hub
         self.summary.sig_chip_clicked.connect(self._on_chip_clicked)
         self.summary.sig_edit_clicked.connect(self._on_edit_clicked)
+        # ★1.61 / §7-B16 H4：「⤒ 用最新版」= 显式动作（默认保留旧版；点了才换函数段与参数）
+        self.summary.sig_apply_latest.connect(self.strategy.apply_latest_function)
+        # ★1.61 / §7-B16 H6：摘要条上的「ƒ 库」= 函数总库入口（常驻可见，与三页同款）
+        self.summary.sig_formula_hub.connect(self.open_formula_library)
         self.btn_run.clicked.connect(self.start_backtest)
         root.addWidget(self.summary)
 
@@ -345,7 +336,6 @@ class SingleStockBacktestView(QWidget):
         self.lbl_detect = self.pane_fn.lbl_detect
         self.btn_detect = self.pane_fn.btn_detect
         self.btn_library = self.pane_fn.btn_library
-        self.btn_save_formula = self.pane_fn.btn_save_formula
         self.btn_send_market = self.pane_fn.btn_send_market
         self.txt_params = self.pane_cond.txt_params
         self.gate_buy = self.pane_cond.gate_buy
@@ -369,7 +359,6 @@ class SingleStockBacktestView(QWidget):
         # ---------- 接线（原就地 connect 全部保留，只是控件来自卡片）----------
         self.btn_detect.clicked.connect(self.detect_function)
         self.btn_library.clicked.connect(self.open_formula_library)
-        self.btn_save_formula.clicked.connect(self.save_formula_as)
         self.btn_send_market.clicked.connect(self.send_formula_to_market)
         self.chk_index_enable.toggled.connect(self._sync_index_enabled)
         self.cmb_fill_mode.currentIndexChanged.connect(self._sync_fill_controls)
@@ -527,35 +516,26 @@ class SingleStockBacktestView(QWidget):
     def current_formula_segments(self) -> list[str]:
         return [text.strip() for text in self.segments.texts() if text.strip()]
 
-    def save_formula_as(self):
-        """把①里的函数 + 参数存成配方（同名即覆盖）。"""
-        texts = self.current_formula_segments()
-        if not texts:
-            QMessageBox.information(self, "暂无函数", "先在①里粘贴函数，再保存为配方。")
-            return
-        name, ok = QInputDialog.getText(self, "保存为配方", "配方名称（同名即覆盖）：")
-        if not ok:
-            return
-        try:
-            formula = make_formula(name, texts, params_text=self.txt_params.text(),
-                                   source=SOURCE_BACKTEST)
-        except ValueError as e:
-            QMessageBox.warning(self, "无法保存", str(e))
-            return
-        saved = self.formula_store.upsert(formula)
-        self._set_detect(True, f"✓ 已存入配方库：{saved['name']}")
+    def current_formula_draft(self) -> dict:
+        """★1.61 / §7-B16：本页"正在编辑的函数"草稿（浮窗「💾 保存当前函数」用）。
+
+        ⚠ **只读**：不改本页任何状态。浮窗拿它预填编辑器，存不存由用户决定 ——
+          这样"在 M1 写好函数想存起来"不必跑去总库重抄一遍（那才是本末倒置）。
+        """
+        return {'name_hint': '',
+                'segments': [{'text': t, 'target': 'main'}
+                             for t in self.current_formula_segments()],
+                'params_text': self.txt_params.text().strip(),
+                'source': SOURCE_BACKTEST}
 
     def open_formula_library(self):
-        """打开配方库并载入选中项（行情页存下的配方在这里同样能用）。"""
-        dialog = FormulaLibraryDialog(self.formula_store, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        formula = dialog.selected_formula()
-        if not formula:
-            return
-        count = self.load_formula_from_external(segments_as_texts(formula),
-                                                formula.get("params_text", ""))
-        self._set_detect(True, f"✓ 已从配方库载入「{formula['name']}」（{count} 段）")
+        """★1.61 / §7-B16：函数入口统一走「函数总库」浮窗。
+
+        旧「💾 存为配方」按钮与 `FormulaLibraryDialog` 均已退役 ——
+        **存 / 取 / 改 / 管都在浮窗里**（「ƒ 函数」区：「💾 存当前函数」把本页正在写的函数
+        取过去存；「📚 本页方案」区管策略库）。本按钮（`pane_fn.btn_library`）只是入口。
+        """
+        self.main_win.show_formula_hub_panel()
 
     def send_formula_to_market(self) -> int:
         """回测页 → 行情页（由主窗口转交，两个页面互不 import）；返回送过去的段数。"""
@@ -692,9 +672,6 @@ class SingleStockBacktestView(QWidget):
     def _strategy_payload(self) -> dict:
         """当前编辑器状态 → 可持久化策略快照（验收断言与归档同源）"""
         return self.strategy.payload()
-
-    def _reload_strategy_combo(self, keep_active: str | None = None):
-        self.strategy.reload_combo(keep_active)
 
     def _render_compare(self):
         self.strategy.render_compare()
@@ -1035,8 +1012,12 @@ class SingleStockBacktestView(QWidget):
             self.current_name = name
             self.txt_symbol.setText(symbol)
             self.lbl_symbol.setText(f"{name} ({symbol})")
-        self.strategy.apply_payload(config)
-        self.lbl_run_status.setText("已从历史存档复用参数到编辑器，可调整或直接「▶ 开始回测」。")
+        stale = self.strategy.apply_payload(config)
+        # ★1.61 / §7-B16 H4：历史存档的 config 同样带 `asset_id` ⇒ 复用后给同款显式动作
+        #   （默认保留存档里的函数原样；要换新版由用户点「⤒ 用最新版」）。
+        self.strategy.prompt_stale(stale)
+        self.lbl_run_status.setText("已从历史存档复用参数到编辑器，可调整或直接「▶ 开始回测」。"
+                                    + self.strategy.stale_tip(stale))
 
     def save_to_history(self) -> str | None:
         """手动「💾 存为历史快照」（自动存档关掉时的兜底入口）。返回存档 id。"""

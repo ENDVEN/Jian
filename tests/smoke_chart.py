@@ -907,11 +907,18 @@ try:
     check("VALID_TARGETS 与编辑器下拉完全一致",
           set(VALID_TARGETS) == {value for _label, value in TARGET_CHOICES})
 
-    # ---- 6) 配方库预览文案（列表右侧给人看的东西）----
-    from ui.widgets.formula_library import preview_text
-    preview = preview_text(make_formula("预览用", [("A: C;", "sub2")], source=SOURCE_MARKET))
-    check("预览含名称/来源/段数/正文",
-          all(token in preview for token in ("预览用", "行情页", "A: C;", "函数段 1")))
+    # ---- 6) 资产行文案（★1.61 / §7-B16：A 页卡片与浮窗列表**共用同一份口径**）----
+    #   ⚠ 旧版测的是"配方库对话框的预览文本"；对话框已删（生产零入口）。
+    #     改测 `asset_row_meta` —— 它是**两处都在用**的生产代码，文案分叉 = 用户看不出
+    #     "背后是同一个库"（这正是本轮统一浮窗要解决的感知问题）。
+    from ui.widgets.hub_layout import asset_row_meta
+    _mk_row = make_formula("行文案用", [("A: C;", "sub2")], source=SOURCE_MARKET)
+    _row0 = asset_row_meta(_mk_row, 0)
+    _row2 = asset_row_meta({**_mk_row, "syntax_state": "err"}, 2)
+    check("行文案含来源 / 段数 / 引用状态（两处共用一份，防各画一张脸）",
+          "行情页" in _row0 and "1 段" in _row0 and "未被引用" in _row0)
+    check("有引用时报条数、语法错误带 ✗",
+          "引用 2" in _row2 and "✗" in _row2)
 except Exception as e:  # noqa: BLE001
     import traceback
     traceback.print_exc()

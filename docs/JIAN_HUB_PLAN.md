@@ -1,6 +1,8 @@
 # 函数总库（Formula Hub）· 实现方案书
 
-> 状态：**待用户点头开工（设计 v1 · 2026-09-29 用户三项拍板后起草）**
+> 状态：**H0–H6 已落地（`1.61`+未提交 · 2026-09-30）；剩 H5**（本文档路径表已勾选；
+> H5 余项 = 提交时顺推 `1.62` 三处同批）。施工记录与真 bug 见 `JIAN_RULES.md` §7-B16 与 §11.5-108/109/110。
+> **H6 是最初方案书没写、由用户口径追加的一步**：把 M1/M2/M3 各自的"保存/载入/管理"统一收进浮窗。
 > 拍板记录：**样式 = A+B 组合**（左轨加 A 管理台专页；M1/M2/M3 的函数入口改 B 浮窗，
 > **只改函数选择与管理，配置区一字不动**）· **数据模型 = 提案① 真源统一 + 引用**（直接打通）。
 > 配套设计稿 = `design/1.60-formula-hub/`（A `a-双栏管理台.html` · B `b-全局浮窗.html` 为实现目标；
@@ -76,12 +78,13 @@
 
 | 步 | 主题 | 交付 | 主要落点 | 规模 |
 |---|---|---|---|---|
-| **H0** | 骨架 | 左轨「ƒ 函数库」+ 空页（有说明不放假控件）+ 浮窗壳（开合/位置记忆）+ M1/M2/M3「ƒ 库」按钮占位（点了开壳） | `formula_hub.py` / `formula_hub_panel.py` / `main_window` / 三页按钮 | 0.5 轮 |
-| **H1** | 资产库 + 迁移 | `formula_store` 扩 origin（scan/hub）；`hub_migration.py`；启动迁移；**引用计数查询件** | `formula_store.py` / `hub_migration.py` / `main.py` | 1 轮 |
-| **H2** | A 页全功能 | 列表（搜索/来源筛选/排序）+ 详情（段/参数/引用/状态）+ 编辑器（validate 人话报错）+ 删除分级 + 全库体检 | `hub_*` 三件 + 注册表 0 项（无新设置） | 1–1.5 轮 |
-| **H3** | 浮窗 + 三页接线 | B 浮窗全功能 + 「载入到本页」按 §4 语义表接 M1/M2/M3/行情页 | `formula_hub_panel.py` + 三页 | 1 轮 |
-| **H4** | 同步语义 | "总库有更新版"提示（M1/M2/M3 载入时）+ 总库编辑回执点名引用方 | `backtest_strategy.py` / `scan_strategy_bridge.py` / `hub_flow.py` | 0.5 轮 |
-| **H5** | 收口 | 断言数 / 文档 / 版本顺推 / B15 衔接确认（sweep 的"策略来源 = formula_store"天然兼容资产库） | 文档 + 台账 | 0.5 轮 |
+| **H0** | 骨架 | ✅ 左轨「ƒ 函数库」+ 页面 + 浮窗壳（开合/位置记忆）+ M1/M2/M3「ƒ 库」按钮 | `formula_hub.py` / `formula_hub_panel.py` / `main_window` / 三页按钮 | 0.5 轮 |
+| **H1** | 资产库 + 迁移 | ✅ `formula_store` 扩 origin（scan/hub）+ `hub_migrated`；`hub_migration.py`（幂等收编）；启动迁移；**引用计数查询件** `hub_assets.ref_counts` | `formula_store.py` / `hub_migration.py` / `hub_assets.py` / `main.py` | 1 轮 |
+| **H2** | A 页全功能 | ✅ 列表（搜索/来源筛选/排序）+ 详情（段/参数/引用/状态）+ 编辑器（validate 人话报错）+ 删除分级（无引用二次确认 / 有引用键入「删除」）+ 全库体检 | `hub_*` 三件 + 注册表 0 项（无新设置） | 1–1.5 轮 |
+| **H3** | 浮窗 + 三页接线 | ✅ B 浮窗全功能 + 「载入到本页」按 §4 语义表接 M1/M2/M3/行情页 | `formula_hub_panel.py` + 三页 | 1 轮 |
+| **H4** | 同步语义 | ✅ "总库有更新版"提示 + **默认隐藏的「⤒ 用最新版」**（默认保留旧版，红线②）+ 总库编辑回执点名引用方；护栏 = 源码级"`asset_texts` 只在显式动作里" | `backtest_strategy.py` / `scan_strategy_bridge.py` / `backtest_summary_bar.py` / `scan_layout.py` / `breadth_layout.py` / `hub_flow.py` | 0.5 轮 |
+| **H5** | 收口 | [~] 断言数（overlay **894** / chart **891**）✅ · 文档回写 ✅ · **版本顺推 `1.62` 待提交** · B15 衔接确认（sweep 的"策略来源 = formula_store"天然兼容资产库）✅ | 文档 + 台账 | 0.5 轮 |
+| **H6** | **统一浮窗（追加步 · 2026-09-30 用户口径）** | ✅ 浮窗升级两区：`ƒ 函数`（列表/详情/**紧凑编辑** + **「💾 存当前函数」**，照设计稿 B）+ `📚 本页方案`（M1 策略 / M2·M3 筛选方案：列/载入/存为/删除）；**页面侧入口全删**（M1 策略下拉+保存当前+移除、M1「存为配方」、M2/M3 三颗、行情页「存为配方…」、`FormulaLibraryDialog`），每页只留「ƒ 库」；行画法/编辑器/保存/删除/过滤**全部收成公共件** | `formula_hub_panel.py` / `hub_float_fn.py` / `hub_latest.py` / `hub_flow.py` / `hub_layout.py` / `hub_assets.py` / `main_window.py` + 五页 | 1 轮 |
 
 **每步固定四条验收**：① 断言进 `smoke_pages_overlay`（页面/存储为主；动引擎才跑 `smoke_chart`）；
 ② 手验清单写进回执；③ 落点唯一（同一资产只许一个编辑面 = 总库编辑器；页面侧只许"载入"与"同步最新"）；

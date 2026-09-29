@@ -16,6 +16,7 @@
       `~/.jian_data/`（实测红过两次，红不红取决于时机）。正解 = 路径重定向到临时目录
       + 不把 `backtest_archive.auto` 还原成 True；后台下载同理（打桩 `download_hub.SyncWorker`）。
 """
+import json
 import os
 import sys
 import tempfile
@@ -169,9 +170,64 @@ for _vk in ("scan_ui", "breadth_ui"):
         _pref_module.preferences.set(
             _vk, {a: b for a, b in _cur_vk.items() if a != "col_order"})
 
+# ★1.61 / §7-B16 护栏6/8：`hub_ui`（总库浮窗的位置/开合/上次选中）同样**必须在构造窗口前抹平**：
+#   ① 与 §11.5-70/90 同族 —— 测试不许依赖用户真实偏好（他用得越久，冒烟越红）；
+#   ② 更直接：`open=True` 会让 `JianMainWindow.__init__` 末尾的 `_restore_hub_ui()`
+#      在构造期就把浮窗建出来并显示 ⇒ 下面所有"懒建 / 默认不显示"的断言当场假红。
+_pref_module.preferences.set("hub_ui", None)
+
 # §7-A4：构造前关掉自动存档，避免任何测试回测写脏真实 ~/.jian_data/backtest_results/。
 # （存档接线在下方用临时 root 直接测；真实目录仅可能被读，不会被写。）
 _pref_module.preferences.set("backtest_archive", {"auto": False})
+
+# ★1.61 / §7-B16：函数总库三库全部指到**临时目录**（真实 ~/.jian_data 零读写）。
+#   下方 win = JianMainWindow() 构造 page_hub 时就会触发 `ensure_hub_migration` ——
+#   不先隔离就会把 asset_id 写进用户真实的 backtest_strategies.json / scan_strategies.json
+#   / formula_library.json（数据主权红线，§11.5-32/90 同族）。
+_tmp_hub = tempfile.mkdtemp(prefix="jian_hub_")
+import data.formula_store as _fsmod  # noqa: E402
+import data.hub_assets as _hub_assets_mod  # noqa: E402
+import data.hub_migration as _hub_migration_mod  # noqa: E402
+from data.formula_store import FormulaStore as _HubFS  # noqa: E402
+from data.scan_strategy_store import ScanStrategyStore as _ScanHubStore  # noqa: E402
+_fsmod._STORE = _HubFS(os.path.join(_tmp_hub, "formula_library.json"))
+# 种一条"最近使用"的种子资产：行情页构造期会恢复 last_used ⇒ 草稿槽存在
+# （旧行为 = 读真实库里用户最近那条；隔离后必须自给自足，否则下面的
+#   「公式图层 = 1 根状态柱 / 统一图元 = 4」整组假红 —— 内容会被本节覆盖，无所谓）。
+_seed_hub = _fsmod._STORE.upsert({'name': '冒烟种子', 'params_text': '',
+                                  'segments': [{'text': 'MA5:MA(C,5);', 'target': 'main'}],
+                                  'source': 'hub'})
+_fsmod._STORE.touch(_seed_hub['id'])
+
+
+class _TmpM1HubStore:
+    """总库专用 M1 策略库替身（只落临时目录；**语义对齐真类：__init__ 从盘加载**——
+    迁移/引用计数每次现开实例，桩不 load 就永远看到空库 = 静默假绿/假红）。"""
+
+    def __init__(self):
+        self.path = os.path.join(_tmp_hub, "backtest_strategies.json")
+        self.data = {"strategies": [], "results": {}}
+        if os.path.exists(self.path):
+            try:
+                with open(self.path, encoding="utf-8") as _h:
+                    _loaded = json.load(_h)
+                self.data["strategies"] = _loaded.get("strategies", [])
+                self.data["results"] = _loaded.get("results", {})
+            except (OSError, ValueError):
+                pass
+
+    def save(self):
+        with open(self.path, "w", encoding="utf-8") as _h:
+            json.dump(self.data, _h, ensure_ascii=False)
+
+
+_hub_assets_mod.StrategyStore = _TmpM1HubStore
+_hub_migration_mod.StrategyStore = _TmpM1HubStore
+_scan_hub_store = _ScanHubStore()
+_scan_hub_store.path = os.path.join(_tmp_hub, "scan_strategies.json")
+_scan_hub_store.load()
+_hub_assets_mod.get_scan_strategy_store = lambda: _scan_hub_store
+_hub_migration_mod.get_scan_strategy_store = lambda: _scan_hub_store
 
 from core.formula.program import parse_program, execute_programs_with_draws  # noqa: E402
 from ui.main_window import JianMainWindow  # noqa: E402
@@ -584,11 +640,15 @@ print("== 行情页 ⇄ 回测页：公式资产化 + 互送（v6.11 · P7）=="
 from PyQt6.QtWidgets import QInputDialog
 
 from data.formula_store import FormulaStore
-from ui.widgets.formula_library import FormulaLibraryDialog
 
 # ⚠ 用**临时库**替换真实库，绝不污染 ~/.jian_data/formula_library.json（用户数据主权）
 tmp_formula = tempfile.mkdtemp(prefix="jian_formula_page_")
 fstore = FormulaStore(os.path.join(tmp_formula, "formula_library.json"))
+# ★1.61 / §7-B16：**浮窗与总库页读的是单例 `get_formula_store()`** ⇒ 这里必须把单例也指到
+#   这个临时实例。否则"页面存的"与"浮窗能看到的"是**两份** —— 而生产里它们本来就是同一份
+#   （同一个 `formula_store` 单例），测试若用两个实例，测的就是现实中不存在的形态
+#   （§11.5-32 同族：测试的形态必须与线上一致）。
+_fsmod._STORE = fstore
 mkt._formula_store = fstore
 bt = win.page_backtest.backtest_single
 bt.formula_store = fstore
@@ -604,9 +664,23 @@ check("行情页接收外来公式：段 / 参数 / 目标窗格全部落位",
       and mkt._formula_params_text == "L1=5")
 check("接收后回执说明了来源", "测试" in mkt.lbl_formula_status.text())
 
-# —— 存为配方（输入框已在上方统一打桩；这里只排队"该输入什么名字"）——
-ANSWERS.extend(["行情页配方", "回测页配方", "行情页配方"])
-mkt.save_formula_as()
+# —— 保存入口 = **统一浮窗**（★1.61 / §7-B16：旧的「💾 存为配方」按钮已退役）——
+#   用户口径：页面写好的函数必须能就地存，但入口要统一 ⇒ 走浮窗「ƒ 函数」区的
+#   「💾 存当前函数」（取本页草稿预填）→「💾 保存」。这里就用这条**真路径**来验。
+win.show_formula_hub_panel()
+_fp = win._formula_hub_panel
+
+
+def _save_via_float(name: str) -> None:
+    """走浮窗「💾 存当前函数 → 💾 保存」（旧页内按钮已删，这是唯一入口）。"""
+    _fp.show_zone(0)
+    _fp.fn._on_save_current()
+    _fp.fn.editor.txt_name.setText(name)
+    _fp.fn._on_save()
+
+
+win.switch_to('market')
+_save_via_float("行情页配方")
 saved_market = fstore.get_by_name("行情页配方")
 check("行情页把公式存进了配方库", saved_market is not None and fstore.count() == 1)
 check("配方**保留了每段的目标窗格**（回测侧做不到这点）",
@@ -627,7 +701,9 @@ check("送来的函数被自动检测（不是静默塞进去）",
 # —— 回测页 → 行情页 ——
 bt.segments.set_texts(["RSV := (C - LLV(C,9)) / (HHV(C,9) - LLV(C,9)) * 100;\nK值: RSV, COLORWHITE;"])
 bt.txt_params.setText("N1=9")
-bt.save_formula_as()
+win.switch_to('backtest')
+win.page_backtest.tabs.setCurrentIndex(0)
+_save_via_float("回测页配方")
 check("回测页也能存配方（同名覆盖、来源标记正确）",
       fstore.count() == 2 and fstore.get_by_name("回测页配方")["source"] == 'backtest')
 
@@ -639,18 +715,38 @@ check("行情页已切换并按「主图」接收（回测侧没有窗格信息�
 check("互送后自动切到行情页", win.content_area.currentIndex() == 3)
 check("回执说明了来源", "回测页" in mkt.lbl_formula_status.text())
 
-# —— 配方库对话框 ——
-dlg = FormulaLibraryDialog(fstore)
-check("配方库列出了全部配方", dlg.lst_formulas.count() == fstore.count() == 2)
-check("未点载入时没有选中结果", dlg.selected_formula() is None)
-check("选中项可被读出", dlg.current_formula() is not None)
-check("预览区展示了选中配方的正文",
-      dlg.current_formula()["name"] in dlg.txt_preview.toPlainText())
-dlg.load_selected()
-check("载入后回传该配方", dlg.selected_formula()["name"] == dlg.current_formula()["name"]
-      or dlg.selected_formula() is not None)
-check("载入会记录“最近使用”", bool(fstore.get(dlg.selected_formula()["id"])["used_at"]))
-dlg.close()
+# —— 统一浮窗（★1.61 / §7-B16）：列表 / 详情 / 载入 ——
+#   ⚠ 旧 `FormulaLibraryDialog`（ui/widgets/formula_library.py）生产零入口 ⇒ 已删除；
+#     它那几条断言改由**浮窗**承担（浮窗与 A 页共用同一份资产库与同一张行脸）。
+from ui.widgets.hub_layout import HubItem  # noqa: E402
+
+win.show_formula_hub_panel()
+_fp = win._formula_hub_panel
+_fp.refresh()
+
+
+def _hub_rows(pane):
+    """列表里的资产行（`HubItem`）—— 与 A 页**同一类行件**，便于验"同一张脸"。"""
+    rows = []
+    for _i in range(pane.list_lay.count()):
+        _w = pane.list_lay.itemAt(_i).widget()
+        if isinstance(_w, HubItem):
+            rows.append(_w)
+    return rows
+
+
+check("浮窗列出全部函数（与资产库同一份数据、与 A 页同一类行件）",
+      len(_hub_rows(_fp.fn)) == fstore.count() == 2)
+_name_q = fstore.get_by_name("行情页配方")
+_fp.select(_name_q["id"])
+check("选中项可被读出", _fp.selected_id() == _name_q["id"])
+check("详情区点名函数名 + 段数（旧对话框「预览区」的职责已由详情卡承担）",
+      _fp.fn.d_name.text() == "行情页配方" and "2 段" in _fp.fn.d_meta.text())
+_fp.fn.btn_load.click()       # 真点击（§11.5-96：主入口必须含一次真实点击）
+check("浮窗「⤓ 载入到本页」回填当前页（行情页）并记录「最近使用」",
+      [t for t, _g in mkt._formula_segments] == [MACD_SEG, MA_SEG]
+      and bool(fstore.get(_name_q["id"])["used_at"]))
+win._formula_hub_panel.btn_close.click()
 
 # —— 开机自动恢复（"公式重启就丢"的治本办法）——
 last = fstore.last_used()
@@ -663,7 +759,8 @@ check("恢复回执点名了配方名", last["name"] in mkt.lbl_formula_status.t
 
 # —— 同名覆盖（不产生重复条目）——
 before = fstore.count()
-mkt.save_formula_as()
+win.switch_to('market')
+_save_via_float("行情页配方")
 check("同名再保存 = 覆盖，不新增条目", fstore.count() == before)
 
 print("== 行情工作台（v6.12 · P8）：自选股 / 周期 / 新画线类型 ==")
@@ -2265,7 +2362,7 @@ DESK_PUBLIC_ATTRS = (
     "_watch", "_readout",
     # 行为入口（页面级断言与 main_window 互送都调它们）
     "load_symbol", "sync_cloud", "render_charts", "prepared_df",
-    "edit_formula", "save_formula_as", "open_formula_library",
+    "edit_formula", "open_formula_library",
     "send_formula_to_backtest", "receive_formula",
     "delete_selected_annotation", "clear_annotations",
     "select_period_group", "select_minute", "select_adjust",
@@ -2279,6 +2376,13 @@ _desk_missing = [name for name in DESK_PUBLIC_ATTRS + DESK_PUBLIC_STATE if not h
 check(f"公共面完整（{len(DESK_PUBLIC_ATTRS) + len(DESK_PUBLIC_STATE)} 项 · 缺：{_desk_missing or '无'}）",
       not _desk_missing)
 check("附图高度常量 SUB_PLOT_HEIGHT 仍可外部导入（150）", SUB_PLOT_HEIGHT == 150)
+# ★1.61 / §7-B16：页面侧的「保存函数 / 策略保存 / 策略移除」入口**统一到「ƒ 库」浮窗**
+#   ⇒ 旧的页内入口不该再留（留着就是两套入口 = §11.5-11 的老毛病；复活会立刻红）。
+check("旧的「存为配方 / 策略下拉 / 保存当前 / 移除」页内入口已退役（浮窗取代）",
+      not hasattr(mkt, "save_formula_as") and not hasattr(bt, "save_formula_as")
+      and not hasattr(bt, "btn_save_formula")
+      and not hasattr(bt, "cmb_strategy") and not hasattr(bt, "btn_save_strategy")
+      and not hasattr(bt, "btn_del_strategy"))
 check("导航第 4 页仍指向行情工作台（main_window.page_market）", win.page_market is mkt)
 
 # ⚠ STEP 3b 已办：周期/复权两个下拉被**分段控件**取代。这里反过来钉住"旧名不该再留"
@@ -4988,7 +5092,7 @@ from config import settings  # noqa: E402
 #       （desk_ui / scan_ui / …）是否**逐值一致** —— 一致 ⇒ 被动的是别人的键，不是我们写的 ⇒ 通过。
 #   两级都不满足才 FAIL（真污染仍然抓得住）。
 _AFTER_LIB = _real_lib_fingerprint()
-_OUR_KEYS = ("desk_ui", "scan_ui", "breadth_ui", "review_ui", "download_prefs")
+_OUR_KEYS = ("desk_ui", "scan_ui", "breadth_ui", "review_ui", "download_prefs", "hub_ui")
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
               "backtest_strategies.json", "preferences.json", "trade_calendar.json",
               "scan_strategies.json", "industry_map.json", "backtest_results"):
@@ -5129,6 +5233,335 @@ except Exception as _eq:  # noqa: BLE001
     check(f"§9-F③ 样式断言整段抛异常: {type(_eq).__name__}: {_eq}", False)
 
 # ==========================================
+# ==========================================
+# §7-B16 · ƒ 函数总库（★1.61）：导航 / 页面 / 浮窗 / 迁移 / 引用计数 / 快照时效 / 落点唯一
+#   【隔离】三库已在文件顶部指到临时目录（真实 ~/.jian_data 零读写）。
+#   【红线】①总库只管资产不管运行 ②载入只认内联快照（配置区一字不动）③迁移绝不猜拆/幂等。
+# ==========================================
+print("\n== §7-B16 · 函数总库（A 页 + B 浮窗 + 资产收编）==")
+try:
+    import pathlib as _pl82  # noqa: E402
+
+    from data.formula_store import (SOURCE_BACKTEST as _SB82,  # noqa: E402
+                                    SOURCE_HUB as _SH82, SOURCE_LABELS as _SL82,
+                                    SOURCE_SCAN as _SS82, make_formula as _mf82)
+    from data.hub_assets import (asset_texts as _at82, delete_asset as _da82,  # noqa: E402
+                                 find_by_content as _fbc82, ref_counts as _rc82,
+                                 stale_snapshot as _ss82, upsert_asset as _ua82)
+    from data.hub_migration import ensure_hub_migration as _ehm82  # noqa: E402
+    from ui.widgets.hub_editor import FormulaAssetEditor as _FormulaAssetEditor  # noqa: E402
+
+    # ---- ① 导航：插队在回测与数据管理之间；data/settings 顺移 6/7（S2-0 已同步改）----
+    check("★ B16：左轨「ƒ 函数库」= 内容栈 index 5，data/settings 顺移 6/7（运行期实测）",
+          win.content_area.indexOf(win.page_hub) == 5
+          and win.content_area.indexOf(win.page_data) == 6
+          and win.content_area.indexOf(win.page_settings) == 7)
+    check("★ B16：`switch_to('hub')` 认它 + 导航按钮存在",
+          hasattr(win, 'btn_hub')
+          and (win.switch_to('hub'), win.content_area.currentWidget() is win.page_hub)[1])
+
+    # ---- ② 资产库 = formula_store 本体（不新建 store）；4 个来源齐全 ----
+    check("★ B16：资产库本体 = formula_store（来源标签 4 值；scan/hub 可直接构造）",
+          set(_SL82) == {'market', 'backtest', 'scan', 'hub'}
+          and _mf82('扫描导入', ['CROSS(MA(C,20),L);'], source=_SS82)['source'] == _SS82
+          and _mf82('总库新建', ['MA5:MA(C,5);'], source=_SH82)['source'] == _SH82)
+    check("★ B16：总库/浮窗/页面共用**同一个**资产库单例（顶部隔离到临时目录的那个）",
+          win.page_hub.store() is _fsmod._STORE)
+
+    # ---- ③ 迁移：收编 + 写回引用；老档**整体一段**（红线③：绝不按分号猜拆）----
+    #   ⚠ page_hub 构造期已跑过一次迁移（空库）⇒ 标记已置位；这里先复位再验，才收编得到。
+    _fsmod._STORE.hub_migrated = False
+    _m1_82 = _hub_assets_mod.StrategyStore()
+    _m1_82.data['strategies'] = [
+        {'id': 's1', 'name': '双段策略', 'segments': ['MA5:MA(C,5);', 'UPTREND:C>MA5;'],
+         'function': 'MA5:MA(C,5); UPTREND:C>MA5;', 'params_text': 'P1(5)'},
+        {'id': 's2', 'name': '老拼接档', 'function': 'X:=MA(C,10); Y:X>0;', 'params_text': ''},
+    ]
+    _m1_82.save()
+    _scan_hub_store.data['strategies'] = [
+        {'id': 'p1', 'name': '回踩方案',
+         'config': {'formula': 'CROSS(MA(C,20),L)', 'params': '', 'asset_id': ''}}]
+    _scan_hub_store.save()
+    _st82 = _ehm82()
+    check("★ B16：迁移把 M1/M2·M3 公式收编成资产并写回 asset_id（本轮 2+1 条）",
+          _st82['m1'] == 2 and _st82['scan'] == 1 and _st82['migrated'] is True)
+    _s2_asset = _fbc82(_fsmod._STORE, ['X:=MA(C,10); Y:X>0;'], '')
+    check("★ B16：老拼接档收编为**一整段**（绝不按分号猜拆 —— 红线③）",
+          _s2_asset is not None and len(_at82(_s2_asset)) == 1
+          and _s2_asset['segments'][0]['text'] == 'X:=MA(C,10); Y:X>0;')
+    _st82b = _ehm82()
+    check("★ B16：迁移**幂等**（第二次直接短路，一条都不重复收编）",
+          _st82b['migrated'] is False and _st82b['m1'] == 0 and _st82b['scan'] == 0)
+
+    # ---- ④ 引用计数 + 快照时效（红线②的数据面）----
+    _a82 = _fbc82(_fsmod._STORE, ['MA5:MA(C,5);', 'UPTREND:C>MA5;'], 'P1(5)')
+    _refs82 = _rc82(_a82['id'])
+    check("★ B16：引用计数动态可算（M1 命中 1；scan 方案引用另一条）",
+          len(_refs82['m1']) == 1 and '双段策略' in _refs82['m1'][0]
+          and len(_rc82(_scan_hub_store.data['strategies'][0]['config']['asset_id'])['m2m3']) == 1)
+    _old_texts = _at82(_a82)
+    _fsmod._STORE.upsert({'id': _a82['id'], 'name': _a82['name'],
+                          'segments': [{'text': 'MA99:MA(C,99);', 'target': 'main'}],
+                          'params_text': '', 'source': _a82.get('source')})
+    check("★ B16：快照时效 —— 资产被改后报出更新版；一致 / 资产已删 = None（回落快照）",
+          _ss82(_a82['id'], _old_texts, 'P1(5)') is not None
+          and _ss82(_a82['id'], ['MA99:MA(C,99);'], '') is None
+          and _ss82('no-such-asset', _old_texts, '') is None)
+
+    # ---- ⑤ 删除（数据层）：**只清引用它**的那一处；非引用方与内联快照都不许动 ----
+    #   ⚠ 旧写法断言"两库 asset_id 全置空" —— 那在 id 全为字面量 'None'（一条资产串掉所有引用）
+    #     时是**巧合成立**；id 生成修好后，正确口径就是"只清引用它的那一条"（否则删一个函数
+    #     会把别的函数的引用一起抹掉 —— 那才是真 bug）。
+    _ref_asset = _fbc82(_fsmod._STORE, ['CROSS(MA(C,20),L)'], '')
+    _s1_aid = _hub_assets_mod.StrategyStore().data['strategies'][0].get('asset_id')
+    _removed82, _refs_del = _da82(_fsmod._STORE, _ref_asset['id'])
+    check("★ B16：删除**只清引用它的那一处**（M1 的 asset_id 原样保留；scan 置空、内联快照留底）",
+          _removed82 is True
+          and bool(_s1_aid)
+          and _hub_assets_mod.StrategyStore().data['strategies'][0].get('asset_id') == _s1_aid
+          and _scan_hub_store.data['strategies'][0]['config'].get('asset_id') in (None, '')
+          and _scan_hub_store.data['strategies'][0]['config'].get('formula')
+          == 'CROSS(MA(C,20),L)')
+
+    # ---- ⑥ A 页：编辑器接真引擎 + 体检 + 选中联动 ----
+    _hub82 = win.page_hub
+    _hub82.editor.txt_code.setPlainText('XX:MA(C,(;')
+    _chk82a = _hub82.editor.check()
+    _hub82.editor.txt_code.setPlainText('MA5:MA(C,5);')
+    _chk82b = _hub82.editor.check()
+    check("★ B16：编辑器接**真引擎**（parse_program）—— 语法错误给人话（err）、通过 = ok",
+          _chk82a[0] == 'err' and _chk82b[0] == 'ok')
+    check("★ B16：全库体检跑得完且状态回写（纯计算、零线程）",
+          (_hub82._flow.check_all(), True)[1])
+    check("★ B16：reveal_asset 选中联动（浮窗「去总库编辑」的落点）",
+          (_hub82.reveal_asset(_a82['id']), _hub82.d_name.text() == _a82['name'])[1])
+
+    # ---- ⑦ 浮窗 + 「载入到本页」路由（红线①②）----
+    win.switch_to('backtest')
+    win.page_backtest.tabs.setCurrentIndex(0)
+    _bt82 = win.page_backtest.backtest_single
+    # ⚠ 门控条件的 `variable` 会随**变量池联动重绑**（`condition_gate.set_variables`：变量消失 ⇒
+    #   回退第一项）—— 那是 M1 页既有行为，不是"Hub 改了配置"。所以先把变量池同步一次
+    #   （未同步时门控还停在出厂默认变量 'A'），并让哨兵函数**与待载入函数共用同一个变量名**，
+    #   这样"配置区一字不动"才能在**字面深度相等**的口径下被真验（否则测的是变量重绑，不是红线②）。
+    _bt82.segments.set_texts(['MA99:MA(C,99);', 'KEEP:1;'])
+    _bt82.detect_function(quiet=True)
+    _gate_before = (_bt82.gate_buy.config(), _bt82.gate_sell.config())
+    win.show_formula_hub_panel()
+    _panel82 = win._formula_hub_panel
+    check("★ B16：浮窗懒建可显示 + 两区齐备（ƒ 函数 / 📚 本页方案）+ 两个取口已注入",
+          _panel82 is not None and not _panel82.isHidden()
+          and _panel82.zone_stack.count() == 2
+          and callable(_panel82.draft_provider) and callable(_panel82.plan_provider))
+    check("★ B16：浮窗的编辑面 = **与 A 页同一个编辑器**（不是第二套表单 —— 样式/口径同源）",
+          _panel82.fn.editor.__class__ is _FormulaAssetEditor
+          and 'QPlainTextEdit' not in _pl82.Path('ui/widgets/formula_hub_panel.py')
+          .read_text(encoding='utf-8'))
+    _panel82.select(_a82['id'])
+    _panel82.fn.btn_load.click()   # 真点击（§11.5-96：手点是主入口的控件必须含一次真实点击）
+    check("★ B16：「载入到本页」路由 M1 —— 函数段+参数回填，**配置区一字不动**（红线②）",
+          'MA99' in (_bt82.segments.texts() or [''])[0]
+          and (_bt82.gate_buy.config(), _bt82.gate_sell.config()) == _gate_before
+          and _fsmod._STORE.get(_a82['id'])['used_at'] != '')
+    check("★ B16：M1/M2/M3/行情页的「ƒ 库」入口真实存在",
+          _bt82.pane_fn.btn_library.text() == 'ƒ 库'
+          and hasattr(win.page_backtest.page_scan._formula_pane, 'btn_hub')
+          and hasattr(win.page_backtest.page_breadth._formula_pane, 'btn_hub')
+          and callable(getattr(win.page_backtest.page_scan, 'load_formula_from_hub', None)))
+
+    # ---- ⑧ 总库「送 ↗」= 切页 + 回填（红线①：绝不运行）----
+    win.switch_to('hub')
+    _hub82.reveal_asset(_a82['id'])
+    _hub82._flow.send('backtest')
+    check("★ B16：总库「送回测页」= 切页 + 回填（M1 函数段被替换、无任何运行被触发）",
+          win.content_area.currentWidget() is win.page_backtest
+          and 'MA99' in (win.page_backtest.backtest_single.segments.texts() or [''])[0])
+
+    # ---- ⑨ H4：同步语义 —— 「总库有更新版」= 提示可见 + 更新必须**显式**（红线②：默认保留旧版）----
+    #   ⚠ 这条测的是"默认不动 + 点了才动"，不是"能不能读资产"：`_a82` 的资产内容在 ④ 已被改成
+    #     `MA99:MA(C,99);`，而下面这条策略的内联快照是 `KEEPOLD:1;` ⇒ 二者分叉 = 典型的"有更新版"。
+    _h4_sid = _bt82.store.upsert({'name': 'H4 策略', 'segments': ['KEEPOLD:1;'],
+                                  'function': 'KEEPOLD:1;', 'params_text': '',
+                                  'asset_id': _a82['id']})
+    _bt82.strategy.load_plan(_h4_sid)      # ★1.61：页内下拉已退役 ⇒ 按 id 载入（浮窗同一路径）
+    check("★ B16 H4：载入策略**默认保留旧版**（函数段 = 内联快照原文）+ 冒出「⤒ 用最新版」+ 回执点名",
+          _bt82.segments.texts() == ['KEEPOLD:1;']
+          and not _bt82.btn_apply_latest.isHidden()
+          and '更新版' in _bt82.lbl_run_status.text())
+    _h4_risk = _bt82._risk_config()
+    _h4_rng = (_bt82.date_start.date().toString('yyyy-MM-dd'),
+               _bt82.date_end.date().toString('yyyy-MM-dd'))
+    _h4_gate = [(c.get('rule'), c.get('value'))
+                for c in (_bt82.gate_buy.config().get('conditions') or [])]
+    _bt82.btn_apply_latest.click()          # 真点击（§11.5-96：主入口必须含一次真实点击）
+    check("★ B16 H4：点「⤒ 用最新版」**才**换函数；风控 / 区间 / 条件规则一字不动；换完按钮收起",
+          _bt82.segments.texts() == ['MA99:MA(C,99);']
+          and _bt82._risk_config() == _h4_risk
+          and (_bt82.date_start.date().toString('yyyy-MM-dd'),
+               _bt82.date_end.date().toString('yyyy-MM-dd')) == _h4_rng
+          and [(c.get('rule'), c.get('value'))
+               for c in (_bt82.gate_buy.config().get('conditions') or [])] == _h4_gate
+          and _bt82.btn_apply_latest.isHidden())
+
+    # ---- ⑩ H4（M2/M3 同款）：只换筛选条件；粗筛阈值 / 统计范围一字不动 ----
+    _h4_asset2 = _fsmod._STORE.upsert(_mf82('H4 扫描函数', ['COND := C > MA(C,20);'],
+                                            source=_SS82))
+    _scan82 = win.page_backtest.page_scan
+    _scan82._formula_pane.txt_formula.setPlainText('SENTINEL_SCAN := 1;')
+    _scan82._strategy.prompt_stale(_h4_asset2)
+    _scan_thr = _scan82._filter_pane.to_thresholds().to_dict()
+    _scan_scope = _scan82.cb_scope.currentIndex()
+    _scan_btn_shown = not _scan82.btn_apply_latest.isHidden()
+    _scan82.btn_apply_latest.click()
+    check("★ B16 H4（M2/M3 同款）：点「⤒ 用最新版」只换筛选条件（阈值 / 范围 / 复权一字不动）",
+          _scan_btn_shown
+          and 'MA(C,20)' in _scan82._formula_pane.txt_formula.toPlainText()
+          and 'SENTINEL_SCAN' not in _scan82._formula_pane.txt_formula.toPlainText()
+          and _scan82._filter_pane.to_thresholds().to_dict() == _scan_thr
+          and _scan82.cb_scope.currentIndex() == _scan_scope
+          and _scan82.btn_apply_latest.isHidden())
+
+    # ---- ⑪ H4 源码级护栏（护栏 2 的机器化）：**载入路径不读资产内容** ----
+    #   红线②的机器判据 = "读资产的**调用**只许出现在**唯一一处显式动作**里"：
+    #   两个桥接文件里 `asset_texts` **一个都不许有**（载入路径只读内联快照）；
+    #   公共件 `hub_latest.py` 里也只在显式动作 `apply()` 之内调用它
+    #   （模块顶部的 `import` 不算调用 —— 所以判据用带括号的 `asset_texts(`）。
+    _h4_bs = _pl82.Path('ui/widgets/backtest_strategy.py').read_text(encoding='utf-8')
+    _h4_sb = _pl82.Path('ui/widgets/scan_strategy_bridge.py').read_text(encoding='utf-8')
+    _h4_latest = _pl82.Path('ui/widgets/hub_latest.py').read_text(encoding='utf-8')
+    check("★ B16 H4（源码级）：读资产**只在公共件的显式动作里** —— 桥接与载入路径一概不碰",
+          'asset_texts' not in _h4_bs and 'asset_texts' not in _h4_sb
+          and 'asset_texts(' not in _h4_latest.split('def apply')[0]
+          and _h4_latest.count('asset_texts(') == 1)
+
+    # ---- ⑫ 护栏 6/8：浮窗界面态 `hub_ui`（位置偏移 / 开合 / 上次选中）----
+    #   ⚠ 位置一律按**行为**验（"拖多少就挪多少 / 重开回到同一处"），不重算实现里的夹取公式
+    #     —— 那样只是把实现抄了一遍，实现改了断言跟着改，等于没护栏。
+    check("★ B16 护栏6：默认无偏移（抹平后），且浮窗已在 ⑦ 被打开时落了 `open=True`",
+          win._hub_offset == (0, 0) and win._hub_ui()['offset'] == [0, 0]
+          and win._hub_ui()['open'] is True)
+    _pos_before = _panel82.pos()
+    win._on_hub_dragged(-40, 0)                # 等价于标题栏往左拖了一下（基准位靠右，左拖不会被夹取）
+    _pos_mid = _panel82.pos()
+    check("★ B16 护栏6：拖动只搬浮窗、偏移实时累加；**拖动过程不写盘**（松手才落）",
+          (_pos_mid.x() - _pos_before.x()) == -40
+          and win._hub_offset == (-40, 0)
+          and win._hub_ui()['offset'] == [0, 0])
+    win._on_hub_drag_finished()
+    _panel82.hide()
+    _panel82.move(0, 0)                        # 先挪走，证明是"按偏好摆回来"而不是碰巧没动
+    win.show_formula_hub_panel(keep=_a82['id'])
+    check("★ B16 护栏6：松手落盘 + 重开按 `hub_ui.offset` 摆回原处（位置记忆真的生效）",
+          win._hub_ui()['offset'] == [-40, 0]
+          and (_panel82.x(), _panel82.y()) == (_pos_mid.x(), _pos_mid.y()))
+    _panel82.btn_close.click()                 # 真点击（§11.5-96：主入口必须含一次真实点击）
+    check("★ B16 护栏6：点 ✕ ⇒ `open=False` + 记住上次选中的函数（开合记忆的写点）",
+          _panel82.isHidden() and win._hub_ui()['open'] is False
+          and win._hub_ui()['asset_id'] == _a82['id'])
+    _pref_module.preferences.set('hub_ui', {'open': True, 'offset': [-40, 0],
+                                            'asset_id': _a82['id']})
+    _panel82.hide()
+    win._restore_hub_ui()                      # 开机恢复路径（独立成方法，可直接调）
+    check("★ B16 护栏6：开机恢复 —— 接上开合 / 位置偏移 / 上次选中的函数",
+          (not _panel82.isHidden()) and win._hub_offset == (-40, 0)
+          and _panel82.selected_id() == _a82['id'])
+    _panel82.btn_close.click()                 # 收尾：别把"开着"留给后面的段落
+    check("★ B16 护栏6/8：`hub_ui` 坏数据逐字段回落（不炸、也不把浮窗搞没）",
+          (_pref_module.preferences.set('hub_ui', {'offset': 'bad', 'open': 'yes'}),
+           win._hub_ui())[1] == {'open': True, 'offset': [0, 0], 'asset_id': ''})
+    _pref_module.preferences.set('hub_ui', {'open': False, 'offset': [0, 0], 'asset_id': ''})
+
+    # ---- ⑬ 自查纠错回归（v6.79）：逐段窗格不许被压平 + 体检标记要能读回 ----
+    #   ① 旧写法 `[{'text': t, 'target': payload['target']} for t in texts]` 会把行情页配方的
+    #      `sub1`/`main` 分段**压成同一个窗格**（静默丢数据）；正确 = 逐行沿用原段窗格、
+    #      只有**新增行**才落「默认窗格」。
+    _seg_asset = _fsmod._STORE.upsert(_mf82('分段窗格资产',
+                                            [('A:MA(C,5);', 'sub1'), ('B:MA(C,10);', 'main')],
+                                            source=_SH82))
+    _hub82.reveal_asset(_seg_asset['id'])
+    _hub82._flow.edit()
+    _hub82.editor.txt_code.setPlainText('A:MA(C,5);\nB:MA(C,10);\nC:MA(C,20);')   # 末尾加一行
+    _hub82.editor.cmb_target.setCurrentIndex(_hub82.editor.cmb_target.findData('sub2'))
+    _hub82._flow.save()
+    _seg_round = _fsmod._STORE.get_by_name('分段窗格资产')
+    check("★ B16 纠错：只改函数文本再保存 ⇒ **逐段窗格原样保留**（新行才落「默认窗格」）",
+          [s['target'] for s in _seg_round['segments']] == ['sub1', 'main', 'sub2'])
+    #   ② 体检把 `syntax_state` 写进库并 save()，`FormulaStore.load()` 必须回填它 ——
+    #      否则"写了却读不回"：重启后列表里的 ✗/⚠ 全没（静默不一致）。
+    _hub82._flow.check_all()
+    _reloaded = _HubFS(_fsmod._STORE.path)
+    _re_asset = _reloaded.get_by_name('分段窗格资产')
+    check("★ B16 纠错：全库体检的 `syntax_state` 落盘后**能读回来**（旧版写了却读不回）",
+          _re_asset is not None and _re_asset.get('syntax_state') == 'ok')
+    #   ③ 引用表一次读盘：`ref_map()` 与逐条 `ref_counts()` 必须**完全一致**（优化不许改口径）
+    _rmap = _hub_assets_mod.ref_map()
+    check("★ B16 纠错：`ref_map()`（一次读盘）与 `ref_counts()`（逐条）口径一致",
+          all(_hub_assets_mod.ref_counts(a['id'], _rmap)
+              == _hub_assets_mod.ref_counts(a['id']) for a in _fsmod._STORE.all()))
+
+    # ---- ⑭ H6：统一浮窗的「📚 本页方案」区 + 「💾 存当前函数」----
+    #   用户口径："M1 的保存当前/移除、M2/M3 的载入/存为/管理，本质是同一件事" ⇒
+    #   统一收进浮窗，且**必须认出当前页**（否则在 M1 打开、切到 M2 还能载入 M1 的策略 = 静默错配）。
+    win.switch_to('backtest')
+    win.page_backtest.tabs.setCurrentIndex(0)
+    _api_m1 = win.current_plan_api()
+    win.page_backtest.tabs.setCurrentIndex(1)
+    _api_m2 = win.current_plan_api()
+    win.switch_to('market')
+    check("★ B16 H6：方案区**认当前页**（M1=策略 / M2=筛选方案 / 行情页=无方案库）",
+          _api_m1 is not None and _api_m1['kind'] == 'M1' and _api_m1['noun'] == '策略'
+          and _api_m2 is not None and _api_m2['kind'] == 'M2M3'
+          and win.current_plan_api() is None)
+    win.switch_to('backtest')
+    win.page_backtest.tabs.setCurrentIndex(0)
+    win.show_formula_hub_panel()
+    _panel82.show_zone(1)
+    _plans_m1 = _api_m1['plans']()
+    _first_plan = str(_plans_m1[0].get('id')) if _plans_m1 else ''
+    check("★ B16 H6：切到方案区 ⇒ 按**当前页**列出方案（M1 策略 ≥1 条）",
+          _panel82.zone_stack.currentIndex() == 1 and bool(_first_plan))
+    _panel82._select_plan(_first_plan)
+    _panel82.btn_plan_load.click()          # 真点击
+    check("★ B16 H6：浮窗「📚 载入」= 把该方案还原进当前页（与页内是**同一套**还原路径）",
+          _bt82._active_strategy_id == _first_plan)
+    _panel82.show_zone(0)
+    _bt82.segments.set_texts(['DRAFTFUNC: MA(C,7);'])
+    _n_assets = len(_fsmod._STORE.all())
+    _panel82.fn._on_save_current()
+    check("★ B16 H6：「💾 存当前函数」把页面上写的函数取过来**预填**，但不落库（还要点保存）",
+          'DRAFTFUNC' in _panel82.fn.editor.txt_code.toPlainText()
+          and len(_fsmod._STORE.all()) == _n_assets)
+    _panel82.fn.editor.txt_name.setText('从 M1 存的草稿')
+    _panel82.fn._on_save()
+    check("★ B16 H6：确认保存 ⇒ 落进**同一个资产库**（浮窗与 A 页共用一份，不是第二套）",
+          _fsmod._STORE.get_by_name('从 M1 存的草稿') is not None)
+
+    # ---- ⑮ H6：入口必须**常驻可见** ----
+    #   ★1.61 实测事故：入口只长在"抽屉里的公式卡片"上，而抽屉默认关着 ⇒ 用户报"我根本
+    #   没看到你做的 ƒ 库"。原断言只查 `hasattr`（存在），**查不出"藏在抽屉里"**。
+    #   所以这里钉的是**可见性**（`isVisibleTo(win)`：祖先没被显式隐藏 = 用户看得到）。
+    _vis = {}
+    for _label, _pkey, _ptab, _pbtn in (
+            ('M1', 'backtest', 0, _bt82.btn_hub),
+            ('M2', 'backtest', 1, win.page_backtest.page_scan.btn_hub),
+            ('M3', 'backtest', 2, win.page_backtest.page_breadth.btn_hub),
+            ('行情页', 'market', None, win.page_market.btn_hub)):
+        win.switch_to(_pkey)
+        if _ptab is not None:
+            win.page_backtest.tabs.setCurrentIndex(_ptab)
+        _vis[_label] = _pbtn.isVisibleTo(win)
+    check(f"★ B16 H6：四页「ƒ 库」入口**常驻可见**（不在抽屉里）—— 实测={_vis}",
+          all(_vis.values()))
+    win.switch_to('backtest')
+    win.page_backtest.tabs.setCurrentIndex(0)
+    _panel82.hide()
+    _bt82.btn_hub.click()                 # 真点击（§11.5-96）
+    check("★ B16 H6：点摘要条「ƒ 库」⇒ 浮窗真被唤出（入口 → 浮窗链路完整）",
+          not _panel82.isHidden())
+    _panel82.btn_close.click()
+except Exception as _e82:  # noqa: BLE001
+    check(f"§7-B16 函数总库断言整段抛异常: {type(_e82).__name__}: {_e82}", False)
+
 # 发布物一致性（v6.66）：`version.json` 是**老用户的更新清单**（`core/updater.py` 每次启动比对）
 #   ⇒ 它必须是**合法 JSON**，且版本号与 `settings.APP_VERSION` 同步（§9-A 三处同步的机器版）。
 #   【为什么加机器护栏】v6.66 手工回写时 notes 里写了**裸双引号** ⇒ 整个文件成了非法 JSON
@@ -5159,13 +5592,13 @@ try:
     _side73 = win.btn_settings.parentWidget().layout()
     check("★ S2-0：运行期实测 —— 左轨**最后一个控件**就是 `⚙ 设置`（真在底部，不只是源码写着）",
           _side73.itemAt(_side73.count() - 1).widget() is win.btn_settings)
-    check("★ S2-0：设置页进了内容栈（index 6）+ 导航可切 + `switch_to('settings')` 认它",
+    check("★ S2-0：设置页进了内容栈 + 导航可切 + `switch_to('settings')` 认它（★1.59 起设置顺移 index 7）",
           'self.content_area.addWidget(self.page_settings)' in _mws73
           and 'self.btn_settings.clicked.connect' in _mws73
-          and '"settings": 6' in _mws73)
+          and '"settings": 7' in _mws73)
     check("★ S2-0：主窗口已挂上设置页（真实装配，不只是源码里有）",
           hasattr(win, 'page_settings') and hasattr(win, 'btn_settings')
-          and win.content_area.indexOf(win.page_settings) == 6)
+          and win.content_area.indexOf(win.page_settings) == 7)
 
     # ---- ② 唯一真源：页面不许自己描述设置项 / 不许自己读写偏好（§9-D 落点唯一）----
     check("★ S2-0：设置页**只渲染注册表**（源码里既无 `preferences`、也无 item 字面量）",

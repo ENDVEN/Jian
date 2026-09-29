@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from core.cross_section import ScanThresholds
 from core.preferences import preferences
+from data.formula_store import SOURCE_SCAN
 from data.market_db import DataLakeManager
 from data.scan_store import get_scan_store
 from ui.workers import JobGuard
@@ -71,10 +72,16 @@ class BreadthView(QWidget):
         self._flow = BreadthFlow(self)
         self._readiness = ReadinessFlow(self)        # 就绪度体检 + 更新到最新/滞后（D6/§7-B10，两页共用）
         # ★v1.46 / §7-B12 P3：筛选方案库桥接（载入/存为/管理；与 M2 共享一份方案池）
+        # ★1.61 / §7-B16：函数总库浮窗入口（H3）—— 与 M2 同款（两页共用 ScanFormulaPane）
+        self._formula_pane.btn_hub.clicked.connect(self._open_formula_hub)
+        # ★1.61 / §7-B16 H6：**摘要条上那个**（常驻可见）—— 设计稿 B 定的入口位；
+        #   抽屉里的那个只在抽屉打开时可见，两个按钮走同一个方法（无第二套实现）。
+        self.btn_hub.clicked.connect(self._open_formula_hub)
         self._strategy = ScanStrategyBridge(self)
-        self.btn_load.clicked.connect(self._strategy.load)
-        self.btn_save.clicked.connect(self._strategy.save)
-        self.btn_manage.clicked.connect(self._strategy.manage)
+        # ★1.61 / §7-B16：方案库的「载入 / 存为 / 管理」按钮**已退役**（与 M2 同款）——
+        #   统一入口 = 「ƒ 库」浮窗的「📚 本页方案」区。
+        # ★1.61 / §7-B16 H4：「⤒ 用最新版」= 显式动作（与 M2 同款；两页共用一份方案池）
+        self.btn_apply_latest.clicked.connect(self._strategy.apply_latest_function)
         self._load_breadth_ui()
         self._result.set_empty('还没有扫描结果 —— 选好统计范围与条件，点「▶ 开始扫描」。')
         self._readiness.start_calendar_fetch()       # 后台拉一次交易日历，喂滞后提示（§7-B10 STEP 3）
@@ -101,6 +108,33 @@ class BreadthView(QWidget):
         return self._layout.build_result_area()
 
     # ★P3 筛选方案库需要的两个接口（委托 flow；桥接只认这两个 + lbl_receipt）
+    def load_formula_from_hub(self, texts, params_text: str = "") -> int:
+        """★1.61 / §7-B16：总库「载入到本页」—— 只回填函数与参数（M3 与 M2 同口径）。"""
+        clean = [str(x).strip() for x in (texts or []) if str(x or '').strip()]
+        if not clean:
+            return 0
+        self._formula_pane.txt_formula.setPlainText(chr(10).join(clean))
+        self._formula_pane.txt_params.setText(str(params_text or ''))
+        return len(clean)
+
+    def current_formula_draft(self) -> dict:
+        """★1.61 / §7-B16：本页正在编辑的筛选条件草稿（浮窗「💾 保存当前函数」用）。
+
+        ⚠ **只读**：不改本页任何状态（阈值 / 区间 / 展示 / 复权一概不碰）。
+        """
+        texts = [ln.strip() for ln in
+                 self._formula_pane.txt_formula.toPlainText().splitlines() if ln.strip()]
+        return {'name_hint': '',
+                'segments': [{'text': t, 'target': 'main'} for t in texts],
+                'params_text': self._formula_pane.txt_params.text().strip(),
+                'source': SOURCE_SCAN}
+
+    def _open_formula_hub(self) -> None:
+        win = getattr(self.main_win, 'window', None)
+        target = self.main_win.window() if callable(win) else self.main_win
+        if hasattr(target, 'show_formula_hub_panel'):
+            target.show_formula_hub_panel()
+
     def current_config(self) -> dict:
         return self._flow.current_config()
 

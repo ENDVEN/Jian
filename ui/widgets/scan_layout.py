@@ -68,6 +68,13 @@ def _chip(text: str, tooltip: str = '') -> QPushButton:
 class ScanFormulaPane(EditPane):
     def __init__(self, parent=None):
         super().__init__('fn', 'ƒ 筛选条件（可多段 · 共享变量池）', '#1976D2', 'ƒ 筛选条件', parent)
+        # ★1.61 / §7-B16：函数总库浮窗入口（M2/M3 共用本窗格 ⇒ 一处改动两页都有）——
+        #   只负责"从总库选函数回填"，粗筛阈值/范围/复权等配置一字不动（红线②）。
+        self.btn_hub = QPushButton('ƒ 库')
+        self.btn_hub.setStyleSheet(FLAT_QSS)
+        self.btn_hub.setToolTip('从「函数总库」选一个函数回填到这里（非模态浮窗，随时可关）；'
+                                '函数的管理与编辑在「ƒ 函数库」页')
+        self.add_head(self.btn_hub)
         self.txt_formula = QTextEdit()
         self.txt_formula.setPlaceholderText(
             "例：\nDIFF := EMA(C,12) - EMA(C,26);\nDEA  := EMA(DIFF,9);\n"
@@ -280,18 +287,9 @@ class ScanLayout:
         for chip in (p.chip_formula, p.chip_filter, p.chip_scope):
             lay.addWidget(chip)
 
-        # ★v1.46 / §7-B12 P3：筛选方案「载入 / 存为 / 管理」（与 M1 策略库同构、独立库）。
-        #   放左侧配置 chips 旁（它们是"对配置的操作"），短标签不撑窗；行为在 ScanStrategyBridge。
-        p.btn_load = QPushButton('📚 载入')
-        p.btn_save = QPushButton('💾 存为')
-        p.btn_manage = QPushButton('管理')
-        for _b, _tip in ((p.btn_load, '载入已保存的筛选方案（函数/参数/粗筛/范围）；M2 与 M3 共用一份方案库'),
-                         (p.btn_save, '把当前筛选配置存成命名方案（同名覆盖），下次一键载入'),
-                         (p.btn_manage, '管理（删除）已保存的筛选方案')):
-            _b.setStyleSheet(FLAT_QSS)
-            _b.setCursor(Qt.CursorShape.PointingHandCursor)
-            _b.setToolTip(_tip)
-            lay.addWidget(_b)
+        # ★1.61 / §7-B16：旧「📚 载入 / 💾 存为 / 管理」已退役 —— 统一收进「ƒ 库」浮窗的
+        #   「📚 本页方案」区。用户口径：M1 的策略库与 M2/M3 的方案库**本质是同一件事**，
+        #   却各占一排按钮 ⇒ 用户根本认不出背后是同一个库；现在同一个入口、同一张行脸。
         lay.addStretch()
 
         p.lbl_receipt = QLabel('还没有扫描过 —— 选好范围与条件后点「▶ 开始扫描」')
@@ -299,6 +297,28 @@ class ScanLayout:
         # 窄屏不撑窗：水平方向 Ignored ⇒ 长文本不会抬高窗口最小宽度（详情走 tooltip / 结果区）
         p.lbl_receipt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         lay.addWidget(p.lbl_receipt, 1)
+
+        # ★1.61 / §7-B16 H6：**函数总库入口**（常驻可见）—— 设计稿 B 把三页入口定在**摘要条**上。
+        #   此前它只长在"抽屉里的公式卡片"上，而抽屉默认关着 ⇒ 用户**根本看不到入口**
+        #   （★1.61 实测：`_formula_pane.btn_hub.isVisible()` 为 False）。抽屉里那个保留：
+        #   抽屉是遮罩，打开时会盖住摘要条，写条件时就近取库还得靠它。
+        p.btn_hub = QPushButton('ƒ 库')
+        p.btn_hub.setStyleSheet(FLAT_QSS)
+        p.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_hub.setToolTip('打开「ƒ 函数总库」浮窗：选一个函数载入到本页，'
+                             '或把本页正在写的条件存进总库（管理与编辑在左轨「ƒ 函数库」页）')
+        lay.addWidget(p.btn_hub)
+
+        # ★1.61 / §7-B16 H4：「⤒ 用最新版」**默认隐藏** —— 只有"载入的方案其函数在总库已有
+        #   新版本"时才出现（`ScanStrategyBridge.prompt_stale` 显隐）。它是 L4 附属级动作，
+        #   不是新常驻行（§10-14）。不点它 ⇒ 方案里的函数保持原样（红线②，默认动作）。
+        p.btn_apply_latest = QPushButton('⤒ 用最新版')
+        p.btn_apply_latest.setStyleSheet(FLAT_QSS)
+        p.btn_apply_latest.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_apply_latest.setToolTip('把总库里这条函数的最新版本取过来替换筛选条件；'
+                                      '粗筛阈值 / 统计范围 / 复权口径等配置一字不动。')
+        p.btn_apply_latest.hide()
+        lay.addWidget(p.btn_apply_latest)
 
         p.bar_progress = QProgressBar()
         p.bar_progress.setRange(0, 1)

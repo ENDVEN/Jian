@@ -141,6 +141,17 @@ class DeskLayout:
         p.btn_sync.clicked.connect(p.sync_cloud)
         bar.addWidget(p.btn_sync)
 
+        # ★1.61 / §7-B16 H6：**函数总库入口**（常驻可见）—— 设计稿 B 定的位置是"工具行右端"。
+        #   此前行情页只有一个「📚 配方库」按钮，藏在左栏「ƒ」图标页里（要先切页才看得见）
+        #   ⇒ 用户找不到入口。这里与 M1/M2/M3 的「ƒ 库」同名同义（同一个浮窗、同一份库）。
+        p.btn_hub = QPushButton("ƒ 库")
+        p.btn_hub.setStyleSheet(_BTN_QSS)
+        p.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_hub.setToolTip("打开「ƒ 函数总库」浮窗：选一个函数叠加到图上，"
+                             "或把当前公式存进总库。\n（编辑与管理在左轨「ƒ 函数库」页 —— 同一个库）")
+        p.btn_hub.clicked.connect(p.open_formula_library)
+        bar.addWidget(p.btn_hub)
+
         p.lbl_sync_status = QLabel("")
         p.lbl_sync_status.setStyleSheet("font-size: 12px; color: #8A94A6; margin-left: 8px;")
         bar.addWidget(p.lbl_sync_status)
@@ -501,12 +512,10 @@ class DeskLayout:
 
         action_row = QHBoxLayout()
         action_row.setSpacing(6)
-        p.btn_save_formula_as = QPushButton("💾 存为配方…")
-        p.btn_save_formula_as.setStyleSheet(_BTN_QSS)
-        p.btn_save_formula_as.setToolTip("把当前公式存进配方库；同名即覆盖。\n"
-                                         "⚠ 一条公式只能去一个地方（主图或副图）—— 段目标不一致会被挡住")
-        p.btn_save_formula_as.clicked.connect(p.save_formula_as)
-        action_row.addWidget(p.btn_save_formula_as)
+        # ★1.61 / §7-B16：旧「💾 存为配方…」已退役 —— 入口统一到「ƒ 库」浮窗
+        #   （「ƒ 函数」区的「💾 存当前函数」会把本页正在用的公式取过去存）。
+        #   ⚠ 代价（有意为之）：存完**不再自动叠加**到图上 —— 红线①「总库只管资产不管运行」，
+        #     要画图请到本页左栏配方页把那条配方打开（叠加是功能页的事）。
         p.btn_send_backtest = QPushButton("📤 送去做回测")
         p.btn_send_backtest.setStyleSheet(_BTN_QSS)
         p.btn_send_backtest.setToolTip("把函数与参数送进「📐 市场回测」（回测不区分主图/副图）")

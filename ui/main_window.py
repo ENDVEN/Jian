@@ -11,9 +11,11 @@ from PyQt6.QtCore import QEventLoop, Qt, QThread, QUrl
 from config import settings
 from core.analyzer import TradeAnalyzer
 from core.engine import DataEngine
+from core.preferences import preferences      # ★1.61 §7-B16：浮窗界面态（hub_ui）
 from core.updater import UpdateCheckerThread
 # P7：函数配方互送用的纯函数（把各种形态的"函数段"统一成页面各自要的形状）
-from data.formula_store import segments_as_texts, segments_as_tuples
+from data.formula_store import (get_formula_store, segments_as_texts,
+                                segments_as_tuples)
 
 from ui.download_hub import DownloadHub
 from ui.widgets.download_bar import DownloadBar
@@ -26,6 +28,10 @@ from ui.views.review import ReviewView
 from ui.views.trading_desk import TradingDeskView
 from ui.views.backtest_module import BacktestModule
 from ui.views.data_manager import DataManagerView
+from ui.views.formula_hub import FormulaHubView   # ★1.61 / §7-B16：函数总库（左轨第 6 项）
+from ui.widgets.formula_hub_panel import (HUB_PANEL_GAP_RIGHT, HUB_PANEL_TOP,
+                                          FormulaHubPanel)
+from data.hub_assets import asset_texts
 
 # 【高内聚、低耦合的体现】：从各自独立的文件中按需引入模块
 from ui.dialogs.list_manager import ListManagerDialog
@@ -34,6 +40,10 @@ from ui.dialogs.import_futures import FuturesImportDialog
 from ui.views.settings_view import SettingsView      # ★v6.73 / §7-B13 S2-0：设置页（S2 双栏）
 
 logger = logging.getLogger(__name__)
+
+# ★1.61 / §7-B16 护栏6：函数总库浮窗的界面态偏好键（唯一真源 = `core.preferences.DEFAULTS`）。
+#   内容 = {"offset": [dx, dy], "open": bool, "asset_id": str}；**只存界面态，不存函数内容**。
+HUB_UI_KEY = 'hub_ui'
 
 
 class JianMainWindow(QMainWindow):
@@ -61,6 +71,9 @@ class JianMainWindow(QMainWindow):
         self.downloads = DownloadHub(self)
         # ★v6.70 / §9-F①：关窗重入闸门（退出等待现在会转事件循环，不再有“物理上不可能重入”）
         self._exiting = False
+        # ★1.61 / §7-B16 护栏6：函数总库浮窗的**位置偏移**（拖出来的，记进 `hub_ui`）。
+        #   必须在**任何 `resizeEvent` 之前**就位 —— 重摆浮窗的路径会读它。
+        self._hub_offset = (0, 0)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -80,10 +93,13 @@ class JianMainWindow(QMainWindow):
         self.btn_review = QPushButton("💡 深度复盘")
         self.btn_market = QPushButton("📈 市场行情")
         self.btn_backtest = QPushButton("📐 市场回测")
+        # ★1.61 / §7-B16：「ƒ 函数库」插队（用户拍板的落位 = 回测与数据管理之间）——
+        #   它是函数资产的"中立的家"；设置页"最下方固定"的口径不受影响（仍加在 addStretch 之后）。
+        self.btn_hub = QPushButton("ƒ 函数库")
         self.btn_data = QPushButton("🗄 数据管理")
         
         for btn in [self.btn_overview, self.btn_records, self.btn_review, self.btn_market,
-                    self.btn_backtest, self.btn_data]:
+                    self.btn_backtest, self.btn_hub, self.btn_data]:
             btn.setProperty("class", "NavBtn")
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
@@ -110,6 +126,8 @@ class JianMainWindow(QMainWindow):
         # ⚠ 属性名仍叫 page_market（导航第 4 页的历史名字），实现已换成 P8 的行情工作台
         self.page_market = TradingDeskView(self)
         self.page_backtest = BacktestModule(self)
+        # ★1.61 / §7-B16：函数总库页（A 管理台：列表 + 详情 ⇄ 编辑器；只管资产不管运行）
+        self.page_hub = FormulaHubView(self)
         self.page_data = DataManagerView(self)
         # ★v6.73 / §7-B13 S2-0：设置页（S2「系统设置双栏」）—— **只渲染注册表**，页面不写设置项
         self.page_settings = SettingsView(self)
@@ -119,8 +137,9 @@ class JianMainWindow(QMainWindow):
         self.content_area.addWidget(self.page_review) 
         self.content_area.addWidget(self.page_market)
         self.content_area.addWidget(self.page_backtest)
-        self.content_area.addWidget(self.page_data)
-        self.content_area.addWidget(self.page_settings)      # ← index 6（设置）
+        self.content_area.addWidget(self.page_hub)           # ← index 5（ƒ 函数库）
+        self.content_area.addWidget(self.page_data)          # ← index 6
+        self.content_area.addWidget(self.page_settings)      # ← index 7（设置）
         
         main_layout.addWidget(sidebar)
         # --- 右侧 = 内容栈 + 底部下载条（下载条只在有任务时出现，平时零高度）---
@@ -160,11 +179,18 @@ class JianMainWindow(QMainWindow):
         self.btn_review.clicked.connect(lambda: self.content_area.setCurrentIndex(2))
         self.btn_market.clicked.connect(lambda: self.content_area.setCurrentIndex(3))
         self.btn_backtest.clicked.connect(lambda: self.content_area.setCurrentIndex(4))
-        self.btn_data.clicked.connect(lambda: self.content_area.setCurrentIndex(5))
-        self.btn_settings.clicked.connect(lambda: self.content_area.setCurrentIndex(6))
+        self.btn_hub.clicked.connect(lambda: self.content_area.setCurrentIndex(5))
+        # ★1.61 / §7-B16：统一浮窗的「📚 本页方案」区跟着**当前页 / 当前子页签**走
+        self.content_area.currentChanged.connect(self._on_page_changed)
+        self.page_backtest.tabs.currentChanged.connect(self._on_page_changed)
+        self.btn_data.clicked.connect(lambda: self.content_area.setCurrentIndex(6))
+        self.btn_settings.clicked.connect(lambda: self.content_area.setCurrentIndex(7))
         
         self.render_all_data()
         self.check_for_updates()
+        # ★1.61 / §7-B16 护栏6：按偏好还原总库浮窗（偏移 / 上次选中 / 是否开着）。
+        #   ⚠ 放在**最后**：它只碰浮窗自己，不该插进页面构造与数据渲染之间。
+        self._restore_hub_ui()
 
     # ==========================================
     # 页面切换 + 函数配方互送（P7 · §7-B3 P7）
@@ -173,7 +199,7 @@ class JianMainWindow(QMainWindow):
     # 主窗口本来就是"组件装配与事件分发"的地方（§3），由它当唯一的传话筒最干净：
     #   行情页 ──send_formula_to_backtest──▶ 主窗口 ──▶ 回测页.load_formula_from_external()
     #   回测页 ──send_formula_to_market────▶ 主窗口 ──▶ 行情页.receive_formula()
-    _PAGE_INDEX = {"market": 3, "backtest": 4, "data": 5, "settings": 6}
+    _PAGE_INDEX = {"market": 3, "backtest": 4, "hub": 5, "data": 6, "settings": 7}
 
     def switch_to(self, key: str) -> None:
         """按名字切页（互送后直接把用户带到目标页，省得他自己找）。"""
@@ -218,6 +244,216 @@ class JianMainWindow(QMainWindow):
     def resizeEvent(self, event):  # noqa: N802 —— Qt 命名
         super().resizeEvent(event)
         self._place_download_panel()
+        self._place_hub_panel()          # ★1.61 §7-B16：浮窗跟着窗口走（含用户拖动偏移）
+
+    # ==========================================
+    # ƒ 函数总库（★1.61 / §7-B16）：快速翻阅浮窗 + 载入路由
+    # ==========================================
+    # 【形态与纪律】照 download_queue_panel 的浮层范式（非模态、不持线程、位置主窗口算）；
+    #   浮窗只读（编辑落点唯一 = 总库 A 页），"载入到本页"只回填函数区（红线②：配置区一字不动）。
+    # ★护栏 6：位置 / 开合 / 上次选中都记进偏好 `hub_ui`（唯一真源 = `core.preferences.DEFAULTS`）。
+    _formula_hub_panel = None
+
+    def _hub_ui(self) -> dict:
+        """读浮窗界面态 —— **坏数据逐字段回落**（§9-D：绝不因为一个坏键把浮窗搞没）。"""
+        raw = preferences.get(HUB_UI_KEY)
+        data = dict(raw) if isinstance(raw, dict) else {}
+        offset = data.get('offset')
+        if not (isinstance(offset, (list, tuple)) and len(offset) == 2
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                        for v in offset)):
+            offset = [0, 0]
+        return {'open': bool(data.get('open', False)),
+                'offset': [int(offset[0]), int(offset[1])],
+                'asset_id': str(data.get('asset_id') or '')}
+
+    def _save_hub_ui(self, **changes) -> None:
+        """写浮窗界面态（只改传进来的字段，其余保持）—— 落点唯一，别处不许直接写这个键。"""
+        data = self._hub_ui()
+        data.update(changes)
+        preferences.set(HUB_UI_KEY, data)
+
+    def show_formula_hub_panel(self, keep: str = None) -> None:
+        """打开（或置顶）函数总库**浮窗**（懒建：不点「ƒ 库」就不多一块界面）。
+
+        :param keep: 要预选中的资产 id（开机恢复用）；None = 保持浮窗当前选中项。
+        """
+        if self._formula_hub_panel is None:
+            self._formula_hub_panel = FormulaHubPanel(self._right_panel)
+            self._formula_hub_panel.sig_load.connect(self.load_into_current)
+            self._formula_hub_panel.sig_open_hub.connect(self._open_hub_page)
+            self._formula_hub_panel.sig_dragged.connect(self._on_hub_dragged)
+            self._formula_hub_panel.sig_drag_finished.connect(self._on_hub_drag_finished)
+            self._formula_hub_panel.sig_closed.connect(self._on_hub_closed)
+            # 两个取口：浮窗是**跨页**的，"当前页是谁 / 当前页有哪些方案"只有主窗口知道
+            self._formula_hub_panel.draft_provider = self.current_formula_draft
+            self._formula_hub_panel.plan_provider = self.current_plan_api
+        keep = keep if keep is not None else self._formula_hub_panel.selected_id()
+        self._formula_hub_panel.refresh(keep=keep)
+        self._formula_hub_panel.refresh_plans()
+        self._place_hub_panel()
+        self._formula_hub_panel.show()
+        self._formula_hub_panel.raise_()
+        self._save_hub_ui(open=True)          # 开合记忆：下次启动接着开着
+
+    def _on_page_changed(self, *_a) -> None:
+        """页面 / 子页签变了 ⇒ 浮窗的「📚 本页方案」区必须跟着换（它管的是**本页**的方案）。
+
+        ⚠ 不做这件事就会"在 M1 打开浮窗、切到 M2 后还显示 M1 的策略" —— 用户按「载入」
+          就会把策略还原进 M2 的界面（静默错配，且界面上完全看不出来）。
+        """
+        panel = getattr(self, '_formula_hub_panel', None)
+        if panel is not None:
+            panel.refresh_plans()
+
+    def _place_hub_panel(self) -> None:
+        """浮窗默认钉在**内容区右上角**（下载浮层在右下，两者互不重叠），再叠加用户拖动偏移。
+
+        ⚠ 夹回内容区内：窗口缩小 / 用户拖太远 ⇒ 不许"飞到看不见的地方"
+          （那样浮窗看起来像是丢了，用户只能重启）。
+        """
+        panel = getattr(self, '_formula_hub_panel', None)
+        host = getattr(self, '_right_panel', None)
+        if panel is None or host is None:
+            return
+        panel.adjustSize()
+        dx, dy = self._hub_offset
+        x = host.width() - panel.width() - HUB_PANEL_GAP_RIGHT + dx
+        y = HUB_PANEL_TOP + dy
+        x = min(max(0, x), max(0, host.width() - panel.width()))
+        y = min(max(0, y), max(0, host.height() - panel.height()))
+        panel.move(x, y)
+
+    def _on_hub_dragged(self, dx: int, dy: int) -> None:
+        """标题栏拖动：把位移累加进偏移并重摆（**拖动过程不写盘**，松手才落）。"""
+        ox, oy = self._hub_offset
+        self._hub_offset = (ox + dx, oy + dy)
+        self._place_hub_panel()
+
+    def _on_hub_drag_finished(self) -> None:
+        self._save_hub_ui(offset=[int(self._hub_offset[0]), int(self._hub_offset[1])])
+
+    def _on_hub_closed(self) -> None:
+        """**用户主动点 ✕** ⇒ 记住"他要它关着" + 上次选中的那条函数（开合记忆的写点）。"""
+        panel = getattr(self, '_formula_hub_panel', None)
+        self._save_hub_ui(open=False,
+                          asset_id=(panel.selected_id() if panel is not None else ''))
+
+    def _restore_hub_ui(self) -> None:
+        """开机按偏好还原浮窗（偏移 / 上次选中 / 是否开着）—— 独立成方法便于断言直接调用。
+
+        ⚠ 「开合记忆」是**自我纠正**的：用户点 ✕ 关掉 ⇒ `open=False` 落盘 ⇒ 下次不再弹；
+          他不会遇到"每次开机都被一块浮层打扰"。
+        """
+        ui = self._hub_ui()
+        self._hub_offset = (ui['offset'][0], ui['offset'][1])
+        if ui['open']:
+            self.show_formula_hub_panel(keep=ui['asset_id'] or None)
+
+    def _open_hub_page(self) -> None:
+        """浮窗「✏ 去总库编辑」：切到 A 页并选中浮窗当前选中的函数（编辑落点唯一）。"""
+        self.switch_to('hub')
+        panel = getattr(self, '_formula_hub_panel', None)
+        if panel is not None and panel.selected_id():
+            self.page_hub.reveal_asset(panel.selected_id())
+
+    def load_into_current(self, asset: dict) -> int:
+        """浮窗「⤓ 载入到本页」：把资产回填到**当前页**的函数区。
+
+        ⚠ 红线②：只回填函数段与参数 —— 条件/风控/门控/成交/阈值/范围等配置**一字不动**。
+        :return: 实际载入的段数（0 = 当前页没有函数区；负值不出现）
+        """
+        texts = asset_texts(asset)
+        params = str(asset.get('params_text') or '')
+        cur = self.content_area.currentWidget()
+        n = 0
+        if cur is self.page_market:
+            pairs = segments_as_tuples({"segments": asset.get("segments")})
+            n = self.page_market.receive_formula(pairs, params, source_label="函数总库")
+        elif cur is self.page_backtest:
+            idx = self.page_backtest.tabs.currentIndex()
+            if idx == 0:
+                n = self.page_backtest.backtest_single.load_formula_from_external(texts, params)
+            elif idx == 1:
+                n = self.page_backtest.page_scan.load_formula_from_hub(texts, params)
+            elif idx == 2:
+                n = self.page_backtest.page_breadth.load_formula_from_hub(texts, params)
+        if n:
+            get_formula_store().touch(asset.get('id'))   # 载入即 used_at（自动恢复也认它）
+        else:
+            self.page_hub.say('⚠ 当前页没有可载入的函数区 —— 请切到行情 / 回测（M1） / 扫描（M2·M3）页')
+        return n
+
+    # ==========================================
+    # ★1.61 / §7-B16：「统一浮窗」的两个取口（**当前页提供，浮窗不自己找页面**）
+    #   浮窗是"跨页"的（从哪页开都一样），所以"当前页是谁"这件事只有主窗口知道。
+    #   页面侧一律**只读**（各页的 `current_formula_draft()` 不改任何状态）。
+    # ==========================================
+    def current_formula_draft(self) -> dict | None:
+        """当前页"正在编辑的函数"草稿（浮窗「💾 保存当前函数」用）；无函数区 = None。
+
+        :return: `{'name_hint', 'segments': [{text,target}], 'params_text', 'source'}`
+        """
+        cur = self.content_area.currentWidget()
+        if cur is self.page_market:
+            return self.page_market._formula.current_formula_draft() or None
+        if cur is self.page_backtest:
+            view = self.page_backtest
+            idx = view.tabs.currentIndex()
+            if idx == 0:
+                return view.backtest_single.current_formula_draft()
+            if idx == 1:
+                return view.page_scan.current_formula_draft()
+            if idx == 2:
+                return view.page_breadth.current_formula_draft()
+        return None
+
+    def current_plan_api(self) -> dict | None:
+        """当前页的「方案 / 策略库」三件事（浮窗「📚 本页方案」区用）；无 = None。
+
+        :return: `{'kind','noun','hint','plans','plan_label','load','save','delete'}`
+                 —— 全是**可调用对象**（页面/桥接的实现，浮窗只负责画与转发）。
+        """
+        cur = self.content_area.currentWidget()
+        if cur is not self.page_backtest:
+            return None
+        view = self.page_backtest
+        idx = view.tabs.currentIndex()
+        if idx == 0:
+            br = view.backtest_single.strategy
+            return {'kind': 'M1', 'noun': '策略',
+                    'hint': '策略 = 函数 + 买卖条件 + 风控 + 区间；每条的结果在「🗂 运行历史」里',
+                    'plans': br.plans, 'plan_label': br.plan_label,
+                    'load': br.load_plan, 'save': br.save, 'delete': br.delete_plan}
+        if idx in (1, 2):
+            page = view.page_scan if idx == 1 else view.page_breadth
+            br = page._strategy
+            return {'kind': 'M2M3', 'noun': '筛选方案',
+                    'hint': '筛选方案 = 函数 + 粗筛阈值 + 统计范围 + 复权口径（M2 / M3 共用一份池）',
+                    'plans': br.plans, 'plan_label': br.plan_label,
+                    'load': br.load_plan, 'save': br.save, 'delete': br.delete_plan}
+        return None
+
+    def send_asset_to_page(self, asset: dict, target: str) -> int:
+        """总库「送 ↗」：切到目标页并载入（**只回填，绝不运行** —— 红线①）。"""
+        texts = asset_texts(asset)
+        params = str(asset.get('params_text') or '')
+        n = 0
+        if target == 'market':
+            self.switch_to('market')
+            pairs = segments_as_tuples({"segments": asset.get("segments")})
+            n = self.page_market.receive_formula(pairs, params, source_label="函数总库")
+        elif target == 'backtest':
+            self.switch_to('backtest')
+            self.page_backtest.tabs.setCurrentIndex(0)
+            n = self.page_backtest.backtest_single.load_formula_from_external(texts, params)
+        elif target == 'scan':
+            self.switch_to('backtest')
+            self.page_backtest.tabs.setCurrentIndex(1)
+            n = self.page_backtest.page_scan.load_formula_from_hub(texts, params)
+        if n:
+            get_formula_store().touch(asset.get('id'))
+        return n
 
     def _on_download_activity(self, busy: bool) -> None:
         self.nav_badge.setVisible(bool(busy))
@@ -235,7 +471,7 @@ class JianMainWindow(QMainWindow):
         if obj is self.btn_data and event.type() == event.Type.Resize:
             self._place_badge()
         elif obj is self.nav_badge and event.type() == event.Type.MouseButtonPress:
-            self.content_area.setCurrentIndex(5)
+            self.content_area.setCurrentIndex(6)
             self.btn_data.setChecked(True)
             self.show_download_queue()
             return True                           # 吞掉：点角标不该只切页不开面板

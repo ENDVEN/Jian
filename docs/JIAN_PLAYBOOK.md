@@ -864,3 +864,37 @@ M1/M2/M3 滞后提示的**唯一真源**，只是下载层没接上 ⇒ 出现"U
   一个成功就把另一个攒的冷却清了）⇒ 冷却永远攒不起来、退避形同虚设。
   **口径**：清零要**连续 `SUCCESS_STREAK_TO_CLEAR` 次成功**（失败把连击打回 0），
   别拿"任一次成功"当恢复证据。
+- **11.5-108** 【v6.79 · Qt 布局】**一个 widget 只容一个布局，第二个会被"静默丢弃"**：
+  `ui/views/formula_hub.py` 先 `QVBoxLayout(self)`，随后 `hub_layout.HubLayout(page)` 又
+  `QHBoxLayout(page)` —— 控制台只有一行 `QLayout: Attempting to add QLayout "" to FormulaHubView "",
+  which already has a layout`，**没有任何异常**，但左右两栏（列表 + 详情/编辑器）**从未挂到页面上**
+  ⇒ 用户看到的"页面只剩标题一行"就是这么来的。
+  **口径**：① 页面自己只建**一个**根布局；② 版式模块（`*_layout.py`）**只造容器**（`self.root = QWidget()`
+  + 自己的 `QHBoxLayout(self.root)`），由页面 `root.addWidget(layout.root, 1)` 挂进去 —— 这就是
+  `scan_view` 三件套的既有范式；③ 新增"XX 页"时先抄范式，别自己另起布局。
+  **识别信号**：Qt 打印 `QLayout: Attempting to add ... which already has a layout` 时，
+  九成是"两个模块都往同一个 widget 上 `QLayout(widget)`"，**不是**样式或数据问题。
+
+- **11.5-109** 【v6.79 · 数据】**`str(None) == 'None'` 是真值 —— 别拿它当"空值兜底"**：
+  `data/formula_store.make_formula` 写的是 `"id": str(formula_id) or new_id()`。调用方
+  `upsert(payload)` 传 `formula_id = payload.get("id")`，而**不带 id 的新条目**在这个键上拿到的是
+  `None` ⇒ `str(None)` = `'None'`（**真值**）⇒ 短路掉 `new_id()` ⇒ **所有不带 id 直接 upsert 的资产
+  共用同一个 id `'None'`**：引用计数把不相关的条目算进去、`get('None')` 永远返回第一条、
+  快照时效据此误报"总库有更新版"。
+  ⚠ 这个写法 **HEAD 里早就有**，但此前所有调用方都先经 `make_formula`（`formula_id` 默认是 **空串**
+  `""`，`str("")` 是假值 ⇒ 正常走 `new_id()`）⇒ **潜伏**；总库是第一个"直接 `upsert({...})` 不带 id"的
+  调用方，于是当场引爆（冒烟 4 条一起红）。
+  **口径**：`"id": str(formula_id or "") or new_id()` —— **先把 None/"" 归一，再判真假**；
+  凡"兜底生成 + `str()` 包裹"的写法，都要先问一句"**传进来的是 None 还是空串**"。
+  **排查动作**：`grep "str(.*) or "` 全仓扫一遍同类写法。
+- **11.5-110** 【v6.79 · 数据】**"一行 = 一段"的编辑器会静默改数据**：
+  总库编辑器的模型是"**一段 = 一行**"（`hub_editor`）。可**段的文本本身就可能含换行** ——
+  行情页的 MACD 段就是两行：`"DIF := EMA(C,12) - EMA(C,26);\nMACD线: DIF, COLORWHITE;"`。
+  于是 `load_segments()` 把段文本按 `\n` 拼进 `QPlainTextEdit`、`texts()` 再按行切回来：
+  **2 段进、3 段出**，而且第 3 段套了"默认窗格" ⇒ 窗格也错位（`['sub1','main']` → `['sub1','main','sub1']`）。
+  最阴的地方：**用户一个字都没改**，只是"打开 → 保存"，数据就被改了（冒烟里当场红了两条）。
+  **口径**：编辑器必须记住**载入时的文本**（`_loaded_text`）与**原始分段**（`_orig_segments`）：
+  · `toPlainText() == _loaded_text` ⇒ **原样回放**原分段（文本 + 逐段窗格）；
+  · 真改了文本 ⇒ 才按"一行一段"重排（并在界面文案里写明会发生这件事）。
+  **排查动作**：凡"编辑器模型（按行/按块）"与"数据模型（段）"不一致的控件，都要问一句
+  "**用户没动内容时，它会不会自己改数据**"——编辑器的默认动作必须是**恒等映射**。
