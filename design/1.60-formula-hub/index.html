@@ -148,6 +148,7 @@
     <h2>六、修订历史 · 命名惯例 · 自检</h2>
     <div class="hint">
       · <b>v1（2026-09-29）</b>：立项 + 四版起草（A/B/C/D）+ 统一模型提案 + 现状盘点。<br>
+      · <b>v2（2026-09-29）</b>：用户选型定案 —— <b>样式 = A+B 组合</b>（左轨 A 管理台专页；M1/M2/M3 函数入口改 B 浮窗，配置区不动）+ <b>数据模型 = 提案①</b>（真源统一+引用）。C/D 留档。实现方案书 = <code>docs/JIAN_HUB_PLAN.md</code>。<br>
       · 目录 = <code>design/1.60-formula-hub/</code>（惯例：design/&lt;APP版本号&gt;-&lt;特性&gt;/，一个特性一个目录，迭代只改目录内文件）。<br>
       · 自检：<code>node _check.js</code>（有 node 时）或 <code>py _check.py</code>（同逻辑的 Python 版，本机无 node 时用）——
         两版做同一套检查：① 逐页真跑内联 script + 调 <code>__selftest()</code>；② getElementById 的 id 必须真实存在；
