@@ -195,6 +195,10 @@ class ScanView(QWidget):
             return 0
         self._formula_pane.txt_formula.setPlainText(chr(10).join(clean))
         self._formula_pane.txt_params.setText(str(params_text or ''))
+        # ★H7：可见回执 —— "载入了但页面一声不响"会被当成没成功（用户实测口径）
+        self.lbl_receipt.setText(
+            f'⤓ 已从函数库载入 {len(clean)} 段筛选条件（粗筛阈值 / 统计范围 / 复权口径一字未动）'
+            '—— 点「▶ 开始扫描」按它取截面。')
         return len(clean)
 
     def _open_formula_hub(self) -> None:

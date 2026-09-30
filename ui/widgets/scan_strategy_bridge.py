@@ -148,7 +148,24 @@ class ScanStrategyBridge:
         return True
 
     def delete_plan(self, plan_id: str) -> bool:
-        """按 id 删方案（浮窗用）—— 与「管理」走同一套库操作。"""
+        """按 id 删方案（浮窗用）—— 与「管理」走同一套库操作。
+
+        ⚠ **必须二次确认**：H7 起浮窗把"本页方案"和函数资产并进**一个列表**，删除是列表里的
+          一格按钮 —— 少了确认就是"手一抖方案没了"（`manage()` 里那套确认随旧入口一起退役了，
+          这道闸门必须跟着搬到**唯一剩下的入口**上，§11.5-11：同类防护不许只改一处）。
+        """
+        plan = next((s for s in self.store.list_strategies()
+                     if str(s.get('id')) == str(plan_id)), None)
+        if plan is None:
+            return False
+        reply = QMessageBox.question(
+            self.page, '删除筛选方案',
+            f"确定删除筛选方案「{plan.get('name') or '未命名'}」吗？\n\n"
+            "（只删这份方案存档；已收编的函数资产还在「ƒ 函数库」里）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
         return bool(self.store.delete(str(plan_id)))
 
     def manage(self) -> None:

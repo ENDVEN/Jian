@@ -31,17 +31,20 @@ _ITEM_QSS_ON = "QFrame#HubItem { border:1px solid #1976D2; background:#E8F1FB; }
 
 
 class HubItem(QFrame):
-    """列表里的一条（可点选中）。
+    """列表里的一条（**单击选中 / 双击执行**）。
 
-    ⚠ 必须子类覆写 `mousePressEvent` —— 给实例赋属性不参与 Qt 的 C++ 事件派发
-      （`download_queue_panel._ClickableLabel` 同款教训）。
+    ⚠ 必须子类覆写 `mousePressEvent` / `mouseDoubleClickEvent` —— 给实例赋属性不参与
+      Qt 的 C++ 事件派发（`download_queue_panel._ClickableLabel` 同款教训，本仓已踩两次）。
+    ⚠ **双击的语义由调用方定**（浮窗 = 载入到本页；A 页 = 进编辑），本类只转发、不猜 ——
+      同一个零件在两处承担不同动作，写死在这里就会逼 A 页也跟着"双击即载入"。
     """
 
-    def __init__(self, asset_id: str, on_pick, parent=None):
+    def __init__(self, asset_id: str, on_pick, on_double=None, parent=None):
         super().__init__(parent)
         self.setObjectName('HubItem')
         self._asset_id = asset_id
         self._on_pick = on_pick
+        self._on_double = on_double      # None = 这条没有双击动作（保持单选语义）
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def asset_id(self) -> str:
@@ -54,6 +57,11 @@ class HubItem(QFrame):
     def mousePressEvent(self, event):  # noqa: N802 —— Qt 命名
         if callable(self._on_pick):
             self._on_pick(self._asset_id)
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event):  # noqa: N802
+        if callable(self._on_double):
+            self._on_double(self._asset_id)
         event.accept()
 
 
@@ -83,20 +91,32 @@ def asset_row_meta(asset: dict, n_refs: int) -> str:
             f"{'用过 ' + used[5:10] if used else '未使用'} {syntax_chip(asset)}").strip()
 
 
-def build_plain_row(row_id: str, title: str, meta: str, on_pick, selected: bool) -> HubItem:
-    """一行"普通条目"（标题 + 元信息）—— **资产行与方案行共用同一张脸与选中态**。
+def build_plain_row(row_id: str, title: str, meta: str, on_pick, selected: bool,
+                    badge: str = '', on_double=None) -> HubItem:
+    """一行"普通条目"（标题 + 元信息 [+ 类型徽标]）—— **资产行与方案行共用同一张脸**。
 
     ⚠ 统一的意义：用户在不同地方看到**同一种行**，才会认得出"背后是同一个库在管"。
+    :param badge: 右上角的小徽标（如「📚 方案」）。浮窗把**本页方案与函数资产并进同一个列表**
+        ⇒ 二者必须是同一张脸 + 一个类型徽标，**不能再分成两个区**（用户口径：分区是多此一举）。
     """
-    item = HubItem(row_id, on_pick)
+    item = HubItem(row_id, on_pick, on_double)
     item.set_selected(bool(selected))
     lay = QVBoxLayout(item)
     lay.setContentsMargins(9, 7, 9, 7)
     lay.setSpacing(2)
+    top = QHBoxLayout()
+    top.setContentsMargins(0, 0, 0, 0)
+    top.setSpacing(6)
     name = QLabel(str(title or '未命名'))
     name.setStyleSheet("font-size:13px; font-weight:600; color:#20242C;")
     name.setWordWrap(True)
-    lay.addWidget(name)
+    top.addWidget(name, 1)
+    if badge:
+        chip = QLabel(str(badge))
+        chip.setStyleSheet("font-size:10.5px; font-weight:600; color:#1976D2;"
+                           " background:#E8F1FB; border-radius:7px; padding:1px 7px;")
+        top.addWidget(chip, 0, Qt.AlignmentFlag.AlignTop)
+    lay.addLayout(top)
     meta_lbl = QLabel(str(meta or ''))
     meta_lbl.setStyleSheet("font-size:11.3px; color:#8A94A6;")
     meta_lbl.setWordWrap(True)
@@ -104,10 +124,16 @@ def build_plain_row(row_id: str, title: str, meta: str, on_pick, selected: bool)
     return item
 
 
-def build_asset_row(asset: dict, n_refs: int, on_pick, selected: bool) -> HubItem:
-    """造一行资产（**唯一实现处**）—— A 页与浮窗都调它，防"两处各画一张脸"。"""
-    return build_plain_row(asset['id'], str(asset.get('name') or '未命名'),
-                           asset_row_meta(asset, n_refs), on_pick, selected)
+def build_asset_row(asset: dict, n_refs: int, on_pick, selected: bool,
+                    badge: str = '', on_double=None, row_id: str = '') -> HubItem:
+    """造一行资产（**唯一实现处**）—— A 页与浮窗都调它，防"两处各画一张脸"。
+
+    :param row_id: 行 id 覆盖（浮窗把**方案行与函数行并进一个列表** ⇒ 两类必须带类型前缀防撞号；
+        行件回调收到的 id 必须与注册表一致，否则"点了没高亮 / 删错一条"）。
+    """
+    return build_plain_row(str(row_id or asset['id']), str(asset.get('name') or '未命名'),
+                           asset_row_meta(asset, n_refs), on_pick, selected,
+                           badge=badge, on_double=on_double)
 
 
 class HubLayout:

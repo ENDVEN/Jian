@@ -29,8 +29,9 @@ from ui.views.trading_desk import TradingDeskView
 from ui.views.backtest_module import BacktestModule
 from ui.views.data_manager import DataManagerView
 from ui.views.formula_hub import FormulaHubView   # ★1.61 / §7-B16：函数总库（左轨第 6 项）
-from ui.widgets.formula_hub_panel import (HUB_PANEL_GAP_RIGHT, HUB_PANEL_TOP,
-                                          FormulaHubPanel)
+from ui.widgets.formula_hub_panel import (HUB_PANEL_GAP_RIGHT, HUB_PANEL_MIN_H,
+                                          HUB_PANEL_TOP, FormulaHubPanel)
+from ui.widgets.hub_float_list import FN_KIND   # ★H7：浮窗列表里"函数行"的类型标记
 from data.hub_assets import asset_texts
 
 # 【高内聚、低耦合的体现】：从各自独立的文件中按需引入模块
@@ -190,7 +191,7 @@ class JianMainWindow(QMainWindow):
         self.check_for_updates()
         # ★1.61 / §7-B16 护栏6：按偏好还原总库浮窗（偏移 / 上次选中 / 是否开着）。
         #   ⚠ 放在**最后**：它只碰浮窗自己，不该插进页面构造与数据渲染之间。
-        self._restore_hub_ui()
+        self._load_hub_ui_state()
 
     # ==========================================
     # 页面切换 + 函数配方互送（P7 · §7-B3 P7）
@@ -247,12 +248,17 @@ class JianMainWindow(QMainWindow):
         self._place_hub_panel()          # ★1.61 §7-B16：浮窗跟着窗口走（含用户拖动偏移）
 
     # ==========================================
-    # ƒ 函数总库（★1.61 / §7-B16）：快速翻阅浮窗 + 载入路由
+    # ƒ 函数总库（★1.61 / §7-B16）：**页面内**悬浮列表 + 载入路由
     # ==========================================
     # 【形态与纪律】照 download_queue_panel 的浮层范式（非模态、不持线程、位置主窗口算）；
-    #   浮窗只读（编辑落点唯一 = 总库 A 页），"载入到本页"只回填函数区（红线②：配置区一字不动）。
-    # ★护栏 6：位置 / 开合 / 上次选中都记进偏好 `hub_ui`（唯一真源 = `core.preferences.DEFAULTS`）。
+    #   "载入到本页"只回填函数区（红线②：配置区一字不动）。
+    # ★H7 改口径（用户实测）：**页面内悬浮** —— 宿主 = 打开它的那个页面（切页随页收起），
+    #   不再是"跨页全局悬浮"（用户："全局没有意义，我只需要它在对应页面悬浮"）。
+    #   ⇒ `hub_ui` 只留**位置偏移 + 上次选中**；"开合记忆"随全局形态一起退役：页面内的浮窗
+    #     不会跨页活到下次启动，开机自动弹一块浮层只会在仪表盘上白占地方。
     _formula_hub_panel = None
+    _hub_host = None                 # 浮窗当前挂在哪个页面（页面内悬浮的宿主）
+    _BT_TAB_LABELS = ('M1 单股回测', 'M2 全市场筛选', 'M3 广度统计')
 
     def _hub_ui(self) -> dict:
         """读浮窗界面态 —— **坏数据逐字段回落**（§9-D：绝不因为一个坏键把浮窗搞没）。"""
@@ -263,8 +269,7 @@ class JianMainWindow(QMainWindow):
                 and all(isinstance(v, (int, float)) and not isinstance(v, bool)
                         for v in offset)):
             offset = [0, 0]
-        return {'open': bool(data.get('open', False)),
-                'offset': [int(offset[0]), int(offset[1])],
+        return {'offset': [int(offset[0]), int(offset[1])],
                 'asset_id': str(data.get('asset_id') or '')}
 
     def _save_hub_ui(self, **changes) -> None:
@@ -273,49 +278,80 @@ class JianMainWindow(QMainWindow):
         data.update(changes)
         preferences.set(HUB_UI_KEY, data)
 
-    def show_formula_hub_panel(self, keep: str = None) -> None:
-        """打开（或置顶）函数总库**浮窗**（懒建：不点「ƒ 库」就不多一块界面）。
+    def _page_label(self, page=None) -> str:
+        """当前页的人话名（浮窗标题旁那枚上下文胶囊）。
 
-        :param keep: 要预选中的资产 id（开机恢复用）；None = 保持浮窗当前选中项。
+        ⚠ 并成一个列表之后，"这些方案属于哪一页"就只剩这枚胶囊能说清 —— 在 M1 打开却以为
+          在看 M2 的方案 = 静默错配（§11.5-11 同族）。
         """
+        page = page if page is not None else self.content_area.currentWidget()
+        if page is self.page_backtest:
+            idx = self.page_backtest.tabs.currentIndex()
+            return self._BT_TAB_LABELS[idx] if 0 <= idx < len(self._BT_TAB_LABELS) else '回测'
+        for attr, label in (('page_market', '市场行情'), ('page_hub', 'ƒ 函数库'),
+                            ('page_overview', '资金与表现'), ('page_records', '交易流水'),
+                            ('page_review', '深度复盘'), ('page_data', '数据管理'),
+                            ('page_settings', '设置')):
+            if page is getattr(self, attr, None):
+                return label
+        return ''
+
+    def show_formula_hub_panel(self, keep: str = None) -> None:
+        """打开（或置顶）函数总库浮窗 —— 懒建 + **挂到当前页**（页面内悬浮）。
+
+        :param keep: 要预选中的行（资产 id 或方案 id）；None = 保持当前选中项。
+        """
+        page = self.content_area.currentWidget()
+        if page is None:
+            return
         if self._formula_hub_panel is None:
-            self._formula_hub_panel = FormulaHubPanel(self._right_panel)
+            self._formula_hub_panel = FormulaHubPanel(page)
             self._formula_hub_panel.sig_load.connect(self.load_into_current)
             self._formula_hub_panel.sig_open_hub.connect(self._open_hub_page)
             self._formula_hub_panel.sig_dragged.connect(self._on_hub_dragged)
             self._formula_hub_panel.sig_drag_finished.connect(self._on_hub_drag_finished)
             self._formula_hub_panel.sig_closed.connect(self._on_hub_closed)
-            # 两个取口：浮窗是**跨页**的，"当前页是谁 / 当前页有哪些方案"只有主窗口知道
+            # 两个取口："当前页是谁 / 当前页有哪些方案"只有主窗口知道（浮窗自己不找页面）
             self._formula_hub_panel.draft_provider = self.current_formula_draft
             self._formula_hub_panel.plan_provider = self.current_plan_api
-        keep = keep if keep is not None else self._formula_hub_panel.selected_id()
-        self._formula_hub_panel.refresh(keep=keep)
-        self._formula_hub_panel.refresh_plans()
+        panel = self._formula_hub_panel
+        if panel.parent() is not page:
+            # ★H7：换宿主（Qt 的 `setParent` 会把子件从旧宿主摘走 ⇒ 旧页面里不会留残影）
+            panel.setParent(page)
+        self._hub_host = page
+        panel.set_context(self._page_label(page))
+        keep = keep if keep is not None else panel.selected_id()
+        panel.refresh(keep=keep)
         self._place_hub_panel()
-        self._formula_hub_panel.show()
-        self._formula_hub_panel.raise_()
-        self._save_hub_ui(open=True)          # 开合记忆：下次启动接着开着
+        panel.show()
+        panel.raise_()
 
     def _on_page_changed(self, *_a) -> None:
-        """页面 / 子页签变了 ⇒ 浮窗的「📚 本页方案」区必须跟着换（它管的是**本页**的方案）。
-
-        ⚠ 不做这件事就会"在 M1 打开浮窗、切到 M2 后还显示 M1 的策略" —— 用户按「载入」
-          就会把策略还原进 M2 的界面（静默错配，且界面上完全看不出来）。
+        """页面 / 子页签变了 ⇒ 页面内悬浮的浮窗跟着走：
+        **同一页换子页签**（M1↔M2↔M3）= 上下文变了 ⇒ 就地刷新（方案与标题胶囊一起换）；
+        **换到别的页** = 它已不属于当前页 ⇒ 收起（用户下次点「ƒ 库」会把它挂到新页上）。
         """
         panel = getattr(self, '_formula_hub_panel', None)
-        if panel is not None:
-            panel.refresh_plans()
+        if panel is None:
+            return
+        page = self.content_area.currentWidget()
+        if panel.parent() is page:
+            panel.set_context(self._page_label(page))
+            panel.refresh(keep=panel.selected_id())
+        else:
+            panel.hide()
 
     def _place_hub_panel(self) -> None:
-        """浮窗默认钉在**内容区右上角**（下载浮层在右下，两者互不重叠），再叠加用户拖动偏移。
+        """浮窗钉在**宿主页右上角**（下载浮层在右下，两者互不重叠），再叠加用户拖动偏移。
 
-        ⚠ 夹回内容区内：窗口缩小 / 用户拖太远 ⇒ 不许"飞到看不见的地方"
-          （那样浮窗看起来像是丢了，用户只能重启）。
+        ⚠ 夹回宿主页内：窗口缩小 / 用户拖太远 ⇒ 不许"飞到看不见的地方"
+          （那样浮窗看起来像是丢了，用户只能重启）；并按宿主高度封顶（页面矮 ⇒ 列表自己滚）。
         """
         panel = getattr(self, '_formula_hub_panel', None)
-        host = getattr(self, '_right_panel', None)
+        host = getattr(self, '_hub_host', None)
         if panel is None or host is None:
             return
+        panel.setMaximumHeight(max(HUB_PANEL_MIN_H, host.height() - 2 * HUB_PANEL_TOP))
         panel.adjustSize()
         dx, dy = self._hub_offset
         x = host.width() - panel.width() - HUB_PANEL_GAP_RIGHT + dx
@@ -334,28 +370,32 @@ class JianMainWindow(QMainWindow):
         self._save_hub_ui(offset=[int(self._hub_offset[0]), int(self._hub_offset[1])])
 
     def _on_hub_closed(self) -> None:
-        """**用户主动点 ✕** ⇒ 记住"他要它关着" + 上次选中的那条函数（开合记忆的写点）。"""
+        """**用户主动点 ✕** ⇒ 记住上次选中的那条（下次打开接着看它）。"""
         panel = getattr(self, '_formula_hub_panel', None)
-        self._save_hub_ui(open=False,
-                          asset_id=(panel.selected_id() if panel is not None else ''))
+        self._save_hub_ui(asset_id=(panel.selected_id() if panel is not None else ''))
 
-    def _restore_hub_ui(self) -> None:
-        """开机按偏好还原浮窗（偏移 / 上次选中 / 是否开着）—— 独立成方法便于断言直接调用。
+    def _load_hub_ui_state(self) -> None:
+        """开机把浮窗**位置偏移**读进来。
 
-        ⚠ 「开合记忆」是**自我纠正**的：用户点 ✕ 关掉 ⇒ `open=False` 落盘 ⇒ 下次不再弹；
-          他不会遇到"每次开机都被一块浮层打扰"。
+        ⚠ 不再"自动弹开"（旧版 `hub_ui.open` 的语义已随全局悬浮一起退役）：页面内的浮窗
+          活不到下次启动，而在仪表盘上自动弹一块函数浮层纯属噪音 —— 要看就点「ƒ 库」。
         """
         ui = self._hub_ui()
         self._hub_offset = (ui['offset'][0], ui['offset'][1])
-        if ui['open']:
-            self.show_formula_hub_panel(keep=ui['asset_id'] or None)
 
     def _open_hub_page(self) -> None:
-        """浮窗「✏ 去总库编辑」：切到 A 页并选中浮窗当前选中的函数（编辑落点唯一）。"""
-        self.switch_to('hub')
+        """浮窗「✏ 去总库编辑」：切到 A 页并选中浮窗当前选中的**函数**（编辑落点唯一）。
+
+        ⚠ 选中的是本页方案时**不带 id 过去**：方案不是资产，`reveal_asset` 找不到它，
+          带过去只会把 A 页的选中态清空（看起来像"点了没反应"）。
+        """
         panel = getattr(self, '_formula_hub_panel', None)
-        if panel is not None and panel.selected_id():
-            self.page_hub.reveal_asset(panel.selected_id())
+        asset_id = ''
+        if panel is not None and panel.selected_kind() == FN_KIND:
+            asset_id = panel.selected_id()
+        self.switch_to('hub')
+        if asset_id:
+            self.page_hub.reveal_asset(asset_id)
 
     def load_into_current(self, asset: dict) -> int:
         """浮窗「⤓ 载入到本页」：把资产回填到**当前页**的函数区。
@@ -379,10 +419,25 @@ class JianMainWindow(QMainWindow):
             elif idx == 2:
                 n = self.page_backtest.page_breadth.load_formula_from_hub(texts, params)
         if n:
-            get_formula_store().touch(asset.get('id'))   # 载入即 used_at（自动恢复也认它）
+            get_formula_store().touch(asset.get('id'))   # 载入即 used_at（列表的"最近使用"据此排）
+            self._hub_say(f'⤓ 已载入「{asset.get("name")}」到本页（{n} 段）—— '
+                          '配置区一字未动；跑图 / 跑回测 / 跑扫描在页面上完成')
+            panel = getattr(self, '_formula_hub_panel', None)
+            if panel is not None:
+                panel.refresh(keep=asset.get('id'))      # used_at 变了 ⇒ 列表"最近使用"跟着重排
         else:
-            self.page_hub.say('⚠ 当前页没有可载入的函数区 —— 请切到行情 / 回测（M1） / 扫描（M2·M3）页')
+            self._hub_say('⚠ 当前页没有可载入的函数区 —— 请切到行情 / 回测（M1） / 扫描（M2·M3）页')
         return n
+
+    def _hub_say(self, text: str) -> None:
+        """把一句话写到浮窗的回执行（浮窗没建出来就静默 —— 例如 A 页「送 ↗」走的是另一条路）。
+
+        ⚠ 载入**必须有可见回执**：用户实测"点了半天页面纹丝不动"里，有一半是**没有任何反馈**
+          （浮窗既不说话、页面也不变）—— 于是分不清"没成功"还是"没反应"。
+        """
+        panel = getattr(self, '_formula_hub_panel', None)
+        if panel is not None:
+            panel.say(text)
 
     # ==========================================
     # ★1.61 / §7-B16：「统一浮窗」的两个取口（**当前页提供，浮窗不自己找页面**）

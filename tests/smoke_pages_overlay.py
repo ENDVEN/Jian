@@ -170,10 +170,10 @@ for _vk in ("scan_ui", "breadth_ui"):
         _pref_module.preferences.set(
             _vk, {a: b for a, b in _cur_vk.items() if a != "col_order"})
 
-# ★1.61 / §7-B16 护栏6/8：`hub_ui`（总库浮窗的位置/开合/上次选中）同样**必须在构造窗口前抹平**：
-#   ① 与 §11.5-70/90 同族 —— 测试不许依赖用户真实偏好（他用得越久，冒烟越红）；
-#   ② 更直接：`open=True` 会让 `JianMainWindow.__init__` 末尾的 `_restore_hub_ui()`
-#      在构造期就把浮窗建出来并显示 ⇒ 下面所有"懒建 / 默认不显示"的断言当场假红。
+# ★1.61 / §7-B16 护栏6/8：`hub_ui`（总库浮窗的位置偏移 / 上次选中）同样**必须在构造窗口前抹平**：
+#   与 §11.5-70/90 同族 —— 测试不许依赖用户真实偏好（用户用得越久，断言越取决于他的历史）。
+#   ⚠ H7 起浮窗是**页面内悬浮**（不再开机自动弹，`open` 键已退役）⇒ 这一抹平现在只保一件事：
+#     `_hub_offset` 不带着用户拖动过的偏移进来（否则"默认无偏移"那条断言假红）。
 _pref_module.preferences.set("hub_ui", None)
 
 # §7-A4：构造前关掉自动存档，避免任何测试回测写脏真实 ~/.jian_data/backtest_results/。
@@ -673,10 +673,10 @@ _fp = win._formula_hub_panel
 
 def _save_via_float(name: str) -> None:
     """走浮窗「💾 存当前函数 → 💾 保存」（旧页内按钮已删，这是唯一入口）。"""
-    _fp.show_zone(0)
-    _fp.fn._on_save_current()
-    _fp.fn.editor.txt_name.setText(name)
-    _fp.fn._on_save()
+    _fp.list.show_list()            # ★H7：不再有分区，列表就是全部
+    _fp.list._on_save_current()
+    _fp.list.editor.txt_name.setText(name)
+    _fp.list._on_save()
 
 
 win.switch_to('market')
@@ -736,13 +736,17 @@ def _hub_rows(pane):
 
 
 check("浮窗列出全部函数（与资产库同一份数据、与 A 页同一类行件）",
-      len(_hub_rows(_fp.fn)) == fstore.count() == 2)
+      len(_hub_rows(_fp.list)) == fstore.count() == 2)
 _name_q = fstore.get_by_name("行情页配方")
 _fp.select(_name_q["id"])
 check("选中项可被读出", _fp.selected_id() == _name_q["id"])
-check("详情区点名函数名 + 段数（旧对话框「预览区」的职责已由详情卡承担）",
-      _fp.fn.d_name.text() == "行情页配方" and "2 段" in _fp.fn.d_meta.text())
-_fp.fn.btn_load.click()       # 真点击（§11.5-96：主入口必须含一次真实点击）
+# ★H7：旧版把「函数名 / 段数」放在**从列表进不去的详情页**里 —— 那正是用户报
+#   "双击根本点不进对应的函数页面"的死胡同。现在这些信息**就在列表行上**（不用进任何二级页）。
+_row_q = next(w for w in _hub_rows(_fp.list) if w.asset_id() == f'f:{_name_q["id"]}')
+_txt_q = [w.text() for w in _row_q.findChildren(object) if hasattr(w, 'text')]
+check("列表行自带函数名 + 元信息（选它不必先进任何二级页）",
+      "行情页配方" in _txt_q and any("2 段" in t for t in _txt_q))
+_fp.list.btn_load.click()     # 真点击（§11.5-96：主入口必须含一次真实点击）
 check("浮窗「⤓ 载入到本页」回填当前页（行情页）并记录「最近使用」",
       [t for t, _g in mkt._formula_segments] == [MACD_SEG, MA_SEG]
       and bool(fstore.get(_name_q["id"])["used_at"]))
@@ -5349,16 +5353,16 @@ try:
     _gate_before = (_bt82.gate_buy.config(), _bt82.gate_sell.config())
     win.show_formula_hub_panel()
     _panel82 = win._formula_hub_panel
-    check("★ B16：浮窗懒建可显示 + 两区齐备（ƒ 函数 / 📚 本页方案）+ 两个取口已注入",
+    check("★ B16：浮窗懒建可显示 + **单列表**（不再分区）+ 两个取口已注入",
           _panel82 is not None and not _panel82.isHidden()
-          and _panel82.zone_stack.count() == 2
+          and hasattr(_panel82.list, 'btn_save_plan')
           and callable(_panel82.draft_provider) and callable(_panel82.plan_provider))
     check("★ B16：浮窗的编辑面 = **与 A 页同一个编辑器**（不是第二套表单 —— 样式/口径同源）",
-          _panel82.fn.editor.__class__ is _FormulaAssetEditor
+          _panel82.list.editor.__class__ is _FormulaAssetEditor
           and 'QPlainTextEdit' not in _pl82.Path('ui/widgets/formula_hub_panel.py')
           .read_text(encoding='utf-8'))
     _panel82.select(_a82['id'])
-    _panel82.fn.btn_load.click()   # 真点击（§11.5-96：手点是主入口的控件必须含一次真实点击）
+    _panel82.list.btn_load.click()   # 真点击（§11.5-96：手点是主入口的控件必须含一次真实点击）
     check("★ B16：「载入到本页」路由 M1 —— 函数段+参数回填，**配置区一字不动**（红线②）",
           'MA99' in (_bt82.segments.texts() or [''])[0]
           and (_bt82.gate_buy.config(), _bt82.gate_sell.config()) == _gate_before
@@ -5434,42 +5438,40 @@ try:
           and 'asset_texts(' not in _h4_latest.split('def apply')[0]
           and _h4_latest.count('asset_texts(') == 1)
 
-    # ---- ⑫ 护栏 6/8：浮窗界面态 `hub_ui`（位置偏移 / 开合 / 上次选中）----
+    # ---- ⑫ 护栏 6/8：浮窗界面态 `hub_ui`（位置偏移 / 上次选中）----
     #   ⚠ 位置一律按**行为**验（"拖多少就挪多少 / 重开回到同一处"），不重算实现里的夹取公式
     #     —— 那样只是把实现抄了一遍，实现改了断言跟着改，等于没护栏。
-    check("★ B16 护栏6：默认无偏移（抹平后），且浮窗已在 ⑦ 被打开时落了 `open=True`",
+    #   ⚠ H7 改口径：浮窗成为**页面内悬浮** ⇒ 不再有 `open`（"开合记忆"随全局形态退役）。
+    check("★ B16 护栏6：默认无偏移（抹平后）；且 `hub_ui` **不再有 open**（页面内悬浮的必然）",
           win._hub_offset == (0, 0) and win._hub_ui()['offset'] == [0, 0]
-          and win._hub_ui()['open'] is True)
+          and 'open' not in win._hub_ui())
     _pos_before = _panel82.pos()
+    # ⚠ 位置一律**按行为、且相对宿主**验：浮窗是**右锚**在宿主页上的（x 由宿主宽度算出来），
+    #   宿主宽度在测试中途可能合法变化（这里实测 2165→2207）⇒ 拿**绝对 x** 比就是假红。
+    #   用户看到的"还在原来那个地方"= **距宿主右缘的间距**不变（= 基准 18 + 拖动 40）。
+    _gap_before = win._hub_host.width() - _pos_before.x() - _panel82.width()
     win._on_hub_dragged(-40, 0)                # 等价于标题栏往左拖了一下（基准位靠右，左拖不会被夹取）
-    _pos_mid = _panel82.pos()
+    _gap_mid = win._hub_host.width() - _panel82.x() - _panel82.width()
+    _y_mid = _panel82.y()
     check("★ B16 护栏6：拖动只搬浮窗、偏移实时累加；**拖动过程不写盘**（松手才落）",
-          (_pos_mid.x() - _pos_before.x()) == -40
+          (_gap_mid - _gap_before) == 40
           and win._hub_offset == (-40, 0)
           and win._hub_ui()['offset'] == [0, 0])
     win._on_hub_drag_finished()
     _panel82.hide()
     _panel82.move(0, 0)                        # 先挪走，证明是"按偏好摆回来"而不是碰巧没动
     win.show_formula_hub_panel(keep=_a82['id'])
-    check("★ B16 护栏6：松手落盘 + 重开按 `hub_ui.offset` 摆回原处（位置记忆真的生效）",
+    _gap_now = win._hub_host.width() - _panel82.x() - _panel82.width()
+    check("★ B16 护栏6：松手落盘 + 重开摆回**同一处**（距宿主右缘间距一模一样、顶距也一致）",
           win._hub_ui()['offset'] == [-40, 0]
-          and (_panel82.x(), _panel82.y()) == (_pos_mid.x(), _pos_mid.y()))
+          and _gap_now == _gap_mid and _panel82.y() == _y_mid)
     _panel82.btn_close.click()                 # 真点击（§11.5-96：主入口必须含一次真实点击）
-    check("★ B16 护栏6：点 ✕ ⇒ `open=False` + 记住上次选中的函数（开合记忆的写点）",
-          _panel82.isHidden() and win._hub_ui()['open'] is False
-          and win._hub_ui()['asset_id'] == _a82['id'])
-    _pref_module.preferences.set('hub_ui', {'open': True, 'offset': [-40, 0],
-                                            'asset_id': _a82['id']})
-    _panel82.hide()
-    win._restore_hub_ui()                      # 开机恢复路径（独立成方法，可直接调）
-    check("★ B16 护栏6：开机恢复 —— 接上开合 / 位置偏移 / 上次选中的函数",
-          (not _panel82.isHidden()) and win._hub_offset == (-40, 0)
-          and _panel82.selected_id() == _a82['id'])
-    _panel82.btn_close.click()                 # 收尾：别把"开着"留给后面的段落
+    check("★ B16 护栏6：点 ✕ ⇒ 收起 + 记住上次选中的那条（`hub_ui.asset_id`）",
+          _panel82.isHidden() and win._hub_ui()['asset_id'] == _a82['id'])
     check("★ B16 护栏6/8：`hub_ui` 坏数据逐字段回落（不炸、也不把浮窗搞没）",
           (_pref_module.preferences.set('hub_ui', {'offset': 'bad', 'open': 'yes'}),
-           win._hub_ui())[1] == {'open': True, 'offset': [0, 0], 'asset_id': ''})
-    _pref_module.preferences.set('hub_ui', {'open': False, 'offset': [0, 0], 'asset_id': ''})
+           win._hub_ui())[1] == {'offset': [0, 0], 'asset_id': ''})
+    _pref_module.preferences.set('hub_ui', {'offset': [0, 0], 'asset_id': ''})
 
     # ---- ⑬ 自查纠错回归（v6.79）：逐段窗格不许被压平 + 体检标记要能读回 ----
     #   ① 旧写法 `[{'text': t, 'target': payload['target']} for t in texts]` 会把行情页配方的
@@ -5515,24 +5517,24 @@ try:
     win.switch_to('backtest')
     win.page_backtest.tabs.setCurrentIndex(0)
     win.show_formula_hub_panel()
-    _panel82.show_zone(1)
     _plans_m1 = _api_m1['plans']()
     _first_plan = str(_plans_m1[0].get('id')) if _plans_m1 else ''
-    check("★ B16 H6：切到方案区 ⇒ 按**当前页**列出方案（M1 策略 ≥1 条）",
-          _panel82.zone_stack.currentIndex() == 1 and bool(_first_plan))
-    _panel82._select_plan(_first_plan)
-    _panel82.btn_plan_load.click()          # 真点击
-    check("★ B16 H6：浮窗「📚 载入」= 把该方案还原进当前页（与页内是**同一套**还原路径）",
+    check("★ B16 H7：**不再分区** —— 本页方案与函数资产同处一个列表（方案行带徽标、恒排最前）",
+          bool(_first_plan)
+          and _panel82.list._rows.get(f'p:{_first_plan}') is not None
+          and list(_panel82.list._rows)[0] == f'p:{_first_plan}')
+    _panel82.list.select(_first_plan)       # 只给**裸 id**（浮窗自己归一成行 id）
+    _panel82.list.btn_load.click()          # 真点击（与双击**同一个**动作）
+    check("★ B16 H7：列表里选中方案 + 「⤓ 载入到本页」= 还原进当前页（与页内**同一套**还原路径）",
           _bt82._active_strategy_id == _first_plan)
-    _panel82.show_zone(0)
     _bt82.segments.set_texts(['DRAFTFUNC: MA(C,7);'])
     _n_assets = len(_fsmod._STORE.all())
-    _panel82.fn._on_save_current()
+    _panel82.list._on_save_current()
     check("★ B16 H6：「💾 存当前函数」把页面上写的函数取过来**预填**，但不落库（还要点保存）",
-          'DRAFTFUNC' in _panel82.fn.editor.txt_code.toPlainText()
+          'DRAFTFUNC' in _panel82.list.editor.txt_code.toPlainText()
           and len(_fsmod._STORE.all()) == _n_assets)
-    _panel82.fn.editor.txt_name.setText('从 M1 存的草稿')
-    _panel82.fn._on_save()
+    _panel82.list.editor.txt_name.setText('从 M1 存的草稿')
+    _panel82.list._on_save()
     check("★ B16 H6：确认保存 ⇒ 落进**同一个资产库**（浮窗与 A 页共用一份，不是第二套）",
           _fsmod._STORE.get_by_name('从 M1 存的草稿') is not None)
 
@@ -5558,6 +5560,45 @@ try:
     _bt82.btn_hub.click()                 # 真点击（§11.5-96）
     check("★ B16 H6：点摘要条「ƒ 库」⇒ 浮窗真被唤出（入口 → 浮窗链路完整）",
           not _panel82.isHidden())
+
+    # ---- ⑯ H7：**页面内悬浮**（用户实测："全局没有意义，我只需要它在对应页面悬浮"）----
+    check("★ B16 H7：浮窗宿主 = **当前页**（不再是内容区全局浮层）",
+          _panel82.parent() is win.page_backtest and win._hub_host is win.page_backtest
+          and _panel82.isVisibleTo(win.page_backtest))
+    win.switch_to('market')
+    check("★ B16 H7：切到别的页 ⇒ 随页收起（页面内悬浮的必然结果，不再跨页打扰）",
+          _panel82.isHidden())
+    win.switch_to('backtest')
+    win.page_backtest.tabs.setCurrentIndex(1)
+    win.show_formula_hub_panel()
+    _m2_plans = win.current_plan_api()['plans']()
+    _m2_ids = {f'p:{plan["id"]}' for plan in _m2_plans}
+    check("★ B16 H7：同一页换子页签 ⇒ 就地刷新（标题胶囊 + 方案池一起跟着走）",
+          _panel82.lbl_ctx.text() == 'M2 全市场筛选'
+          and _m2_ids.issubset(set(_panel82.list._rows))
+          and f'p:{_first_plan}' not in _panel82.list._rows)
+    _dl_src = _pl82.Path('ui/widgets/desk_layout.py').read_text(encoding='utf-8')
+    check("★ B16 H7：行情页「ƒ 库」在**工具行**（顶栏只剩 查阅 / 云端同步 —— 用户拍板的位置）",
+          'p.btn_hub' in _dl_src.split('def build_tool_row')[1]
+          .split('def build_control_panel')[0]
+          and 'p.btn_hub' not in _dl_src.split('def build_top_bar')[1]
+          .split('def build_tool_row')[0])
+
+    # ---- ⑰ H7：**双击即用**（本浮窗存在的理由）+ 回执可见 ----
+    #   ★1.61 实测事故：列表行只"选中"、「载入」住在**从列表进不去的详情页**里 ⇒
+    #   用户报"双击根本点不进对应的函数页面 / f 库是个摆设 / M1 摘要条永远停在出厂文案"。
+    win.page_backtest.tabs.setCurrentIndex(0)
+    win.show_formula_hub_panel(keep=_a82['id'])
+    _bt82.segments.set_texts(['PLACEHOLDER:1;'])
+    _status_before = _bt82.lbl_run_status.text()
+    _panel82.list._on_row_double(f'f:{_a82["id"]}')   # 等价于用户**双击那一行**
+    check("★ B16 H7：**双击列表行 = 直接用到本页**（函数回填）+ 浮窗回执 + 页面回执都说话",
+          'MA99' in (_bt82.segments.texts() or [''])[0]
+          and '已载入' in _panel82.lbl_stat.text()
+          and _bt82.lbl_run_status.text() != _status_before
+          and '已载入' in _bt82.lbl_run_status.text())
+    check("★ B16 H7：M1 摘要条不再停在出厂文案（用户实测那句「完成检测并配置买卖条件后即可运行」）",
+          '完成检测并配置买卖条件后即可运行' not in _bt82.lbl_run_status.text())
     _panel82.btn_close.click()
 except Exception as _e82:  # noqa: BLE001
     check(f"§7-B16 函数总库断言整段抛异常: {type(_e82).__name__}: {_e82}", False)

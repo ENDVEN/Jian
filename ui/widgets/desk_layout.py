@@ -141,17 +141,6 @@ class DeskLayout:
         p.btn_sync.clicked.connect(p.sync_cloud)
         bar.addWidget(p.btn_sync)
 
-        # ★1.61 / §7-B16 H6：**函数总库入口**（常驻可见）—— 设计稿 B 定的位置是"工具行右端"。
-        #   此前行情页只有一个「📚 配方库」按钮，藏在左栏「ƒ」图标页里（要先切页才看得见）
-        #   ⇒ 用户找不到入口。这里与 M1/M2/M3 的「ƒ 库」同名同义（同一个浮窗、同一份库）。
-        p.btn_hub = QPushButton("ƒ 库")
-        p.btn_hub.setStyleSheet(_BTN_QSS)
-        p.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
-        p.btn_hub.setToolTip("打开「ƒ 函数总库」浮窗：选一个函数叠加到图上，"
-                             "或把当前公式存进总库。\n（编辑与管理在左轨「ƒ 函数库」页 —— 同一个库）")
-        p.btn_hub.clicked.connect(p.open_formula_library)
-        bar.addWidget(p.btn_hub)
-
         p.lbl_sync_status = QLabel("")
         p.lbl_sync_status.setStyleSheet("font-size: 12px; color: #8A94A6; margin-left: 8px;")
         bar.addWidget(p.lbl_sync_status)
@@ -251,6 +240,18 @@ class DeskLayout:
             "font-size:11.5px; color:#5B6472; background:#F2F4F8; border-radius:9px;"
             " padding:3px 10px;")
         row.addWidget(p.lbl_anno_pill)
+
+        # ★1.61 / §7-B16 H7：**函数总库入口** —— 用户实测："位置不对，正常应该摆在工具栏，
+        #   而不是查询和云端同步那边（那个优先级没这么高）"。
+        #   ⇒ 从 L1 顶栏搬到**工具行右端的最末位**（本行唯一与"取数/查阅"无关的入口，
+        #     放在末尾才符合它"低频、随手取"的性子）；与 M1/M2/M3 的「ƒ 库」同名同义。
+        p.btn_hub = QPushButton("ƒ 库")
+        p.btn_hub.setStyleSheet(CHIP_MORE_QSS)
+        p.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_hub.setToolTip("打开「ƒ 函数库」浮窗：选一个函数叠加到图上，"
+                             "或把当前公式存进总库。\n（编辑与管理在左轨「ƒ 函数库」页 —— 同一个库）")
+        p.btn_hub.clicked.connect(p.open_formula_library)
+        row.addWidget(p.btn_hub)
 
         p._sync_period_widgets()
         return row

@@ -85,6 +85,7 @@
 | **H4** | 同步语义 | ✅ "总库有更新版"提示 + **默认隐藏的「⤒ 用最新版」**（默认保留旧版，红线②）+ 总库编辑回执点名引用方；护栏 = 源码级"`asset_texts` 只在显式动作里" | `backtest_strategy.py` / `scan_strategy_bridge.py` / `backtest_summary_bar.py` / `scan_layout.py` / `breadth_layout.py` / `hub_flow.py` | 0.5 轮 |
 | **H5** | 收口 | [~] 断言数（overlay **894** / chart **891**）✅ · 文档回写 ✅ · **版本顺推 `1.62` 待提交** · B15 衔接确认（sweep 的"策略来源 = formula_store"天然兼容资产库）✅ | 文档 + 台账 | 0.5 轮 |
 | **H6** | **统一浮窗（追加步 · 2026-09-30 用户口径）** | ✅ 浮窗升级两区：`ƒ 函数`（列表/详情/**紧凑编辑** + **「💾 存当前函数」**，照设计稿 B）+ `📚 本页方案`（M1 策略 / M2·M3 筛选方案：列/载入/存为/删除）；**页面侧入口全删**（M1 策略下拉+保存当前+移除、M1「存为配方」、M2/M3 三颗、行情页「存为配方…」、`FormulaLibraryDialog`），每页只留「ƒ 库」；行画法/编辑器/保存/删除/过滤**全部收成公共件** | `formula_hub_panel.py` / `hub_float_fn.py` / `hub_latest.py` / `hub_flow.py` / `hub_layout.py` / `hub_assets.py` / `main_window.py` + 五页 | 1 轮 |
+| **H7** | **浮窗交互重做（追加步 · 2026-09-30 用户实测 5 条）** | ✅ ① **双击即用**（函数 ⇒ 回填本页函数区；方案 ⇒ 整体还原）—— 旧版把「载入」藏在**从列表进不去的详情页**里（真死胡同）；② **载入必写可见回执**（浮窗一行 + 页面那行：M1 `lbl_run_status` / M2·M3 `lbl_receipt`）；③ 行情页入口从 L1 顶栏 ⇒ **L2 工具行右端末位**；④ **页面内悬浮**（宿主 = 打开它的页面，换页随页收起；`hub_ui.open` 退役）；⑤「ƒ 函数」与「📚 本页方案」**并成一个列表**（方案行带徽标、恒排最前；`hub_float_fn.py` → `hub_float_list.py`）。顺带：M2·M3 `delete_plan()` 补二次确认 | `formula_hub_panel.py` / **`hub_float_list.py`（新）** / `hub_layout.py`（`badge`+`on_double`）/ `main_window.py`（`_hub_host` 页面内悬浮 + `_hub_say`）/ 四页载入落点（回执）/ `desk_layout.py`（入口搬位）/ `scan_strategy_bridge.py`（删除确认） | 1 |
 
 **每步固定四条验收**：① 断言进 `smoke_pages_overlay`（页面/存储为主；动引擎才跑 `smoke_chart`）；
 ② 手验清单写进回执；③ 落点唯一（同一资产只许一个编辑面 = 总库编辑器；页面侧只许"载入"与"同步最新"）；

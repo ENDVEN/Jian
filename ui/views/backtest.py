@@ -511,6 +511,12 @@ class SingleStockBacktestView(QWidget):
         self.segments.set_texts(clean)
         self.txt_params.setText(str(params_text or ""))
         self.detect_function(quiet=True)      # 送来的函数立刻自检：语法/缺参当场可见
+        # ★H7：载入**必须有可见回执** —— 用户实测"在 M1 里点半天，摘要条永远停在
+        #   「完成检测并配置买卖条件后即可运行」"里，一半的原因是**没有任何反馈**：
+        #   分不清"没成功"还是"没反应"。这条文案就是那句"我收到了"。
+        self.lbl_run_status.setText(
+            f"⤓ 已载入 {len(clean)} 段函数到函数段（买卖条件 / 风控 / 区间一字未动）"
+            "—— 选好股票点「▶ 开始回测」。")
         return len(clean)
 
     def current_formula_segments(self) -> list[str]:

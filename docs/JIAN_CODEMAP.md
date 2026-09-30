@@ -321,10 +321,12 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #     · hub_flow.py(257：刷新/筛选/选中/编辑/保存/删除分级/复制/全库体检/送 ↗)
     │                    #     · hub_editor.py(125：**全站唯一编辑面** —— 名称 + 函数段 + 默认窗格 +
     │                    #         参数 + `🔎 检测语法`（真引擎 `parse_program`，**不要求先填名称**）)
-    │                    #     · formula_hub_panel.py(**统一浮窗 = 唯一非模态浮层范式** —— 两区
-    │                    #         分段：`ƒ 函数` / `📚 本页方案`；标题栏可拖 + `hub_ui` 位置/开合记忆)
-    │                    #     · hub_float_fn.py(浮窗的「ƒ 函数」区：列表 → 详情 → **紧凑编辑**
-    │                    #         三态 + 「💾 存当前函数」；行画法/编辑器/保存与 A 页**共用**)
+    │                    #     · formula_hub_panel.py(**统一浮窗 = 唯一非模态浮层范式** —— ★H7 起
+    │                    #         **单列表**（不再分区）+ **页面内悬浮**（宿主 = 当前页，换页随页
+    │                    #         收起）；标题栏可拖 + `hub_ui.offset` 位置记忆（`open` 已退役）)
+    │                    #     · hub_float_list.py(★H7 **浮窗的统一列表**：本页方案 + 函数资产并在一处、
+    │                    #         行带类型徽标、**双击即用**；列表 ⇄ 紧凑编辑两态 + 「💾 存当前函数」；
+    │                    #         行画法/编辑器/保存/删除确认与 A 页**共用**。原名 hub_float_fn.py 已退役)
     │                    #     · hub_latest.py(H4 公共件「总库有更新版」的提示 + 显式更新；
     │                    #         **M1 与 M2·M3 共用一份**，`asset_texts` 的调用只许出现在它的
     │                    #         `apply()` 里 —— 源码级护栏钉死"载入路径不读资产内容")
@@ -483,11 +485,12 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | 联网抓名单/成分股 | **`MarketSyncService.fetch_index_constituents()`**（v6.10 收编）—— **UI 层禁止 import `AkShareFeed`**（§9-H 红线，`tests/smoke_chart.py` 有源码级断言守门） |
 | 存/载"公式配方"（函数段 + 参数 + 每段目标窗格） | **`data/formula_store.py`**（★v6.79 = **函数资产库本体**）：`get_formula_store()`（**单例**，页面/浮窗/总库共用）+ `make_formula/normalize_segments/segments_as_tuples/segments_as_texts`。⚠ 任何新页面要存公式，**必须用这个单例**，别自己 `FormulaStore()`（会互相覆盖）；⚠ **别绕开 `make_formula` 直接 `upsert({...})` 不带 `id`** —— 那会把 `id` 变成字符串 `'None'` 让所有资产串号（§11.5-109，已修但别再造这种调用形态） |
 | 行情页 ⇄ 回测页 互送函数 | **`ui/main_window.py`**：`send_formula_to_backtest()` / `send_formula_to_market()` / `switch_to()` —— **两个页面禁止互相 import**，一律经主窗口转交（§3 的"装配与事件分发"职责） |
-| **函数总库（ƒ 函数库页 / 浮窗 / 更新动作）** | ★v6.79/§7-B16：资产库本体 = **`data/formula_store.py`**（扩展而非新建）；数据助手 = **`data/hub_assets.py`**（`find_by_content` 内容命中 / `upsert_asset` 收编 / `ref_counts` 引用计数 / `stale_snapshot` 时效 / `delete_asset` 删引用）；一次性收编 = **`data/hub_migration.py`**（幂等；老档**整体一段**绝不按分号猜拆）；A 页 = `ui/views/formula_hub.py` + `ui/widgets/hub_layout\|flow\|editor.py`；B 浮窗 = `ui/widgets/formula_hub_panel.py`；路由 = `ui/main_window.py`（`show_formula_hub_panel` / `load_into_current` / `send_asset_to_page` / `_restore_hub_ui`） |
+| **函数总库（ƒ 函数库页 / 浮窗 / 更新动作）** | ★v6.79/§7-B16：资产库本体 = **`data/formula_store.py`**（扩展而非新建）；数据助手 = **`data/hub_assets.py`**（`find_by_content` 内容命中 / `upsert_asset` 收编 / `ref_counts` 引用计数 / `stale_snapshot` 时效 / `delete_asset` 删引用）；一次性收编 = **`data/hub_migration.py`**（幂等；老档**整体一段**绝不按分号猜拆）；A 页 = `ui/views/formula_hub.py` + `ui/widgets/hub_layout\|flow\|editor.py`；B 浮窗 = `ui/widgets/formula_hub_panel.py`；路由 = `ui/main_window.py`（`show_formula_hub_panel` / `load_into_current` / `send_asset_to_page` / `_load_hub_ui_state` / `_hub_say`）；★H7 浮窗**页面内悬浮**（`_hub_host` + `_on_page_changed` 随页收起） |
 | 函数 / 方案**入口**（M1 · M2·M3 · 行情页） | **一律是「ƒ 库」按钮 → 统一浮窗**（`main_win.show_formula_hub_panel()`）。★v6.79 H6 起**页面侧只剩这一个入口**：M1 的策略下拉/保存当前/移除、M1 的「💾 存为配方」、M2/M3 的「📚 载入/💾 存为/管理」、行情页的「💾 存为配方…」、`formula_library.py` **全部已删**（`smoke_pages_overlay` 有**负向断言**钉"复活即红"）。⚠ 载入只回填**函数段 + 参数**，条件/风控/门控/成交/阈值/范围 **一字不动**（红线②） |
-| 「ƒ 库」按钮**该摆在哪**（踩过坑） | **必须常驻可见**：M1 = 摘要条右侧动作簇（`backtest_summary_bar.btn_hub` → `sig_formula_hub`）· M2/M3 = 摘要条（`scan_layout`/`breadth_layout` 的 `p.btn_hub`）· 行情页 = 顶部工具行右端（`desk_layout.build_top_bar` 的 `p.btn_hub`）。⚠ **别只放抽屉里的编辑卡片**（`pane_fn.btn_library` / `_formula_pane.btn_hub`）—— 抽屉默认关着 ⇒ 用户"根本看不到入口"（★1.61 实测事故）。抽屉里那两颗**保留**（抽屉是遮罩会盖住摘要条），两处走**同一个方法**。冒烟 ⑮ 用 `isVisibleTo(win)` 钉四页可见性（**"存在"≠"看得见"**，`hasattr` 查不出这类问题） |
-| 浮窗的「📚 本页方案」区（策略 / 筛选方案） | 路由 = `main_window.current_plan_api()`（**认当前页**：M1 = `backtest_single.strategy`，M2/M3 = `page_scan/_breadth._strategy`，其它页 = None）；页面/子页签一变必须 `panel.refresh_plans()`。三个动作直接复用桥接的 `load_plan` / `save` / `delete_plan` —— **页面侧不另写一套** |
-| 浮窗的「💾 存当前函数」 | 草稿取口 = `main_window.current_formula_draft()`（四页各有一份**只读** `current_formula_draft()`）；落在 `hub_float_fn.begin_save_current()`（**预填不落库**，还要点「💾 保存」）。⚠ 来源 `source` 由草稿带进 `save_editor_asset(default_source=...)` —— 在行情页存的公式不该被记成"总库新建" |
+| 「ƒ 库」按钮**该摆在哪**（踩过坑） | **必须常驻可见**：M1 = 摘要条右侧动作簇（`backtest_summary_bar.btn_hub` → `sig_formula_hub`）· M2/M3 = 摘要条（`scan_layout`/`breadth_layout` 的 `p.btn_hub`）· 行情页 = **L2 工具行右端末位**（`desk_layout.build_tool_row` 的 `p.btn_hub`；★H7 从 L1 顶栏搬下来 —— 用户："不该跟查询 / 云端同步并排，优先级没这么高"）。⚠ **别只放抽屉里的编辑卡片**（`pane_fn.btn_library` / `_formula_pane.btn_hub`）—— 抽屉默认关着 ⇒ 用户"根本看不到入口"（★1.61 实测事故）。抽屉里那两颗**保留**（抽屉是遮罩会盖住摘要条），两处走**同一个方法**。冒烟 ⑮ 用 `isVisibleTo(win)` 钉四页可见性（**"存在"≠"看得见"**），⑯ 钉行情页那颗在**工具行**（源码判据） |
+| 浮窗里的**本页方案**（策略 / 筛选方案） | ★H7 起**与函数资产同一个列表**（方案行带「📚 方案」徽标、恒排最前；行 id 前缀 `p:` / `f:` 防撞号）—— 不再有独立的「📚 本页方案」区。路由 = `main_window.current_plan_api()`（**认当前页**：M1 = `backtest_single.strategy`，M2/M3 = `page_scan/_breadth._strategy`，其它页 = None）；页面/子页签一变就地刷新（`_on_page_changed`）。三个动作直接复用桥接的 `load_plan` / `save` / `delete_plan` —— **页面侧不另写一套** |
+| 浮窗的「💾 存当前函数」 / 「📚 存为方案」 | 草稿取口 = `main_window.current_formula_draft()`（四页各有一份**只读** `current_formula_draft()`）；落在 `hub_float_list.begin_save_current()`（**预填不落库**，还要点「💾 保存」）。「存为方案」按页面能力**显隐**（无方案库的页不显示）。⚠ 来源 `source` 由草稿带进 `save_editor_asset(default_source=...)` —— 在行情页存的公式不该被记成"总库新建" |
+| 浮窗的**载入**（双击 / 「⤓ 载入到本页」） | ★H7：**双击 = 用起来**（函数 ⇒ `sig_load` → 主窗口 `load_into_current`；方案 ⇒ `api['load']`），按钮与之同一动作。⚠ 用户实测事故：旧版把这一切藏在**从列表进不去的详情页**里 ⇒ 浮窗成摆设。**载入必须写可见回执**：浮窗一行（`panel.say`）+ **页面自己那行**（M1 `lbl_run_status` / M2·M3 `lbl_receipt` / 行情页 `_set_formula_status`）—— "点了没反应"与"没成功"必须分得清 |
 | "总库有更新版"提示 / 显式更新 | 判定 = `data/hub_assets.stale_snapshot()`；共用件 = **`ui/widgets/hub_latest.LatestFunctionPrompt`**（M1 与 M2·M3 各持一个实例，只传 5 个参数：主语 / 被换的东西 / 没动的东西 / 回填函数 / 回执控件）⇒ 两处桥接只剩同名薄壳 `prompt_stale` / `stale_tip` / `apply_latest_function`。⚠ **默认保留旧版**（红线②）；护栏 = 源码级断言"读资产的**调用**只出现在 `hub_latest.apply()` 里、两个桥接文件里一个都没有" |
 | 浮窗位置 / 开合记忆 | 偏好键 **`hub_ui`**（`{"offset": [dx,dy], "open": bool, "asset_id": str}`，唯一真源 = `core.preferences.DEFAULTS`）；主窗口 `_hub_ui` / `_save_hub_ui` / `_place_hub_panel` / `_restore_hub_ui` 读写；拖动入口 = `formula_hub_panel._DragHeader`。⚠ 偏移会被 `_place_hub_panel` **夹回内容区**（不许飞走）；点 ✕ ⇒ `open=False` ⇒ 下次不弹（**自我纠正**） |
 | 载入外来公式后 | 页面侧必须做两件事：① **自动检测**（`detect_function(quiet=True)` / `_compile_formula()`），不能静默塞进去；② 回执说清**来源**（"已从回测页载入 N 段"） |
