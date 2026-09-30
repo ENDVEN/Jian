@@ -17,6 +17,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from core.cross_section import FILTERED, HIT, INSUFFICIENT, MISS, STATUS_LABELS
+from ui.widgets.styles import KPI_CARD_QSS
 
 __all__ = ['ScanResult', 'STATUS_BG', 'STATUS_FG', 'MAX_TABLE_ROWS']
 
@@ -41,14 +42,38 @@ _SORT_KEY = {COL_SYM: 'sym', COL_NAME: 'name', COL_CLOSE: 'close',
              COL_AMOUNT: 'amount', COL_VOL: 'volume', COL_TURNOVER: 'turnover',
              COL_MKTCAP: 'float_mktcap'}
 
-_KPI_STYLE = {
-    'hit': ('#E8F5E9', '#2E7D32', '命中（满足条件）'),
-    'miss': ('#F5F6F8', '#5A6474', '未命中（有数据、条件不成立）'),
-    'insufficient': ('#FFF3E0', '#E65100', '数据不足（无行/停牌/历史太短/缺列）—— **不是未命中**'),
-    'filtered': ('#F0F3F8', '#8A94A6', '被粗筛剔除（数据没问题，只是不满足阈值）'),
-    'valid': ('#E8F1FF', '#1976D2', '有效样本 = 命中 + 未命中 —— **广度占比的分母**'),
-    'elapsed': ('#F5F6F8', '#8A94A6', '本次耗时；「缓存」表示这次没有重算（切日期/换窗口零成本）'),
+# ★1.64：KPI 从"恒色药丸"改为**小号 KPI 卡**（用户 2026-09-30：这一页主角是命中清单 ⇒ KPI 当配角）。
+#   于是**底色不再需要**（卡片恒白），只留 `值的主色 + 提示`；语义色现在只落在"值"上，
+#   整排不再是一片彩色药丸 —— 既轻，也不抢清单的眼。
+_KPI_SPEC = {
+    'hit': ('#2E7D32', '命中（满足条件）'),
+    'miss': ('#5A6474', '未命中（有数据、条件不成立）'),
+    'insufficient': ('#E65100', '数据不足（无行/停牌/历史太短/缺列）—— **不是未命中**'),
+    'filtered': ('#8A94A6', '被粗筛剔除（数据没问题，只是不满足阈值）'),
+    'valid': ('#1976D2', '有效样本 = 命中 + 未命中 —— **广度占比的分母**'),
+    'elapsed': ('#8A94A6', '本次耗时；「缓存」表示这次没有重算（切日期/换窗口零成本）'),
 }
+
+# 「有效样本 / 用时」不是四态之一，标签在这里给；四态一律走 `core.cross_section.STATUS_LABELS`
+# （**唯一口径**：核心改了词，这里跟着改）。
+_KPI_EXTRA_LABELS = {'valid': '有效样本', 'elapsed': '用时'}
+
+KPI_EMPTY_HTML = '<span style="font-size:11.5px;color:#8A94A6;">—</span>'
+
+
+def kpi_card_html(key: str, main: str, sub: str = '') -> str:
+    """小号 KPI 卡的**富文本**（灰标签 + 彩值 + 灰副值）—— 唯一实现。
+
+    ⚠ 富文本是刻意选的：QLabel 支持 HTML ⇒ **一个控件**就能做"标签小、值大、副值更小"，
+      不必为一个数字套三层布局（那会让 6 个 KPI 的构造长一倍）。
+    """
+    fg = (_KPI_SPEC.get(key) or ('#20242C', ''))[0]
+    label = STATUS_LABELS.get(key) or _KPI_EXTRA_LABELS.get(key, key)
+    text = (f'<span style="font-size:11.5px;color:#8A94A6;">{label}</span>&nbsp;'
+            f'<b style="font-size:17px;color:{fg};">{main}</b>')
+    if sub:
+        text += f'&nbsp;<span style="font-size:11px;color:#8A94A6;">{sub}</span>'
+    return text
 
 
 def _num(value) -> str:
@@ -119,11 +144,9 @@ class ScanResult:
         p._sort_col = None            # ★P1：换范围 ⇒ 排序复位到默认命中置顶
         p._sort_desc = False
         for pill in (p.kpi or {}).values():
-            pill.setText('—')
+            pill.setText(KPI_EMPTY_HTML)
             pill.setToolTip('还没有结果')
-            pill.setStyleSheet(
-                'font-size: 12px; font-weight: bold; color:#8A94A6;'
-                'background:#F5F6F8; border-radius:8px; padding:5px 10px;')
+            pill.setStyleSheet(KPI_CARD_QSS)
         p.table.setRowCount(0)
 
     # ---------- KPI ----------
@@ -137,23 +160,22 @@ class ScanResult:
             'valid': counts.get('valid', 0),
             'elapsed': elapsed_ms,
         }
-        for key, (bg, fg, tip) in _KPI_STYLE.items():
+        for key, (fg, tip) in _KPI_SPEC.items():
             pill = p.kpi[key]
             value = values[key]
+            total = counts.get('total', 0)
             if key == 'hit':
-                text = f'命中 {value} · {counts.get("total", 0)} 只'
+                main, sub = str(value), f'/ {total} 只'
             elif key == 'valid':
-                text = f'有效样本 {value}/{counts.get("total", 0)}'
+                main, sub = str(value), f'/ {total}'
             elif key == 'elapsed':
                 seconds = (elapsed_ms or 0.0) / 1000.0
-                text = ('缓存命中' if cached else f'用时 {seconds:.2f} s')
+                main, sub = ('缓存' if cached else f'{seconds:.2f} s'), ''
             else:
-                text = f'{STATUS_LABELS["insufficient" if key == "insufficient" else key]} {value}'
-            pill.setText(text)
+                main, sub = str(value), ''
+            pill.setText(kpi_card_html(key, main, sub))
             pill.setToolTip(tip)
-            pill.setStyleSheet(
-                f'font-size: 12px; font-weight: bold; color:{fg};'
-                f'background:{bg}; border-radius:8px; padding:5px 10px;')
+            pill.setStyleSheet(KPI_CARD_QSS)
 
     # ---------- 表格 ----------
     def toggle_sort(self, col: int) -> bool:

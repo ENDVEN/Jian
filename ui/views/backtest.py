@@ -931,9 +931,16 @@ class SingleStockBacktestView(QWidget):
         （回执文字带 current_name/current_symbol 的语境，属页面职责）。
         """
         self._leave_preview_state()          # 真跑出一次结果 ⇒ 只读回放态自动结束
+        # ★1.65：**不再把策略函数的叠层喂进结果图**（用户实测："K线买卖点里会把写好的函数
+        #   画进去，导致比例失调无法查看"）。根因 = **量纲不同**：M1 的函数是**买卖条件**，
+        #   它的绘图 IR（`STICKLINE` 状态柱 / 图标）用的是**函数自己的量纲**（实测状态柱值到
+        #   80+，而价格量级是个位数），而结果区按 §7-B3 B③ 会把叠层并进 K 线的 y 量程
+        #   （`overlay_extent` → `low = fmin(low, ov_lo)`）⇒ 价格被压成贴着底边的一条线。
+        #   ⇒ 本页只画"K线 + 买卖点"；**公式叠层归行情页**（那里才是"看函数画得对不对"的地方，
+        #     且行情页的 ChartHost 是按自己的窗格量纲编排的，不会被跨量纲的东西带偏）。
         summary = self.result.render_result(
             result, self.current_name, self.current_symbol,
-            df=self._last_df, draws=self._last_draws)
+            df=self._last_df, draws=[])
         cum = summary["cumulative_return"]
         self.lbl_run_status.setText(
             f"{self.current_name} ({self.current_symbol}) | "
@@ -941,8 +948,13 @@ class SingleStockBacktestView(QWidget):
             f"{result.total_trades} 笔闭环, 累计 {cum * 100:+.2f}%")
 
     def _render_kline(self, result):
-        """（1.22 起实现在 backtest_result.py；保留同名转发供内部调用与验收断言）"""
-        self.result.render_kline(result, df=self._last_df, draws=self._last_draws,
+        """（1.22 起实现在 backtest_result.py；保留同名转发供内部调用与验收断言）
+
+        ★1.65：`draws=[]` —— 与 `_render_result` 同一口径（策略函数的叠层不进结果图，
+        见那里的注释：跨量纲会把 K 线量程带偏）。`_last_draws` 仍作为**本次运行状态**保留
+        （只读回放的现场还原要用它），只是不再喂给结果区。
+        """
+        self.result.render_kline(result, df=self._last_df, draws=[],
                                  name=self.current_name, symbol=self.current_symbol)
 
     # ==========================================

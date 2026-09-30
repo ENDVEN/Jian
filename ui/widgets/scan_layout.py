@@ -23,7 +23,11 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFrame,
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import (CARD_QSS, ClickCatcher, EditDrawer, EditPane,
                                        number_spin)
-from ui.widgets.custom_widgets import (CHIP_QSS_OFF, CHIP_QSS_ON, COMBO_QSS, FLAT_QSS,
+from ui.widgets.summary_chip import build_chip, chip_qss   # ★1.64：chip 的**三页唯一来源**
+from ui.widgets.scan_result import KPI_EMPTY_HTML   # ★1.64：小号 KPI 卡的空白态
+from ui.widgets.styles import (KPI_CARD_QSS, SUMMARY_GHOST_QSS,  # ★1.64：三页同一张脸
+                               SUMMARY_RUN_QSS)
+from ui.widgets.custom_widgets import (COMBO_QSS, FLAT_QSS,
                                         SYNC_ACTION_LABEL, NoWheelComboBox,
                                         NoWheelDateEdit, TAB_QSS_OFF, TAB_QSS_ON,
                                         date_edit_qss, hint_icon, mini_label)
@@ -52,14 +56,14 @@ DAY_HINT = '◀ ▷ 在扫描结果的交易日轴上移动；切日期**零成�
 ASOF_MIN_YEAR = 2010
 
 
-def _chip(text: str, tooltip: str = '') -> QPushButton:
-    """摘要条胶囊（样式唯一来源 = custom_widgets 的 CHIP_QSS_*，§10-9 控件契约）"""
-    btn = QPushButton(text)
-    btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    btn.setStyleSheet(CHIP_QSS_ON)
-    if tooltip:
-        btn.setToolTip(tooltip)
-    return btn
+def _chip(text: str, tooltip: str = '', state: str = 'on') -> QPushButton:
+    """摘要条胶囊 —— ★1.64 起**与 M1 同源**（`summary_chip.build_chip`，四态药丸）。
+
+    ⚠ 旧版引的是 `custom_widgets.CHIP_QSS_ON`（**恒绿**）⇒ M2/M3 的 chip 与 M1 长得不是
+      一回事（用户报的"三套设计语言"的病根之一）；恒绿本身还是**假状态**：所有 chip
+      都像在报警。样式唯一来源 = `ui/widgets/summary_chip.py`。
+    """
+    return build_chip(text, tooltip, state)
 
 
 # ==========================================
@@ -190,6 +194,49 @@ class ScanFilterPane(EditPane):
 # ==========================================
 # 装配器
 # ==========================================
+# ③ 🌐 统计范围（★1.64：从 L1 操作轴**搬进配置抽屉**）
+# ==========================================
+class ScanScopePane(EditPane):
+    """🌐 统计范围卡（自选 / 指数成分 / 全 A + 只数）。
+
+    【为什么搬家】用户实测口径："这组（统计范围 / 指数 / N 只）**建议直接坐进配置里面**，
+    这样会稍微美观些；右边的日期按你设计的样式摆。" ⇒ 顶栏只留"选哪天 + 口径 + 配置入口"，
+    范围这种**低频大件**进抽屉（与 M1 的"低频配置收进抽屉"是同一个道理，§10-14）。
+
+    ⚠ 控件仍**同时挂在页面上**（`p.cb_scope` / `p.cb_index` / `p.lbl_scope` 属性名不变）——
+      联动逻辑（`scan_flow.on_scope_changed`）与既有断言因此一行都不用改。
+    """
+
+    def __init__(self, page, parent=None):
+        super().__init__('scope', '🌐 统计范围（自选 / 指数成分 / 全 A）', '#1976D2',
+                         '🌐 范围', parent)
+        p = page
+        p.cb_scope = NoWheelComboBox()
+        p.cb_scope.addItems(['我的自选', '指数成分…', '全 A 花名册'])
+        p.cb_scope.setStyleSheet(COMBO_QSS)
+        p.cb_scope.setToolTip('自选 / 指数成分 / 全 A。⚠ 先小范围跑通，再放开全 A（主案 G-STEP 4）')
+        self.body_lay.addWidget(p.cb_scope)
+
+        p.cb_index = NoWheelComboBox()
+        for code, name in INDEX_PRESETS.items():
+            p.cb_index.addItem(f'{name} {code}', code)
+        p.cb_index.setStyleSheet(COMBO_QSS)
+        p.cb_index.hide()
+        p.cb_index.setToolTip('选一个指数，抓它的成分股（走 MarketSyncService，§9-H）')
+        self.body_lay.addWidget(p.cb_index)
+
+        p.lbl_scope = QLabel('')
+        p.lbl_scope.setStyleSheet('font-size: 11.5px; color: #8A94A6;')
+        self.body_lay.addWidget(p.lbl_scope)
+
+        hint = QLabel('范围决定"分母"：命中 / 未命中 / 数据不足都以它为准；'
+                      '改范围会重新体检本地数据是否就绪（未下载会先提示，不静默空跑）。')
+        hint.setWordWrap(True)
+        hint.setStyleSheet('font-size: 11px; color:#8A94A6;')
+        self.body_lay.addWidget(hint)
+
+
+# ==========================================
 class ScanLayout:
     """M2 页的版式装配（只造控件 / 排布局；行为在 `scan_flow`，渲染在 `scan_result`）。"""
 
@@ -198,29 +245,10 @@ class ScanLayout:
 
     # ---------- L1 操作轴 ----------
     def build_top_bar(self) -> QHBoxLayout:
+        """★1.64：只留"选哪天 + 口径 + 配置入口"（范围那组已搬进 🌐 统计范围卡）。"""
         p = self.page
         lay = QHBoxLayout()
         lay.setSpacing(8)
-
-        lay.addWidget(mini_label('统计范围'))
-        p.cb_scope = NoWheelComboBox()
-        p.cb_scope.addItems(['我的自选', '指数成分…', '全 A 花名册'])
-        p.cb_scope.setStyleSheet(COMBO_QSS)
-        p.cb_scope.setToolTip('自选 / 指数成分 / 全 A。⚠ 先小范围跑通，再放开全 A（主案 G-STEP 4）')
-        lay.addWidget(p.cb_scope)
-
-        p.cb_index = NoWheelComboBox()
-        for code, name in INDEX_PRESETS.items():
-            p.cb_index.addItem(f'{name} {code}', code)
-        p.cb_index.setStyleSheet(COMBO_QSS)
-        p.cb_index.hide()
-        p.cb_index.setToolTip('选一个指数，抓它的成分股（走 MarketSyncService，§9-H）')
-        lay.addWidget(p.cb_index)
-
-        p.lbl_scope = QLabel('')
-        p.lbl_scope.setStyleSheet('font-size: 11.5px; color: #8A94A6;')
-        lay.addWidget(p.lbl_scope)
-        lay.addStretch()
 
         lay.addWidget(mini_label('基准日'))
         # —— 先选后扫（用户 2026-09-21 拍板）：日期必须**扫描前就能自由选**
@@ -269,9 +297,13 @@ class ScanLayout:
                                 '不复权分区尚未备齐 —— 备齐前不在界面上假装支持（主案 D8）。')
         lay.addWidget(p.lbl_adjust)
 
+        # ★1.64：口径与日期在左、配置入口在右（用户："右边的日期…按你设计的样式摆放" ⇒ 本条
+        #   操作轴的排布照 `design/1.64-m2m3-restyle/a-m2-全市场筛选.html` 的 L1）。
+        lay.addStretch()
         p.btn_config = QPushButton('⚙ 配置')
         p.btn_config.setStyleSheet(FLAT_QSS)
         p.btn_config.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_config.setToolTip('打开配置抽屉（筛选条件 / 粗筛 / 统计范围 —— 也可以直接点摘要条上的胶囊）')
         lay.addWidget(p.btn_config)
         return lay
 
@@ -281,10 +313,15 @@ class ScanLayout:
         lay = QHBoxLayout()
         lay.setSpacing(6)
 
-        p.chip_formula = _chip('ƒ 条件 —', '当前筛选条件（点开抽屉编辑）')
-        p.chip_filter = _chip('🎚 粗筛 —', '粗筛阈值（点开抽屉编辑）')
+        p.chip_formula = _chip('ƒ 条件 —', '当前筛选条件')
+        p.chip_filter = _chip('🎚 粗筛 —', '粗筛阈值')
         p.chip_scope = _chip('🌐 范围 —', '统计范围（标的域与只数）')
-        for chip in (p.chip_formula, p.chip_filter, p.chip_scope):
+        # ★1.64：胶囊**可点开对应配置** —— 与 M1 摘要条同一个手感：点开、再点收起、开着的那张高亮。
+        #   用户实测："M1 里面的 chip 都是可以点击然后对应到配置里相应功能的，M2/M3 没看到这部分"。
+        for chip, key in ((p.chip_formula, 'fn'), (p.chip_filter, 'filter'),
+                          (p.chip_scope, 'scope')):
+            chip.setToolTip(chip.toolTip() + ' —— 点击打开这张配置卡（再点收起）')
+            chip.clicked.connect(lambda _=False, k=key: p.open_pane(k))
             lay.addWidget(chip)
 
         # ★1.61 / §7-B16：旧「📚 载入 / 💾 存为 / 管理」已退役 —— 统一收进「ƒ 库」浮窗的
@@ -303,7 +340,7 @@ class ScanLayout:
         #   （★1.61 实测：`_formula_pane.btn_hub.isVisible()` 为 False）。抽屉里那个保留：
         #   抽屉是遮罩，打开时会盖住摘要条，写条件时就近取库还得靠它。
         p.btn_hub = QPushButton('ƒ 库')
-        p.btn_hub.setStyleSheet(FLAT_QSS)
+        p.btn_hub.setStyleSheet(SUMMARY_GHOST_QSS)      # ★1.64：与 M1 的次级动作同一张脸
         p.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
         p.btn_hub.setToolTip('打开「ƒ 函数总库」浮窗：选一个函数载入到本页，'
                              '或把本页正在写的条件存进总库（管理与编辑在左轨「ƒ 函数库」页）')
@@ -335,7 +372,9 @@ class ScanLayout:
         #   页面上没有任何入口）。入口不该依赖结果区的显示状态。
         #   文字与空态按钮、以及各处**指称它的文案**同源（`SYNC_ACTION_LABEL`）。
         p.btn_sync = QPushButton(SYNC_ACTION_LABEL)
-        p.btn_sync.setStyleSheet(FLAT_QSS)
+        # ★1.64：做成 **chip 样式**（用户实测："单独一段字看着比较难受"）——
+        #   它本来就是个"一键动作"，与摘要条上的胶囊同族才对；flat 蓝字在摘要条里像一段说明文字。
+        p.btn_sync.setStyleSheet(chip_qss('on'))
         p.btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
         p.btn_sync.setToolTip(
             '把当前范围的数据补齐/更新到**最近一个已收盘定稿的交易日**\n'
@@ -349,11 +388,10 @@ class ScanLayout:
 
         p.btn_run = QPushButton('▶ 开始扫描')
         p.btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
-        p.btn_run.setStyleSheet(
-            "QPushButton { background:#1976D2; color:white; font-weight:bold;"
-            " padding:6px 16px; border-radius:8px; border:none; }"
-            "QPushButton:hover { background:#1565C0; }"
-            "QPushButton:disabled { background:#B0C4DE; }")
+        # ★1.64：主操作用**与 M1 同一枚**（蓝底实心）—— 旧版是自定义的一份，
+        #   三页并排时看不出"哪个是主按钮"（正是"三套设计语言"之一）。
+        p.btn_run.setStyleSheet(SUMMARY_RUN_QSS)
+        p.btn_run.setToolTip('按当前条件与范围取截面（跑完把命中清单铺到下方）')
         lay.addWidget(p.btn_run)
         return lay
 
@@ -378,19 +416,25 @@ class ScanLayout:
         head.addWidget(p.lbl_cached)
         lay.addLayout(head)
 
-        # —— KPI 行（三态 + 有效样本 + 用时）——
+        # ★1.64：卡片头下加 1px 分隔（与样板 / M1 的卡片头同款）—— 让"标题行"与内容分开一档，
+        #   不再是一片糊在一起的白。
+        _sep = QFrame()
+        _sep.setFixedHeight(1)
+        _sep.setStyleSheet('background:#F2F5F9;')
+        lay.addWidget(_sep)
+
+        # —— KPI 行：**小号 KPI 卡**（★1.64 · 用户口径：这一页主角是命中清单 ⇒ KPI 当配角，
+        #    白底小卡 + 标签与值同行、值 17px；不再是一排彩色药丸 —— 既轻，也不抢清单的眼）——
         kpis = QHBoxLayout()
         kpis.setSpacing(8)
         p.kpi = {}
         for key in KPI_KEYS:
-            pill = QLabel('—')
-            pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            pill.setStyleSheet(
-                'font-size: 12px; font-weight: bold; color:#8A94A6;'
-                'background:#F5F6F8; border-radius:8px; padding:5px 10px;')
+            pill = QLabel(KPI_EMPTY_HTML)
+            pill.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            pill.setStyleSheet(KPI_CARD_QSS)
             pill.setToolTip('还没有结果')
             p.kpi[key] = pill
-            kpis.addWidget(pill)
+            kpis.addWidget(pill, 1)          # 等宽：6 枚并排铺满，不挤成一堆
         lay.addLayout(kpis)
 
         # —— 结果表（只读 + 单选；双击 → 行情工作台，E 节"不另做看图器"）——
@@ -455,7 +499,9 @@ class ScanLayout:
     # ---------- L3 配置抽屉（覆盖层；必须**最后**创建 —— 堆叠顺序 = 创建顺序）----------
     def build_overlays(self) -> None:
         p = self.page
-        p._panes = [ScanFormulaPane(), ScanFilterPane()]
+        # ★1.64：多一张「🌐 统计范围」卡（从 L1 搬进来）—— 顺序 = 抽屉里的先后，
+        #   前两张的**下标不动**（`_formula_pane` / `_filter_pane` 的既有引用全都不用改）。
+        p._panes = [ScanFormulaPane(), ScanFilterPane(), ScanScopePane(p)]
         p._formula_pane = p._panes[0]
         p._filter_pane = p._panes[1]
         p._scrim = ClickCatcher(p)

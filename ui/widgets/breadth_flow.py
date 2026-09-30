@@ -37,6 +37,7 @@ from ui.download_jobs import SingleSyncGate   # ★1.59：真源直连（不再�
 from ui.widgets.breadth_chart import DEFAULT_CHART_TYPE, DEFAULT_INDEX_STYLE
 from ui.widgets.breadth_layout import DEFAULT_INDEX_CODE, DEFAULT_RANGE, RANGE_PRESETS
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
+from ui.widgets.summary_chip import set_chip_state   # ★1.64：胶囊高亮（三页同一份 chip）
 from ui.widgets.readiness_flow import (constituent_failure_text,
                                        constituent_snapshot_text, mark_archived,
                                        scope_snapshot)
@@ -225,6 +226,16 @@ class BreadthFlow:
             if style_text and str(pane.cb_index_style.currentData()) != 'line':
                 parts[-1] = parts[-1] + style_text   # 如「中证500K线」（默认折线不占字）
         p.chip_display.setText('📈 展示 ' + '·'.join(parts))
+
+    def sync_chip_states(self) -> None:
+        """★1.64：摘要条胶囊的**高亮**跟着抽屉走（开着的那张 = `sel`，其余 = `on`）。
+
+        ⚠ 与 M1/M2 同一口径：点胶囊打开配置后，胶囊自己必须"亮着"，否则看不出"现在开的是哪张"。
+        """
+        p = self.page
+        for chip, key in ((p.chip_formula, 'fn'), (p.chip_filter, 'filter'),
+                          (p.chip_scope, 'scope'), (p.chip_display, 'display')):
+            set_chip_state(chip, 'sel' if p._open_key == key else 'on')
 
     # ==========================================
     # 扫描（后台线程 + 竞态守卫 + 进度回执）

@@ -270,6 +270,30 @@ OUTLINE_QSS = ("QPushButton { border: 1px solid #E4E9F0; background: #fff; borde
                "QPushButton:disabled { color: #B8C2D0; background: #F5F6F8;"
                " border-color: #EDF0F5; }")
 
+# ==========================================
+# 摘要条动作族（★1.64 · M2/M3 视觉重塑 STEP 2）
+#   【为什么要收成一份】M1 的摘要条是「主操作 = 蓝底实心 + 次级 = 描边 ghost」，而 M2/M3 的主操作
+#   写成 flat（**只有蓝字、没有底**）⇒ 三页并排看不出"哪个是主按钮"（用户报的"三套设计语言"之一）。
+#   这里逐字搬 M1 已定稿的那两枚（**像素不变**），M1/M2/M3 一律引用。
+# ==========================================
+SUMMARY_RUN_QSS = ("QPushButton { background: #1976D2; color: white; font-weight: bold;"
+                   " padding: 7px 20px; border: none; border-radius: 9px; font-size: 13.5px; }"
+                   "QPushButton:hover { background: #1565C0; }"
+                   "QPushButton:disabled { background: #B8C6D8; }")
+SUMMARY_GHOST_QSS = ("QPushButton { color: #1976D2; background: transparent;"
+                     " border: 1px solid #BBDEFB; border-radius: 9px; padding: 6px 13px;"
+                     " font-weight: bold; font-size: 12.5px; }"
+                     "QPushButton:hover { background: #E3F2FD; }")
+
+# ==========================================
+# 小号 KPI 卡（★1.64 · M2 结果区）
+#   【为什么是"小号"】M2 这一页**主角是命中清单**（用户 2026-09-30 拍板）⇒ KPI 只当配角：
+#   白底小卡 + 标签与值同行（值 17px，不是 M1 那排的 24px），把高度让给清单。
+#   ⚠ 值的主色由各状态自己定（`scan_result._KPI_STYLE` 的 fg），这里只管**盒子**。
+# ==========================================
+KPI_CARD_QSS = ("QLabel { background: #FFFFFF; border: 1px solid #E7EAF0;"
+                " border-radius: 10px; padding: 7px 11px; color: #20242C; }")
+
 # 页签（pill）样式：编辑抽屉顶部页签等（v6.21 从 `backtest_panes` 上收）
 TAB_QSS_OFF = ("QPushButton { background:#F7F9FC; border:1px solid #E7EAF0; border-radius:8px;"
                " padding:5px 12px; font-size:12.5px; font-weight:bold; color:#5B6472; }"

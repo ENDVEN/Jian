@@ -23,10 +23,13 @@ from ui.widgets.backtest_panes import CARD_QSS, ClickCatcher, EditDrawer, EditPa
 from ui.widgets.breadth_chart import (CHART_TYPES, DEFAULT_CHART_TYPE,
                                       DEFAULT_INDEX_STYLE, INDEX_STYLES,
                                       BreadthChart)
-from ui.widgets.custom_widgets import (CHIP_QSS_ON, COMBO_QSS, FLAT_QSS,
+from ui.widgets.summary_chip import build_chip, chip_qss   # ★1.64：chip 的**三页唯一来源**
+from ui.widgets.styles import SUMMARY_GHOST_QSS, SUMMARY_RUN_QSS   # ★1.64：三页同一张脸
+from ui.widgets.custom_widgets import (COMBO_QSS, FLAT_QSS,
                                         SYNC_ACTION_LABEL, NoWheelComboBox,
                                         hint_icon, mini_label)
-from ui.widgets.scan_layout import ScanFilterPane, ScanFormulaPane
+from ui.widgets.scan_layout import (ScanFilterPane, ScanFormulaPane,  # noqa: F401
+                                    ScanScopePane)
 
 __all__ = ['BreadthLayout', 'BreadthDisplayPane', 'RANGE_PRESETS', 'DEFAULT_INDEX_CODE']
 
@@ -41,13 +44,12 @@ DRAWER_MIN_WIDTH = 420
 DRAWER_MAX_WIDTH = 560
 
 
-def _chip(text: str, tooltip: str = '') -> QPushButton:
-    btn = QPushButton(text)
-    btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    btn.setStyleSheet(CHIP_QSS_ON)
-    if tooltip:
-        btn.setToolTip(tooltip)
-    return btn
+def _chip(text: str, tooltip: str = '', state: str = 'on') -> QPushButton:
+    """摘要条胶囊 —— ★1.64 起**与 M1/M2 同源**（`summary_chip.build_chip`，四态药丸）。
+
+    旧版各写一份、且引恒绿的 `CHIP_QSS_ON` ⇒ 同一个零件三张脸（用户报的"三套设计语言"）。
+    """
+    return build_chip(text, tooltip, state)
 
 
 def _flat_btn(text: str, tooltip: str = '') -> QPushButton:
@@ -145,26 +147,8 @@ class BreadthLayout:
         lay = QHBoxLayout()
         lay.setSpacing(8)
 
-        lay.addWidget(mini_label('统计范围'))
-        p.cb_scope = NoWheelComboBox()
-        p.cb_scope.addItems(['我的自选', '指数成分…', '全 A 花名册'])
-        p.cb_scope.setStyleSheet(COMBO_QSS)
-        p.cb_scope.setToolTip('广度统计的是这个范围内的标的（与 M2 全市场筛选同一套范围语义）')
-        lay.addWidget(p.cb_scope)
-
-        p.cb_index = NoWheelComboBox()
-        for code, name in INDEX_PRESETS.items():
-            p.cb_index.addItem(f'{name} {code}', code)
-        p.cb_index.setStyleSheet(COMBO_QSS)
-        p.cb_index.hide()
-        p.cb_index.setToolTip('选一个指数，统计它的成分股（走 MarketSyncService，§9-H）')
-        lay.addWidget(p.cb_index)
-
-        p.lbl_scope = QLabel('')
-        p.lbl_scope.setStyleSheet('font-size: 11.5px; color: #8A94A6;')
-        lay.addWidget(p.lbl_scope)
-        lay.addStretch()
-
+        # ★1.64：范围那组（统计范围 / 指数 / N 只）已搬进 🌐 统计范围卡（与 M2 **同一张卡**，
+        #   一份实现两页共用）—— 本行只留"看多长 + 口径 + 配置入口"。
         lay.addWidget(mini_label('区间'))
         p.cb_range = NoWheelComboBox()
         for _key, label in RANGE_PRESETS:
@@ -182,7 +166,10 @@ class BreadthLayout:
                                 '不复权分区尚未备齐 —— 备齐前不在界面上假装支持。')
         lay.addWidget(p.lbl_adjust)
 
-        p.btn_config = _flat_btn('⚙ 配置')
+        lay.addStretch()
+        p.btn_config = _flat_btn('⚙ 配置',
+                                 '打开配置抽屉（筛选条件 / 粗筛 / 展示 / 统计范围 —— '
+                                 '也可以直接点摘要条上的胶囊）')
         lay.addWidget(p.btn_config)
         return lay
 
@@ -192,11 +179,15 @@ class BreadthLayout:
         lay = QHBoxLayout()
         lay.setSpacing(6)
 
-        p.chip_formula = _chip('ƒ 条件 —', '筛选条件（点开抽屉编辑；与 M2/M1 同一套引擎）')
-        p.chip_filter = _chip('🎚 粗筛 —', '粗筛阈值（点开抽屉编辑）')
+        p.chip_formula = _chip('ƒ 条件 —', '筛选条件（与 M2/M1 同一套引擎）')
+        p.chip_filter = _chip('🎚 粗筛 —', '粗筛阈值')
         p.chip_scope = _chip('🌐 范围 —', '统计范围（标的域与只数）')
-        p.chip_display = _chip('📈 展示 —', '平滑 / 占比 / 指数副图（点开抽屉编辑）')
-        for chip in (p.chip_formula, p.chip_filter, p.chip_scope, p.chip_display):
+        p.chip_display = _chip('📈 展示 —', '平滑 / 占比 / 指数副图')
+        # ★1.64：胶囊**可点开对应配置**（与 M1/M2 同一手感：点开、再点收起、开着的那张高亮）
+        for chip, key in ((p.chip_formula, 'fn'), (p.chip_filter, 'filter'),
+                          (p.chip_scope, 'scope'), (p.chip_display, 'display')):
+            chip.setToolTip(chip.toolTip() + ' —— 点击打开这张配置卡（再点收起）')
+            chip.clicked.connect(lambda _=False, k=key: p.open_pane(k))
             lay.addWidget(chip)
 
         # ★1.61 / §7-B16：旧「📚 载入 / 💾 存为 / 管理」已退役 —— 统一收进「ƒ 库」浮窗
@@ -212,7 +203,7 @@ class BreadthLayout:
         # ★1.61 / §7-B16 H6：**函数总库入口**（常驻可见，与 M2 同款同位置 —— 两页共用一份方案池，
         #   入口与长相也必须同源）。此前它只长在抽屉里的公式卡片上，抽屉默认关着 ⇒ 看不到。
         p.btn_hub = QPushButton('ƒ 库')
-        p.btn_hub.setStyleSheet(FLAT_QSS)
+        p.btn_hub.setStyleSheet(SUMMARY_GHOST_QSS)      # ★1.64：与 M1/M2 的次级动作同一张脸
         p.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
         p.btn_hub.setToolTip('打开「ƒ 函数总库」浮窗：选一个函数载入到本页，'
                              '或把本页正在写的条件存进总库（管理与编辑在左轨「ƒ 函数库」页）')
@@ -239,12 +230,14 @@ class BreadthLayout:
         # ★v1.41 / §11.5-80：**常驻**「更新到最新」入口（与 M2 同款、同文案）。
         #   ⚠ 与下面「⚡ 只补新交易日」**职责不同**：这个**下载数据**，那个**用已有数据续算广度**。
         #   旧版 M3 也没有任何常驻的下载入口（唯一入口同样是空态按钮）⇒ 一并补齐。
-        p.btn_sync = _flat_btn(SYNC_ACTION_LABEL,
+        p.btn_sync = _flat_btn(SYNC_ACTION_LABEL,        # ★1.64：样式随后改成 **chip**（见下）
                                '把当前范围的数据补齐/更新到最近一个已收盘定稿的交易日。\n'
                                '已是最新的标的会**自动跳过、不发请求**。\n'
                                '⚠ 它只**下载数据**；下载完还要点「⚡ 只补新交易日」把广度续算上去。\n'
                                '⚠ 口径固定 = **前复权**日线（`kline_daily`），'
                                '与行情页当前选的口径无关；不复权那份在「🗄 数据管理」单独维护。')
+        # ★1.64：做成 **chip 样式**（用户实测："单独一段字看着比较难受"）—— 与 M2 同款同观感
+        p.btn_sync.setStyleSheet(chip_qss('on'))
         lay.addWidget(p.btn_sync)
 
         p.btn_incr = _flat_btn('⚡ 只补新交易日', '已经有结果、只是新下了几天数据时用：'
@@ -268,11 +261,8 @@ class BreadthLayout:
         p.btn_run.setToolTip('按当前公式/阈值/范围，把**整段历史从头算一遍**（首次运行、'
                              '或改了条件时用）。数据与条件都没变 ⇒ 直接命中缓存秒回。')
         p.btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
-        p.btn_run.setStyleSheet(
-            "QPushButton { background:#1976D2; color:white; font-weight:bold;"
-            " padding:6px 16px; border-radius:8px; border:none; }"
-            "QPushButton:hover { background:#1565C0; }"
-            "QPushButton:disabled { background:#B0C4DE; }")
+        # ★1.64：主操作与 M1/M2 **同一枚**（蓝底实心）—— 旧版三页各写一份、观感不一
+        p.btn_run.setStyleSheet(SUMMARY_RUN_QSS)
         lay.addWidget(p.btn_run)
         return lay
 
@@ -344,7 +334,9 @@ class BreadthLayout:
     # ---------- L3 配置抽屉（覆盖层；必须**最后**创建 —— 堆叠顺序 = 创建顺序）----------
     def build_overlays(self) -> None:
         p = self.page
-        p._panes = [ScanFormulaPane(), ScanFilterPane(), BreadthDisplayPane()]
+        # ★1.64：多一张「🌐 统计范围」卡（从 L1 搬进来；**与 M2 同一张卡类**）——
+        #   前三张的下标不动（`_formula_pane` / `_filter_pane` / `_display_pane` 引用照旧）。
+        p._panes = [ScanFormulaPane(), ScanFilterPane(), BreadthDisplayPane(), ScanScopePane(p)]
         p._formula_pane = p._panes[0]
         p._filter_pane = p._panes[1]
         p._display_pane = p._panes[2]

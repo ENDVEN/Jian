@@ -131,6 +131,9 @@ class ScanView(QWidget):
         if key is not None:
             self._scrim.raise_()
             self._drawer.raise_()
+        _flow = getattr(self, '_flow', None)
+        if _flow is not None:
+            _flow.sync_chip_states()     # ★1.64：胶囊高亮跟着抽屉走（与 M1 同一手感）
 
     def close_pane(self):
         self.open_pane(None)

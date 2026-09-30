@@ -314,7 +314,22 @@ class _Result:
 
 
 result = _Result([_Trade(dates[50], dates[150])])
-view._render_kline(result)
+
+
+def _feed_kline(draws_list):
+    """把叠层**直接喂给结果区**（§7-B3/B4 的验收路径）。
+
+    ⚠ ★1.65 起 **M1 页面不再把策略函数的 IR 喂进结果图**（用户实测："K线买卖点里会把写好的
+      函数画进去，导致比例失调无法查看" —— 策略函数是**买卖条件**，量纲与价格不同，叠层一旦
+      被 `overlay_extent` 并进 K 线量程，价格就被压成贴着底边的一条线）。所以这一段改为
+      **直喂结果区**：既保留对"叠层渲染 / 逐 bar 对齐 / 量程 / 开关"的全部验收，
+      又由下面那条断言钉死"**页面**这条路不再喂"。
+    """
+    view.result.render_kline(result, df=df, draws=draws_list,
+                             name=view.current_name, symbol=view.current_symbol)
+
+
+_feed_kline(draws)
 
 # ---- 断言 ----
 print("== 叠层已渲染 ==")
@@ -369,8 +384,7 @@ check("再打开后 y 范围重新含叠层", view._kline_state['overlay_lo'] is
 print("== 无绘图语句的旧函数不受影响 ==")
 plain = parse_program("MA5: MA(C,5), COLORRED;")
 _, plain_draws = execute_programs_with_draws([plain], df, {})
-view._last_draws = plain_draws
-view._render_kline(result)
+_feed_kline(plain_draws)
 check("只有一条公式线", len(view._overlay_items) == 1)
 check("线色 = 红（未被对比度守卫改动）",
       view._overlay_items[0].opts['pen'].color().name().upper() == '#FF0000')
@@ -387,15 +401,26 @@ def png_bytes(widget):
 
 
 view.kline_chart.resize(900, 480)
-view._last_draws = draws
 view.chk_overlay.setChecked(True)
-view._render_kline(result)
+_feed_kline(draws)
 img_with = png_bytes(view.kline_chart)
 view.chk_overlay.setChecked(False)
-view._render_kline(result)
+_feed_kline(draws)
 img_without = png_bytes(view.kline_chart)
 check("grab PNG 非空", len(img_with) > 3000 and len(img_without) > 3000)
 check("开关叠层确实改变了像素（证明真画上去了）", img_with != img_without)
+
+print("== ★1.65：M1 页面**不再**把策略函数叠层喂进结果图（用户实测的比例失调根因）==")
+view._last_draws = draws                 # 页面手上**确实有**叠层 IR（真跑时也一定有）
+view._render_kline(result)               # 走**页面**那条路 = 用户实际路径
+check("★1.65 页面路径下结果图**没有叠层**（函数不显示）+ 量程不再被跨量纲的东西带偏",
+      view.result._overlay_items == [] and view.result._kline_win_draws == []
+      and view.result._kline_state['overlay_lo'] is None
+      and view.chk_overlay.isHidden())
+_ky0, _ky1 = view.kline_chart.getViewBox().viewRange()[1]
+check(f"★1.65 页面路径下 y 量程只由 K 线决定（实测 {_ky0:.2f}~{_ky1:.2f}，"
+      f"K线 {float(df['low'].min()):.2f}~{float(df['high'].max()):.2f}）",
+      _ky0 >= float(df['low'].min()) * 0.9 and _ky1 <= float(df['high'].max()) * 1.2)
 
 print("== 检测期：绘图语句尾部颜色 + 未渲染语句的非阻断提示（§9-Q 回归防护）==")
 # 这一条是真实回归的固化：`STICKLINE(...), COLORFF0000;` 曾让存量函数直接跑不起来
@@ -2582,10 +2607,33 @@ try:
           and _scan.table.horizontalHeaderItem(8).text() == '成交额(万)'
           and _scan.table.horizontalHeaderItem(11).text() == '市盈率'
           and _scan.table.horizontalHeaderItem(14).text() == '流通市值(亿)')
-    check("抽屉两张卡：ƒ 筛选条件 + 🎚 粗筛（含「↺ 恢复默认」）；出厂示例已填好（不是空框）",
-          [pane.key for pane in _scan._panes] == ['fn', 'filter']
+    check("抽屉三张卡：ƒ 筛选条件 + 🎚 粗筛 + 🌐 统计范围（含「↺ 恢复默认」）；出厂示例已填好",
+          [pane.key for pane in _scan._panes] == ['fn', 'filter', 'scope']
           and hasattr(_scan._filter_pane, 'btn_reset')
           and bool(_scan._formula_pane.txt_formula.toPlainText().strip()))
+    # ★1.64：① 胶囊**可点开对应配置**（用户："M1 的 chip 能点击对应到配置，M2/M3 没看到"）；
+    #   ② 范围组（统计范围 / 指数 / N 只）从 L1 **坐进配置抽屉**（用户建议：这样美观些）。
+    _scan.open_pane('scope')
+    check("★1.64：点「🌐 范围」胶囊 ⇒ 开的正是**统计范围卡**（范围组真搬进抽屉、控件同一批）",
+          _scan._open_key == 'scope' and _scan._panes[2].key == 'scope'
+          and _scan._drawer.isAncestorOf(_scan.cb_scope)
+          and _scan._drawer.isAncestorOf(_scan.cb_index)
+          and _scan._drawer.isAncestorOf(_scan.lbl_scope))
+    #   ⚠ 判据用 **sel 专属底色 `#E8F2FE`**，不能用边框色 `#A9C7EA` ——
+    #     后者在 hover 规则里也有（每个 chip 的 QSS 都含它），拿它当"高亮"标记必然假绿。
+    check("★1.64：开着的那张卡对应的胶囊**高亮**（sel），其余回中性（与 M1 同一手感）",
+          'E8F2FE' in _scan.chip_scope.styleSheet()
+          and 'E8F2FE' not in _scan.chip_formula.styleSheet())
+    _scan.open_pane('fn')
+    check("★1.64：点「ƒ 条件」胶囊 ⇒ 切到筛选条件卡（`_last_pane` 跟着走）",
+          _scan._open_key == 'fn' and _scan._last_pane == 'fn'
+          and 'E8F2FE' in _scan.chip_formula.styleSheet())
+    _scan.open_pane('fn')
+    check("★1.64：再点同一个胶囊 = 收起（与 M1 / backtest 页同款交互）",
+          _scan._open_key is None and 'E8F2FE' not in _scan.chip_formula.styleSheet())
+    from ui.widgets.summary_chip import chip_qss as _chipq65  # noqa: E402
+    check("★1.64：「更新到最新」也是 **chip 样式**（不再是一段蓝字 —— 用户实测「看着难受」）",
+          _scan.btn_sync.styleSheet() == _chipq65('on'))
     check("复权口径**印在界面上**且只有这一种（D8：raw 未备齐前不假装支持）",
           _scan.lbl_adjust.text() == '前复权')
 
@@ -2957,10 +3005,27 @@ try:
     # ---- ② 版式与口径不变量 ----
     check("★ 常驻行 ≤3（§10-14：L1 操作轴 + L2 摘要条 + L0 结果区；抽屉是**覆盖层**不占布局）",
           _brd.layout().count() == 3)
-    check("抽屉三张卡：ƒ 筛选条件 + 🎚 粗筛 + 📈 展示（ƒ/🎚 **直接复用 M2 的同款 EditPane**）",
-          [pane.key for pane in _brd._panes] == ['fn', 'filter', 'display']
+    check("抽屉四张卡：ƒ 筛选条件 + 🎚 粗筛 + 📈 展示 + 🌐 统计范围"
+          "（ƒ/🎚/🌐 **直接复用 M2 的同款 EditPane**）",
+          [pane.key for pane in _brd._panes] == ['fn', 'filter', 'display', 'scope']
           and hasattr(_brd._filter_pane, 'btn_reset')
           and bool(_brd._formula_pane.txt_formula.toPlainText().strip()))
+    # ★1.64：胶囊可点开对应配置（含新搬进抽屉的 🌐 范围）+「更新到最新」为 chip 样式
+    _brd.open_pane('scope')
+    check("★1.64：点「🌐 范围」胶囊 ⇒ 开的正是**统计范围卡**（与 M2 同一张卡类、控件同一批）",
+          _brd._open_key == 'scope' and _brd._panes[3].key == 'scope'
+          and _brd._drawer.isAncestorOf(_brd.cb_scope)
+          and _brd._drawer.isAncestorOf(_brd.lbl_scope)
+          and 'E8F2FE' in _brd.chip_scope.styleSheet())
+    _brd.open_pane('display')
+    check("★1.64：点「📈 展示」胶囊 ⇒ 切到展示卡且胶囊高亮（其余回中性）",
+          _brd._open_key == 'display' and _brd._last_pane == 'display'
+          and 'E8F2FE' in _brd.chip_display.styleSheet()
+          and 'E8F2FE' not in _brd.chip_scope.styleSheet())
+    _brd.open_pane('display')
+    check("★1.64：再点同一个胶囊 = 收起（与 M1/M2 同款交互）", _brd._open_key is None)
+    check("★1.64：「更新到最新」也是 **chip 样式**（与 M2 同款同观感）",
+          _brd.btn_sync.styleSheet() == _chipq65('on'))
     check("复权口径**印在界面上**且只有这一种（D8：raw 未备齐前不假装支持）",
           _brd.lbl_adjust.text() == '前复权')
     check("区间快捷档 6 档（近3月/近6月/近1年/近3年/近5年/全部历史，顺序即下拉顺序）",
@@ -5616,6 +5681,54 @@ try:
     _panel82.btn_close.click()
 except Exception as _e82:  # noqa: BLE001
     check(f"§7-B16 函数总库断言整段抛异常: {type(_e82).__name__}: {_e82}", False)
+
+# ==========================================
+# §1.65 · M2/M3 视觉统一（★1.64 重塑：chip 三页同源 / 按钮族同一张脸 / 小号 KPI 卡）
+#   【为什么机器钉】"三套设计语言"的复发方式永远是"**某一页又自己写了一份**" ⇒ 这里既钉
+#   **源码级唯一来源**（不许再出现私有副本），也钉**同一张脸**（同一 QSS 常量逐字相等）。
+# ==========================================
+print("\n== §1.65 · M2/M3 视觉统一（chip / 按钮族 / 小号 KPI）==")
+try:
+    import pathlib as _pl65  # noqa: E402
+
+    from ui.widgets.scan_result import kpi_card_html as _kch65  # noqa: E402
+    from ui.widgets.styles import (KPI_CARD_QSS as _KPI65,  # noqa: E402
+                                   SUMMARY_GHOST_QSS as _GHOST65,
+                                   SUMMARY_RUN_QSS as _RUN65)
+    from ui.widgets.summary_chip import CHIP_STATES as _CS65  # noqa: E402
+    from ui.widgets.summary_chip import build_chip as _bc65  # noqa: E402
+
+    _bt65 = win.page_backtest.backtest_single
+    _scan65 = win.page_backtest.page_scan
+    _brd65 = win.page_backtest.page_breadth
+    check("★1.65 三页主操作**同一张脸**（蓝底实心 —— 旧版 M2/M3 写成 flat，看不出主次）",
+          _bt65.btn_run.styleSheet() == _scan65.btn_run.styleSheet()
+          == _brd65.btn_run.styleSheet() == _RUN65)
+    check("★1.65 三页「ƒ 库」次级动作**同一张脸**（描边 ghost）",
+          _bt65.btn_hub.styleSheet() == _scan65.btn_hub.styleSheet()
+          == _brd65.btn_hub.styleSheet() == _GHOST65)
+    check("★1.65 chip **唯一来源**：QSS 由 `summary_chip.chip_qss` 生成（四态齐全且互不相同）",
+          set(_CS65) == {'on', 'ok', 'off', 'sel'}
+          and _bc65('x').styleSheet() == _bc65('y').styleSheet()
+          and len({_bc65('x', state=s).styleSheet() for s in _CS65}) == 4)
+    _src65 = {name: _pl65.Path('ui/widgets/' + name).read_text(encoding='utf-8')
+              for name in ('scan_layout.py', 'breadth_layout.py',
+                           'backtest_summary_bar.py', 'scan_result.py')}
+    check("★1.65（源码级）chip / 按钮族 / KPI 卡**不许再长私有副本**"
+          "（旧写法 = 自己 `setStyleSheet(CHIP_QSS_ON)` / 自留 `_KPI_STYLE`）",
+          all(('CHIP_QSS_ON,' not in src and 'CHIP_QSS_ON)' not in src)
+              for src in _src65.values())
+          and 'KPI_CARD_QSS' in _src65['scan_layout.py']
+          and '_KPI_STYLE' not in _src65['scan_result.py'])
+    check("★1.65 M2 KPI = **小号卡**（白底卡 QSS + 富文本：灰标签 + 17px 彩值 + 灰副值）",
+          _scan65.kpi['hit'].styleSheet() == _KPI65
+          and 'font-size:11.5px' in _kch65('hit', '128', '/ 5412 只')
+          and 'font-size:17px' in _kch65('hit', '128', '/ 5412 只')
+          and '#2E7D32' in _kch65('hit', '128'))
+    check("★1.65 M3 **没有 KPI 行**（用户口径：只重塑工具栏，下面图表原样不动）",
+          not hasattr(_brd65, 'kpi') and getattr(_brd65, 'chart', None) is not None)
+except Exception as _e65:  # noqa: BLE001
+    check(f"§1.65 视觉统一断言整段抛异常: {type(_e65).__name__}: {_e65}", False)
 
 # 发布物一致性（v6.66）：`version.json` 是**老用户的更新清单**（`core/updater.py` 每次启动比对）
 #   ⇒ 它必须是**合法 JSON**，且版本号与 `settings.APP_VERSION` 同步（§9-A 三处同步的机器版）。

@@ -400,6 +400,11 @@ class BacktestResultArea(QWidget):
 
         # ---- 公式叠层：K线之后、买卖点之前（§7-B3 P3 堆叠顺序）----
         self._paint_overlays(src_rows, len(window))
+        # ★1.65：没有叠层可画就**藏起开关** —— 否则留一个"点了没反应"的假控件（用户最烦的
+        #   那类"存在≠有用"）。M1 已不再喂策略函数的 IR（跨量纲会把 K 线压扁，见
+        #   `ui/views/backtest.py::_render_result` 的注释）⇒ 本页平时看不到这个勾选框；
+        #   叠层能力本身**保留**（有叠层的调用方与 §7-B3/B4 验收直喂结果区时照常生效）。
+        self.chk_overlay.setVisible(bool(self._kline_win_draws))
 
         buy_x, buy_y, sell_x, sell_y = [], [], [], []
         for t in result.trades:

@@ -25,28 +25,17 @@
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 
+# ★1.64：chip 的四态与 QSS 搬到 `summary_chip`（**三页唯一来源**）—— 本文件不再自留一份，
+#   否则 M1 与 M2/M3 又会各长一张脸（这正是用户报的"三套设计语言"的病根）。
+from ui.widgets.summary_chip import CHIP_STATES, build_chip, set_chip_state
+
+# ★1.64：主操作 / 次级两枚按钮也搬到 `styles.py`（**三页唯一来源**）—— 本文件只引用，
+#   不再自留定义（M2/M3 要用同一张脸，就得有同一个出处）。
+from ui.widgets.styles import SUMMARY_GHOST_QSS as _GHOST_QSS
+from ui.widgets.styles import SUMMARY_RUN_QSS as _RUN_QSS
+
 _BAR_QSS = ("QFrame#SummaryBar { background: #FFFFFF; border: 1px solid #E7EAF0; "
             "border-radius: 12px; }")
-
-# chip 四种状态：(底色, 边框, 字色)
-_CHIP_STATES = {
-    "on":  ("#FBFCFE", "#E7EAF0", "#3C4552"),
-    "ok":  ("#F2FAF4", "#D6EEDA", "#256B34"),
-    "off": ("#FAFBFC", "#E7EAF0", "#B4BECB"),
-    "sel": ("#E8F2FE", "#A9C7EA", "#1257A8"),   # 当前展开的那张卡片
-}
-_CHIP_QSS = ("QPushButton {{ text-align: left; padding: 5px 12px; border-radius: 14px;"
-             " background: {bg}; border: 1px solid {bd}; color: {fg};"
-             " font-size: 12.5px; font-weight: 600; }}"
-             "QPushButton:hover {{ border-color: #A9C7EA; background: #F4F9FF; }}")
-
-_RUN_QSS = ("QPushButton { background: #1976D2; color: white; font-weight: bold;"
-            " padding: 7px 20px; border: none; border-radius: 9px; font-size: 13.5px; }"
-            "QPushButton:hover { background: #1565C0; }"
-            "QPushButton:disabled { background: #B8C6D8; }")
-_GHOST_QSS = ("QPushButton { color: #1976D2; background: transparent; border: 1px solid #BBDEFB;"
-              " border-radius: 9px; padding: 6px 13px; font-weight: bold; font-size: 12.5px; }"
-              "QPushButton:hover { background: #E3F2FD; }")
 
 
 class SummaryBar(QFrame):
@@ -88,9 +77,8 @@ class SummaryBar(QFrame):
         self._active: str | None = None
 
         for key, label in self.CHIPS:
-            btn = QPushButton(label)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(f"查看 / 修改「{label.split(' ', 1)[-1]}」配置（点击展开，再点收起）")
+            btn = build_chip(
+                label, f"查看 / 修改「{label.split(' ', 1)[-1]}」配置（点击展开，再点收起）")
             btn.clicked.connect(lambda _=False, k=key: self.sig_chip_clicked.emit(k))
             self._chips[key] = btn
             self._labels[key] = label
@@ -147,7 +135,7 @@ class SummaryBar(QFrame):
         if key not in self._chips:
             return
         self._chips[key].setText(f"{self._labels[key]}　{text}")
-        self._states[key] = state if state in _CHIP_STATES else "on"
+        self._states[key] = state if state in CHIP_STATES else "on"
         self._apply_styles()
 
     def set_active(self, key: str | None):
@@ -165,5 +153,4 @@ class SummaryBar(QFrame):
     def _apply_styles(self):
         for key, btn in self._chips.items():
             state = "sel" if key == self._active else self._states.get(key, "on")
-            bg, bd, fg = _CHIP_STATES[state]
-            btn.setStyleSheet(_CHIP_QSS.format(bg=bg, bd=bd, fg=fg))
+            set_chip_state(btn, state)
