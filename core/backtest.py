@@ -252,7 +252,8 @@ class BacktestResult:
     start_date: str
     end_date: str
     trades: list[BacktestTrade] = field(default_factory=list)
-    equity: pd.DataFrame = field(default_factory=pd.DataFrame)  # date / equity / in_market
+    # ★1.64 起第 4 列 = `close`（当日收盘价，供净值图淡画"买入持有"基准；旧存档可能没有）
+    equity: pd.DataFrame = field(default_factory=pd.DataFrame)  # date / equity / in_market / close
     params: dict = field(default_factory=dict)
     commission_rate: float = DEFAULT_COMMISSION_RATE
     risk: dict = field(default_factory=dict)  # 本次实际生效的风控参数 (阶段B)
@@ -537,7 +538,11 @@ class BacktestEngine:
                 mark_equity = equity * (closes[i] / entry_price if entry_price else 1.0)
             else:
                 mark_equity = equity
-            equity_curve.append((dates[i], float(mark_equity), bool(in_market)))
+            # ★1.64：**同时带上当日收盘价**（第 4 列）—— 净值图要在曲线后面淡画一条
+            #   "买入持有"基准（用户口径："图形后面那条淡淡的股价线挺好的"）。
+            #   ⚠ 这里给**原始收盘价**、不做任何加工：归一化（首日 = 1.0）是**画图口径**，
+            #     属于 UI 侧（否则"净值"与"基准"两条口径混在引擎里，谁都不敢再动）。
+            equity_curve.append((dates[i], float(mark_equity), bool(in_market), float(closes[i])))
 
         # 收盘仍持仓 -> 以最后收盘价强平 (杜绝悬空)
         # T+1 下这是安全的：入场根被 last_entry_bar 限制在 n-2 之前，末根必晚于入场根。
@@ -553,7 +558,8 @@ class BacktestEngine:
                 exit_reason=REASON_FORCE_CLOSE))
             equity *= (1.0 + ret)
 
-        equity_df = pd.DataFrame(equity_curve, columns=['date', 'equity', 'in_market'])
+        equity_df = pd.DataFrame(equity_curve,
+                                 columns=['date', 'equity', 'in_market', 'close'])
         return BacktestResult(
             symbol=symbol, buy_expression=buy_expression, sell_expression=sell_expression,
             start_date=start_date, end_date=end_date,

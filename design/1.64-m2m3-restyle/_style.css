@@ -1,0 +1,261 @@
+/* design/1.64-m2m3-restyle/_style.css —— M2/M3 重塑样板的**唯一配色/零件来源**。
+   纪律：这里不发明新色，每个令牌都对账线上代码（改样板前先改这边，改完再回写 §7-* 设计说明）。
+
+   · 主蓝 #1976D2 / 悬停 #1565C0 ......... backtest_summary_bar._RUN_QSS（主操作）· FLAT_BLUE
+   · 浅蓝底 #E3F2FD / 描边 #BBDEFB ....... backtest_summary_bar._GHOST_QSS（次级描边按钮）
+   · flat 悬停底 #EEF4FD ................. styles.flat_qss(FLAT_HOVER_BG)
+   · chip 四态（底/边/字）................ backtest_summary_bar._CHIP_STATES
+   · 卡片 白底 / #E7EAF0 边 / 12px 圆角 ... _BAR_QSS（摘要条）· hub_layout._PANEL_QSS
+   · 文字 #212121 / #1F2430 ............. settings.COLOR_TEXT_PRIMARY · 标题
+   · 次级 #616B7A · 弱化 #8A94A6 / #B4BECB  styles.FLAT_MUTED
+   · 盈亏（**绿=正 / 红=负**，与净值曲线同口径）settings.COLOR_PROFIT_TEXT / COLOR_LOSS_TEXT
+   · 字体栈：只用系统栈 + 通用族（禁专有字体名，§10-15）
+*/
+
+:root {
+  --blue: #1976D2;
+  --blue-dark: #1565C0;
+  --blue-bg: #E3F2FD;
+  --blue-sel: #E8F2FE;
+  --blue-line: #BBDEFB;
+  --flat-hover: #EEF4FD;
+  --ink: #1F2430;
+  --ink-2: #212121;
+  --ink-3: #3C4552;
+  --muted: #616B7A;
+  --muted-2: #8A94A6;
+  --muted-3: #B4BECB;
+  --line: #E7EAF0;
+  --line-2: #E4E9F0;
+  --line-3: #F2F5F9;
+  --chip-line: #E7EAF0;
+  --bg: #F5F7FA;
+  --up: #2E7D32;
+  --up-bg: #F2FAF4;
+  --up-line: #D6EEDA;
+  --down: #C62828;
+  --down-bg: #FDF3F2;
+  --down-line: #F5D6D3;
+  --r-bar: 12px;
+  --r-chip: 14px;
+  --r-btn: 9px;
+  --r-card: 12px;
+  --shadow: 0 6px 22px rgba(31, 36, 48, .07);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 22px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC",
+               "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.win {
+  max-width: 1180px;
+  margin: 0 auto 26px;
+  background: #fff;
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* ---------- 模块页签（app: BacktestModule.tabs）---------- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 16px 0;
+  border-bottom: 1px solid var(--line);
+  background: #FCFDFF;
+}
+.tab {
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-2);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 9px 9px 0 0;
+}
+.tab.on {
+  color: var(--blue-dark);
+  background: #fff;
+  border-color: var(--line);
+}
+
+.pad { padding: 14px 16px 16px; }
+
+/* ---------- L1 操作轴 ---------- */
+.axis {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.rowlab { font-size: 12px; color: var(--muted-2); }
+.day { font-size: 13px; font-weight: 700; color: var(--ink); min-width: 96px; text-align: center; }
+.sep { width: 1px; height: 18px; background: var(--line-3); margin: 0 4px; }
+.grow { flex: 1; }
+.note-pill {
+  font-size: 11.5px; color: var(--blue);
+  border: 1px solid var(--blue-line); border-radius: 8px; padding: 3px 8px;
+}
+.hint { font-size: 11.5px; color: var(--muted-2); }
+.hint-warn { font-size: 11.5px; color: #E65100; }
+
+/* ---------- L2 摘要条（**与 M1 同一枚 chip 零件**）---------- */
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px;
+  padding: 7px 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-bar);
+}
+.chip {
+  text-align: left;
+  padding: 5px 12px;
+  border-radius: var(--r-chip);
+  border: 1px solid var(--chip-line);
+  background: #FBFCFE;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.chip.ok { background: var(--up-bg); border-color: var(--up-line); color: #256B34; }
+.chip.off { background: #FAFBFC; border-color: var(--line); color: var(--muted-3); }
+.chip.sel { background: var(--blue-sel); border-color: #A9C7EA; color: #1257A8; }
+.receipt { font-size: 12px; color: var(--blue); }
+
+/* ---------- 按钮三族（M1 现状）---------- */
+.btn-run {
+  background: var(--blue); color: #fff; font-weight: 700;
+  padding: 7px 20px; border: none; border-radius: var(--r-btn); font-size: 13.5px;
+}
+.btn-ghost {
+  color: var(--blue); background: transparent; border: 1px solid var(--blue-line);
+  border-radius: var(--r-btn); padding: 6px 13px; font-weight: 700; font-size: 12.5px;
+}
+.btn-flat {
+  color: var(--blue); background: transparent; border: none;
+  border-radius: 8px; padding: 4px 8px; font-weight: 700; font-size: 12.5px;
+}
+.btn-danger { color: var(--muted-2); background: transparent; border: none; font-size: 12px; }
+button { font-family: inherit; cursor: pointer; }
+
+/* ---------- L0 结果区 ---------- */
+.result { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+/* ⚠ 用户 2026-09-30 拍板：M2 这一页**主角是命中清单** ⇒ KPI 只当配角，
+   做成"一行小卡"（label 与值同行、值 17px 而不是 24px），不许抢清单的高与眼。 */
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.kpi {
+  display: flex; align-items: baseline; gap: 7px;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  padding: 7px 11px;
+}
+.k-label { font-size: 11.5px; color: var(--muted-2); }
+.k-value { font-size: 17px; font-weight: 700; color: var(--ink); }
+.k-value.up { color: var(--up); }
+.k-value.down { color: var(--down); }
+.k-sub { font-size: 11px; color: var(--muted-2); }
+
+.card { background: #fff; border: 1px solid var(--line); border-radius: var(--r-card); }
+.card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 13px; border-bottom: 1px solid var(--line-3);
+}
+.card-title { font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.card-note { font-size: 11.5px; color: var(--muted-2); }
+
+table.grid { width: 100%; border-collapse: collapse; }
+table.grid th {
+  text-align: left; font-size: 11.5px; font-weight: 600; color: var(--muted);
+  background: #FAFBFC; padding: 7px 10px; border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.grid td {
+  font-size: 12.5px; color: var(--ink-3); padding: 7px 10px;
+  border-bottom: 1px solid var(--line-3); white-space: nowrap;
+}
+table.grid tr:last-child td { border-bottom: none; }
+table.grid td.num, table.grid th.num { text-align: right; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+
+/* ---------- 四态占比条（M3 招牌零件）---------- */
+.stack { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin-top: 8px; }
+.stack i { display: block; height: 100%; }
+.legend { display: flex; gap: 14px; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+.legend b { font-weight: 700; color: var(--ink-3); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-right: 5px; }
+
+/* ---------- L3 抽屉（遮罩 + 卡片；与 M1 同一张卡）---------- */
+.drawer-wrap { position: relative; height: 300px; overflow: hidden; border-top: 1px solid var(--line); }
+.mask { position: absolute; inset: 0; background: rgba(31, 36, 48, .12); }
+.drawer {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 430px;
+  background: #fff; border-left: 1px solid var(--line-2);
+  box-shadow: -8px 0 22px rgba(31, 36, 48, .08);
+  padding: 12px 14px; overflow: auto;
+}
+.d-card { border: 1px solid var(--line-3); border-radius: 10px; margin-bottom: 10px; }
+.d-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-bottom: 1px solid var(--line-3);
+}
+.d-title { font-size: 14px; font-weight: 700; color: var(--blue); }
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.3px;
+  background: #FBFCFE; padding: 9px 12px; color: var(--ink-3); line-height: 1.75;
+  border-radius: 0 0 10px 10px;
+}
+.thr { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 10px 12px; }
+.thr label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.thr input {
+  width: 74px; padding: 5px 8px; font-size: 12.5px;
+  border: 1px solid #D9DEE8; border-radius: 8px; color: var(--ink);
+}
+.d-foot { display: flex; gap: 8px; justify-content: flex-end; padding-top: 4px; }
+
+/* ---------- M3 结果区（**原样**：口径行 + 双窗格图 + 读数条；本页只重塑工具栏）---------- */
+.calib-row { display: flex; align-items: center; gap: 10px; }
+.calib { font-size: 12px; color: var(--muted); }
+.cached {
+  font-size: 11.5px; color: #256B34; background: var(--up-bg);
+  border: 1px solid var(--up-line); border-radius: 7px; padding: 1px 8px;
+}
+.chartbox {
+  background: #fff; border: 1px solid var(--line); border-radius: var(--r-card);
+  padding: 8px 10px 10px;
+}
+.readout { font-size: 11.5px; color: var(--muted); padding: 2px 4px 6px; }
+.handle { fill: #D9DEE8; }
+
+/* ---------- 说明块（只给样板看，不进 app）---------- */
+.doc { max-width: 1180px; margin: 0 auto 22px; }
+.doc h2 { font-size: 15px; color: var(--ink); margin: 18px 0 8px; }
+.doc h3 { font-size: 13.5px; color: var(--ink-3); margin: 14px 0 6px; }
+.doc p, .doc li { font-size: 12.5px; color: var(--muted); line-height: 1.75; }
+table.cmp { width: 100%; border-collapse: collapse; background: #fff;
+  border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden; }
+table.cmp th, table.cmp td { font-size: 12.5px; padding: 8px 10px; border-bottom: 1px solid var(--line-3);
+  text-align: left; color: var(--ink-3); }
+table.cmp th { background: #FAFBFC; color: var(--muted); font-weight: 600; }
+#selftest {
+  display: none; white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px; background: #FFF; border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px; color: var(--ink-3);
+}
+.title-row { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; }
+.title-row h1 { font-size: 17px; margin: 0; color: var(--ink); }
+.tag { font-size: 11.5px; color: var(--blue); background: var(--blue-sel);
+  border-radius: 7px; padding: 2px 8px; }

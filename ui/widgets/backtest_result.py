@@ -29,7 +29,8 @@ from config import settings
 from core.backtest import EXIT_REASON_COLORS, EXIT_REASON_LABELS
 from ui.widgets.adaptive_axis import axis_px, compute_ticks, slice_span, visible_span
 from ui.widgets.chart_pane import ChartPane
-from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
+from ui.widgets.chart_style import (apply_pokorny_style, plot_benchmark_curve,
+                                    plot_equity_curve)
 from ui.widgets.custom_widgets import CandlestickItem, ui_painter_font
 from ui.widgets.draw_overlay import OverlayPainter, overlay_extent, slice_draws
 
@@ -296,6 +297,14 @@ class BacktestResultArea(QWidget):
         self.equity_chart.getPlotItem().setTitle("")   # 有数据就撤掉空态提示
         eq = result.equity
         dates = pd.to_datetime(eq['date'])
+        # ★1.64：**买入持有基准**（淡灰细线、压在最底层）—— 用户口径："图形后面那条淡淡的
+        #   股价线挺好的"。⚠ 先归一到首日 = 1.0 再画：直接画原始价与净值**不同量纲**，
+        #   会把纵轴整个带偏（§7-A4"买卖点用净值定位"是同一条道理）。
+        #   旧存档快照没有 close 列 ⇒ 静默跳过（不画、也不报错）。
+        if 'close' in eq.columns:
+            plot_benchmark_curve(self.equity_chart, eq['close'].tolist())
+            self.equity_chart.setToolTip(
+                "灰线 = 买入持有（同样归一到首日 1.0，可直接与净值比跑赢 / 跑输）")
         # 净值曲线基准线 = 1.0（归一化起点），绘制统一走 chart_style（v5.12 · §9-O7）
         plot_equity_curve(self.equity_chart, eq['equity'], fill_base=1.0, width=2)
         self.equity_chart.addLine(

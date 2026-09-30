@@ -3760,8 +3760,10 @@ try:
     _root5 = _tf5.mkdtemp(prefix='jian_hist_')
     _hv.archive = BacktestArchive(root=_root5)
     _d5 = _pd5.to_datetime(['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'])
+    # ★1.64：合成序列的列**与引擎新 schema 对齐**（多一个 `close`）—— 净值图据此淡画
+    #   "买入持有"基准；旧存档抽稀后的记录没有这一列 ⇒ 渲染器静默跳过（不画、也不报错）。
     _eq5 = _pd5.DataFrame({'date': _d5, 'equity': [1.0, 1.1, 1.05, 1.2],
-                           'in_market': [0, 1, 1, 1]})
+                           'in_market': [0, 1, 1, 1], 'close': [10.0, 11.0, 10.5, 12.0]})
     _res5 = _BR5('600000', 'B', 'S', '2024-01-02', '2024-01-05',
                  trades=[_BT5(entry_date=_d5[1], exit_date=_d5[3], entry_price=10.0,
                               exit_price=12.0, pnl=2.0, return_pct=0.2)], equity=_eq5)
@@ -3834,6 +3836,18 @@ try:
     check("回放的 K 线页给出诚实提示（存档不含逐日 OHLC）",
           '历史存档' in getattr(_sv5.result, '_kline_hint_text', '')
           and _sv5.result._kline_state is None)
+    # ★1.64：**历史回放也画买入持有基准** —— 端到端串一遍：
+    #   存档抽稀（带 close）→ `record_to_result` 重建 → 真渲染器 → 数图上的曲线。
+    #   ⚠ 只验"列有了 / 助手函数会归一"不算数：那样"列有了但没人画"会静默通过。
+    _rec5 = _hv.archive.load(_rid5)
+    check("★1.64：存档抽稀保留 `close`（回放才有基准线的数据；旧档为 None ⇒ 静默不画）",
+          all('close' in r for r in _rec5['equity'])
+          and [r['close'] for r in _rec5['equity']] == [10.0, 11.0, 10.5, 12.0])
+    _bench5 = [it for it in _sv5.result.equity_chart.getPlotItem().listDataItems()
+               if it.zValue() < 0]
+    check("★1.64：回放的净值图**真画出**买入持有基准（z<0 压底层 · 归一到首日 1.0）",
+          len(_bench5) == 1
+          and [round(v, 6) for v in _bench5[0].getData()[1]] == [1.0, 1.1, 1.05, 1.2])
     _sv5.exit_preview()
     check("退出预览：现场恢复 + 导出恢复 + 横幅收起",
           _sv5._preview_mode is False and _sv5._last_result is _prior

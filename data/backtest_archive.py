@@ -101,9 +101,12 @@ def _date_key(value) -> str | None:
 def sample_equity(result, max_points: int = EQUITY_MAX_POINTS) -> list:
     """把 `result.equity` 等间隔抽稀到 ≤max_points，且**强制并入所有成交日** + **端点保底**。
 
-    返回 `[{date, equity, in_market, buy_at, sell_at}]`：
+    返回 `[{date, equity, in_market, buy_at, sell_at, close}]`：
       · `buy_at` / `sell_at` = 该日净值（只有成交日才非 None），
         供结果区把买卖点**画在净值曲线上**（不用成交价 —— 量纲不同）。
+      · ★1.64 `close` = 该日**收盘价**（原样，不加工）—— 结果区据此在净值曲线后面淡画
+        "买入持有"基准（归一化是画图口径，属 UI 侧）。旧档没有这一列 ⇒ 存 None，
+        回放时**静默不画那条基准**（不报错、也不假装有）。
       · 端点保底 = 必含第一点与最后一点（否则 `cumulative_return` 会算错，见模块 docstring）。
       · 若成交日集合本身就超过 `max_points`，**买卖点优先**，允许超限（有 2MB 硬闸兜底）。
     """
@@ -156,8 +159,24 @@ def sample_equity(result, max_points: int = EQUITY_MAX_POINTS) -> list:
             "date": k, "equity": eqv, "in_market": in_market,
             "buy_at": eqv if k in buy_days else None,
             "sell_at": eqv if k in sell_days else None,
+            "close": _close_at(d, i),
         })
     return rows
+
+
+def _close_at(frame, i):
+    """取第 i 行收盘价（★1.64：净值图"买入持有基准"用）；列不存在 / 坏值 ⇒ None。
+
+    ⚠ 单独成函数是为了**坏值不拖垮整份抽稀**：单日 NaN 只让那一天没有基准点，
+      而 `plot_benchmark_curve` 自己会过滤 None（少于 2 点就不画）。
+    """
+    if "close" not in getattr(frame, "columns", ()):
+        return None
+    try:
+        value = float(frame["close"].iloc[i])
+    except (TypeError, ValueError, IndexError):  # noqa: BLE001
+        return None
+    return None if pd.isna(value) else round(value, 6)
 
 
 def build_record(result, meta: dict, config: dict = None, kind: str = KIND_M1,
@@ -253,7 +272,9 @@ def build_scan_record(config: dict, *, kind: str, scope_label: str = '',
 def record_to_result(record: dict) -> BacktestResult:
     """从存档记录重建 `BacktestResult`（喂给现有结果区渲染，**不改引擎**）。
 
-    产出的 `equity` 带 `buy_at` / `sell_at` 两列（成交日净值）⇒ 净值曲线可画买卖点。
+    产出的 `equity` 带 `buy_at` / `sell_at` 两列（成交日净值）⇒ 净值曲线可画买卖点；
+    ★1.64 起还带 `close`（收盘价）⇒ 回放也能淡画"买入持有"基准（旧档该列为 None，
+    渲染器静默跳过 —— 回放图的其余部分与现场完全一致）。
     ⚠ KPI **不要**用它的 `summary()` 重算（那是抽稀序列），要读存档里的 `record["kpi"]`。
     """
     meta = record.get("meta") or {}
@@ -279,9 +300,11 @@ def record_to_result(record: dict) -> BacktestResult:
             "in_market": [int(r.get("in_market") or 0) for r in rows],
             "buy_at": [r.get("buy_at") for r in rows],
             "sell_at": [r.get("sell_at") for r in rows],
+            "close": [r.get("close") for r in rows],
         })
     else:
-        equity = pd.DataFrame(columns=["date", "equity", "in_market", "buy_at", "sell_at"])
+        equity = pd.DataFrame(
+            columns=["date", "equity", "in_market", "buy_at", "sell_at", "close"])
     fill = meta.get("fill") or {}
     return BacktestResult(
         symbol=str(meta.get("symbol") or ""),

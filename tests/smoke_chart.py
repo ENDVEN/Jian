@@ -2414,6 +2414,22 @@ try:
     check("next_open：成交价 == 次日开盘 11.00", abs(r.trades[0].entry_price - 11.0) < 1e-9)
     check("next_open：成交根 == 信号根 +1", r.trades[0].entry_date == df_a['date'].iloc[1])
 
+    # ---- ★1.64：净值序列带 `close` + 买入持有基准（净值图后面那条淡线）----
+    #   ⚠ 基准**必须归一**（首日 = 1.0）才算"同口径可说人话"：直接画原始价 = 不同量纲，
+    #     纵轴会被整个带偏（与 §7-A4"买卖点用净值定位"同一条道理）。
+    _bench = _bt(df_a, [True, False, False, False], [True, True, True, True])
+    check("★1.64 引擎的净值序列带 `close` 列（逐日收盘价 —— 画买入持有基准的数据前提）",
+          list(_bench.equity.columns) == ['date', 'equity', 'in_market', 'close']
+          and _bench.equity['close'].tolist() == df_a['close'].tolist())
+    from ui.widgets.chart_style import plot_benchmark_curve as _pbc  # noqa: E402
+    _pbc_chart = pg.PlotWidget()
+    _pbc_item = _pbc(_pbc_chart, [10.0, 12.0, 8.0])
+    check("★1.64 买入持有基准：**归一到首日 1.0** + **压在最底层**（z<0，不许盖净值/买卖点）",
+          _pbc_item is not None
+          and [round(v, 9) for v in _pbc_item.getData()[1]] == [1.0, 1.2, 0.8]
+          and _pbc_item.zValue() < 0
+          and _pbc(_pbc_chart, [10.0]) is None and _pbc(_pbc_chart, []) is None)
+
     r = _bt(df_a, [True, False, False, False], [False] * 4, fill_mode=FILL_CLOSE)
     check("close：成交价 == 当日收盘 10.20", abs(r.trades[0].entry_price - 10.2) < 1e-9)
     check("close：成交根 == 信号根本身", r.trades[0].entry_date == df_a['date'].iloc[0])

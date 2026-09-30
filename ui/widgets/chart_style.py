@@ -176,6 +176,36 @@ def plot_equity_curve(chart, values, fill_base: float = 0.0, width: float = 2,
     )
 
 
+# 买入持有基准的**唯一配色**（淡化灰蓝：它是"背景信息"，不许抢净值曲线的色相——§10-1 单色高对比）
+BENCHMARK_COLOR = "#C3CAD6"
+
+
+def plot_benchmark_curve(chart, values, base: float = None,
+                         color: str = BENCHMARK_COLOR, width: float = 1.2):
+    """把一条**基准序列**（如买入持有）归一后**淡淡画在最底层**（★1.64 · 用户口径）。
+
+    【为什么必须归一】直接画原始收盘价 = 与净值**不同量纲**，纵轴会被整个带偏
+      （与 §7-A4"买卖点用净值定位、不用成交价"是同一条道理）⇒ 一律归一到
+      **首日 = 1.0**：这样"净值 vs 买入持有"四条眼就能比出跑赢还是跑输，
+      而不是"多了一条莫名奇妙的线"。
+    【为什么压 z 值】它在"图形后面"（用户原话）—— 净值曲线与买卖点必须压得住它。
+
+    :param values: 原始序列（如逐日收盘价）
+    :param base:   归一化基准值；None = 取首值（"买入持有"= 首日买入 ⇒ 起点 1.0）
+    :return:       曲线的 PlotDataItem（数据不足 / 基准为 0 时返回 None —— 静默跳过）
+    """
+    y = [float(v) for v in (values or []) if v is not None]
+    if len(y) < 2:
+        return None
+    anchor = float(base if base not in (None, 0) else y[0])
+    if not anchor:
+        return None
+    item = chart.plot(list(range(len(y))), [v / anchor for v in y],
+                      pen=pg.mkPen(color=color, width=width))
+    item.setZValue(-10)
+    return item
+
+
 # ==========================================
 # 叠层配色与对比度（§7-B3 P3）
 # ==========================================

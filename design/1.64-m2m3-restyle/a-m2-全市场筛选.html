@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>M2 全市场筛选 · 重塑样板（1.64）</title>
+<link rel="stylesheet" href="_style.css">
+</head>
+<body>
+
+<div class="doc">
+  <div class="title-row">
+    <h1>M2 全市场筛选</h1>
+    <span class="tag">按 M1 的设计语言重塑 · 样板 a</span>
+    <span class="tag">数据为假样例</span>
+  </div>
+  <p>同一套零件：<b>L1 操作轴 · L2 摘要条（chip 四态）· L0 结果区（KPI 卡 + 卡片包表）· L3 抽屉（同一张卡）</b>。
+     与现状的差别见 <a href="index.html">index</a> 里的对照表。</p>
+</div>
+
+<!-- ================= 主视图 ================= -->
+<div class="win">
+  <div class="tabs">
+    <span class="tab">M1 单股回测</span>
+    <span class="tab on">M2 全市场筛选</span>
+    <span class="tab">M3 广度统计</span>
+  </div>
+
+  <!-- L1 操作轴 -->
+  <div class="axis">
+    <span class="rowlab">交易日</span>
+    <button class="btn-flat">◀</button>
+    <span class="day">2026-09-29</span>
+    <button class="btn-flat">▶</button>
+    <button class="btn-flat">最新</button>
+    <span class="sep"></span>
+    <span class="note-pill">前复权</span>
+    <span class="hint">（本轮只有前复权一种口径；不复权分区未备齐）</span>
+    <span class="grow"></span>
+    <button class="btn-flat">⚙ 配置</button>
+  </div>
+
+  <!-- L2 摘要条：chips + 回执 + 次级 + 主操作（与 M1 同一排布） -->
+  <div class="summary">
+    <button class="chip sel">ƒ 条件　3 条</button>
+    <button class="chip ok">🎚 粗筛　2 项</button>
+    <button class="chip">🌐 范围　全 A</button>
+    <span class="grow"></span>
+    <span class="receipt">已按 2026-09-29 取截面：命中 128 只 / 全 A 5412 只</span>
+    <button class="btn-ghost">ƒ 库</button>
+    <button class="btn-ghost">⚙ 编辑配置</button>
+    <button class="btn-run">▶ 开始扫描</button>
+  </div>
+
+  <!-- L0 结果区 -->
+  <div class="result">
+    <!-- KPI = 配角（用户 2026-09-30：这一页主角是命中清单 ⇒ 小一号） -->
+    <div class="kpis">
+      <div class="kpi"><span class="k-label">命中</span><b class="k-value">128</b><span class="k-sub">/ 5412 只</span></div>
+      <div class="kpi"><span class="k-label">上涨占比</span><b class="k-value up">62.5%</b><span class="k-sub">80 涨 / 48 跌</span></div>
+      <div class="kpi"><span class="k-label">中位涨幅</span><b class="k-value up">+1.83%</b><span class="k-sub">最强 +9.97%</span></div>
+      <div class="kpi"><span class="k-label">中位量比</span><b class="k-value">1.34</b><span class="k-sub">昨 1.21</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">命中清单</span>
+        <span class="card-note">点列头排序 · 双击行送行情页</span>
+        <span class="grow"></span>
+        <button class="btn-ghost">⤓ 导出 CSV</button>
+        <button class="btn-ghost">📤 送行情页</button>
+      </div>
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>#</th><th>代码</th><th>名称</th>
+            <th class="num">收盘</th><th class="num">涨幅</th>
+            <th class="num">量比</th><th class="num">换手</th><th class="num">流通市值</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td class="mono">SZ002352</td><td>顺丰控股</td>
+              <td class="num">43.18</td><td class="num up">+9.97%</td>
+              <td class="num">2.41</td><td class="num">3.4%</td><td class="num">211 亿</td></tr>
+          <tr><td>2</td><td class="mono">SH600519</td><td>贵州茅台</td>
+              <td class="num">1620.00</td><td class="num up">+4.12%</td>
+              <td class="num">1.88</td><td class="num">0.6%</td><td class="num">2.03 万亿</td></tr>
+          <tr><td>3</td><td class="mono">SZ000001</td><td>平安银行</td>
+              <td class="num">11.26</td><td class="num up">+2.05%</td>
+              <td class="num">1.55</td><td class="num">1.1%</td><td class="num">2185 亿</td></tr>
+          <tr><td>4</td><td class="mono">SH601318</td><td>中国平安</td>
+              <td class="num">52.40</td><td class="num up">+1.31%</td>
+              <td class="num">1.34</td><td class="num">0.9%</td><td class="num">9562 亿</td></tr>
+          <tr><td>5</td><td class="mono">SZ300750</td><td>宁德时代</td>
+              <td class="num">187.55</td><td class="num down">-0.62%</td>
+              <td class="num">0.97</td><td class="num">0.8%</td><td class="num">8246 亿</td></tr>
+          <tr><td>6</td><td class="mono">SH600030</td><td>中信证券</td>
+              <td class="num">21.03</td><td class="num down">-1.14%</td>
+              <td class="num">0.88</td><td class="num">0.7%</td><td class="num">3117 亿</td></tr>
+          <tr><td colspan="8" class="hint">…… 共 128 行（表内滚动，表头固定）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- L3 抽屉展开态（遮罩盖住上方内容） -->
+  <div class="drawer-wrap">
+    <div class="mask"></div>
+    <div class="drawer">
+      <div class="d-card">
+        <div class="d-head">
+          <span class="d-title">ƒ 筛选条件</span>
+          <span class="hint">（真引擎体检 · 与总库同一个编辑器）</span>
+          <span class="grow"></span>
+          <button class="btn-flat">🩺 检测</button>
+        </div>
+        <div class="code">COND1 := C &gt; MA(C,20);<br>COND2 := V &gt; MA(V,5) * 1.5;</div>
+      </div>
+      <div class="d-card">
+        <div class="d-head">
+          <span class="d-title">🎚 粗筛</span>
+          <span class="hint">先粗筛掉大半，再跑条件（省时间）</span>
+        </div>
+        <div class="thr">
+          <label>最小涨幅 <input value="1.0"></label>
+          <label>最大涨幅 <input value="9.9"></label>
+          <label>最小量比 <input value="1.2"></label>
+          <label>最小换手 <input value="0.5"></label>
+        </div>
+      </div>
+      <div class="d-foot">
+        <button class="btn-flat">↺ 恢复默认</button>
+        <button class="btn-ghost">收起</button>
+        <button class="btn-run">▶ 开始扫描</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<pre id="selftest"></pre>
+
+<script>
+(function () {
+  function el(id) { return document.getElementById(id); }
+  window.__selftest = function () {
+    var lines = [], ok = true;
+    function t(name, cond) { if (!cond) { ok = false; } lines.push((cond ? '✓ ' : '✗ ') + name); }
+    t('无水平溢出', document.documentElement.scrollWidth <= window.innerWidth + 1);
+    t('页签三枚', document.querySelectorAll('.tab').length === 3);
+    t('摘要条 3 枚 chip', document.querySelectorAll('.summary .chip').length === 3);
+    t('主操作只有一枚（▶ 开始扫描）', document.querySelectorAll('.btn-run').length >= 1);
+    t('结果表有数据行', document.querySelectorAll('table.grid tbody tr').length > 0);
+    t('抽屉卡片两张', document.querySelectorAll('.drawer .d-card').length === 2);
+    return { ok: ok, lines: lines };
+  };
+  if (location.search.indexOf('selftest') >= 0) {
+    var r = window.__selftest();
+    var box = el('selftest');
+    if (box) { box.textContent = r.lines.join('\n'); box.style.display = 'block'; }
+    document.title = (r.ok ? 'SELFTEST OK ' : 'SELFTEST FAIL ') + r.lines.length;
+  }
+})();
+</script>
+</body>
+</html>

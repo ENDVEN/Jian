@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>M3 广度统计 · 重塑样板（1.64 · 只改工具栏）</title>
+<link rel="stylesheet" href="_style.css">
+</head>
+<body>
+
+<div class="doc">
+  <div class="title-row">
+    <h1>M3 广度统计</h1>
+    <span class="tag">按 M1 的设计语言重塑 · 样板 b</span>
+    <span class="tag">只改上方工具栏</span>
+  </div>
+  <p>用户口径（2026-09-30）：<b>「M3 只改动上方的工具栏，不要 KPI 栏；下面的图表内容不要动」</b>
+     ⇒ 本页只重塑<b>页签 / 操作轴 / 摘要条 / 按钮族</b>；<b>结果区连容器一起原样保留</b>
+     （口径行 + 双窗格图 + 读数条），既不新增 KPI 行，也不引入四态占比条或别的走势图。</p>
+</div>
+
+<div class="win">
+  <!-- ========== 重塑部分：页签 + 操作轴 + 摘要条 ========== -->
+  <div class="tabs">
+    <span class="tab">M1 单股回测</span>
+    <span class="tab">M2 全市场筛选</span>
+    <span class="tab on">M3 广度统计</span>
+  </div>
+
+  <div class="axis">
+    <span class="rowlab">基准日</span>
+    <button class="btn-flat">◀</button>
+    <span class="day">2026-09-29</span>
+    <button class="btn-flat">▶</button>
+    <button class="btn-flat">最新</button>
+    <span class="sep"></span>
+    <span class="rowlab">窗口</span>
+    <button class="btn-flat">20 日</button>
+    <button class="btn-flat">60 日</button>
+    <button class="btn-flat">120 日</button>
+    <span class="sep"></span>
+    <span class="note-pill">前复权</span>
+    <span class="grow"></span>
+    <button class="btn-flat">⚙ 配置</button>
+  </div>
+
+  <div class="summary">
+    <button class="chip sel">ƒ 条件　2 条</button>
+    <button class="chip on">🎚 粗筛　1 项</button>
+    <button class="chip">🌐 范围　沪深300</button>
+    <button class="chip ok">📈 展示　柱状 + 趋势线</button>
+    <span class="grow"></span>
+    <span class="receipt">有效样本 295 / 300 · 2026-09-29 · 前复权</span>
+    <button class="btn-ghost">ƒ 库</button>
+    <button class="btn-ghost">⚙ 编辑配置</button>
+    <button class="btn-run">▶ 开始统计</button>
+  </div>
+
+  <!-- ========== 原样部分：结果区（现状的 M3 图，一个字没动） ========== -->
+  <div class="result">
+    <div class="calib-row">
+      <span class="calib">口径：沪深300 · 有效 295 / 300 · 近 1 年 · 前复权</span>
+      <span class="cached">缓存命中</span>
+      <span class="grow"></span>
+      <span class="hint">上窗格 = 每日命中家数（细柱）+ MA5（橙线）· 下窗格 = 指数收盘（参照）</span>
+    </div>
+
+    <div class="chartbox">
+      <div class="readout">2026-09-29 · 命中 2010 只 · MA5 1855.4 只（占比 38.0%）</div>
+      <svg viewBox="0 0 1040 322" width="100%" height="322" role="img"
+           aria-label="M3 双窗格广度图（现状形态）">
+        <!-- 上窗格：家数刻度 + 网格（左槽与下窗格对齐） -->
+        <g stroke="#F2F5F9">
+          <line x1="52" y1="26"  x2="1020" y2="26"/>
+          <line x1="52" y1="82"  x2="1020" y2="82"/>
+          <line x1="52" y1="138" x2="1020" y2="138"/>
+          <line x1="52" y1="195" x2="1020" y2="195"/>
+        </g>
+        <g fill="#8A94A6" font-size="11" text-anchor="end">
+          <text x="46" y="30">3000</text>
+          <text x="46" y="86">2000</text>
+          <text x="46" y="142">1000</text>
+          <text x="46" y="199">0</text>
+        </g>
+        <text x="8" y="16" fill="#616B7A" font-size="11">家数（只）</text>
+
+        <!-- 每日命中家数：细柱（半透明，让 MA5 当主角） -->
+        <g fill="#1976D2" fill-opacity=".35">
+          <rect x="62"  y="186" width="34" height="8"/>
+          <rect x="110" y="172" width="34" height="22"/>
+          <rect x="158" y="154" width="34" height="40"/>
+          <rect x="206" y="159" width="34" height="35"/>
+          <rect x="254" y="134" width="34" height="60"/>
+          <rect x="302" y="106" width="34" height="88"/>
+          <rect x="350" y="74"  width="34" height="120"/>
+          <rect x="398" y="98"  width="34" height="96"/>
+          <rect x="446" y="124" width="34" height="70"/>
+          <rect x="494" y="142" width="34" height="52"/>
+          <rect x="542" y="130" width="34" height="64"/>
+          <rect x="590" y="104" width="34" height="90"/>
+          <rect x="638" y="64"  width="34" height="130"/>
+          <rect x="686" y="44"  width="34" height="150"/>
+          <rect x="734" y="54"  width="34" height="140"/>
+          <rect x="782" y="76"  width="34" height="118"/>
+          <rect x="830" y="98"  width="34" height="96"/>
+          <rect x="878" y="122" width="34" height="72"/>
+          <rect x="926" y="136" width="34" height="58"/>
+          <rect x="974" y="110" width="34" height="84"/>
+        </g>
+        <!-- MA5（主角：橙实线） -->
+        <polyline fill="none" stroke="#FB8C00" stroke-width="2"
+          points="79,170 127,158 175,150 223,142 271,138 319,132 367,126 415,122
+                  463,118 511,114 559,112 607,116 655,120 703,126 751,132 799,136
+                  847,140 895,142 943,144 991,140"/>
+
+        <!-- 窗格分割把手（ChartHost 的拖动条） -->
+        <line x1="52" y1="208" x2="1020" y2="208" stroke="#EDF0F5"/>
+        <rect class="handle" x="510" y="204" width="46" height="8" rx="4"/>
+
+        <!-- 下窗格：指数收盘（参照，灰线）+ 自己的左轴（与上窗格同左槽宽度） -->
+        <g stroke="#F2F5F9">
+          <line x1="52" y1="232" x2="1020" y2="232"/>
+          <line x1="52" y1="286" x2="1020" y2="286"/>
+        </g>
+        <g fill="#8A94A6" font-size="11" text-anchor="end">
+          <text x="46" y="236">3600</text>
+          <text x="46" y="290">3200</text>
+        </g>
+        <polyline fill="none" stroke="#5B6472" stroke-width="1.5"
+          points="62,250 175,240 287,262 399,236 511,248 623,228 735,244 847,232 991,246"/>
+
+        <!-- 日期轴只在**最下窗格**出现（ChartHost 的既有口径） -->
+        <g fill="#8A94A6" font-size="11" text-anchor="middle">
+          <text x="79"  y="312">2025-11</text>
+          <text x="271" y="312">2026-01</text>
+          <text x="463" y="312">2026-03</text>
+          <text x="655" y="312">2026-05</text>
+          <text x="847" y="312">2026-07</text>
+          <text x="991" y="312">2026-09</text>
+        </g>
+      </svg>
+      <div class="hint">灰网格 + 整数家数刻度 + 左槽对齐，全部来自 <span class="mono">chart_style</span> /
+          <span class="mono">ChartHost</span>（§10-12：M3 不许自己拼窗格）—— <b>这一块保持现状</b>。</div>
+    </div>
+  </div>
+
+  <!-- ========== 重塑部分：抽屉（与 M1 同一张卡）========== -->
+  <div class="drawer-wrap">
+    <div class="mask"></div>
+    <div class="drawer">
+      <div class="d-card">
+        <div class="d-head">
+          <span class="d-title">ƒ 筛选条件</span>
+          <span class="hint">（真引擎体检）</span>
+          <span class="grow"></span>
+          <button class="btn-flat">🩺 检测</button>
+        </div>
+        <div class="code">UP := C &gt; MA(C,20);<br>STRONG := C &gt; MA(C,60);</div>
+      </div>
+      <div class="d-card">
+        <div class="d-head">
+          <span class="d-title">📈 展示</span>
+          <span class="hint">柱状 / 折线 · 占比 / 家数 · 平滑窗口</span>
+        </div>
+        <div class="thr">
+          <label>形态 <input value="柱状 + 趋势线"></label>
+          <label>平滑 <input value="MA5"></label>
+        </div>
+      </div>
+      <div class="d-foot">
+        <button class="btn-flat">↺ 恢复默认</button>
+        <button class="btn-ghost">收起</button>
+        <button class="btn-run">▶ 开始统计</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<pre id="selftest"></pre>
+
+<script>
+(function () {
+  function el(id) { return document.getElementById(id); }
+  window.__selftest = function () {
+    var lines = [], ok = true;
+    function t(name, cond) { if (!cond) { ok = false; } lines.push((cond ? '✓ ' : '✗ ') + name); }
+    t('无水平溢出', document.documentElement.scrollWidth <= window.innerWidth + 1);
+    t('页签三枚', document.querySelectorAll('.tab').length === 3);
+    t('摘要条 4 枚 chip', document.querySelectorAll('.summary .chip').length === 4);
+    t('**没有 KPI 行**（用户口径）', document.querySelectorAll('.kpi').length === 0);
+    t('没有四态占比条', document.querySelectorAll('.stack, .legend').length === 0);
+    t('结果区保留现状双窗格图（柱 ≥15 + 两条线）',
+      document.querySelectorAll('svg rect').length >= 15
+      && document.querySelectorAll('svg polyline').length === 2);
+    t('工具行有 ƒ 库与主按钮',
+      !!document.querySelector('.summary .btn-ghost')
+      && !!document.querySelector('.summary .btn-run'));
+    return { ok: ok, lines: lines };
+  };
+  if (location.search.indexOf('selftest') >= 0) {
+    var r = window.__selftest();
+    var box = el('selftest');
+    if (box) { box.textContent = r.lines.join('\n'); box.style.display = 'block'; }
+    document.title = (r.ok ? 'SELFTEST OK ' : 'SELFTEST FAIL ') + r.lines.length;
+  }
+})();
+</script>
+</body>
+</html>

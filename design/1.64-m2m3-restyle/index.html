@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>M2/M3 视觉重塑 · 样板索引（1.64）</title>
+<link rel="stylesheet" href="_style.css">
+</head>
+<body>
+
+<div class="doc">
+  <div class="title-row">
+    <h1>M2 / M3 视觉重塑（按 M1 的设计语言）</h1>
+    <span class="tag">设计样板 · 待拍板</span>
+  </div>
+  <p>目标：让 <b>M1 / M2 / M3 看起来是同一个软件的三个页签</b>，而不是三套设计语言。
+     手法只有一条 —— <b>把 M1 已经定稿的零件拿来共用</b>，不新造样式、不改配色。</p>
+
+  <h3>两份样板</h3>
+  <ul>
+    <li><a href="a-m2-全市场筛选.html">a-m2-全市场筛选.html</a> —— 三页签 + 操作轴 + 摘要条 + KPI 卡 + 卡片包表 + 抽屉</li>
+    <li><a href="b-m3-广度统计.html">b-m3-广度统计.html</a> —— 同上骨架，但结果区换成「四态占比条 + 广度走势图」（M3 本就没有表）</li>
+  </ul>
+  <p class="hint">用浏览器打开即可；地址栏加 <span class="mono">?selftest=1</span> 会把页内自检结果打到页脚。</p>
+
+  <h3>与现状的差别（这才是要改的地方）</h3>
+  <table class="cmp">
+    <thead>
+      <tr><th style="width:15%">零件</th><th style="width:30%">M1（已经定稿）</th>
+          <th style="width:28%">M2 / M3 现在</th><th>重塑后</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>低频配置的状态</td>
+        <td>摘要条里的 <b>chip 药丸</b>（14px 圆角 / 四态底色 / 点击展开对应卡片）</td>
+        <td><span class="mono">scan_layout._chip()</span> / <span class="mono">breadth_layout._chip()</span>
+            —— <b>各写一份</b>，边距/字号/状态色都不完全一样</td>
+        <td>只留<b>一份</b> chip 工厂（与 M1 同源），三页共用</td>
+      </tr>
+      <tr>
+        <td>卡片 / 抽屉</td>
+        <td><span class="mono">backtest_panes.EditPane</span>：14px 粗体标题 + accent 色 + 统一内边距</td>
+        <td>同基类，但 accent 色与内边距各写各的</td>
+        <td>accent 色与内边距归到一处（与 M1 逐像素一致）</td>
+      </tr>
+      <tr>
+        <td>主操作</td>
+        <td><b>蓝底实心</b>（▶ 开始回测 / ⚙ 编辑配置 是描边 ghost）</td>
+        <td>主操作也是<span class="mono">flat</span>（只有蓝字、没有底）⇒ 看不出"哪个是主按钮"</td>
+        <td>主操作统一蓝底实心；次级统一描边 ghost</td>
+      </tr>
+      <tr>
+        <td>结果区</td>
+        <td>KPI 卡（24px 粗体、涨绿跌红）+ 页签 + 图</td>
+        <td>一上来就是一张干表（没有"一眼看懂"的数）</td>
+        <td>先一排<b>小号 KPI</b>（配角 —— 主角是清单），再卡片包住表（表头/行高与 M1 成交明细同款）。
+            <b>M3 不适用</b>：它只重塑工具栏，结果区原样</td>
+      </tr>
+      <tr>
+        <td>回执位置</td>
+        <td>摘要条右侧、紧挨主按钮（"改完就看回执"）</td>
+        <td>摘要条中部，与按钮隔开</td>
+        <td>同一位置、同一字号（12px / 主蓝）</td>
+      </tr>
+      <tr>
+        <td>「ƒ 库」入口</td>
+        <td>摘要条右侧动作簇</td>
+        <td>已在（H7 起同款）</td>
+        <td>保持；行情页那枚已在 L2 工具行末端</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>已拍板（2026-09-30 · 用户）</h3>
+  <ol>
+    <li><b>涨跌配色：沿用线上</b> —— <span class="up">绿 = 正</span> / <span class="down">红 = 负</span>
+        （<span class="mono">settings.COLOR_PROFIT_TEXT</span> / <span class="mono">COLOR_LOSS_TEXT</span>），
+        不做 A 股习惯的「红涨绿跌」（那是全局口径变更，M1 的净值图也得跟着改）。</li>
+    <li><b>M2：KPI 卡片做小</b> —— 这一页<b>主角是命中清单</b> ⇒ KPI 只当配角：值 17px（不是 24px）、
+        标签与值同行、卡片内边距收到 7px。<b>已改</b>（见 <a href="a-m2-全市场筛选.html">a</a>）。</li>
+    <li><b>M3：只改上方工具栏</b> —— 不要 KPI 行、不要四态占比条、也不要别的走势图；
+        <b>下面图表的内容原样不动</b>（现状 = 上窗格"每日命中家数柱 + MA5 橙线" / 下窗格"指数收盘"的
+        双窗格图，口径行与读数条也都保留）。<b>已改</b>（见 <a href="b-m3-广度统计.html">b</a>）。</li>
+  </ol>
+
+  <h3>落地顺序（按拍板后的范围）</h3>
+  <ol>
+    <li>抽 chip 工厂与卡片 accent 到<b>一处</b>（消灭 <span class="mono">scan_layout._chip</span> /
+        <span class="mono">breadth_layout._chip</span> 两份私有实现）；</li>
+    <li>M2 结果区加<b>小号</b> KPI 行 + 表装进卡片（数据来自已有的 <span class="mono">counts</span>
+        与命中清单，不新算口径）；</li>
+    <li>M3 <b>只换工具栏那一段的皮</b>：结果区一行不动，不许碰 <span class="mono">breadth_chart</span>
+        的渲染口径与窗格编排；</li>
+    <li>三页按钮族归位（主 = 实心 / 次 = 描边 / 行内 = flat）；</li>
+    <li>跑两份冒烟 + 回写 §7-B6 设计说明与 CODEMAP。</li>
+  </ol>
+</div>
+
+<pre id="selftest"></pre>
+
+<script>
+(function () {
+  function el(id) { return document.getElementById(id); }
+  window.__selftest = function () {
+    var lines = [], ok = true;
+    function t(name, cond) { if (!cond) { ok = false; } lines.push((cond ? '✓ ' : '✗ ') + name); }
+    t('无水平溢出', document.documentElement.scrollWidth <= window.innerWidth + 1);
+    t('两份样板链接齐全', document.querySelectorAll('a[href$=".html"]').length >= 2);
+    t('对照表有 6 行', document.querySelectorAll('table.cmp tbody tr').length === 6);
+    t('待拍板 3 条', document.querySelectorAll('ol li').length >= 3);
+    return { ok: ok, lines: lines };
+  };
+  if (location.search.indexOf('selftest') >= 0) {
+    var r = window.__selftest();
+    var box = el('selftest');
+    if (box) { box.textContent = r.lines.join('\n'); box.style.display = 'block'; }
+    document.title = (r.ok ? 'SELFTEST OK ' : 'SELFTEST FAIL ') + r.lines.length;
+  }
+})();
+</script>
+</body>
+</html>
