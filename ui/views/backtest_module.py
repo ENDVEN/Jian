@@ -1,8 +1,9 @@
 # ui/views/backtest_module.py
 """
-📐 市场回测 —— 模块容器（三个子页全部上线）：
+📐 市场回测 —— 模块容器（子页全部上线）：
 
   · 📈 单股回测   M1: 已实现 (SingleStockBacktestView)
+  · 🧪 参数研究   B15: 已实现 (ParamSweepView · §7-B15：参数稳健性研究，插在 M1/M2 之间——用户定)
   · 🌐 全市场筛选 M2: 已实现 (ScanView · §7-B1/B2 STEP 4：某日全市场横截面选股)
   · 📊 广度统计   M3: 已实现 (BreadthView · §7-B1/B2 STEP 5：逐日广度折线 + 指数副图联动)
 
@@ -13,6 +14,7 @@ from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 from ui.views.backtest import SingleStockBacktestView
 from ui.views.backtest_history import BacktestHistoryView
 from ui.views.breadth_view import BreadthView
+from ui.views.param_sweep import ParamSweepView
 from ui.views.scan_view import ScanView
 
 _TAB_QSS = """
@@ -34,6 +36,9 @@ class BacktestModule(QWidget):
         self.main_win = main_win
 
         self.single_view = SingleStockBacktestView(main_win)
+        # ★§7-B15（v6.86）：参数稳健性研究（B15 MVP）—— 入口在 M1 与 M2 之间（用户定，勿改）。
+        #   左栏表单 / 图表件 / 编排分居 `ui/widgets/sweep_form.py` / `sweep_chart.py` 与本页薄壳。
+        self.page_sweep = ParamSweepView(main_win)
         # ★§7-B1/B2 STEP 4（v6.37）：M2 从 `_ComingSoonPage` 占位换成真页面。
         #   版式 / 行为 / 渲染分居 `ui/widgets/scan_layout.py` / `scan_flow.py` / `scan_result.py`
         #   （"状态留页面、行为搬模块 + 同名薄壳"，与 1.22/1.23/1.26 同款）。
@@ -53,10 +58,17 @@ class BacktestModule(QWidget):
         self.tabs.setDocumentMode(True)
         self.tabs.setStyleSheet(_TAB_QSS)
         self.tabs.addTab(self.single_view, "📈 单股回测")
+        self.tabs.addTab(self.page_sweep, "🧪 参数研究")
         self.tabs.addTab(self.page_scan, "🌐 全市场筛选")
         self.tabs.addTab(self.page_breadth, "📊 广度统计")
         self.tabs.addTab(self.page_history, "🗂 运行历史")
         layout.addWidget(self.tabs, 1)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self, idx: int) -> None:
+        """切入参数研究页时刷新（策略列表 / 切块缓存可能已被别处更新）。"""
+        if self.tabs.widget(idx) is self.page_sweep:
+            self.page_sweep.refresh_page()
 
     # 供测试/其它模块快速访问单股页
     @property

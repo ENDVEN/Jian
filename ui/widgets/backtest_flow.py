@@ -29,6 +29,7 @@ from core.formula.program import (FormulaProgramError, execute_programs,
 from core.preferences import preferences
 from core.utils import align_by_date
 from data.akshare_feed import is_index_symbol, is_stock_code
+from ui.widgets.symbol_pick import pick_symbol   # ★共用件：选标的的搜索/校验/提示口径
 from data.backtest_archive import SOURCE_AUTO, SOURCE_MANUAL, BacktestArchive, build_record
 from data.sync_service import ZONE_INDEX, ZONE_KLINE, friendly_fetch_message
 from data.trade_calendar import latest_settled_trading_day
@@ -68,25 +69,20 @@ class BacktestFlow:
     # 选标的
     # ==========================================
     def select_symbol(self):
+        """「选择 / 回车」选标的 —— **共用口径在 `ui.widgets.symbol_pick`**
+        （★用户 2026-10-01：参数研究页也要 M1 同款行为 ⇒ 搜索/校验/提示文案只留一份）。
+
+        本方法只做"回填本页控件 + 顺手刷新对比"，观感与行为与旧版逐字一致。
+        """
         p = self.page
-        keyword = p.txt_symbol.text().strip()
-        if not keyword:
-            QMessageBox.information(p, "提示", "请输入股票代码或名称。")
+        picked = pick_symbol(p, p.txt_symbol.text(), lake=p.data_lake)
+        if picked is None:
             return
-        res_df = p.main_win.engine.search_symbol(keyword)   # 经 DataEngine 门面，UI 不碰 DAO
-        if res_df.empty:
-            QMessageBox.warning(p, "未找到", f"花名册中没有 '{keyword}'。")
-            return
-        symbol = str(res_df.iloc[0]['symbol'])
-        name = str(res_df.iloc[0]['name'])
-        if not is_stock_code(symbol):
-            QMessageBox.warning(p, "仅支持A股", f"'{name} ({symbol})' 不是A股标的。")
-            return
+        symbol, name, hint = picked
         p.current_symbol = symbol
         p.current_name = name
         p.txt_symbol.setText(symbol)
-        p.lbl_symbol.setText(f"{name} ({symbol})"
-                             + (" · 已缓存" if p.data_lake.exists("kline_daily", symbol) else ""))
+        p.lbl_symbol.setText(hint)
         p._render_compare()
 
     def _on_range_preset(self, preset: str):

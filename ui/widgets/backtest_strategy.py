@@ -23,6 +23,7 @@ from config import settings
 #   `stale_snapshot` 把资产带回给调用方，由它决定提示方式（提示可见、更新要显式动作）。
 from data.formula_store import SOURCE_BACKTEST, get_formula_store
 from data.hub_assets import stale_snapshot, upsert_asset
+from data.strategy_store import segments_of   # ★1.66：旧档"段"落回的**唯一出口**
 from ui.widgets.hub_latest import LatestFunctionPrompt   # ★1.61 §7-B16 H4 公共件（M1 与 M2/M3 共用）
 
 
@@ -163,8 +164,10 @@ class StrategyBridge:
         :return: 总库更新版资产（无引用 / 内容一致 / 资产已删 = None）
         """
         p = self.page
-        segments = strategy.get("segments") or [str(strategy.get("function", ""))]
-        p.segments.set_texts([s for s in segments if s and s.strip()])
+        # ★1.66：旧档回落（只有 `function`）收到 `strategy_store.segments_of` 一处 ——
+        #   参数研究页当初各写一份"只读 segments"，旧策略在那边直接空转（实测事故）。
+        segments = list(segments_of(strategy))
+        p.segments.set_texts(segments)
         p.txt_params.setText(str(strategy.get("params_text", "")))
         if strategy.get("start_date"):
             p.date_start.setDate(QDate.fromString(str(strategy["start_date"]), "yyyy-MM-dd"))

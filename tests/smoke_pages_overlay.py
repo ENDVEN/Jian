@@ -43,7 +43,10 @@ RUN_STARTED_AT = time.time()
 #   （本轮实测：应用开着时该断言 3 次里飘 2 次）。内容指纹能分清"被动过"与"被我们写过"。
 _REAL_LIB_FILES = ("annotations.json", "formula_library.json", "watchlist.json",
                    "backtest_strategies.json", "preferences.json", "trade_calendar.json",
-                   "scan_strategies.json", "industry_map.json")
+                   "scan_strategies.json", "industry_map.json",
+                   # ★v6.86 / §7-B15 SW-4（方案书 §8-18）：B15 两个新落点进名单 ——
+                   #   指数切块缓存（core/index_regimes）+ 参数研究快照库（data/sweep_archive）
+                   "index_regimes.json", os.path.join("sweep_results", "_index.json"))
 
 
 def _real_lib_fingerprint() -> dict:
@@ -2569,9 +2572,10 @@ try:
 
     # ---- ① 挂载与公共面（迁移护栏：改名 / 删除 / 把薄壳写成空函数 ⇒ 立刻红）----
     check("M2 已换掉 `_ComingSoonPage` 占位（`page_scan` = ScanView）", isinstance(_scan, ScanView))
-    check("M2 仍挂在回测模块的页签上（`backtest_module` 的壳一字未动，F-2）",
-          win.page_backtest.tabs.widget(1) is _scan
-          and win.page_backtest.tabs.tabText(1) == '🌐 全市场筛选')
+    check("M2 仍挂在回测模块的页签上（★v6.86 起第 2 位是参数研究，M2 顺移到 index 2）",
+          win.page_backtest.tabs.widget(2) is _scan
+          and win.page_backtest.tabs.tabText(2) == '🌐 全市场筛选'
+          and win.page_backtest.tabs.tabText(1) == '🧪 参数研究')
     SCAN_PUBLIC = (
         # 状态（全部留在页面）
         'main_win', '_thresholds', '_symbols', '_names', '_asof', '_outcome', '_guard',
@@ -2932,7 +2936,7 @@ try:
 
     # ---- ⑦ 抽屉开合（覆盖层：不动主区高度）----
     win.switch_to('backtest')                     # 真实用户动作：切到回测模块
-    win.page_backtest.tabs.setCurrentIndex(1)     # 再切到 M2 页签（否则页面不在前台，isVisible 恒 False）
+    win.page_backtest.tabs.setCurrentIndex(2)     # 再切到 M2 页签（★v6.86 起 index 2；离屏下 isVisible 需要前台）
     app.processEvents()
     _scan.open_pane('filter')
     check("抽屉可开：抽屉 + 遮罩可见，几何在页面矩形内（§11.5-26）",
@@ -2972,9 +2976,9 @@ try:
     # ---- ① 挂载与公共面（迁移护栏：改名 / 删除 / 把薄壳写成空函数 ⇒ 立刻红）----
     check("M3 已换掉 `_ComingSoonPage` 占位（`page_breadth` = BreadthView，占位类退役）",
           isinstance(_brd, BreadthView))
-    check("M3 仍挂在回测模块的第 3 页签上（`backtest_module` 的壳一字未动，F-2）",
-          win.page_backtest.tabs.widget(2) is _brd
-          and win.page_backtest.tabs.tabText(2) == '📊 广度统计')
+    check("M3 仍挂在回测模块的第 4 页签上（★v6.86 起 M3 顺移到 index 3）",
+          win.page_backtest.tabs.widget(3) is _brd
+          and win.page_backtest.tabs.tabText(3) == '📊 广度统计')
     BRD_PUBLIC = (
         # 状态（全部留在页面）
         'main_win', '_thresholds', '_symbols', '_names', '_outcome', '_guard', '_index_guard',
@@ -3312,7 +3316,7 @@ try:
 
     # ---- ⑧ 抽屉开合（覆盖层：不动主区高度）----
     win.switch_to('backtest')
-    win.page_backtest.tabs.setCurrentIndex(2)         # 切到 M3 页签（离屏下 isVisible 需要）
+    win.page_backtest.tabs.setCurrentIndex(3)         # 切到 M3 页签（★v6.86 起 index 3）
     app.processEvents()
     _brd.open_pane('display')
     check("抽屉可开（📈 展示卡）：抽屉 + 遮罩可见，几何在页面矩形内（§11.5-26）",
@@ -3799,8 +3803,8 @@ try:
 
     _hv = win.page_backtest.page_history
     _sv5 = win.page_backtest.single_view
-    check("市场回测页第4子页 = 运行历史（index 3）",
-          _hv is not None and win.page_backtest.tabs.indexOf(_hv) == 3)
+    check("市场回测页第5子页 = 运行历史（★v6.86 起 index 4，第 2 位是参数研究）",
+          _hv is not None and win.page_backtest.tabs.indexOf(_hv) == 4)
 
     def _settle5(seconds=0.4):
         """等防抖 / 事件循环跑完（★v1.46：搜索框起 220ms 防抖，不再每敲一字重读索引）。"""
@@ -5164,6 +5168,414 @@ except Exception as _e_p3:  # noqa: BLE001
     check(f"§7-B12 P3 筛选方案库断言整段抛异常: {type(_e_p3).__name__}: {_e_p3}", False)
 
 # ==========================================
+# §7-B15 SW-5/6/7 · 参数研究页（`ui/views/param_sweep.py` + sweep_form/sweep_chart）
+#   红线/护栏的行为级断言：页签次序 / 折叠不丢表单 / 结论条同屏 / 源码级纪律
+# ==========================================
+print("\n== §7-B15 参数研究页：页签 / 折叠 / 结论条 / 源码级纪律 ==")
+
+try:
+    win.switch_to('backtest')
+    win.page_backtest.tabs.setCurrentIndex(1)      # 🧪 参数研究（用户定：M1 与 M2 之间）
+    app.processEvents()
+    _psw = win.page_backtest.page_sweep
+    from ui.views.param_sweep import ParamSweepView as _PSVC
+    check("SW-5：参数研究挂在 M1 与 M2 之间（index 1），页面真装配",
+          isinstance(_psw, _PSVC)
+          and win.page_backtest.tabs.tabText(1) == '🧪 参数研究'
+          and _psw.form.isVisibleTo(win))
+
+    # ---- §8-13 折叠记忆且不丢表单（断言 5 个字段值折叠→展开后不变）----
+    # ★v6.86 视觉返工后的形态：左栏 = 306px 白卡；折叠 = 46px 竖条，**展开钮长在竖条上**。
+    #   （上一版把展开钮放在被隐藏的卡体里 = 收起即死胡同 —— 用户实测抓到，本断言防回归。）
+    check("设计稿规格：左栏 306px 定宽白卡（不再用 splitter ⇒ 不塌 0）",
+          abs(_psw.form.panel.width() - 306) <= 2)
+    from PyQt6.QtWidgets import QScrollArea as _QSA76
+    _right_sa = [w for w in _psw.findChildren(_QSA76) if w.parent() is _psw][0]
+    check("★v6.86 返工：右栏吃满剩余宽度（≥2× 左栏 —— 上一版被 addStretch 平分成半宽）",
+          _right_sa.width() >= 2 * _psw.form.panel.width())
+    _psw.form.in_symbol.setText("600519")
+    _before5 = (_psw.form.in_symbol.text(),
+                _psw.form.dt_is_start.date().toString("yyyy-MM-dd"),
+                _psw.form.dt_is_end.date().toString("yyyy-MM-dd"),
+                _psw.form.dt_oos_start.date().toString("yyyy-MM-dd"),
+                _psw.form.min_trades())
+    _psw.toggle_panel_collapsed()
+    app.processEvents()
+    _folded = (_psw.is_panel_collapsed() and not _psw.form.panel.isVisibleTo(win)
+               and _psw.form.strip.isVisibleTo(win)
+               and _psw.form.btn_expand.isVisibleTo(win))   # ★展开钮必须活着（死胡同回归断言）
+    _psw.toggle_panel_collapsed()
+    app.processEvents()
+    _after5 = (_psw.form.in_symbol.text(),
+               _psw.form.dt_is_start.date().toString("yyyy-MM-dd"),
+               _psw.form.dt_is_end.date().toString("yyyy-MM-dd"),
+               _psw.form.dt_oos_start.date().toString("yyyy-MM-dd"),
+               _psw.form.min_trades())
+    check("§8-13：折叠态=46px 竖条且展开钮可见；展开后 5 个字段值不变",
+          _folded and _before5 == _after5 and _psw.form.panel.isVisibleTo(win))
+    _psw.form.btn_collapse.click()            # 真点击（§11.5-96）折叠
+    app.processEvents()
+    _alive = _psw.form.btn_expand.isVisibleTo(win)
+    _psw.form.btn_expand.click()              # 真点击展开
+    app.processEvents()
+    check("★ 死胡同回归：真点击折叠 → 展开钮可见；真点击展开 → 卡体回来",
+          _alive and _psw.form.panel.isVisibleTo(win))
+
+    # ---- 空态管理：没跑完样本外之前不露裸坐标轴 ----
+    check("空态：图表隐藏、占位卡可见（散点/热力图不出空图）",
+          not _psw.scatter.isVisibleTo(win) and _psw.chart_empty.isVisibleTo(win))
+
+    # ---- 红线③：结论条常驻（直接进布局；跑不跑结果都在屏上）----
+    check("红线③：结论条是常驻 QLabel（不进 tooltip、不折叠）—— 有文本且 isVisibleTo",
+          _psw.lbl_verdict.isVisibleTo(win) and bool(_psw.lbl_verdict.text())
+          and _psw.lbl_verdict.toolTip() == "")
+
+    # ---- 红线①：样本外按钮初始禁用（先跑样本内才解锁）----
+    check("红线①（流程形态）：样本外按钮初始禁用 ⇒ 用户必须先跑样本内",
+          not _psw.form.btn_run_oos.isEnabled())
+
+    # ---- 源码级纪律（判据 = 代码形状，§11.5-101）----
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _psw_src = open(os.path.join(_repo_root, "ui", "views", "param_sweep.py"),
+                    encoding="utf-8").read()
+    _psw_form = open(os.path.join(_repo_root, "ui", "widgets", "sweep_form.py"),
+                     encoding="utf-8").read()
+    check("§8-11 策略来源唯一：页面 import StrategyStore，且不存在自由编辑函数的输入控件",
+          "from data.strategy_store import StrategyStore" in _psw_src
+          and "formula_store" not in _psw_src
+          and "QPlainTextEdit" not in _psw_src and "QPlainTextEdit" not in _psw_form)
+    check("§8-19 候选表三件套：无 ResizeToContents()/setSortingEnabled() 调用（判据 = 调用形状，§11.5-101）",
+          "ResizeToContents(" not in _psw_src and "setSortingEnabled(" not in _psw_src)
+    check("红线①硬闸在页面：同网格重跑样本外必须过「污染样本外」确认（源码级）",
+          "_confirm_pollution" in _psw_src and "污染" in _psw_src
+          and "_oos_done" in _psw_src)
+    # ★R0 拆件后，这三样（risk_summary / _FILL_LABELS / 同屏文案）住在
+    #   `ui/widgets/sweep_results.py` —— 源码级判据必须跟着**搬家的落点**走。
+    _psw_res_src = open(os.path.join(_repo_root, "ui", "widgets", "sweep_results.py"),
+                        encoding="utf-8").read()
+    check("结论条同屏内容（源码级）：成交口径与风控摘要印进结论条（v3.1 勘误②）",
+          "risk_summary" in _psw_res_src and "_FILL_LABELS" in _psw_res_src
+          and "同屏不可折叠" in _psw_res_src)
+
+    # ---- ★R0 拆件：视图回到"编排 + 闸门"，结果渲染另成一件事 ----
+    _psw_lines = len([l for l in _psw_src.splitlines() if l.strip()])
+    _res_lines = len([l for l in _psw_res_src.splitlines() if l.strip()])
+    check(f"★R0/R3：param_sweep.py 拆件后 ≤470 行（实测 {_psw_lines}）+ 结果/区间两件独立"
+          f"（sweep_results.py {_res_lines} 行）",
+          _psw_lines <= 470 and _res_lines > 100
+          and "class ParamSweepView(" in _psw_src
+          and all(_m in _psw_src for _m in ("SweepInputMixin", "SweepRegimesMixin",
+                                            "SweepResultsMixin"))
+          and "def _compute_and_show" not in _psw_src
+          and "def _compute_and_show" in _psw_res_src)
+
+    # ---- ★R2：预设"三级"（口径 → 窗口 → 取近 N 组），不再平铺几十条 ----
+    _f2 = _psw.form
+    check(f"★R2：口径下拉只剩 4 项（3 类 + 自定义）—— 实测 {_f2.cb_interval_kind.count()} 项",
+          _f2.cb_interval_kind.count() == 4
+          and _f2.cb_interval_kind.itemData(3) == "custom")
+    check("★R2：默认「取近 5 组」（用户 2026-10-01 拍板）且窗口数 ≤ 5",
+          _f2.cb_recent_n.currentText() == "5 组" and _f2.cb_preset.count() <= 5)
+    check("★R2：窗口项标题带**四日期**（「哪一段」是用户唯一要选的东西）",
+          all(("→" in _f2.cb_preset.itemText(i) and "‖" in _f2.cb_preset.itemText(i))
+              for i in range(_f2.cb_preset.count())))
+    _f2.cb_interval_kind.setCurrentIndex(0)          # 切「单边上涨」
+    app.processEvents()
+    _iv_up = _f2.interval()
+    check("★R2：切口径 ⇒ 四格日期**立刻**换成该口径的最近一对（不用再点一次）",
+          _iv_up.is_start != "" and _f2.cb_preset.count() <= 5)
+    _f2.cb_recent_n.setCurrentIndex(0)              # 取近 3 组
+    app.processEvents()
+    check("★R2：改「取近 N 组」⇒ 窗口数跟着变（实测 %d 项）" % _f2.cb_preset.count(),
+          _f2.cb_preset.count() <= 3)
+    _f2.select_custom()
+    app.processEvents()
+    check("★R2：「自定义」口径藏起窗口与取近（四格由用户 / 切块时间轴填）",
+          not _f2.cb_preset.isVisibleTo(win) and not _f2.cb_recent_n.isVisibleTo(win)
+          and bool(_f2.lbl_why.text()))
+    _f2.cb_interval_kind.setCurrentIndex(2)          # 还原「震荡箱体」（后续段落还用）
+    _f2.cb_recent_n.setCurrentIndex(1)
+    app.processEvents()
+
+    # ---- ★R1 统一件接入：卡 / KPI / 主次按钮都不许各写一份 ----
+    from ui.widgets.styles import (SUMMARY_GHOST_QSS as _GH1,  # noqa: E402
+                                   SUMMARY_RUN_QSS as _RUN1)
+    _sp_src = open(os.path.join(_repo_root, "ui", "widgets", "sweep_parts.py"),
+                   encoding="utf-8").read()
+    check("★R1：卡的构造只有一处（`sweep_parts.panel_card`）—— 页面不再自造 _card / 直接用卡 QSS",
+          "def _card" not in _psw_src and "PANEL_CARD_QSS" not in _psw_src
+          and "panel_card" in _psw_src and "def panel_card" in _sp_src)
+    _kpi_src = open(os.path.join(_repo_root, "ui", "widgets", "kpi_card.py"),
+                    encoding="utf-8").read()
+    _scanres_src = open(os.path.join(_repo_root, "ui", "widgets", "scan_result.py"),
+                        encoding="utf-8").read()
+    check("★R1：KPI 小卡与 M2 **同一实现**（`kpi_card.kpi_html`）—— 两页各写一份必然漂",
+          "from ui.widgets.kpi_card import" in _psw_src
+          and "def kpi_html" in _kpi_src
+          and "from ui.widgets.kpi_card import" in _scanres_src
+          and "font-size:17px" not in _scanres_src)
+    check("★R1：KPI 行在屏上（红线③：数字与结论条同屏、都不可折叠）",
+          len(_psw.kpi) == 5 and all(w.isVisibleTo(win) for w in _psw.kpi.values())
+          and bool(_psw.lbl_verdict.text())
+          and _psw.lbl_verdict.toolTip() == "")
+    check("★R1：一页只留一颗蓝底实心主按钮 —— 「💾 存快照」是次级（ghost）",
+          _psw.btn_save.styleSheet() == _GH1
+          and _psw.form.btn_run_is.styleSheet() == _RUN1)
+
+    # ---- ★追加需求（用户 2026-10-01）：标的行 = 手输 + 「选择」按钮 + M1 同款提示 ----
+    _sym_pick_src = open(os.path.join(_repo_root, "ui", "widgets", "symbol_pick.py"),
+                         encoding="utf-8").read()
+    _flow_src = open(os.path.join(_repo_root, "ui", "widgets", "backtest_flow.py"),
+                     encoding="utf-8").read()
+    _inp_src = open(os.path.join(_repo_root, "ui", "widgets", "sweep_input.py"),
+                    encoding="utf-8").read()
+    check("★追加：口径**只有一处** —— M1 的 select_symbol 与参数研究页都调 `symbol_pick.pick_symbol`"
+          "（★1.66 拆件后页面的取口在 `sweep_input.py`）",
+          "def pick_symbol" in _sym_pick_src
+          and "from ui.widgets.symbol_pick import pick_symbol" in _flow_src
+          and "from ui.widgets.symbol_pick import pick_symbol" in _inp_src)
+    check("★追加：标的行有「选择」按钮 + 提示行（提示里点名了怎么换标的）",
+          _f2.btn_pick.text() == "选择" and _f2.btn_pick.isVisibleTo(win)
+          and ("选择" in _f2.lbl_symbol.text() or "未选择" in _f2.lbl_symbol.text()))
+    # 真点一次（引擎门面按花名册查 —— 这里临时打桩，避免依赖本机花名册内容）
+    import pandas as _pd2  # noqa: E402
+    _eng = _psw.main_win.engine
+    _orig_search = _eng.search_symbol
+    _eng.search_symbol = lambda kw: _pd2.DataFrame([{"symbol": "600519", "name": "贵州茅台"}])
+    try:
+        _f2.in_symbol.setText("茅台")
+        _f2.btn_pick.click()                       # 真点击（§11.5-96）
+        app.processEvents()
+        _hint_ok = _f2.lbl_symbol.text().startswith("贵州茅台 (600519)")
+        check(f"★追加：真点「选择」⇒ 回填代码 + M1 同款提示（实测「{_f2.lbl_symbol.text()[:28]}」）",
+              _hint_ok and _f2.symbol() == "600519")
+        check("★追加：选完顺手写本地数据回执（有 ⇒ 区间 / 没有 ⇒ 指向预下载）",
+              ("本地数据" in _f2.lbl_data.text()) or ("预下载" in _f2.lbl_data.text()))
+    finally:
+        _eng.search_symbol = _orig_search
+        _f2.cb_interval_kind.setCurrentIndex(2)
+        app.processEvents()
+
+    # ---- ★R3：区间全景重做（价格线 / 年份刻度 / 悬停 / Shift 只设外 / 重新切块）----
+    from core.index_regimes import SHANGHAI_INDEX_SYMBOL as _SH3  # noqa: E402
+    from core.index_regimes import ZONE_INDEX as _ZI3
+    _has_idx3 = _psw._lake.exists(_ZI3, _SH3)
+    check("★R3：时间轴拿到上证收盘线（「看得懂」三要素之一：价格）—— 本机没有指数数据时必须"
+          "**诚实为空 + 给提示**，不许假装有",
+          (len(_psw.timeline._closes) > 1) if _has_idx3
+          else (list(_psw.timeline._closes) == [] and bool(_psw.timeline._hint)))
+    _segs3 = list(_psw.timeline._segments)
+    check("★R3：段信息 + 悬停读数可算（段型 / 起止 / 交易日数 / 段内涨跌 **+ 判定窗口涨跌**）"
+          "—— 后者是「为什么这段标成跌」的答案，缺了它就自相矛盾",
+          bool(_segs3) and all(("交易日" in _psw.timeline._hover_text(s)
+                                and "判定" in _psw.timeline._hover_text(s))
+                               for s in _segs3[:3]))
+    # ---- ★用户 2026-10-01 反馈：③④ 重设计 + "闸门要看得见"（诊断他"怎么点都没反应"的根因）----
+    _d3 = _f2._dim_rows[0]
+    check("★UI：参数网格 = 标签**进框**（前缀 起/止/步）+ 三框等分且 ≥78px（旧版 72px 被挤扁）",
+          [_d3[k].prefix().strip() for k in ("start", "stop", "step")] == ["起", "止", "步"]
+          and min(_d3[k].width() for k in ("start", "stop", "step")) >= 78)
+    check("★UI：每维就地报档位（超限那一维自己变橙字，不再只有一行小灰字）",
+          _d3["hint"] is not None and bool(_d3["hint"].text()))
+    check("★UI：四个日期框 ≥100px 且**显示完整** yyyy-MM-dd（旧版被压成「201」——用户截图实锤）",
+          min(_f2.dt_is_start.width(), _f2.dt_is_end.width(),
+              _f2.dt_oos_start.width(), _f2.dt_oos_end.width()) >= 100
+          and all(len(w.text()) == 10 for w in (_f2.dt_is_start, _f2.dt_is_end,
+                                                _f2.dt_oos_start, _f2.dt_oos_end)))
+    check("★UI：下拉**弹层**加宽到 ≥400px（长标签后半截看得见）+ 窗口项只给四日期",
+          _f2.cb_preset.view().minimumWidth() >= 400
+          and _f2.cb_interval_kind.view().minimumWidth() >= 400
+          and "里调" not in _f2.cb_preset.itemText(0))
+    _need3 = (_d3["start"].fontMetrics().horizontalAdvance(_d3["start"].prefix() + "25.00") + 24)
+    check(f"★UI：参数框容得下「起25.00」+ 上下箭头（实测框宽 {_d3['start'].width()} ≥ 需要 {_need3}）"
+          "—— 用户截图「起 5.0C」就是被箭头挤掉末位",
+          _d3["start"].width() >= _need3)
+
+    # ---- ★1.66（用户实测：改参数 / 改区间后再跑，右边图表依然不动）----
+    check("★1.66：`_compute_and_show` 只认**当前网格的格子**（旧键不参与 ⇒ 不再 matmul 维度不匹配）"
+          "+ 统计装配异常必须**说出来**（绝不静默冻结）",
+          "combo_key(c) for c in self._grid.combos" in _psw_res_src
+          and "统计装配失败" in _psw_res_src and "logger.warning" in _psw_res_src)
+    check("★1.66：换网格 / 换区间 ⇒ 上一轮结果**作废**并提示重跑（结果与「实验身份」绑定）",
+          "_experiment_signature" in _psw_src and "_invalidate_if_changed" in _psw_src
+          and "上一轮结果作废" in _psw_src)
+
+    # ---- ★1.66（用户实测：第一次正常，改参数二次测试后结果图被极端压缩成一条）----
+    #   根因：`ScatterIso` / `HeatmapGrid` 两个 pyqtgraph 件**自身没有最小高**，而右栏里
+    #   KPI 行 / 时间轴 / 结论条 / 候选表都各有最小高 ⇒ **图卡是唯一的弹性项**，竖向一紧张
+    #   （结论条多一行、门槛提示多一行…）全部亏空都压在它身上 ⇒ 坐标轴挤成番茄酱。
+    #   ⇒ 图体加硬底线，亏空改由**滚动条**承担；余量优先给图。这里按用户截图那档窗口实测。
+    win.show()   # 离屏平台只接受自己的窗口尺寸（实测 2405×723）——判据钉**底线**，不依赖窗口大小
+    app.processEvents()
+    app.processEvents()
+    _psw.chart_empty.hide()          # 等价于"有结果"时的可见组合（不需要真跑两段）
+    _psw.scatter.show()
+    _psw.heatmap.show()
+    app.processEvents()
+    check(f"★1.66：实测窗口 {win.width()}×{win.height()} 下结果图**不被压扁**"
+          f"（散点实测 {_psw.scatter.height()}px ≥ 200，图体底线 "
+          f"{_psw.charts.minimumHeight()}px）—— 图卡是右栏唯一弹性项，"
+          f"亏空必须由滚动条承担",
+          _psw.charts.minimumHeight() >= 300 and _psw.scatter.height() >= 200)
+
+    # ---- ★R4 ⑥：四视图切换（chip 单张占满宽）+ 数据"只喂不重算" ----
+    check("★R4：四枚视图 chip 与四个画布一一对应（散点 / 热力图 / 邻域稳健 / 滚动 IC 12 折），"
+          "切换 = QStackedWidget **单张占满宽**（不并排、不挤 —— §6-2 用户拍板）",
+          list(_psw.charts._chips) == ["scatter", "heatmap", "nb", "roll"]
+          and _psw.charts._stack.count() == 4)
+    _r4_keys, _r4_scene = [], []
+    for _k4 in ("scatter", "heatmap", "nb", "roll"):
+        _psw.charts.show_view(_k4)
+        _r4_keys.append(_psw.charts.view_key())
+        _r4_scene.append(bool(_psw.charts.lbl_scene.text()))
+    check(f"★R4：逐个切换都落到对应视图（实测 {_r4_keys}）+ 每张都有抬头说明句",
+          _r4_keys == ["scatter", "heatmap", "nb", "roll"] and all(_r4_scene))
+    _stats_src = open(os.path.join(_repo_root, "core", "sweep_stats.py"),
+                      encoding="utf-8").read()
+    check("★R4：四视图的数据**只喂不重算**（结果件只调 set_*；两处新口径的唯一出口在 core）",
+          all(_s in _psw_res_src for _s in ("set_neighborhood", "set_rolling_ic",
+                                            "platform_spike_flags", "rolling_ic"))
+          and "def rolling_ic" in _stats_src and "def platform_spike_flags" in _stats_src)
+
+    # ---- ★R4-b：四张图**逐项对齐设计稿**（用户实测："你现在的图表我根本不可读"）----
+    #   设计稿 = `design/1.58-param-sweep/_charts.js`（轴 / 配色 / 标注 / 色标 / 门槛带逐项写死）。
+    _chart_src = open(os.path.join(_repo_root, "ui", "widgets", "sweep_chart.py"),
+                      encoding="utf-8").read()
+    _hm = _psw.charts.heatmap
+    check("★R4-b：热力图色义照稿 —— 负值 = 灰 #D8DEE8（亏钱一眼可辨）· 正值 = 蓝阶 · "
+          "没跑到 = 白（三者必须分得开）；且刻意**不用红绿**（避开 A 股红涨绿跌的误读）",
+          _hm._cell_color(-0.05).name().upper() == "#D8DEE8"
+          and _hm._cell_color(0.0).name().upper() == "#E8F0FA"
+          and _hm._cell_color(0.095).name().upper() == "#1A72EC"
+          and _hm._cell_color(float("nan")).name().upper() == "#FFFFFF")
+    check("★R4-b：散点轴 = **百分比**（设计稿口径），不再出现 0.001 这种原始小数",
+          "样本内年化（%）" in _chart_src and "样本外年化（%）" in _chart_src
+          and "* 100.0" in _chart_src)
+    check("★R4-b：滚动 IC 有 ±0.15 门槛带（照稿：多数折低于门槛 ⇒ 该参数化不稳定）",
+          abs(float(_psw.charts.roll.THRESH) - 0.15) < 1e-9
+          and _psw.charts.roll._band is not None)
+    check("★R4-b：邻域图 = **带参数名**的横向排行（条形 = 邻域均值 · 竖线 = 邻域最差 · 前三名加粗）",
+          "条形 = 邻域均值" in _chart_src and "邻域最差" in _chart_src
+          and _psw.charts.nb.SHOW_MAX == 20)
+
+    # ---- ★R4-c：图不许顶出窗口 + 滚轮让给页面（用户实测）----
+    check("★R4-c：四图与交易分布图的**滚轮让给页面滚动**（用户实测：想下滚却误触成图表缩放）"
+          "—— 与全站 `NoWheel*` 控件同一条纪律",
+          "_NoWheelPlot" in [c.__name__ for c in type(_psw.charts.scatter).__mro__]
+          and "_NoWheelPlot" in [c.__name__ for c in type(_psw.charts.roll).__mro__]
+          and "class TradesDistribution(_NoWheelPlot)" in _chart_src)
+    _rr = type(_psw.charts.scatter)._robust_range([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 1000.0])
+    check(f"★R4-c：轴取景**稳健**（Tukey 1.5×IQR + 必含 0；实测 {_rr[0]:.1f}~{_rr[1]:.1f}，"
+          "1000% 那个孤点不参与取景 ⇒ 不再「点挤成一条竖线」）",
+          _rr[0] <= 0.0 <= _rr[1] and _rr[1] < 100.0)
+    check("★R4-c：图体有**上限**（300~460px）⇒ 不再把候选表顶出窗口（余量给表）",
+          _psw.charts.minimumHeight() >= 300 and _psw.charts.maximumHeight() <= 500)
+
+    # ---- ★R5：候选表补齐（9 列 + ✓✗ + 平/尖 + 行悬停"邻居是谁"）----
+    check("★R5：候选表 9 列（补「门槛 ✓✗」与「平台/尖峰」；判定与热力图**同一个**函数）",
+          _psw.table.columnCount() == 9
+          and [_psw.table.horizontalHeaderItem(_c).text() for _c in range(9)][-2:]
+          == ["门槛", "判定"])
+    check("★R5：门槛只筛不排 ⇒ 未过门槛的行**灰显保留**；行悬停报 IS/OOS/邻域三值 + **邻居是谁**",
+          "include_gated=True" in _psw_res_src and "B4BECB" in _psw_res_src
+          and '"kept"' in _psw_res_src and '"flag"' in _psw_res_src
+          and "邻居：" in _psw_res_src)
+    _snap_src = open(os.path.join(_repo_root, "ui", "widgets", "sweep_snap_card.py"),
+                     encoding="utf-8").read()
+    check("★R5b：⑨ 研究快照卡在位（列表 + 回看/置顶/删除）—— 回看是**只读**："
+          "只 `load` 存档、绝不重跑、不动 `_spec/_interval`（红线①）",
+          hasattr(_psw, "snap_card") and hasattr(_psw, "snap_rows")
+          and "_archive.load(rid)" in _snap_src and "只读回放" in _snap_src
+          and "不重绘" in _snap_src and "_archive.set_pinned" in _snap_src
+          and "_archive.delete" in _snap_src)
+
+    _step3 = _d3["step"].value()
+    _d3["step"].setValue(0.2)                       # 5→25 步 0.2 = 101 档 ⇒ 必被拦
+    app.processEvents()
+    _blocked3 = ((not _f2.btn_run_is.isEnabled()) and bool(_f2.blk_reason.text())
+                 and _f2.blk_reason.isVisibleTo(win))
+    _d3["step"].setValue(_step3)
+    app.processEvents()
+    check("★用户实测修复：网格超限 ⇒ **禁用跑按钮 + 橙字写明原因**；合规 ⇒ 自动恢复"
+          "（旧版按钮照样能点、原因只在小灰字里 ⇒ 用户判定「坏了」）",
+          _blocked3 and _f2.btn_run_is.isEnabled() and not _f2.blk_reason.isVisibleTo(win))
+
+    if _segs3:
+        _tl3 = _psw.timeline
+        _s_mid3 = _segs3[len(_segs3) // 2]
+        _lo3, _hi3 = _tl3._bounds()
+        _x3 = _tl3._x_of(_s_mid3["start"], _lo3, _hi3, _tl3.width()) + 2
+        check("★R3：时间轴**命中测试**可用（段内坐标命中该段；两侧越界返回 None）",
+              (_tl3._seg_at(_x3) or {}).get("start") == _s_mid3["start"]
+              and _tl3._seg_at(-50) is None
+              and _tl3._seg_at(_tl3.width() + 500) is None)
+    _psw.timeline.set_marks("2024-12-30", "2025-07-03", "2025-11-11", "2026-09-24")
+    check("★R3：时间轴**分得清内外**（set_marks 收四个日期 ⇒ 内蓝框 / 外橙框）",
+          tuple(_psw.timeline._marks) == ("2024-12-30", "2025-07-03",
+                                          "2025-11-11", "2026-09-24"))
+    if _segs3:
+        _iv_before3 = _f2.interval()
+        _seg3 = _segs3[0]
+        _psw.timeline.segment_oos_picked.emit(_seg3["start"], _seg3["end"])
+        app.processEvents()
+        _iv_after3 = _f2.interval()
+        check("★R3：Shift+点 = **只设样本外**（样本内一字不动）",
+              _iv_after3.is_start == _iv_before3.is_start
+              and _iv_after3.is_end == _iv_before3.is_end
+              and _iv_after3.oos_start == _seg3["start"]
+              and _iv_after3.oos_end == _seg3["end"])
+    _reg_src = open(os.path.join(_repo_root, "ui", "widgets", "sweep_regimes.py"),
+                    encoding="utf-8").read()
+    check("★R3：「⟳ 重新切块」在时间轴卡头条上，且算法与离线脚本同源（走 core.ensure_payload）"
+          "—— 判据跟着搬家的落点走（`sweep_regimes.py`）",
+          _psw.btn_recut.text().startswith("⟳") and _psw.btn_recut.isVisibleTo(win)
+          and "ensure_payload" in _reg_src and "index_close_from_lake" in _reg_src
+          and "def _rebuild_regimes" not in _psw_src)
+    with tempfile.TemporaryDirectory(prefix="jian_recut_") as _td3:
+        _msg3 = _psw._rebuild_regimes(path=os.path.join(_td3, "index_regimes.json"))
+        check(f"★R3：真点重算 ⇒ 回执「{_msg3[:34]}…」（写**临时**缓存 + 刷新左右两栏）",
+              ("切块已重算" in _msg3) if _has_idx3 else ("预下载" in _msg3))
+        check("★R3：重算后时间轴仍可用（有段或诚实空提示）",
+              len(_psw.timeline._segments) > 0 or bool(_psw.timeline._hint))
+    _f2.cb_interval_kind.setCurrentIndex(2)      # 还原「震荡箱体」（后续段落还用）
+    app.processEvents()
+
+    # ---- ★1.66 血案回归（2026-10-01 · 用户原话「功能什么的都没办法实现」）----
+    #   三个致命点**全在真实路径上**（零件级断言一个都测不到，当时 964/0 全绿）：
+    #   ① 读档只认 `segments` ⇒ 旧存档（只有 `function`）在这一页"0 段 ⇒ 无参数"、整页空转；
+    #   ② 页面把条件**配置 dict** `str()` 掉 ⇒ 引擎收到 "{'rule': …}" ⇒ 每组必挂；
+    #   ③ 预设只填下拉不落日期 + `_on_preset` 按 **key** 反查（key 在缓存里重复几十条）
+    #      ⇒ 首次打开被套上一段"本地没有数据"的区间 ⇒ 区间校验必失败 ⇒ 点运行永远被拒。
+    #   以下逐条钉住；注入的是**旧格式 payload**，与开发者本机策略库无关（不许依赖环境）。
+    _psw_backup = [_psw.form.cb_strategy.itemData(i)
+                   for i in range(_psw.form.cb_strategy.count())]
+    _psw.form.in_symbol.setText("")                     # 清空 ⇒ 验证"自动带入"
+    _psw.form.set_strategies([{"id": "sw_legacy_probe", "name": "旧档回归探针",
+                               "function": "F1:=MA(C,N1);", "params_text": "N1=20",
+                               "condition_buy": {"variable": "C", "rule": "gt", "value": 0.0},
+                               "condition_sell": {"variable": "C", "rule": "lt", "value": 0.0},
+                               "symbol": "600519"}])
+    _psw._on_strategy_changed()
+    app.processEvents()
+    check("★1.66 ①：旧档策略（无 segments）在页面**列得出可扫参数**（function 回落；旧版此处必空）",
+          "N1" in _psw.form.lbl_params.text())
+    check("★1.66：标的按策略保存值**自动带入**（只在空着时填，不覆盖用户输入）",
+          _psw.form.symbol() == "600519")
+    _psw_iv = _psw.form.interval()
+    _psw_dft = next((p for p in _psw.form._presets if p.default), None)
+    check("★1.66 ③：四格日期 = **默认预设**的日期（不是控件初值、也不是排第一的那对 2005 年窗口）",
+          _psw_dft is None or (_psw_iv.is_start == _psw_dft.is_start
+                               and _psw_iv.oos_end == _psw_dft.oos_end))
+    check("★1.66 ②：条件以**配置 dict** 进 spec（源码级判据：旧版这里 `str()` 成 repr ⇒ 引擎必炸）",
+          'condition_buy=payload.get("condition_buy") or ""' in _psw_src
+          and 'str(payload.get("condition_buy")' not in _psw_src)
+    _psw.form.set_strategies([p for p in _psw_backup if isinstance(p, dict)])   # 还原真策略
+    _psw._on_strategy_changed()
+    app.processEvents()
+except Exception as _e_psw:  # noqa: BLE001
+    check(f"SW-5/6/7 参数研究页断言整段抛异常: {type(_e_psw).__name__}: {_e_psw}", False)
+
+# ==========================================
 # 收尾自检：绝不能污染用户真实数据（测试一律用临时库）
 # ==========================================
 from config import settings  # noqa: E402
@@ -5175,10 +5587,12 @@ from config import settings  # noqa: E402
 #       （desk_ui / scan_ui / …）是否**逐值一致** —— 一致 ⇒ 被动的是别人的键，不是我们写的 ⇒ 通过。
 #   两级都不满足才 FAIL（真污染仍然抓得住）。
 _AFTER_LIB = _real_lib_fingerprint()
-_OUR_KEYS = ("desk_ui", "scan_ui", "breadth_ui", "review_ui", "download_prefs", "hub_ui")
+_OUR_KEYS = ("desk_ui", "scan_ui", "breadth_ui", "review_ui", "download_prefs", "hub_ui",
+             "sweep_ui")
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
               "backtest_strategies.json", "preferences.json", "trade_calendar.json",
-              "scan_strategies.json", "industry_map.json", "backtest_results"):
+              "scan_strategies.json", "industry_map.json", "backtest_results",
+              "index_regimes.json", "sweep_results"):
     _path = os.path.join(settings.USER_DATA_DIR, _name)
     _untouched = (not os.path.exists(_path)) or os.path.getmtime(_path) < RUN_STARTED_AT
     if not _untouched and _name in _AFTER_LIB:
@@ -5624,8 +6038,8 @@ try:
     _vis = {}
     for _label, _pkey, _ptab, _pbtn in (
             ('M1', 'backtest', 0, _bt82.btn_hub),
-            ('M2', 'backtest', 1, win.page_backtest.page_scan.btn_hub),
-            ('M3', 'backtest', 2, win.page_backtest.page_breadth.btn_hub),
+            ('M2', 'backtest', 2, win.page_backtest.page_scan.btn_hub),
+            ('M3', 'backtest', 3, win.page_backtest.page_breadth.btn_hub),
             ('行情页', 'market', None, win.page_market.btn_hub)):
         win.switch_to(_pkey)
         if _ptab is not None:

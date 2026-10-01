@@ -17,6 +17,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from core.cross_section import FILTERED, HIT, INSUFFICIENT, MISS, STATUS_LABELS
+from ui.widgets.kpi_card import DEFAULT_KPI_FG, kpi_html   # ★R1：KPI 卡唯一实现
 from ui.widgets.styles import KPI_CARD_QSS
 
 __all__ = ['ScanResult', 'STATUS_BG', 'STATUS_FG', 'MAX_TABLE_ROWS']
@@ -62,18 +63,15 @@ KPI_EMPTY_HTML = '<span style="font-size:11.5px;color:#8A94A6;">—</span>'
 
 
 def kpi_card_html(key: str, main: str, sub: str = '') -> str:
-    """小号 KPI 卡的**富文本**（灰标签 + 彩值 + 灰副值）—— 唯一实现。
+    """小号 KPI 卡的富文本 —— **渲染实现已下沉 `ui.widgets.kpi_card`**（★R1：参数研究页共用），
+    本函数只保留 **M2 的语义层**："key → 标签 + 值色"（`_KPI_SPEC` / `STATUS_LABELS`）。
 
     ⚠ 富文本是刻意选的：QLabel 支持 HTML ⇒ **一个控件**就能做"标签小、值大、副值更小"，
       不必为一个数字套三层布局（那会让 6 个 KPI 的构造长一倍）。
     """
-    fg = (_KPI_SPEC.get(key) or ('#20242C', ''))[0]
+    fg = (_KPI_SPEC.get(key) or (DEFAULT_KPI_FG, ''))[0]
     label = STATUS_LABELS.get(key) or _KPI_EXTRA_LABELS.get(key, key)
-    text = (f'<span style="font-size:11.5px;color:#8A94A6;">{label}</span>&nbsp;'
-            f'<b style="font-size:17px;color:{fg};">{main}</b>')
-    if sub:
-        text += f'&nbsp;<span style="font-size:11px;color:#8A94A6;">{sub}</span>'
-    return text
+    return kpi_html(label, main, sub, fg)
 
 
 def _num(value) -> str:

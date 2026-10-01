@@ -21,6 +21,11 @@ from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
 from ui.widgets.custom_widgets import mono_font_css   # ★v1.46 §10-15 开源等宽栈（唯一出口）
 from ui.widgets.custom_widgets import (COMBO_QSS_SMALL, FLAT_QSS_SMALL,  # ★v6.70 §9-F③ 样式唯一出口
                                        NoWheelComboBox, NoWheelDoubleSpinBox)
+# ★1.66 / §7-B15：「规则键 → DSL」与「组合逻辑键」的**唯一实现**已下沉到 `core.conditions`
+#   —— 因为"从存档读条件再跑回测"（参数研究）也必须用**同一份**映射，而 core/data 侧不许
+#   import UI。这里同名再导出（既有调用点照旧 `from ui.widgets.condition_gate import ...`）。
+from core.conditions import (LOGIC_ALL, LOGIC_ANY, LOGIC_AT_LEAST,  # noqa: F401
+                             build_condition_expression, gate_expression)
 
 _CARD_QSS = ("QFrame { background: white; border: 1px solid #E7EAF0; border-radius: 12px; }")
 # v6.9：行内下拉样式收敛到 custom_widgets（成对的 ::drop-down/::down-arrow，§10-9）
@@ -36,10 +41,7 @@ CONDITION_RULES = [
 _VALUE_RULES = {"eq", "gt", "lt", "ge", "le", "ne"}
 _RULE_KEY_TO_INDEX = {key: i for i, (_, key) in enumerate(CONDITION_RULES)}
 
-# 组合逻辑键
-LOGIC_ALL = "all"          # 全部满足 (=至少 N=条件数)
-LOGIC_ANY = "any"          # 任一满足 (=至少 1)
-LOGIC_AT_LEAST = "atleast" # 至少 N 个满足
+# 组合逻辑键 —— 定义已随"条件→DSL"一起下沉到 `core.conditions`（上方 import 再导出）
 
 _LOGIC_LABELS = {
     LOGIC_ALL: "全部满足 (AND)",
@@ -48,19 +50,7 @@ _LOGIC_LABELS = {
 }
 
 
-def build_condition_expression(variable: str, rule: str, value: float) -> str:
-    """单个积木条件行 -> DSL 表达式"""
-    value_txt = f"{value:.6g}"
-    return {
-        "eq": f"{variable} = {value_txt}",
-        "gt": f"{variable} > {value_txt}",
-        "lt": f"{variable} < {value_txt}",
-        "ge": f"{variable} >= {value_txt}",
-        "le": f"{variable} <= {value_txt}",
-        "ne": f"{variable} <> {value_txt}",
-        "rise": f"CROSS({variable}, 0.5)",
-        "fall": f"CROSS(0.5, {variable})",
-    }.get(rule, "")
+
 
 
 class _ConditionRow(QWidget):
@@ -312,20 +302,12 @@ class ConditionGate(QWidget):
         self._refresh()
 
     def expression(self) -> str:
-        """翻译整组 -> DSL。空串 = 条件不足。"""
-        exprs = [r.expression() for r in self._rows if r.config().get("variable")]
-        if not exprs:
-            return ""
-        logic = self.cb_logic.currentData() or LOGIC_ALL
-        n = max(1, int(self.spin_n.value()))
-        if logic == LOGIC_AT_LEAST and len(exprs) > 1:
-            n = min(n, len(exprs))
-            return f"COUNT_TRUE({', '.join(exprs)}) >= {n}"
-        if len(exprs) == 1:
-            return exprs[0]
-        if logic == LOGIC_ANY:
-            return "(" + ") OR (".join(exprs) + ")"
-        return "(" + ") AND (".join(exprs) + ")"
+        """翻译整组 -> DSL。空串 = 条件不足。
+
+        ★1.66：实现搬到 `core.conditions.gate_expression`（**同一份口径** —— 参数研究
+        从存档读条件时走的就是它；界面自留一份就会两边漂移）。
+        """
+        return gate_expression(self.config())
 
     # ---------- 内部刷新 ----------
     def _sync_n_spin(self, *_):

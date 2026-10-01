@@ -84,11 +84,28 @@ class NoWheelSpinBox(_NoWheelMixin, QSpinBox):
     pass
 
 
-class NoWheelDateEdit(_NoWheelMixin, QDateEdit):
+class _CalendarPopupQSSMixin:
+    """★R4-b：把**日历弹层**的样式钉上（用户实测："年月两栏是透明的，鼠标放上去才显示"）。
+
+    【为什么必须在控件里做】`QCalendarWidget` 弹层是**独立顶层窗口** —— 父控件的 QSS
+    对它**无效**（不是继承关系），所以只能在 `calendarWidget()` 上直接挂样式。
+    这一处修好，全站所有日期控件（M1 区间 / 下载起点 / 参数研究四格…）一起好。
+    """
+
+    def setCalendarPopup(self, enable: bool) -> None:  # noqa: N802 —— Qt 原生命名
+        super().setCalendarPopup(bool(enable))
+        if enable:
+            from ui.widgets.styles import CALENDAR_QSS   # 就地 import：避免与 styles 成环
+            cal = self.calendarWidget()
+            if cal is not None:
+                cal.setStyleSheet(CALENDAR_QSS)
+
+
+class NoWheelDateEdit(_CalendarPopupQSSMixin, _NoWheelMixin, QDateEdit):
     pass
 
 
-class NoWheelDateTimeEdit(_NoWheelMixin, QDateTimeEdit):
+class NoWheelDateTimeEdit(_CalendarPopupQSSMixin, _NoWheelMixin, QDateTimeEdit):
     """带时分的时间输入（用于手工录入的交易/开仓时间）。
 
     v6.9 补：此前手工录入弹窗用的是裸 QDateTimeEdit，悬停时滚轮会误改时间 ——

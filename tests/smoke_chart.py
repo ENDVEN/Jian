@@ -4853,6 +4853,662 @@ try:
 except Exception as _eR:  # noqa: BLE001
     check(f"复权自愈断言整段抛异常: {type(_eR).__name__}: {_eR}", False)
 
+# ==========================================
+# §7-B15 SW-0 · 网格纯计算 `core/sweep_plan.py`（护栏 / 组合数 / 耗时预估 / 区间校验）
+#   合成数据、零 Qt 零行情（方案书 §8-5）；闸门语义见 core/sweep_plan.py docstring
+# ==========================================
+print("\n== §7-B15 SW-0 · 网格纯计算：护栏 / 组合数 / 耗时预估 / 区间校验 ==")
+
+from core.sweep_plan import (  # noqa: E402
+    SweepDimension,
+    StudyInterval,
+    build_grid,
+    estimate_seconds,
+    make_dimension,
+    validate_interval,
+)
+import core.sweep_plan as _sweep_plan_mod  # noqa: E402
+
+try:
+    # ---- 档位生成：等差 + 防浮点漂移 + 诚实拒绝 ----
+    _d1, _m1 = make_dimension("n", 5, 20, 5)
+    check("档位生成：等差取值、round 防漂移（5/10/15/20 共 4 档）",
+          _m1 == "" and _d1 is not None and _d1.values == (5.0, 10.0, 15.0, 20.0)
+          and _d1.n_levels == 4)
+    _d2, _m2 = make_dimension("m", 0.1, 0.3, 0.1)
+    check("档位生成：0.1 步长不产生 0.30000000000000004 这类浮点尾巴",
+          _m2 == "" and _d2 is not None and _d2.values == (0.1, 0.2, 0.3))
+    _cap = _sweep_plan_mod.MAX_LEVELS_PER_DIM
+    _ok_cap, _ = make_dimension("n", 5, 4 + _cap, 1)
+    check(f"★1.66：每维上限放宽到 {_cap} 档 ⇒ **正好 {_cap} 档合法**（用户：跑回测的电脑不至于太差）",
+          _ok_cap is not None and _ok_cap.n_levels == _cap)
+    _over, _msg_over = make_dimension("n", 5, 5 + _cap * 3, 1)
+    check(f"护栏：每维 >{_cap} 档 ⇒ 拒绝 + 给出降档步长建议（不硬跑；断言读常量，不写死数字）",
+          _over is None and str(_cap) in _msg_over and "步长" in _msg_over)
+    _one, _msg_one = make_dimension("n", 5, 5, 1)
+    check("护栏：只落出 1 档 ⇒ 拒绝并建议改为固定值（固定为策略保存值）",
+          _one is None and "固定" in _msg_one)
+    _rev, _msg_rev = make_dimension("n", 5, 1, 1)
+    check("护栏：起点 > 终点 ⇒ 拒绝（不静默对调用户意图）",
+          _rev is None and "起点" in _msg_rev)
+    _z, _msg_z = make_dimension("n", 1, 10, 0)
+    check("护栏：步长必须 > 0", _z is None and "步长" in _msg_z)
+
+    # ---- build_grid：运行前的唯一闸门 ----
+    _plan = build_grid([_d1, _d2])
+    check("组合数 = 各维档数乘积（4×3=12），每组含全部维度取值、首尾组正确",
+          _plan.ok and _plan.n_combos == 12 and len(_plan.combos) == 12
+          and _plan.combos[0] == {"n": 5.0, "m": 0.1}
+          and _plan.combos[-1] == {"n": 20.0, "m": 0.3})
+    check("耗时预估 = 组数 × 每组 2 段 × 单段毫秒（默认 3000 根 ≈55ms ⇒ 1 组 = 0.11s）",
+          abs(_plan.est_seconds - estimate_seconds(12)) < 1e-9
+          and abs(estimate_seconds(1) - 0.11) < 1e-6)
+    _empty = build_grid(())
+    check("护栏：0 维 ⇒ 拒绝（不带参数的配方没有可扫的东西）",
+          not _empty.ok and "至少要有一维" in _empty.rejection)
+    _3d = build_grid([SweepDimension("a", (1.0, 2.0, 3.0)),
+                      SweepDimension("b", (1.0, 2.0, 3.0)),
+                      SweepDimension("c", (1.0, 2.0, 3.0))])
+    check("护栏：3 维 ⇒ 拒绝并建议挑 2 维、其余固定为策略保存值",
+          not _3d.ok and "2 维" in _3d.rejection and "策略保存值" in _3d.rejection)
+    _d_over = build_grid([SweepDimension("a", tuple(float(x) for x in range(_cap + 1)))])
+    check(f"护栏：绕过工厂直造 {_cap + 1} 档 ⇒ build_grid 仍拦（闸门自己复检，落点唯一）",
+          not _d_over.ok and str(_cap) in _d_over.rejection)
+    _dup = build_grid([SweepDimension("a", (1.0, 2.0)), SweepDimension("a", (1.0, 2.0))])
+    check("★R4 血案：两维选**同一个参数** ⇒ 闸门拒绝（25 格会折叠成 5 个组合键 ⇒ 矩阵与网格"
+          "对不上，真机上统计装配必失败）",
+          not _dup.ok and "同一个参数" in _dup.rejection and _dup.combos == ())
+
+    # ---- ★R4：两处新口径（平台/尖峰判定 + 滚动 IC）——唯一出口在 core.sweep_stats ----
+    from core.sweep_stats import platform_spike_flags, rolling_ic  # noqa: PLC0415 —— 本节局部
+    _own = np.array([0.30, 0.28, 0.26, 0.24, 0.22, -0.10, -0.12])
+    _nb = np.array([0.29, 0.27, 0.25, 0.23, 0.21, -0.11, -0.13])
+    _nw = np.array([0.28, 0.26, 0.24, 0.22, 0.20, -0.12, -0.14])
+    _plat, _spike = platform_spike_flags(_own, _nb, _nw)
+    check("★R4 ② / ★R5：平台 = 邻域均值 ≥ **上四分位（前 25%）**（用户 2026-10-01 二次拍板："
+          "中位数口径会覆盖约一半格子、图上是一片绿雾）",
+          int(_plat.sum()) == 2 and bool(_plat[0]) and not bool(_plat[-1]))
+    check("★R4 ②：平台与尖峰**互斥**（图上不会给同一格叠两种圈）",
+          not bool((_plat & _spike).any()))
+    _plat2, _spike2 = platform_spike_flags(
+        np.array([0.50, 0.05, 0.05, 0.05, 0.05]),      # 自身最高
+        np.array([0.04, 0.10, 0.10, 0.10, 0.10]),      # 邻域均值比中位数低 ⇒ 不是平台
+        np.array([-0.20, 0.10, 0.10, 0.10, 0.10]))     # 邻域最差塌了 ⇒ 尖峰
+    check("★R4 ②：尖峰 = 自身 ≥ p75 且 邻域最差 < 中位数 且 非平台（孤立的尖峰）",
+          bool(_spike2[0]) and not bool(_plat2[0]))
+    _roll_perfect = rolling_ic(np.tile(np.arange(13, dtype=float)[:, None] * 0.001, (1, 240)), 12)
+    check("★R4 ④：单调可分的矩阵 ⇒ 每一折的 Rank IC 都是 1（折数 = S = 12）",
+          _roll_perfect.shape == (12,) and np.allclose(_roll_perfect, 1.0))
+    _roll_flat = rolling_ic(np.zeros((13, 240)), 12)
+    check("★R4 ④：常数收益（毫无区分度）⇒ 每折 NaN（图上**断开**，绝不冒充 0）",
+          _roll_flat.shape == (12,) and not np.isfinite(_roll_flat).any())
+    check("★R4 ④：天轴比折数还短 ⇒ 全 NaN（诚实：算不出来就说算不出来）",
+          not np.isfinite(rolling_ic(np.zeros((5, 6)), 12)).any())
+    _old_cap = _sweep_plan_mod.MAX_COMBOS
+    try:
+        _sweep_plan_mod.MAX_COMBOS = 100          # 2 维 × 15 档 = 225 本就 < 2000 ⇒ 临时压低验第二道保险
+        _capped = build_grid([SweepDimension("a", tuple(float(x) for x in range(15))),
+                              SweepDimension("b", tuple(float(x) for x in range(15)))])
+        check("护栏：组合数超上限 ⇒ 拒绝（MAX_COMBOS 第二道保险，放宽维数/档数时仍兜底）",
+              not _capped.ok and _capped.combos == () and "组合数" in _capped.rejection)
+    finally:
+        _sweep_plan_mod.MAX_COMBOS = _old_cap
+
+    # ---- 区间校验：起止有序 / 重叠 = 泄漏 / 数据范围 ----
+    check("区间校验：正常成对区间 ⇒ 零问题",
+          validate_interval(StudyInterval("2018-01-01", "2020-12-31",
+                                          "2021-01-01", "2022-12-31")) == ())
+    _ov = validate_interval(StudyInterval("2018-01-01", "2021-06-30",
+                                          "2021-06-30", "2022-12-31"))
+    check("区间校验：样本内终点 == 样本外起点（共一天）也算重叠 ⇒ 拦（重叠 = 泄漏）",
+          len(_ov) == 1 and "泄漏" in _ov[0])
+    _ord = validate_interval(StudyInterval("2021-01-01", "2020-12-31",
+                                           "2022-01-01", "2021-12-31"))
+    check("区间校验：两段各自起止倒置 ⇒ 各报一条",
+          len(_ord) == 2 and all("理顺" in p for p in _ord))
+    _rng = validate_interval(StudyInterval("2015-01-01", "2020-12-31",
+                                           "2021-01-01", "2027-12-31"),
+                             data_start="2016-01-01", data_end="2026-09-30")
+    check("区间校验：四条边界越出数据范围 ⇒ 前后各点名一条",
+          len(_rng) == 2 and "数据" in _rng[0] and "数据" in _rng[1])
+    _bad = validate_interval(StudyInterval("2018/01/01", "2020-12-31", "2021-01-01", ""))
+    check("区间校验：格式错 / 空日期 ⇒ 点名原文，不做半截比较",
+          len(_bad) == 2 and "2018/01/01" in _bad[0])
+
+    # ---- 源码级纯度：纯计算层不许带 Qt / pandas / 网络（§10-3）----
+    _src = open(os.path.join(ROOT, "core", "sweep_plan.py"), encoding="utf-8").read()
+    check("源码级：sweep_plan 零 Qt / 零 pandas / 零网络（core 层纪律）",
+          all(k not in _src for k in ("PyQt6", "pandas", "akshare", "requests",
+                                      "QThread", "QtWidgets")))
+except Exception as _eSW0:  # noqa: BLE001
+    check(f"SW-0 网格纯计算断言整段抛异常: {type(_eSW0).__name__}: {_eSW0}", False)
+
+# ==========================================
+# §7-B15 SW-1 · 统计唯一真源 `core/sweep_stats.py`（IC / 邻域 / 门槛 / PBO）
+#   合成数据 + 已知答案（方案书 §8-5/§8-6）；零行情零 Qt
+# ==========================================
+print("\n== §7-B15 SW-1 · 统计唯一真源：IC / 邻域 / 门槛只筛不排 / PBO 已知答案 ==")
+
+from core.sweep_plan import neighborhood_indices  # noqa: E402
+from core.sweep_stats import (  # noqa: E402
+    annual_returns,
+    apply_gate,
+    build_neighborhood_matrix,
+    candidate_order,
+    neighborhood_mean,
+    neighborhood_worst,
+    pbo_cscv,
+    rank_ic,
+    study_key_stats,
+)
+
+try:
+    # ---- 年化：常数日收益 → 精确复利公式；净值归零 → 诚实地板 -1.0 ----
+    _R2 = np.zeros((2, 244))
+    _R2[0, :] = 0.001
+    _R2[1, :] = -1.0
+    _ann = annual_returns(_R2)
+    check("年化：常数日收益 = (1+r)^244−1（口径 244 唯一出口）；净值归零 ⇒ -1.0 地板",
+          abs(_ann[0] - ((1.001 ** 244) - 1.0)) < 1e-9 and _ann[1] == -1.0)
+    check("年化：按 day_idx 取子集（CSCV 的 A/B 段重算走同一条路，§8-16 形状保证）"
+          "—— 常数日收益年化与段长无关，122 天也 = (1.001)^244−1",
+          abs(annual_returns(_R2, day_idx=np.arange(122))[0]
+              - ((1.001 ** 244) - 1.0)) < 1e-9)
+
+    # ---- Rank IC：已知答案 + 诚实 NaN + 全网格口径 ----
+    check("Rank IC：完全同向 = +1、完全反向 = −1（Spearman 已知答案）",
+          abs(rank_ic([1, 2, 3, 4], [10, 20, 30, 40]) - 1.0) < 1e-9
+          and abs(rank_ic([1, 2, 3, 4], [40, 30, 20, 10]) - (-1.0)) < 1e-9)
+    check("Rank IC：常数列 ⇒ NaN（界面显示 —，绝不冒充 0）",
+          np.isnan(rank_ic([1, 1, 1], [1, 2, 3])))
+    check("§8-15 全网格口径：IC 函数没有门槛入口 —— 全网格(3组)的 IC(−0.5) ≠ 门后子集的 IC(−1)",
+          abs(rank_ic([3.0, 2.0, 1.0], [2.0, 1.0, 3.0]) - (-0.5)) < 1e-9
+          and abs(rank_ic([2.0, 1.0], [1.0, 3.0]) - (-1.0)) < 1e-9)
+
+    # ---- 邻域：几何（含自身）+ 均值/最差一条矩阵乘 ----
+    _dims2 = (SweepDimension("a", (1.0, 2.0, 3.0)), SweepDimension("b", (1.0, 2.0, 3.0)))
+    _nb2 = neighborhood_indices(_dims2)
+    check("邻域几何：2 维 3×3 —— 角 4 格 / 边 6 格 / 心 9 格（含自身），与 combos 同序",
+          len(_nb2) == 9 and len(_nb2[0]) == 4 and len(_nb2[1]) == 6
+          and len(_nb2[4]) == 9 and 4 in _nb2[4] and 0 in _nb2[0])
+    _nb1 = neighborhood_indices((SweepDimension("p", (1.0, 2.0, 3.0)),))
+    check("邻域几何：1 维 1×3 —— 端 2 格 / 中 3 格",
+          len(_nb1) == 3 and len(_nb1[0]) == 2 and len(_nb1[1]) == 3)
+    _M1, _cnt1 = build_neighborhood_matrix(_nb1)
+    _vals = np.array([1.0, 2.0, 3.0])
+    check("邻域统计：均值/最差按表取格（矩阵乘一条路，CSCV 924 次重算共用）",
+          np.allclose(neighborhood_mean(_vals, _M1, _cnt1), [1.5, 2.0, 2.5])
+          and list(neighborhood_worst(_vals, _nb1)) == [1.0, 1.0, 2.0])
+
+    # ---- 排序键：平台压倒 IS 冠军（行为级"排序不含 IS"）+ 门槛只筛不排 ----
+    # 3 组（1 维）：0=尖峰（IS 好但 OOS 塌+邻居塌）、1=两头稳的平台、2=OOS 更好的平台邻居
+    _R3 = np.array([
+        [0.010, 0.010, 0.010, 0.010, -0.050, -0.050, -0.050, -0.050],
+        [0.004, 0.004, 0.004, 0.004, 0.004, 0.004, 0.004, 0.004],
+        [0.003, 0.003, 0.003, 0.003, 0.005, 0.005, 0.005, 0.005],
+    ])
+    _ks = study_key_stats(_R3, np.arange(4), np.arange(4, 8), _nb1)
+    _ord_all = candidate_order(_ks.is_annual, _ks.oos_annual, _ks.nb_mean)
+    check("排序键：IS 冠军（尖峰 0 号）不得排第一 —— 键 = (邻域均值↓, OOS↓, |Δ|↑)，不含 IS",
+          _ord_all[0] != 0)
+    _g1 = apply_gate(_ord_all, trades=[5, 5, 5], min_trades=5,
+                     is_annual=_ks.is_annual, oos_annual=_ks.oos_annual)
+    _g2 = apply_gate(_ord_all, trades=[5, 50, 5], min_trades=30,
+                     is_annual=_ks.is_annual, oos_annual=_ks.oos_annual)
+    check("门槛只筛不排：改门槛只换成员；留下的成员相对顺序与全序一致（§8-12）",
+          list(_g1) == [x for x in _ord_all if x != 0] and list(_g2) == [1])
+
+    # ---- PBO 已知答案（方案书 §8-6，S=2 两个划分逐个可手算）----
+    _half = 120
+    _stable = np.vstack([
+        np.full((1, 2 * _half), 0.010),
+        np.full((1, 2 * _half), 0.008),
+        np.full((1, 2 * _half), 0.006),
+    ])
+    check("PBO 已知答案·完全稳定 ⇒ 0：任何 A 段选出的冠军在 B 上都压不垮中位数",
+          pbo_cscv(_stable, _nb1, s_blocks=2) == 0.0)
+    _trap = np.vstack([
+        np.concatenate([np.full(_half, 0.020), np.full(_half, -0.020)]),
+        np.concatenate([np.full(_half, 0.020), np.full(_half, -0.010)]),
+        np.concatenate([np.full(_half, 0.0001), np.full(_half, 0.003)]),
+    ])
+    check("PBO 已知答案·按 A 选必掉队 ⇒ 1：每个划分的冠军都掉到 B 的中位数以下",
+          pbo_cscv(_trap, _nb1, s_blocks=2) == 1.0)
+    _rand = np.random.default_rng(7).normal(0.0005, 0.01, size=(9, 240))
+    _nb9 = neighborhood_indices((SweepDimension("a", tuple(float(x) for x in range(3))),
+                                 SweepDimension("b", tuple(float(x) for x in range(3)))))
+    _p12 = pbo_cscv(_rand, _nb9, s_blocks=12)
+    check("PBO：9 组 × S=12（924 个划分）秒级跑完且落在 [0,1]",
+          0.0 <= _p12 <= 1.0)
+    check("PBO 诚实口径：天数 < S / 组合 < 2 ⇒ NaN（不冒充 0）",
+          np.isnan(pbo_cscv(_rand[:, :10], _nb9, s_blocks=12))
+          and np.isnan(pbo_cscv(_rand[:1, :], _nb9, s_blocks=2)))
+    expect_error("PBO：S 奇数当场 ValueError（不默默换口径）",
+                 lambda: pbo_cscv(_rand, _nb1, s_blocks=11), "偶数")
+
+    # ---- 源码级 §8-16：统计层只吃矩阵，物理上拿不到全量结果对象 ----
+    # （§11.5-101：判据 = "写错时的代码形状"（import 行），不是概念字面量 —— 否则被 docstring 引爆）
+    _src1 = open(os.path.join(ROOT, "core", "sweep_stats.py"), encoding="utf-8").read()
+    _imports1 = [ln.strip() for ln in _src1.splitlines()
+                 if ln.strip().startswith(("from ", "import "))]
+    check("源码级 §8-16：sweep_stats 的 import 行里没有 core.backtest / backtest 任何东西",
+          _imports1 != [] and all("backtest" not in ln for ln in _imports1))
+except Exception as _eSW1:  # noqa: BLE001
+    check(f"SW-1 统计唯一真源断言整段抛异常: {type(_eSW1).__name__}: {_eSW1}", False)
+
+# ==========================================
+# §7-B15 SW-2 · 上证指数切块 `core/index_regimes.py`（纯切块 + 配对 + 缓存）
+#   合成收盘序列 + 临时缓存目录（绝不写真实 ~/.jian_data，§11.5-70）
+# ==========================================
+print("\n== §7-B15 SW-2 · 指数切块：状态段 / 配对 / 缓存命中不重算 ==")
+
+from core import index_regimes as _ir  # noqa: E402
+from core.sweep_plan import StudyInterval as _SwInterval  # noqa: E402
+from core.sweep_plan import validate_interval as _sw_validate  # noqa: E402
+
+try:
+    import tempfile  # noqa: F401 —— 缓存测试一律在临时目录里（§11.5-70 防污染）
+
+    # ---- 合成序列：涨 100 日 → 平 100 日 → 跌 100 日（前 60 日无窗口不标记）----
+    _idx = pd.bdate_range("2014-01-01", periods=300)
+
+    def _mk_close(dip=False):
+        vals = []
+        for i in range(300):
+            if i < 100:
+                vals.append(100.0 + 0.4 * i)
+            elif i < 200:
+                v = 140.0 + (0.3 if (i // 3) % 2 else -0.3)
+                if dip and 150 <= i < 160:
+                    v = 120.0                       # 10 日急跌毛刺（短于 min_len ⇒ 不成段）
+                vals.append(v)
+            else:
+                vals.append(140.0 - 0.45 * (i - 200))
+        return pd.Series(vals, index=_idx)
+
+    _segs = _ir.classify_regimes(_mk_close(), min_len=20)
+    check("切块：涨→平→跌 三段按序出现，日期字符串且段间不重叠",
+          [s.regime for s in _segs] == ["up", "sideways", "down"]
+          and all(len(s.start) == 10 and s.start < s.end for s in _segs)
+          and all(_segs[k].end < _segs[k + 1].start for k in range(len(_segs) - 1)))
+    check("切块可复现（§8-14）：同一序列同参数跑两遍 ⇒ 段边界逐字一致",
+          _ir.classify_regimes(_mk_close(), min_len=20) == _segs)
+    _segs_dip = _ir.classify_regimes(_mk_close(dip=True), min_len=20)
+    check("切块：短于 min_len 的毛刺整段丢弃（10 日急跌/急升不成段，诚实不硬切）",
+          sum(1 for s in _segs_dip if s.regime == "down") == 1
+          and sum(1 for s in _segs_dip if s.regime == "up") == 1)
+    check("切块：数据不足一个窗口 ⇒ 空列表（不硬切不报错）",
+          _ir.classify_regimes(pd.Series([100.0 + i for i in range(30)],
+                                         index=pd.bdate_range("2020-01-01", periods=30)),
+                               window=60) == [])
+
+    # ---- 配对：同状态相邻两次 + 牛→熊/熊→牛跨状态；默认 = 最近 震荡→震荡 ----
+    _hand = [
+        _ir.RegimeSegment("up", "2014-01-01", "2014-12-31", 240),
+        _ir.RegimeSegment("down", "2015-01-05", "2015-12-31", 230),
+        _ir.RegimeSegment("sideways", "2016-02-01", "2017-12-29", 440),
+        _ir.RegimeSegment("up", "2018-01-02", "2018-12-28", 230),
+        _ir.RegimeSegment("sideways", "2019-03-04", "2019-12-31", 200),
+    ]
+    _pairs = _ir.build_regime_pairs(_hand)
+    _keys = {p.key for p in _pairs}
+    check("配对：同状态相邻两次出现 + 牛→紧随的熊 / 熊→紧随的牛（跳过中间其他状态）",
+          len(_pairs) == 4 and _keys == {"up>up", "up>down", "down>up", "sideways>sideways"}
+          and any(p.key == "up>down" and p.oos_start == "2015-01-05" for p in _pairs)
+          and any(p.key == "down>up" and p.oos_start == "2018-01-02" for p in _pairs))
+    _dflt = [p for p in _pairs if p.default]
+    check("配对：默认 = 最近一段 震荡→震荡（§11 决议 4）；且 OOS 一律晚于 IS（不时间穿越）",
+          len(_dflt) == 1 and _dflt[0].key == "sideways>sideways"
+          and all(p.oos_start > p.is_end for p in _pairs))
+    check("配对 × SW-0 联动：每个预设喂 validate_interval ⇒ 重叠/越界问题为零",
+          all(not any("泄漏" in q for q in _sw_validate(
+              _SwInterval(p.is_start, p.is_end, p.oos_start, p.oos_end)))
+              for p in _pairs))
+    _fp = _ir.fold_pair("2016-01-01", "2020-12-31")
+    _yp = _ir.year_pair(2020)
+    check("内置预设：时间对折 = 中点拆两半；某一年份 = 上半年调 / 下半年验",
+          _fp is not None and _fp.is_end < _fp.oos_start
+          and _yp == _ir.IntervalPreset("year", "2020 年：上半年调 · 下半年验",
+                                        "2020-01-01", "2020-06-30",
+                                        "2020-07-01", "2020-12-31"))
+
+    # ---- 缓存：命中不重算 + 参数变必重算 + 坏 JSON 诚实降级（全在临时目录）----
+    with tempfile.TemporaryDirectory() as _td:
+        _cp = os.path.join(_td, "index_regimes.json")
+        _pl = _ir.compute_payload(_mk_close(), min_len=20)
+        _ir.save_cache(_pl, path=_cp)
+        check("缓存：save→load 回环一致（tmp + os.replace 原子写）",
+              _ir.load_cache(_cp) == _pl)
+        check("缓存命中判据（§8-14）：同末日同参数 ⇒ 命中；末日变 / 参数变 ⇒ 未命中",
+              _ir.cache_hit(_pl, _pl["data_end"], _pl["params"])
+              and not _ir.cache_hit(_pl, "2099-12-31", _pl["params"])
+              and not _ir.cache_hit(_pl, _pl["data_end"], {**_pl["params"], "window": 40}))
+        _cp2 = os.path.join(_td, "index_regimes_2.json")
+        _calls = {"n": 0}
+        _real_compute = _ir.compute_payload
+
+        def _counting(*a, **k):
+            _calls["n"] += 1
+            return _real_compute(*a, **k)
+
+        _ir.compute_payload = _counting
+        try:
+            _p1, _h1 = _ir.ensure_payload(_mk_close(), path=_cp2, min_len=20)
+            _p2, _h2 = _ir.ensure_payload(_mk_close(), path=_cp2, min_len=20)
+        finally:
+            _ir.compute_payload = _real_compute      # 【§11.5-84】打桩必须成对还原
+        check("ensure_payload：首算落盘（hit=False）→ 二次命中缓存不重算、段边界一致",
+              _h1 is False and _h2 is True and _calls["n"] == 1
+              and _p2["segments"] == _p1["segments"])
+        with open(_cp, "w", encoding="utf-8") as f:
+            f.write("{corrupt!!")
+        check("缓存：坏 JSON ⇒ load 返回 None（诚实降级，不抛不崩）",
+              _ir.load_cache(_cp) is None)
+
+    # ---- 源码级纯度：零 Qt / 零网络（core 层纪律；缓存 IO 是本地文件，允许）----
+    _src2 = open(os.path.join(ROOT, "core", "index_regimes.py"), encoding="utf-8").read()
+    _imp2 = [ln.strip() for ln in _src2.splitlines()
+             if ln.strip().startswith(("from ", "import "))]
+    check("源码级：index_regimes 零 Qt / 零网络（core 层纪律）",
+          _imp2 != [] and all(not any(k in ln for k in ("PyQt6", "requests", "akshare",
+                                                        "QThread", "QtWidgets"))
+                              for ln in _imp2))
+except Exception as _eSW2:  # noqa: BLE001
+    check(f"SW-2 指数切块断言整段抛异常: {type(_eSW2).__name__}: {_eSW2}", False)
+
+# ==========================================
+# §7-B15 SW-3 · 编排 + 线程 `core/param_sweep.py` + `ui/workers.ParamSweepWorker`
+#   合成行情（synthetic_bars）；★§8-17 与 M1 逐位一致是本段主菜
+# ==========================================
+print("\n== §7-B15 SW-3 · 编排+线程：M1 逐位一致 / 续跑 / 中断 / Worker 回包 ==")
+
+from core.param_sweep import (  # noqa: E402
+    SweepSpec, build_matrix, combo_key, run_sweep, split_indices,
+)
+from core.conditions import gate_expression  # noqa: E402  —— 条件配置→DSL 唯一真源
+from data.strategy_store import segments_of  # noqa: E402  —— 旧档"段"回落唯一出口
+from data.sweep_archive import strategy_fingerprint  # noqa: E402  —— 快照指纹（SW-4 也用）
+from core.backtest import BacktestEngine  # noqa: E402  —— M1 同一引擎（手工管线对照用）
+from core.formula.program import execute_programs, parse_program  # noqa: E402
+from core.utils import synthetic_bars  # noqa: E402
+from ui.workers import ParamSweepWorker  # noqa: E402
+
+try:
+    _dfS = synthetic_bars(400)
+    _seg_text = "F1:=MA(C,N1);"
+    _buy, _sell = "CROSS(C, F1)", "CROSS(F1, C)"
+    _ivS = StudyInterval("2024-01-01", "2024-06-30", "2024-07-01", "2024-12-31")
+    _dimN1, _msgN1 = make_dimension("N1", 5, 25, 10)                # 3 档：5/15/25
+    _gridS = build_grid([_dimN1])
+    _specS = SweepSpec(symbol="TEST", segments=(_seg_text,), params_text="N1=20",
+                       condition_buy=_buy, condition_sell=_sell)
+
+    # ---- ★§8-17 参数固定 ⇒ 与 M1 手工管线逐位一致 ----
+    _progs = [parse_program(_seg_text)]
+    _vars = execute_programs(_progs, _dfS, {"N1": 15.0})
+    _merged = _dfS.copy()
+    for _n, _ser in _vars.items():
+        _merged[_n] = _ser.values
+    _r_m1 = BacktestEngine().run(_merged, _buy, _sell, symbol="TEST",
+                                 start_date="2024-01-01", end_date="2024-06-30",
+                                 risk={}, fill_mode=None, trigger_tick=None)
+    _outS = run_sweep(_dfS, _specS, _gridS, _ivS)
+    check("§8-17：run_sweep 3 组全完成、无失败", len(_outS.completed) == 3
+          and not _outS.failed and not _outS.cancelled)
+    _co15 = _outS.completed.get("N1=15")
+    check("§8-17：交易数与日期轴逐位一致（同一引擎、同一合并管线、fill/risk 同形）",
+          _co15 is not None and _co15.is_trades == len(_r_m1.trades)
+          and _co15.is_dates == tuple(pd.to_datetime(
+              _r_m1.equity["date"]).dt.strftime("%Y-%m-%d")))
+    check("§8-17：逐日收益逐位一致（equity pct_change、首日 0）",
+          np.array_equal(_co15.is_returns,
+                         _r_m1.equity["equity"].pct_change().fillna(0.0).to_numpy()))
+    check("不同参数确实产出不同结果（网格不是空转：逐日收益逐字节不同）",
+          len({co.is_returns.tobytes() for co in _outS.completed.values()}) == 3)
+
+    # ---- ★真实路径回归（2026-10-01 血案固化）----
+    #   事故：本节的断言**全部手工喂终态**（`segments=(文本,)` + 条件是**表达式字符串**），
+    #   而真实路径喂的是 ① 旧存档（只有 `function`，没有 `segments`）② 条件的**配置 dict**。
+    #   两处都在真实路径上炸：前者 ⇒ 该页参数探测为空、整页空转；后者 ⇒ 引擎
+    #   `FormulaEngine.signal → tokenize(dict)` 抛 `KeyError: 0`、**每组必挂**（实测 12/12）。
+    #   当时 964/0 全绿也测不出来 —— **测试与真实路径不同形**，这是比 bug 本身更贵的坑。
+    #   ⇒ 这一段一律**从存档 payload 出发**（不许再手工喂终态），并断言"转换不失真"。
+    _legacy_payload = {"name": "旧档策略", "function": _seg_text, "params_text": "N1=20",
+                       "condition_buy": {"variable": "C", "rule": "gt", "value": 0.0},
+                       "condition_sell": {"variable": "C", "rule": "lt", "value": 0.0}}
+    check("★真实路径：旧存档（无 segments）靠 function 回落拿到段（否则页面无参数可扫）",
+          segments_of(_legacy_payload) == (_seg_text,))
+    check("★真实路径：条件配置 → DSL（旧单条件形状 / 新条件组 / 已是表达式 三种都认）",
+          gate_expression(_legacy_payload["condition_buy"]) == "C > 0"
+          and gate_expression({"logic": "any", "n": 1,
+                               "conditions": [{"variable": "C", "rule": "gt", "value": 0.0},
+                                              {"variable": "F1", "rule": "lt", "value": 0.0}]})
+          == "(C > 0) OR (F1 < 0)"
+          and gate_expression({"logic": "atleast", "n": 2,
+                               "conditions": [{"variable": "C", "rule": "gt", "value": 0.0},
+                                              {"variable": "F1", "rule": "lt", "value": 0.0}]})
+          == "COUNT_TRUE(C > 0, F1 < 0) >= 2"
+          and gate_expression("CROSS(C, F1)") == "CROSS(C, F1)"
+          and gate_expression(None) == "")
+    _spec_legacy = SweepSpec(symbol="TEST", segments=segments_of(_legacy_payload),
+                             params_text=_legacy_payload["params_text"],
+                             condition_buy=_legacy_payload["condition_buy"],
+                             condition_sell=_legacy_payload["condition_sell"])
+    _out_legacy = run_sweep(_dfS, _spec_legacy, _gridS, _ivS)
+    check("★真实路径：旧存档 + 条件 dict ⇒ **真跑出结果**（修复前 3/3 全失败）",
+          len(_out_legacy.completed) == 3 and not _out_legacy.failed)
+    _spec_expr = SweepSpec(symbol="TEST", segments=(_seg_text,), params_text="N1=20",
+                           condition_buy="C > 0", condition_sell="C < 0")
+    _out_expr = run_sweep(_dfS, _spec_expr, _gridS, _ivS)
+    check("★真实路径：dict 与等价表达式跑出**同一批逐日收益**（转换不失真，不是「跑起来了就算」）",
+          np.array_equal(_out_legacy.completed["N1=15"].is_returns,
+                         _out_expr.completed["N1=15"].is_returns))
+    check("★真实路径：指纹只吃归一表达式（同一套条件 → 同一指纹，dict 键序不影响复现）",
+          strategy_fingerprint(_spec_legacy) == strategy_fingerprint(_spec_expr))
+    expect_error("★真实路径：条件配置里没有有效行 ⇒ 诚实拒绝（绝不把 dict 递给引擎）",
+                 lambda: run_sweep(_dfS, SweepSpec("T", (_seg_text,), "N1=20",
+                                                   {"logic": "all", "n": 1,
+                                                    "conditions": []}, _sell),
+                                   _gridS, _ivS), "买卖条件为空")
+
+    # ---- ★R2：预设"组织"（口径 / 取近 N 组）是 **core 纯函数**，UI 不许自己分组 ----
+    from core.index_regimes import (DEFAULT_KIND, IntervalPreset,  # noqa: E402
+                                    kind_entries, preset_for_kind, windows_of)
+
+    def _mk(k, a, b, c, d, dflt=False):
+        return IntervalPreset(k, "L", a, b, c, d, dflt)
+
+    _ps = [_mk("sideways>sideways", "2005-01-01", "2005-06-01", "2006-01-01", "2006-06-01"),
+           _mk("sideways>sideways", "2019-01-01", "2019-06-01", "2020-01-01", "2020-06-01", True),
+           _mk("up>down", "2014-11-21", "2015-03-10", "2016-01-15", "2016-04-01")]
+    check("★R2：windows_of 按口径筛 + **时间倒序**（最近的一对永远排第一）",
+          [p.is_start for p in windows_of(_ps, "sideways>sideways")]
+          == ["2019-01-01", "2005-01-01"])
+    check("★R2：取近 N 组 = 截断最近 N 个（0/None = 全部）",
+          len(windows_of(_ps, "sideways>sideways", 1)) == 1
+          and len(windows_of(_ps, "sideways>sideways", 0)) == 2
+          and windows_of(_ps, "sideways>sideways", 1)[0].default)
+    check("★R2：preset_for_kind 取该口径最近一对；该口径没有窗口 ⇒ None（诚实空，不硬套）",
+          preset_for_kind(_ps, "up>down").is_start == "2014-11-21"
+          and preset_for_kind(_ps, "down>up") is None)
+    _ke = kind_entries(_ps)
+    check("★R2：口径三条（单边上涨/单边下跌/震荡箱体）各带 why 与「最近一对」；默认口径 = 震荡箱体",
+          [e["kind"] for e in _ke] == ["up>down", "down>up", "sideways>sideways"]
+          and all(e["why"] for e in _ke) and DEFAULT_KIND == "sideways>sideways"
+          and _ke[2]["preset"].default)
+
+    # ---- 续跑 / 中断（§8-8：已跑结果保留可续）----
+    _out_resume = run_sweep(_dfS, _specS, _gridS, _ivS,
+                            done_keys={"N1=15", "N1=5"})
+    check("续跑：done_keys 跳过已完成组，只补剩余；回执点名续跑口径",
+          len(_out_resume.completed) == 1 and "N1=25" in _out_resume.completed
+          and any("续跑" in n for n in _out_resume.notes))
+    _calls = {"n": 0}
+
+    def _stop_after_two():
+        _calls["n"] += 1
+        return _calls["n"] > 2
+
+    _out_cancel = run_sweep(_dfS, _specS, _gridS, _ivS, should_stop=_stop_after_two)
+    check("中断：组边界生效 —— 已完成的 2 组保留 + cancelled 置位（不是半成品丢弃）",
+          _out_cancel.cancelled and len(_out_cancel.completed) == 2)
+
+    # ---- 诚实拒绝 / 单组失败 ----
+    expect_error("指数门控策略 ⇒ 直接拒绝（MVP 诚实范围收缩）",
+                 lambda: run_sweep(_dfS,
+                                   SweepSpec("T", (_seg_text,), "N1=20", _buy, _sell,
+                                             has_index_gate=True),
+                                   _gridS, _ivS), "指数门控")
+    expect_error("买卖条件为空 ⇒ 拒绝",
+                 lambda: run_sweep(_dfS, SweepSpec("T", (_seg_text,), "N1=20", "", _sell),
+                                   _gridS, _ivS), "买卖条件为空")
+    expect_error("网格未过闸门 ⇒ 拒绝",
+                 lambda: run_sweep(_dfS, _specS, build_grid(()), _ivS), "闸门")
+    _bad_spec = SweepSpec("TEST", (_seg_text,), "N1=20", "NOVAR_MISSING > 0", _sell)
+    _out_bad = run_sweep(_dfS, _bad_spec, _gridS, _ivS)
+    check("单组失败诚实记账（人话原因，不拖垮也不静默）",
+          len(_out_bad.failed) == 3 and all(v for v in _out_bad.failed.values())
+          and not _out_bad.completed)
+    check("combo_key 规范化：int/float 同键、数值 6 位驯浮点尾巴",
+          combo_key({"N1": 5}) == combo_key({"N1": 5.0}) == "N1=5")
+
+    # ---- 拼矩阵出口：形状与切片索引 ----
+    _mat = build_matrix(_outS)
+    _n_is = len(_outS.completed["N1=5"].is_dates)
+    _n_oos = len(_outS.completed["N1=5"].oos_dates)
+    _i_idx, _o_idx = split_indices(_outS)
+    check("build_matrix/split_indices：(3, IS+OOS) 矩阵 + 两段索引无缝衔接",
+          _mat.shape == (3, _n_is + _n_oos)
+          and list(_i_idx[:2]) == [0, 1] and _o_idx[0] == _n_is
+          and np.allclose(_mat[0][:_n_is], _outS.completed["N1=5"].is_returns))
+
+    # ---- Worker 真线程：job_id 原样回包 + 进度 + 取消语义（取消也回包，§8-8）----
+    _seenW = {'p': [], 'f': [], 'x': []}
+    _wS = ParamSweepWorker(21, _dfS, _specS, _gridS, _ivS)
+    _wS.progress.connect(lambda d, t, n: _seenW['p'].append((d, t, n)))
+    _wS.finished.connect(lambda j, o: _seenW['f'].append((j, o)))
+    _wS.failed.connect(lambda j, m: _seenW['x'].append((j, m)))
+    _wS.start()
+    _wS.wait(60000)
+    app.processEvents()
+    check("Worker：job_id 原样回包 + 3 组完成 + 进度收尾到底（done=total=3）",
+          len(_seenW['f']) == 1 and _seenW['f'][0][0] == 21
+          and _seenW['f'][0][1] is not None and len(_seenW['f'][0][1].completed) == 3
+          and _seenW['p'] and _seenW['p'][-1][:2] == (3, 3) and not _seenW['x'])
+    _wC = ParamSweepWorker(22, _dfS, _specS, _gridS, _ivS)
+    _wC.cancel()                                    # 起跑前取消 ⇒ 一组都不跑
+    _finC = []
+    _wC.finished.connect(lambda j, o: _finC.append((j, o)))
+    _wC.start()
+    _wC.wait(60000)
+    app.processEvents()
+    check("Worker 取消：**照样回包**（completed 空 + cancelled 置位，与 M2 回 None 语义故意不同）",
+          len(_finC) == 1 and _finC[0][1] is not None
+          and len(_finC[0][1].completed) == 0 and _finC[0][1].cancelled
+          and _wC.cancelled is True)
+except Exception as _eSW3:  # noqa: BLE001
+    check(f"SW-3 编排+线程断言整段抛异常: {type(_eSW3).__name__}: {_eSW3}", False)
+
+# ==========================================
+# §7-B15 SW-4 · 快照存档 `data/sweep_archive.py`（复现字段 / OOS 诚实计数器 / 体积闸）
+#   root 注入临时目录（绝不写真实 ~/.jian_data/sweep_results，§11.5-70/32）
+# ==========================================
+print("\n== §7-B15 SW-4 · 快照存档：复现字段 / OOS 计数器 / 体积闸 ==")
+
+from data.sweep_archive import (  # noqa: E402
+    MAX_FILE_BYTES as _SW_MAX_FILE,
+    SweepArchive,
+    build_snapshot,
+    oos_key_of,
+    segment_matrix,
+    strategy_fingerprint,
+    top_candidate_rows,
+)
+
+try:
+    check("段矩阵：S 段 = 段内复利 Π(1+r)−1（已知答案 0.1+0.1 连乘）",
+          segment_matrix(np.array([[0.1, 0.1, 0.1, 0.1]]), s=2)
+          == [[(1.1 ** 2) - 1.0, (1.1 ** 2) - 1.0]])
+
+    _fpA = strategy_fingerprint(_specS)
+    check("策略指纹：同文本同指纹、改条件即换指纹（OOS 记账与复现校验的键）",
+          _fpA == strategy_fingerprint(SweepSpec("TEST", (_seg_text,), "N1=20",
+                                                 _buy, _sell))
+          and _fpA != strategy_fingerprint(SweepSpec("TEST", (_seg_text,), "N1=20",
+                                                     "C>F1", _sell)))
+
+    _mat4 = build_matrix(_outS)
+    _items4 = [("N1=5", {"N1": 5.0}), ("N1=15", {"N1": 15.0}), ("N1=25", {"N1": 25.0})]
+    _trades4 = [co.trades for co in _outS.completed.values()]
+    _ks4 = study_key_stats(_mat4, split_indices(_outS)[0], split_indices(_outS)[1],
+                           neighborhood_indices((SweepDimension("N1", (5.0, 15.0, 25.0)),)))
+    _snap4 = build_snapshot(
+        spec=_specS, strategy_name="测试策略", asset_id="",
+        grid=_gridS, interval=_ivS, preset_key="sideways>sideways", min_trades=5,
+        stats={"rank_ic": 0.4, "pbo": 0.3, "items": _items4, "trades": _trades4,
+               "metrics": _ks4, "n_done": 3, "n_failed": 0},
+        matrix=_mat4,
+        daily={"keys": ["N1=15"], "is_dates": list(_outS.completed["N1=15"].is_dates),
+               "oos_dates": list(_outS.completed["N1=15"].oos_dates),
+               "is_returns": {"N1=15": list(_outS.completed["N1=15"].is_returns)},
+               "oos_returns": {"N1=15": list(_outS.completed["N1=15"].oos_returns)}})
+    check("快照复现字段（§8-9）：策略整体内联 + 网格 + 区间 + 门槛 + APP_VERSION 全在场",
+          list(_snap4["strategy"]["segments"]) == [_seg_text]
+          and _snap4["strategy"]["condition_buy"] == _buy
+          and _snap4["grid"]["n_combos"] == 3
+          and _snap4["interval"]["is_start"] == "2024-01-01"
+          and _snap4["gate"]["min_trades"] == 5
+          and bool(_snap4["app_version"]))
+
+    with tempfile.TemporaryDirectory(prefix="jian_sw4_") as _td4:
+        _arch4 = SweepArchive(root=_td4)
+        _rid1 = _arch4.save(dict(_snap4))
+        _snap4b = dict(_snap4)
+        _snap4b["id"] = _rid1                      # 幂等覆盖 = 显式同 id（同 M1 存档语义）
+        _rid2 = _arch4.save(_snap4b)
+        _loaded = _arch4.load(_rid1)
+        check("存档：save→load 回环一致；同 id 幂等覆盖（不产生第二条索引）",
+              bool(_rid1) and _rid2 == _rid1 and _loaded is not None
+              and list(_loaded["strategy"]["segments"]) == [_seg_text]
+              and len(_arch4.list()) == 1)
+        check("候选行落盘（§8-12 口径）：过门槛按序排名，与即时组装逐字段一致",
+              [r["key"] for r in _loaded["stats"]["candidates"]] ==
+              [r["key"] for r in top_candidate_rows(_ks4, _items4, _trades4, 5)]
+              and len(_loaded["stats"]["candidates"]) >= 1
+              and _loaded["stats"]["candidates"][0]["rank"] == 1)
+
+        # ---- OOS 诚实计数器（v3.1 勘误⑧）：同窗口跨研究累计，删一份就减一 ----
+        _okey = oos_key_of("TEST", _fpA, "2024-07-01", "2024-12-31")
+        _snap_twin = dict(_snap4)                      # 同窗口第二项研究（新 id）
+        _snap_twin.pop("id", None)
+        _rid_twin = _arch4.save(_snap_twin)
+        check("OOS 计数器：同一 (标的,策略,样本外窗) 两项研究 ⇒ 计 2；不同窗口不计入",
+              _arch4.oos_usage(_okey) == 2
+              and _arch4.oos_usage(oos_key_of("TEST", _fpA, "2024-07-01",
+                                              "2099-12-31")) == 0)
+        _arch4.set_pinned(_rid1, True)
+        check("重点标记：set_pinned 进索引（范式与 M1 存档一致）",
+              any(e["id"] == _rid1 and e["pinned"] is True for e in _arch4.list()))
+        _arch4.delete(_rid_twin)
+        check("OOS 计数器：删一份研究 ⇒ 计数回落（索引随删减实时诚实）",
+              _arch4.oos_usage(_okey) == 1)
+
+        # ---- 体积闸：超 8MB ⇒ 拒绝写入并返回 None（调用方给回执）----
+        _big = dict(_snap4)
+        _big["segment_matrix"] = [[0.0] * 12] * 3 + [{"junk": "x" * (_SW_MAX_FILE + 1024)}]
+        _arch5 = SweepArchive(root=os.path.join(_td4, "big"))
+        check("体积闸：快照超上限 ⇒ save 返回 None（诚实拒绝，不写半份）",
+              _rid3 is not None and _arch5.save(_big) is None and _arch5.list() == [])
+
+    # ---- 源码级纯度：data 层不许带 Qt ----
+    _src4 = open(os.path.join(ROOT, "data", "sweep_archive.py"), encoding="utf-8").read()
+    _imp4 = [ln.strip() for ln in _src4.splitlines()
+             if ln.strip().startswith(("from ", "import "))]
+    check("源码级：sweep_archive 零 Qt（data 层纪律；统计口径全在 sweep_stats）",
+          _imp4 != [] and all("PyQt6" not in ln and "QtWidgets" not in ln for ln in _imp4))
+except Exception as _eSW4:  # noqa: BLE001
+    check(f"SW-4 快照存档断言整段抛异常: {type(_eSW4).__name__}: {_eSW4}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

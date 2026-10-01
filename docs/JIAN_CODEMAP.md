@@ -22,7 +22,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 ├── JIAN_RULES.md        #     本文件（唯一权威记忆，**故意**留在根目录：打开仓库第一眼就要看见）
 ├── .gitignore           #     忽略 __pycache__ / screenshots / *.db / samples/* / 实例* 等隐私
 ├── scripts/             # 【运维脚本：只给人手动敲命令，**不进 app import 图**】
-│   └── sync_roster.py   #     花名册同步(__main__)：A股+期货名册→DB market_symbols
+│   ├── sync_roster.py   #     花名册同步(__main__)：A股+期货名册→DB market_symbols
+│   └── analyze_index_regimes.py  # §7-B15 SW-2 上证切块离线脚本（只读 index_daily/sh000001，
+│                       #     切块+配对 → 打印 + 写缓存；⚠ DataLakeManager 文件名**不含 .parquet**）
 ├── tests/               # 【验收脚本：同上，独立入口】⚠ 一律用 `__file__` 反推仓库根，**禁止写死相对路径**
 │   ├── smoke_chart.py   # 图表架构 + 控件/口径/标注/配方/周期(含**分钟**档位)/自选/复权/拖动/坐标轴
 │   │                    #        + **§7-B1/B2 横截面内核（三态 / 粗筛 / 广度分母 / 缓存矩阵）**
@@ -84,6 +86,28 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   │                    #      ⚠ 与 M1 **同口径**：prepare_frame ≡ BacktestEngine 的数据准备
 │   │                    #        （`smoke_chart` 有**源码级**断言钉住：改一处漏一处立刻红）
 │   │                    #      ⚠ 新建即越 400 线（§4 已登记）：**新增优先另起模块**
+│   ├── sweep_plan.py    #     §7-B15 SW-0 参数扫描**网格纯计算**：SweepDimension/GridPlan
+│   │                    #      + make_dimension（起/止/步长→档位，round 防浮点尾巴）
+│   │                    #      + build_grid（**运行前唯一闸门**：≤2维/每维≤15档/组合≤2000 ⇒ 拒绝+建议）
+│   │                    #      + estimate_seconds（3000根≈55ms 线性缩放）+ StudyInterval/validate_interval
+│   │                    #      （起止有序 / **共一天也算重叠=泄漏** / 数据范围四边界）
+│   │                    #      + neighborhood_indices（邻域表**含自身**，与 combos 同序 → sweep_stats 用）
+│   ├── index_regimes.py #     §7-B15 SW-2 上证指数**切块**（零 Qt 零网络）：classify_regimes
+│   │                    #      （滚动窗口涨跌幅三态 + min_len 毛刺丢弃，参数全进缓存 ⇒ §8-14 可复现）
+│   │                    #      + build_regime_pairs（同状态相邻两次 / 牛→紧随的熊 / 熊→紧随的牛，
+│   │                    #      默认 = 最近 震荡→震荡）+ fold_pair/year_pair + 缓存
+│   │                    #      `~/.jian_data/index_regimes.json`（**路径可注入**，冒烟重定向 tmp）
+│   ├── sweep_stats.py   #     §7-B15 SW-1 **统计唯一真源**（方案书 §8-1 源码级钉死）：annual_returns
+│   │                    #      （复利年化 244，归零 ⇒ -1 地板）+ rank_ic（**全网格** Spearman，§8-15）
+│   │                    #      + candidate_order（键 = 邻域均值↓,OOS↓,|Δ|↑ **不含 IS**）+ apply_gate
+│   │                    #      （**只筛不排**）+ pbo_cscv（冠军只在 A 段选，§8-16）+ study_key_stats
+│   │                    #      ⚠ **只吃收益矩阵**，不收 BacktestResult / 不 import core.backtest（冒烟钉住）
+│   ├── param_sweep.py   #     §7-B15 SW-3 **编排层**（零 Qt）：run_sweep —— 复用 M1 唯一管线
+│   │                    #      （execute_programs 合并变量列 → BacktestEngine.run；engine.run **不传 params**
+│   │                    #      与 M1 同形）+ fill/risk 全参透传（§8-17 逐位一致有断言）+ 两段独立回测
+│   │                    #      + 逐日收益收集 + 交易日轴对齐守卫 + 可中断可续跑（combo_key 记账）
+│   │                    #      + build_matrix/split_indices（→ sweep_stats 的输入形状）
+│   │                    #      ⚠ 指数门控策略直接拒绝（MVP 诚实范围收缩）
 │   ├── formula/         #     通达信 DSL 共 6 文件（详见 §5.2 / §7-B3）
 │   │   ├── __init__.py  #     FormulaEngine 门面：validate/parse/evaluate/signal
 │   │   ├── tokens.py    #     词法
@@ -105,6 +129,11 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   │                    #      键：time_precision / backtest_ui（1.22 回测页卡片展开状态，记住上次）
 │   └── updater.py       #     UpdateCheckerThread(QThread)：远端 version.json 异步比对，静默失败
 ├── data/                # 【数据获取/存储层】
+│   ├── sweep_archive.py #     §7-B15 SW-4 参数研究**快照存档**（照抄 backtest_archive 范式）：
+│   │                    #      SweepArchive(root 可注入/save/list/load/set_pinned/delete)
+│   │                    #      + build_snapshot（策略**整体内联**+网格+区间+门槛+APP_VERSION）
+│   │                    #      + segment_matrix（S=12 段收益）+ Top-N 逐日 + top_candidate_rows
+│   │                    #      + **OOS 诚实计数器** oos_usage（同标的/策略/样本外窗跨研究累计）
 │   ├── scan_store.py    # M2/M3 **会话内存缓存**（§7-B1/B2 STEP 2）：只缓存结果矩阵
 │   │                    #      （≈22 MB/全市场，不缓存价量宽表）；键 = 公式 + **粗筛** + 标的域
 │   │                    #      + 复权 + **数据版本** ⇒ 数据一变自动失效；`asof` 不进键
@@ -469,12 +498,15 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | 内置指标 → 绘图 IR / "该放主图还是副图" | **`ui/widgets/chart_layers.py`**（v6.7）：`builtin_indicator_layers()` / `layer_value_range()` / `scale_mismatch_hint()`。**别在页面里自己算**（页面只留开关与窗格编排） |
 | 多段函数编辑器（含"段"的增删） | **`ui/widgets/function_segments.py`** —— 回测页与行情页公式编辑器**共用**；⚠ 改它前请读 §11.5-15（删控件必须 `setParent(None)`；容器给多余高度时必须有可伸缩子控件） |
 | 复盘页 UI | `ui/views/review.py`（**173 行**，1.26 拆分后只做装配与转发）；行为落 `ui/widgets/review_*.py`：`review_layout`(版式/可拖竖分栏) / `review_charts`(日历·月度·时长) / `review_playback`(交易回放) / `review_editor`(清单·编辑·孤儿缝合) / `review_flow`(筛选·导航·视图刷新) |
-| M2/M3 新子页 | **均已落地**：M2 = `ui/views/scan_view.py`（164 行）+ `ui/widgets/scan_layout|flow|result.py`（第 2 页签）；M3 = `ui/views/breadth_view.py`（197 行）+ `ui/widgets/breadth_layout|flow|result|chart.py`（第 3 页签）。**共用** `core/cross_section` / `data/scan_store`（含 ⚡增量）/ `ui/workers.CrossSectionWorker` |
+| M2/M3 新子页 | **均已落地**：M2 = `ui/views/scan_view.py`（164 行）+ `ui/widgets/scan_layout|flow|result.py`（★v6.86 起**第 3 页签**）；M3 = `ui/views/breadth_view.py`（197 行）+ `ui/widgets/breadth_layout|flow|result|chart.py`（★第 4 页签）。**共用** `core/cross_section` / `data/scan_store`（含 ⚡增量）/ `ui/workers.CrossSectionWorker` |
+| 🧪 参数研究页（B15 MVP） | 页面 = **`ui/views/param_sweep.py`**（**583 行**⚠ §4 已登记拆法；子页签 index 1，M1/M2 之间——用户定）。左栏表单 = `ui/widgets/sweep_form.py`（**394 行**：306px 定宽白卡 + 46px 折叠竖条 + 步号徽标，★v6.86 视觉返工后形态）；图表 = `ui/widgets/sweep_chart.py`（时间轴/散点/热力图/分布 + 图例 chips）；编排（两段流程 / 红线①确认闸 / 统计装配 / 存快照）在页面。**依赖**：`core/sweep_plan`（网格闸门）→ `core/param_sweep`（逐组回测）→ `core/sweep_stats`（IC/邻域/PBO 唯一真源）→ `data/sweep_archive`（快照 + OOS 计数器）；切块 = `core/index_regimes` + 缓存 `index_regimes.json`。**改统计口径 → `core/sweep_stats` 一处**；改网格护栏 → `sweep_plan`；worker = `ui/workers.ParamSweepWorker`（stage 两段式） |
 | M3 广度页（折线 / 指数副图 / 增量 / 重算） | 页面 = `ui/views/breadth_view.py`（状态 + 同名薄壳）。**版式** `breadth_layout.py`（ƒ/🎚 两卡**直接复用 `scan_layout`**；`BreadthDisplayPane` = 平滑/占比/指数）；**流程** `breadth_flow.py`（`_start_worker` 统一入口：`force` / `incremental` 两开关；`_ensure_index` 指数补拉链）；**图表** `breadth_chart.py`（`BreadthChart`：ChartHost 双窗格 + `attach_all` + 读数条 provider —— **别在页面手写 addPlot/setTicks**）。**⚡增量的矩阵续接在 `data/scan_store.py`**（`find_base` + `merge_tail`），改它必跑 `smoke_chart` 的「STEP 5」段 |
 | 就绪度体检 / 更新到最新（M2/M3 共用） | 内核 = **`data/readiness.py`**（`probe_readiness` 只读 footer 四分类 + `latest` + `summary_line`/`gap_preview`/`detail_text` + **v6.47 `format_stale`** 滞后文案；**别在页面另写“有没有数据”的判断**）；线程 = `ui/workers.py:ReadinessWorker`（第 8 个）/ `CalendarWorker`（第 9 个，滞后判据）；编排 = **`ui/widgets/readiness_flow.py:ReadinessFlow`**（两页共用：自动体检、**v6.47 一键「⬆ 更新到最新」`update_latest` 与“补齐缺失”合并（整批当前范围增量，共用 `_launch_sync`；`fill_missing` 保留但退位次级）**、`start_calendar_fetch` 挂日历→`trading_target`、滞后用 `trading_days_between`、M2 `_calibrate_asof_date` 抬升上限+`lbl_asof_hint` 回显、**回调绑定各自 scope** —— 改它必跑 `smoke_pages_overlay` 的「STEP 6」段）；成分股失败文案唯一出口 = `constituent_failure_text()`；「全市场扫描就绪」预设 = `bulk_download._apply_scan_ready_preset` |
 | 全市场筛选页（M2） | `ui/views/scan_view.py`（状态 + 同名薄壳）。**版式** `scan_layout.py`（阈值⇄控件的**唯一换算处**在 `ScanFilterPane`，界面亿元/% ⇄ 内核元/小数）；**流程** `scan_flow.py`（范围解析 / 后台扫描 / 切日期零成本）；**渲染** `scan_result.py`（KPI 三态 + 结果表） |
 | 改摘要条 chip / 摘要条动作按钮（★1.64 收编） | **chip = `ui/widgets/summary_chip.py`**（`CHIP_STATES` / `chip_qss()` / `build_chip()` / `set_chip_state()` —— 唯一来源）；**主操作 = `styles.SUMMARY_RUN_QSS`**、**次级 = `styles.SUMMARY_GHOST_QSS`**。⚠ M1/M2/M3 **一律引用**：不许再在页面里 `setStyleSheet(CHIP_QSS_ON)`（恒绿假状态）或自写一份蓝色实心按钮（`smoke_pages_overlay` §1.65 有**源码级**断言钉住）。行情页工具行那族 chip（`desk_chips` + MRU 规则）**不在收编范围**（形状用途不同） |
 | M2/M3 的**配置抽屉与摘要条胶囊**（★1.64） | 抽屉卡 = `ScanFormulaPane`(fn) / `ScanFilterPane`(filter) / `BreadthDisplayPane`(display) / **`ScanScopePane`(scope，「🌐 统计范围」，M2/M3 **共用同一张卡类**)**；胶囊点开 = `p.open_pane(key)`（再点同一个 = 收起），**高亮**由 `scan_flow.sync_chip_states()` / `breadth_flow.sync_chip_states()` 写（页面 `open_pane` 调用）。⚠ 范围组（统计范围 / 指数 / N 只）**从 L1 搬进了抽屉**，但控件仍是**页面属性**（`p.cb_scope` / `p.cb_index` / `p.lbl_scope`）—— 联动逻辑与断言**不许改属性名** |
+| 🧪 参数研究**翻新计划书**（★2026-10-01 立项 · 未开工） | **唯一真源 = `docs/JIAN_SWEEP_REWORK.md`**（R0 拆件 → R1 统一件 → R2 左栏预设/引导卡 → R3 时间轴重做 → R4 四视图 → R5 候选表+快照卡 → R6「ƒ 库」入口）。⚠ 功能口径仍在 `docs/JIAN_SWEEP_PLAN.md`（本件只管"做到什么样/怎么做"） |
+| 买卖条件**配置 → DSL 表达式**（★1.66） | **唯一真源 = `core/conditions.py`**（纯计算，零 Qt / 零 IO）：`build_condition_expression`（规则→算子，原长在 `ui/widgets/condition_gate.py`）/`row_expression`/`gate_expression`（组逻辑 all/any/atleast）/`gate_rows`。**两种形状都认**：新 `{logic,n,conditions:[…]}` 与旧单条件 `{variable,rule,value}`；已是表达式字符串则原样透传。⚠ 凡"从存档读条件再跑回测"的地方（§7-B15 参数研究）**必须**调它 —— 旧版把配置 dict 直递 `BacktestEngine.run` ⇒ `KeyError: 0` / `无法识别的字符 '{'`，**每组必挂**（页面还先 `str()` 了一道）。界面 `ConditionGate.expression()` 已改为调本件（不留第二份映射，§11.5-11） |
 | 结果区「K线买卖点」的**公式叠层**（★1.65） | ⚠ **M1 不喂策略函数的绘图 IR**：`ui/views/backtest.py::_render_result` / `_render_kline` 一律 `draws=[]`。理由 = **跨量纲**：策略函数是买卖条件，其 IR（`STICKLINE` 状态柱）用的是函数自己的量纲，一旦被 `overlay_extent` 并进 K 线 y 量程就把价格压成一条线（用户实测"比例失调无法查看" ⇒ "请让这个函数不要显示"）。**公式叠层归行情页**（那里才是看函数的地方）；结果区自身能力保留（`backtest_result._paint_overlays`），**没有叠层时「显示公式叠层」开关自动隐藏**。冒烟改为**直喂** `view.result.render_kline(..., draws=...)` 保住 §7-B3/B4 验收，另加"页面不再喂"的断言 |
 | M2 结果区 KPI（★1.64） | **盒子** = `styles.KPI_CARD_QSS`（白底小卡）；**文案与值色** = `scan_result.kpi_card_html()`（富文本：灰标签 + 17px 彩值 + 灰副值，一个 QLabel 搞定）+ `_KPI_SPEC`（只留值色与提示）。⚠ **M3 没有 KPI 行**（用户口径：只重塑工具栏，结果区原样） |
 | 改图表轴样式 / 净值曲线绘制 | **`ui/widgets/chart_style.py`（唯一来源，v5.13）** —— `apply_pokorny_style`（PlotWidget/PlotItem 都兼容）+ `plot_equity_curve` + ★1.64 `plot_benchmark_curve`（**买入持有基准**：归一到首日 1.0、`z=-10` 压最底层、色 = `BENCHMARK_COLOR` 背景级灰蓝）；业务页面**禁止就地写轴样式** |

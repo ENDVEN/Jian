@@ -113,6 +113,24 @@ class StrategyStore:
         return snapshot
 
 
+def segments_of(payload: dict) -> tuple[str, ...]:
+    """策略存档 → 函数段文本（**兼容旧档的唯一出口**）。
+
+    旧档（`segments` 字段出现之前保存的策略）只有 `function`（各段以分号 / 换行连接），
+    M1 载入一直有这条回落（`ui/widgets/backtest_strategy.apply_payload`）；但别的读档方
+    （§7-B15 参数研究）当初**只读 `segments`** ⇒ 旧策略在那边"看起来没有函数" ⇒
+    参数探测为空 ⇒ 页面整个空转（2026-10-01 实测事故："功能什么的都没办法实现"）。
+    ⇒ 回落口径收到这里一处，读档方一律调它（§11.5-11：同类防护不许各写一份）。
+    """
+    payload = payload or {}
+    segs = tuple(str(s).strip() for s in (payload.get("segments") or [])
+                 if str(s or "").strip())
+    if segs:
+        return segs
+    text = str(payload.get("function") or "").strip()
+    return (text,) if text else ()
+
+
 def _signature(payload: dict) -> str:
     return "|".join([
         str(payload.get("function", "")).strip(),

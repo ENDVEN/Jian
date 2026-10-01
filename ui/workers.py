@@ -23,6 +23,7 @@
     · CrossSectionWorker  M2/M3 横截面扫描（§7-B1/B2 D4：分块 + 进度 + 取消 + 竞态守卫）
     · ReadinessWorker     就绪度体检（§7-B1/B2 D6-1：只读 parquet footer，不联网不写盘）
     · CalendarWorker      交易日历一次性后台抓取（§7-B10：失败/无网回 None，UI 回退本地最新）
+    · ParamSweepWorker    §7-B15 参数扫描（SW-3：逐组两段回测 + 进度 + 可中断可续跑）
   ⚠ 唯一的例外是 `core/updater.py` 的 UpdateCheckerThread —— 它属于 core 层
     （版本检测不是 UI 职责），不搬进 ui/。
 """
@@ -37,6 +38,8 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.backtest import BacktestEngine
 from core.cross_section import ScanCancelled
+from core.param_sweep import run_sweep
+from core.sweep_plan import GridPlan, StudyInterval
 from data.market_db import DataLakeManager
 from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
@@ -599,6 +602,58 @@ class BacktestRunWorker(QThread):
         except Exception as e:  # noqa: BLE001 —— 回测异常绝不穿透线程
             logger.error(f"市场回测-计算异常 [{self.symbol}]: {e}")
         self.finished_signal.emit(result)
+
+
+class ParamSweepWorker(QThread):
+    """§7-B15 参数扫描（SW-3）—— 只做调度；全部口径在 `core/param_sweep`。
+
+    信号（照 CrossSectionWorker 范式）：
+        progress(done, total, note)   # 组级进度；note = 当前组合键（或阶段说明）
+        finished(job_id, outcome)     # `SweepOutcome`；**取消时也回包** ——
+                                      # 已完成的组保留可续（§8-8，与下载队列同款，
+                                      # ⚠ 与 CrossSectionWorker 取消回 None 的语义**故意不同**）
+        failed(job_id, reason)        # 一句话原因（异常绝不穿透线程）
+
+    · **竞态守卫（§9-O5）**：`job_id` 原样回包，页面用 `JobGuard.accept()` 判定；
+    · **红线①「样本外只跑一次」的闸门不在本线程** —— 它在页面流程 + `sweep_archive`
+      （SW-4/SW-5）：线程不该也不需要知道研究历史；
+    · `cancel()` 在**组边界**生效（run_sweep 的 should_stop 钩子），不打断组内回测。
+    """
+
+    progress = pyqtSignal(int, int, str)
+    finished = pyqtSignal(int, object)
+    failed = pyqtSignal(int, str)
+
+    def __init__(self, job_id: int, df, spec, grid: GridPlan, interval: StudyInterval,
+                 stage: str = "both", done_keys=(), parent=None):
+        super().__init__(parent)
+        self._job_id = int(job_id)
+        self._df = df
+        self._spec = spec
+        self._grid = grid
+        self._interval = interval
+        self._stage = str(stage or "both")
+        self._done_keys = frozenset(done_keys)
+        self._cancel = False
+        self.cancelled = False          # 事后判读：这次是不是被用户取消掉的
+
+    def cancel(self):
+        """供 UI 的「中断」按钮调用（只置一个 bool，跨线程安全）。"""
+        self._cancel = True
+
+    def run(self):
+        try:
+            outcome = run_sweep(
+                self._df, self._spec, self._grid, self._interval,
+                stage=self._stage,
+                done_keys=self._done_keys,
+                should_stop=lambda: self._cancel,
+                on_progress=lambda d, t, note: self.progress.emit(int(d), int(t), str(note)))
+            self.cancelled = outcome.cancelled
+            self.finished.emit(self._job_id, outcome)
+        except Exception as e:  # noqa: BLE001 —— 异常绝不穿透线程
+            logger.error(f"参数扫描异常 [{getattr(self._spec, 'symbol', '')}]: {e}")
+            self.failed.emit(self._job_id, str(e))
 
 
 class ConstituentsWorker(QThread):

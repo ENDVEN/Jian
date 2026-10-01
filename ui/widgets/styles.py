@@ -294,6 +294,41 @@ SUMMARY_GHOST_QSS = ("QPushButton { color: #1976D2; background: transparent;"
 KPI_CARD_QSS = ("QLabel { background: #FFFFFF; border: 1px solid #E7EAF0;"
                 " border-radius: 10px; padding: 7px 11px; color: #20242C; }")
 
+# —— 容器级白卡（★v6.86 / §7-B15 视觉返工 v2 · **与 M1/M2/M3 同族**）：
+#   白底 + 1px #EDF0F5 + 8px 圆角 + #FAFBFD 头条（同 `backtest_history_ui._SECT_QSS` 的
+#   SectionCard 语言）。页面级面板 / 图表外框 / 表格外框一律用它，
+#   **不许**在页面里就地写第二份卡片 QSS（§10-9 同类控件同一张脸）。
+PANEL_CARD_QSS = ("QFrame#panelCard { background: #FFFFFF; border: 1px solid #EDF0F5;"
+                  " border-radius: 8px; }")
+PANEL_HEAD_QSS = ("QFrame#panelHead { background: #FAFBFD; border: none;"
+                  " border-top-left-radius: 8px; border-top-right-radius: 8px; }")
+SEC_TITLE_QSS = ("QLabel { color: #3A4250; font-weight: bold; font-size: 12.5px;"
+                 " background: transparent; border: none; }")
+SEC_META_QSS = ("QLabel { color: #8A94A6; font-size: 11.5px; background: transparent;"
+                " border: none; }")
+SEC_HINT_QSS = "QLabel { color: #8A94A6; background: transparent; border: none; }"
+# ★用户 2026-10-01：闸门"拦住了"必须有**看得见**的落点（灰字等于没说 ⇒ "点了没反应"）
+WARN_HINT_QSS = ("QLabel { color: #E65100; background: #FFF8E1; border: 1px solid #FFE082;"
+                 " border-radius: 6px; padding: 4px 6px; }")
+#: 步号徽标（设计稿 .step-no：强调蓝底白字小圆块）
+STEP_BADGE_QSS = ("QLabel { background: #1976D2; color: white; border-radius: 9px;"
+                  " min-width: 18px; max-width: 18px; min-height: 18px; max-height: 18px;"
+                  " font-size: 11px; font-weight: bold; }")
+#: 空态占位卡（浅底 + 虚线边 —— 一眼看出"这里是占位，不是坏了"）
+EMPTY_STATE_QSS = ("QLabel { background: #FAFBFD; border: 1px dashed #D9DEE8;"
+                   " border-radius: 8px; color: #8A94A6; }")
+TABLE_HEAD_QSS = ("QHeaderView::section { background: #F7F9FC; border: none;"
+                  " border-bottom: 1px solid #EDF0F5; padding: 5px 6px;"
+                  " color: #5B6472; font-weight: bold; }")
+VERDICT_BAD_QSS = ("QLabel { background: #FDECEA; border: 1px solid #F5C6C0;"
+                   " border-radius: 8px; padding: 10px 12px; color: #B71C1C; }")
+VERDICT_WARN_QSS = ("QLabel { background: #FFF8E1; border: 1px solid #FFE082;"
+                    " border-radius: 8px; padding: 10px 12px; color: #E65100; }")
+VERDICT_OK_QSS = ("QLabel { background: #EDF7ED; border: 1px solid #C8E6C9;"
+                  " border-radius: 8px; padding: 10px 12px; color: #1B5E20; }")
+VERDICT_IDLE_QSS = ("QLabel { background: #FFFFFF; border: 1px solid #EDF0F5;"
+                    " border-radius: 8px; padding: 10px 12px; color: #20242C; }")
+
 # 页签（pill）样式：编辑抽屉顶部页签等（v6.21 从 `backtest_panes` 上收）
 TAB_QSS_OFF = ("QPushButton { background:#F7F9FC; border:1px solid #E7EAF0; border-radius:8px;"
                " padding:5px 12px; font-size:12.5px; font-weight:bold; color:#5B6472; }"
@@ -350,6 +385,32 @@ def segment_button_qss(position: str = "middle", *, radius: int = 8,
             f"QPushButton:hover {{ background: {hover_bg}; }}"
             f"QPushButton:checked {{ background: {checked_bg}; color: {checked_color};"
             f" border: 1px solid {checked_border};{shape} font-weight: bold; }}")
+
+# ==========================================
+# 日期控件弹出的日历（★R4-b：用户实测「年月两栏透明，鼠标放上去才显示」）
+# ==========================================
+# 【为什么必须单独一份】`QCalendarWidget` 弹层是**独立的顶层窗口**，父控件的 QSS **管不到它**
+#   （不是继承关系）；此前全仓库没有一处 `QCalendarWidget` 样式 ⇒ 它按系统调色板画，
+#   在浅色主题下"月/年"那两栏（QToolButton + QSpinBox）就是**白底白字 = 看不见**
+#   （悬停才被 hover 底色衬出来）—— 用户实测现象。这一份在 `NoWheelDateEdit.setCalendarPopup`
+#   里挂到弹层上（一处修，全站日期控件一起好）。
+CALENDAR_QSS = (
+    "QCalendarWidget QWidget { background:#FFFFFF; color:#20242C; }"
+    "QCalendarWidget QWidget#qt_calendar_navigationbar { background:#FFFFFF;"
+    " border-bottom:1px solid #E6EAF0; }"
+    "QCalendarWidget QToolButton { color:#20242C; background:transparent; border:0;"
+    " padding:2px 6px; font-weight:600; }"
+    "QCalendarWidget QToolButton:hover { background:#E8F1FB; border-radius:6px; }"
+    "QCalendarWidget QToolButton::menu-indicator { image:none; }"
+    "QCalendarWidget QSpinBox { background:#FFFFFF; color:#20242C; border:1px solid #E6EAF0;"
+    " border-radius:6px; padding:1px 4px; selection-background-color:#1976D2;"
+    " selection-color:#FFFFFF; }"
+    "QCalendarWidget QSpinBox::up-button, QCalendarWidget QSpinBox::down-button"
+    " { width:14px; background:#F2F5F9; border:0; }"
+    "QCalendarWidget QAbstractItemView:enabled { background:#FFFFFF; color:#20242C;"
+    " selection-background-color:#1976D2; selection-color:#FFFFFF; outline:0; }"
+    "QCalendarWidget QAbstractItemView:disabled { color:#B4BECB; }"
+    "QCalendarWidget QMenu { background:#FFFFFF; color:#20242C; }")
 
 # ==========================================
 # 页面内容区（§7-B8 第 5 批）：内容放不下就滚 + 底部主操作钉住
