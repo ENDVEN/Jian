@@ -89,6 +89,10 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         root.setSpacing(10)
         self.form = SweepForm()
         root.addWidget(self.form)   # ★不加 stretch —— 上一版它与结果区 1:1 平分剩余宽度（右栏半宽的根因）
+        # ★R6 / §7-B16 H6：**函数总库入口**（第 5 个 —— 与 M1/M2/M3/行情页同名同义同脸）。
+        #   单击只唤浮窗（页面内悬浮、宿主 = 本页，1.63 H7 口径 ⇒ **不新建第二套浮窗**）。
+        self.btn_hub = self.form.btn_hub
+        self.btn_hub.clicked.connect(self._open_formula_hub)
 
         # ---- 右栏：结果区（独立滚动；L0 吃满剩余高度，§10-14）----
         scroll = QScrollArea()
@@ -215,6 +219,15 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         self._restore_collapse()
         self._refresh_run_enabled()          # 首屏就按闸门显示"能不能跑"
 
+    def _open_formula_hub(self) -> None:
+        """★R6：唤「ƒ 函数库」浮窗（**转发给主窗口那一个** —— 与 M1/M2/M3/行情页同一套实现，
+        绝不在这里新建第二套浮窗）。浮窗只做"看 / 管函数资产"：本页策略来源**仍是**
+        `strategy_store`（M1 保存的配方），不含"把某函数变成策略"（那是 M1 的活）。"""
+        win = getattr(self.main_win, "window", None)
+        target = self.main_win.window() if callable(win) else self.main_win
+        if hasattr(target, "show_formula_hub_panel"):
+            target.show_formula_hub_panel()
+
     # ================= 闸门要看得见 =================
     def _refresh_run_enabled(self) -> None:
         """网格 / 区间不合规 ⇒ **禁用「▶ 跑样本内」+ 就地写原因**。
@@ -240,7 +253,8 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
             return None
         iv = self.form.interval()
         return (tuple((d.name, tuple(d.values)) for d in dims),
-                iv.is_start, iv.is_end, iv.oos_start, iv.oos_end)
+                iv.is_start, iv.is_end, iv.oos_start, iv.oos_end,
+                tuple(getattr(iv, "more", ()) or ()))      # ★R7：合并窗口也算实验身份
 
     def _invalidate_if_changed(self) -> None:
         """网格 / 区间一变 ⇒ 上一轮结果**作废**，并明确让用户重跑。

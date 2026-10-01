@@ -5274,20 +5274,25 @@ try:
     check(f"★R2：口径下拉只剩 4 项（3 类 + 自定义）—— 实测 {_f2.cb_interval_kind.count()} 项",
           _f2.cb_interval_kind.count() == 4
           and _f2.cb_interval_kind.itemData(3) == "custom")
-    check("★R2：默认「取近 5 组」（用户 2026-10-01 拍板）且窗口数 ≤ 5",
-          _f2.cb_recent_n.currentText() == "5 组" and _f2.cb_preset.count() <= 5)
-    check("★R2：窗口项标题带**四日期**（「哪一段」是用户唯一要选的东西）",
-          all(("→" in _f2.cb_preset.itemText(i) and "‖" in _f2.cb_preset.itemText(i))
-              for i in range(_f2.cb_preset.count())))
+    # ⚠ ★R7 起，窗口下拉**末尾会多一项「合并全部」**（≥2 对窗口时）⇒ 这些断言一律
+    #   **只数单段窗口项**（把合并项排除），否则会被新功能带红（实测踩过）。
+    _win_items2 = lambda: [_f2.cb_preset.itemText(_i)                # noqa: E731
+                           for _i in range(_f2.cb_preset.count())
+                           if "合并" not in _f2.cb_preset.itemText(_i)]
+    check("★R2：默认「取近 5 组」（用户 2026-10-01 拍板）且**单段窗口**数 ≤ 5"
+          "（★R7 的「合并全部」那项不算在内）",
+          _f2.cb_recent_n.currentText() == "5 组" and len(_win_items2()) <= 5)
+    check("★R2：单段窗口项标题带**四日期**（「哪一段」是用户唯一要选的东西）",
+          all(("→" in _t and "‖" in _t) for _t in _win_items2()))
     _f2.cb_interval_kind.setCurrentIndex(0)          # 切「单边上涨」
     app.processEvents()
     _iv_up = _f2.interval()
     check("★R2：切口径 ⇒ 四格日期**立刻**换成该口径的最近一对（不用再点一次）",
-          _iv_up.is_start != "" and _f2.cb_preset.count() <= 5)
+          _iv_up.is_start != "" and len(_win_items2()) <= 5)
     _f2.cb_recent_n.setCurrentIndex(0)              # 取近 3 组
     app.processEvents()
-    check("★R2：改「取近 N 组」⇒ 窗口数跟着变（实测 %d 项）" % _f2.cb_preset.count(),
-          _f2.cb_preset.count() <= 3)
+    check("★R2：改「取近 N 组」⇒ 单段窗口数跟着变（实测 %d 项 + 合并项）"
+          % len(_win_items2()), len(_win_items2()) <= 3)
     _f2.select_custom()
     app.processEvents()
     check("★R2：「自定义」口径藏起窗口与取近（四格由用户 / 切块时间轴填）",
@@ -5488,6 +5493,66 @@ try:
           and "_archive.load(rid)" in _snap_src and "只读回放" in _snap_src
           and "不重绘" in _snap_src and "_archive.set_pinned" in _snap_src
           and "_archive.delete" in _snap_src)
+
+    # ---- ★R6：「ƒ 库」入口（本页 = 第 5 个；与 M1/M2/M3/行情页同款同义）----
+    check("★R6：左栏 ② 旁有「ƒ 库」入口（与四页**同一张脸**；页面与表单是同一个对象）",
+          hasattr(_psw, "btn_hub") and _psw.btn_hub.text() == "ƒ 库"
+          and _psw.btn_hub is _psw.form.btn_hub)
+    _psw.btn_hub.click()
+    app.processEvents()
+    _hub_panel = getattr(win, "_formula_hub_panel", None)
+    check("★R6：点「ƒ 库」**真的唤出**主窗口那一套函数库浮窗（转发，不新建第二套）",
+          _hub_panel is not None and _hub_panel.isVisible()
+          and "show_formula_hub_panel" in _psw_src)
+    if _hub_panel is not None:
+        _hub_panel.btn_close.click()      # 收尾：浮窗别影响后面的断言
+        app.processEvents()
+
+    # ---- ★R7：合并区间入口（窗口下拉末尾「【全部】合并 N 对窗口」）----
+    from core.index_regimes import IntervalPreset as _IP7                   # noqa: E402
+    from core.sweep_plan import validate_interval as _vi7p                   # noqa: E402
+    # 注入 3 对同口径窗口（用真缓存那种**同名 key**，正是 §11.5-112 ③ 的场景）
+    _pre7 = [_IP7("sideways>sideways", "震荡", f"20{10 + _i}-01-01", f"20{10 + _i}-06-30",
+                  f"20{11 + _i}-01-01", f"20{11 + _i}-06-30") for _i in range(3)]
+    _f7 = _psw.form
+    # ⚠ 本段会**改表单的区间状态**（注入假预设 + 清数据范围）⇒ 收尾必须还原，
+    #   否则后面的 R2 断言被带红。
+    #   另外：★R7 的合并项**按本机数据范围如实筛选**，假窗口（2010~2013）落在真范围之外
+    #   会被如实筛掉 ⇒ 本段先把范围清空（测的是"合并项逻辑本身"），收尾再还原。
+    _all_before7 = list(getattr(_f7, "_all_presets", ()) or ())
+    _kind_before7 = str(_f7.cb_interval_kind.currentData() or "")
+    _range_before7 = tuple(getattr(_f7, "_data_range", ("", "")))
+    _f7.set_data_range("", "")
+    _f7.set_regime_presets(_pre7)
+    app.processEvents()
+    _items7 = [_f7.cb_preset.itemText(_i) for _i in range(_f7.cb_preset.count())]
+    check(f"★R7：窗口下拉**末尾追加合并项**（实测 {len(_items7)} 项；末项 = {_items7[-1][:22] if _items7 else '—'}…）"
+          "—— 单段窗口**一个都没少**（用户：「同时也保留几个月几个月这样的一段段单独区间」）",
+          len(_items7) >= 4 and "合并" in _items7[-1] and "20" in _items7[0])
+    _f7.cb_preset.setCurrentIndex(_f7.cb_preset.count() - 1)     # 选"合并全部"
+    app.processEvents()
+    _iv7p = _f7.interval()
+    _more7 = tuple(getattr(_iv7p, "more", ()) or ())
+    check(f"★R7：选合并 ⇒ `interval().more` 带上其余窗口（实测 {len(_more7)} 个）"
+          " + 四格日期**锁住**（它们只是第一对的显示，不是可改的输入）",
+          len(_more7) == 2 and not _f7.dt_is_start.isEnabled()
+          and _iv7p.is_start == _pre7[0].is_start)
+    check("★R7：合并态**逐对校验通过**（不拿包络去校验）；合并窗口也算「实验身份」"
+          "（改合并态 ⇒ 旧结果作废）",
+          _vi7p(_iv7p) == () and "more" in _psw_src)
+    _f7.cb_interval_kind.setCurrentIndex(_f7.cb_interval_kind.findData("custom"))
+    app.processEvents()
+    check("★R7：切回「自定义」⇒ 退出合并态且四格**重新可编辑**（不留锁死状态）",
+          not (getattr(_f7.interval(), "more", ()) or ()) and _f7.dt_is_start.isEnabled())
+    # ---- 收尾：把区间状态**还原**到本段之前（后面的 R2 断言依赖真缓存那套）----
+    _f7.set_data_range(*_range_before7)
+    _f7.set_regime_presets(_all_before7)
+    _i7back = _f7.cb_interval_kind.findData(_kind_before7 or "custom")
+    if _i7back >= 0:
+        _f7.cb_interval_kind.setCurrentIndex(_i7back)
+    app.processEvents()
+    check("★R7：测试段收尾已还原表单区间状态（不污染后续断言）",
+          len(list(getattr(_f7, "_all_presets", ()) or ())) == len(_all_before7))
 
     _step3 = _d3["step"].value()
     _d3["step"].setValue(0.2)                       # 5→25 步 0.2 = 101 档 ⇒ 必被拦

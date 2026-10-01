@@ -171,12 +171,35 @@ def neighborhood_indices(dims: tuple[SweepDimension, ...]) -> tuple[tuple[int, .
 
 @dataclass(frozen=True)
 class StudyInterval:
-    """一次研究的样本内 / 样本外区间（'YYYY-MM-DD' 字符串，与引擎口径一致）。"""
+    """一次研究的样本内 / 样本外区间（'YYYY-MM-DD' 字符串，与引擎口径一致）。
+
+    ★R7 **合并区间**（用户 2026-10-01 拍板）：`more` = 其余**窗口对**（每项
+    `(内起, 内止, 外起, 外止)`，时间升序）。非空 ⇒ 本次研究是"合并研究"：
+    逐对窗口**各自独立回测**（每段从空仓开始 ⇒ **段与段之间没有持仓**），
+    再把逐日收益**按日期拼接**成一条序列 —— 统计（年化 / Rank IC / PBO）都在这条
+    拼接序列上算（用户已批口径；⚠ PBO 的 CSCV 分段会被窗口边界切断，读 PBO 时记住这点）。
+    四格 `is_*` / `oos_*` 始终 = **第一对**窗口（校验/引擎都按逐对来，不用包络）。
+    """
 
     is_start: str
     is_end: str
     oos_start: str
     oos_end: str
+    more: tuple[tuple[str, str, str, str], ...] = ()
+
+    @property
+    def merge_count(self) -> int:
+        """窗口对数（1 = 常规单窗口研究）。"""
+        return 1 + len(self.more)
+
+    def pairs(self) -> tuple[tuple[str, str, str, str], ...]:
+        """全部窗口对（第一对在前；时间升序由调用方保证）。"""
+        return ((self.is_start, self.is_end, self.oos_start, self.oos_end), *self.more)
+
+    def span(self) -> tuple[str, str]:
+        """**包络**（首对内起 → 末对外止）—— 只给界面显示用，绝不拿去回测或校验。"""
+        ps = self.pairs()
+        return (min(p[0] for p in ps), max(p[3] for p in ps))
 
 
 def validate_interval(iv: StudyInterval,
@@ -188,6 +211,24 @@ def validate_interval(iv: StudyInterval,
     ② 样本内终点 < 样本外起点 —— **共一天也算重叠 = 泄漏**；
     ③ 四条边界落在数据范围内（范围由调用方按标的实测传入，本模块不读盘）。
     """
+    more = tuple(getattr(iv, "more", ()) or ())
+    if more:
+        # ★R7：合并研究 ⇒ **逐对窗口各自校验**（不能拿包络校验：牛→熊 的多对窗口里，
+        #   第 2 对的样本内起点晚于第 1 对的样本外终点是**正常**的）。
+        problems: list[str] = []
+        for i, w in enumerate(iv.pairs(), 1):
+            for p in validate_interval(StudyInterval(*w), data_start, data_end):
+                problems.append(f"第 {i} 对窗口：{p}")
+        # 另外：**同类窗口之间不许重叠**（重叠 = 同一段被算两遍，收益被重复计入）
+        ps = iv.pairs()
+        for i, a in enumerate(ps):
+            for j, b in enumerate(ps[i + 1:], i + 2):
+                for (x0, x1), (y0, y1), tag in (((a[0], a[1]), (b[0], b[1]), "样本内"),
+                                                ((a[2], a[3]), (b[2], b[3]), "样本外")):
+                    if str(x0) <= str(y1) and str(y0) <= str(x1):
+                        problems.append(f"第 {i + 1} 对与第 {j} 对在{tag}上时间重叠"
+                                        "（同一段会被算两遍，收益重复计入）")
+        return tuple(problems)
     problems: list[str] = []
     dates: dict[str, object] = {}
     for key in _INTERVAL_LABELS:

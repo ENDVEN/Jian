@@ -5303,6 +5303,47 @@ try:
     check("★真实路径：dict 与等价表达式跑出**同一批逐日收益**（转换不失真，不是「跑起来了就算」）",
           np.array_equal(_out_legacy.completed["N1=15"].is_returns,
                          _out_expr.completed["N1=15"].is_returns))
+    # ---- ★R7：合并区间（多窗口拼接）----
+    #   口径（用户 2026-10-01 已批）：**逐对窗口各自独立回测** ⇒ 按日期拼接逐日收益
+    #   ⇒ 年化 / Rank IC / PBO 按**拼接序列**算；段与段之间**不持仓**。
+    from core.sweep_plan import StudyInterval as _SI7, validate_interval as _vi7  # noqa: PLC0415
+    _dcol7 = _dfS["date"] if "date" in _dfS.columns else _dfS.index
+    _dts7 = [str(x)[:10] for x in list(_dcol7)]
+    check(f"★R7：夹具够长（能切出 2 对互不重叠的窗口；实测 {len(_dts7)} 天）", len(_dts7) >= 240)
+    _w7 = lambda a, b: (_dts7[a], _dts7[b])                                   # noqa: E731
+    _iv7a = _SI7(*_w7(0, 39), *_w7(40, 79))
+    _iv7b = _SI7(*_w7(80, 119), *_w7(120, 159))
+    _iv7m = _SI7(*_w7(0, 39), *_w7(40, 79), more=(_w7(80, 119) + _w7(120, 159),))
+    check("★R7：`merge_count` / `pairs()` / `span()`（1 对 = 常规；N 对 = 合并，第一对在前）",
+          _iv7a.merge_count == 1 and len(_iv7a.pairs()) == 1
+          and _iv7m.merge_count == 2 and _iv7m.pairs()[0] == _w7(0, 39) + _w7(40, 79)
+          and _iv7m.span() == (_dts7[0], _dts7[159]))
+    check("★R7：合并区间**逐对校验**（每对各自有序、不泄漏 ⇒ 零问题；不拿包络去校验）",
+          _vi7(_iv7m) == () and _vi7(_iv7a) == ())
+    _ov7 = _SI7(*_w7(0, 79), *_w7(80, 119),
+                more=((_dts7[40], _dts7[119], _dts7[120], _dts7[159]),))
+    check("★R7：同类窗口**重叠** ⇒ 拒绝（同一段会被算两遍、收益重复计入）",
+          any("重叠" in _p for _p in _vi7(_ov7)))
+    _spec7 = SweepSpec(symbol="TEST", segments=(_seg_text,), params_text="N1=20",
+                       condition_buy="C > 0", condition_sell="C < 0")
+    _grid7 = build_grid([SweepDimension("N1", (15.0, 20.0))])
+    _o7a = run_sweep(_dfS, _spec7, _grid7, _iv7a)
+    _o7b = run_sweep(_dfS, _spec7, _grid7, _iv7b)
+    _o7m = run_sweep(_dfS, _spec7, _grid7, _iv7m)
+    check("★R7：合并的样本内逐日收益 = 各窗口**按日期拼接**（逐字节相同 ⇒ 拼接没走样）",
+          np.array_equal(_o7m.completed["N1=15"].is_returns,
+                         np.concatenate([_o7a.completed["N1=15"].is_returns,
+                                         _o7b.completed["N1=15"].is_returns])))
+    check("★R7：合并的样本外同理（两条序列各自拼接）",
+          np.array_equal(_o7m.completed["N1=15"].oos_returns,
+                         np.concatenate([_o7a.completed["N1=15"].oos_returns,
+                                         _o7b.completed["N1=15"].oos_returns])))
+    check("★R7：交易数 = 各窗口之和 ⇒ **段与段之间不持仓**（没有跨窗口连续持仓）",
+          _o7m.completed["N1=15"].is_trades
+          == (_o7a.completed["N1=15"].is_trades + _o7b.completed["N1=15"].is_trades))
+    check("★R7：合并研究在 notes 里写明口径（拼接序列 + 段间不持仓）",
+          any("合并区间" in _n and "不持仓" in _n for _n in _o7m.notes))
+
     check("★真实路径：指纹只吃归一表达式（同一套条件 → 同一指纹，dict 键序不影响复现）",
           strategy_fingerprint(_spec_legacy) == strategy_fingerprint(_spec_expr))
     expect_error("★真实路径：条件配置里没有有效行 ⇒ 诚实拒绝（绝不把 dict 递给引擎）",

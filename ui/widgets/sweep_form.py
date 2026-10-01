@@ -27,8 +27,8 @@ from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
 from ui.widgets.sweep_chart import TradesDistribution
 from ui.widgets.styles import (FLAT_QSS, FLAT_QSS_DANGER, PANEL_CARD_QSS,
                                PANEL_HEAD_QSS, SEC_HINT_QSS, SEC_META_QSS,
-                               SEC_TITLE_QSS, STEP_BADGE_QSS, SUMMARY_RUN_QSS,
-                               WARN_HINT_QSS, apply_ui_font)
+                               SEC_TITLE_QSS, STEP_BADGE_QSS, SUMMARY_GHOST_QSS,
+                               SUMMARY_RUN_QSS, WARN_HINT_QSS, apply_ui_font)
 
 PANEL_WIDTH = 306      # 设计稿 .panel 的定宽
 STRIP_WIDTH = 46       # 设计稿 .panel.collapsed 的竖条宽
@@ -58,6 +58,9 @@ class SweepForm(QWidget):
         super().__init__(parent)
         apply_ui_font(self)
         self._presets: list[IntervalPreset] = []
+        self._merged: tuple[tuple[str, str, str, str], ...] = ()   # ★R7 合并区间（其余窗口对）
+        self._merged_all: tuple[IntervalPreset, ...] = ()          # ★R7 同口径的**全部**窗口（升序）
+        self._data_range: tuple[str, str] = ("", "")               # ★R7 本地数据范围（筛合并项用）
         self._collapsed = False
 
         root = QVBoxLayout(self)
@@ -157,9 +160,22 @@ class SweepForm(QWidget):
         self.lbl_data = _hint()
         bl.addWidget(self.lbl_data)
 
-        # ---- ② 策略 ----
+        # ---- ② 策略（★R6：本步标题右侧挂「ƒ 库」入口，与 M1/M2/M3/行情页同名同义同脸）----
         bl.addWidget(_sep())
-        bl.addWidget(_step_title(2, "策略（只列 M1 已保存的配方）"))
+        row2 = QHBoxLayout()
+        row2.setContentsMargins(0, 0, 0, 0)
+        row2.setSpacing(6)
+        row2.addWidget(_step_title(2, "策略（只列 M1 已保存的配方）"), 1)
+        # ⚠ 口径写死：本页策略来源**仍是 `data.strategy_store`**（M1 保存的配方）；浮窗只做
+        #   "看 / 管函数资产"，**不含**"把某函数变成策略"（那是 M1 的活）—— 否则用户会以为
+        #   能从库里直接挑一条策略来扫，那会绕过 M1 的买卖条件 / 风控 / 成交配置。
+        self.btn_hub = QPushButton("ƒ 库")
+        self.btn_hub.setStyleSheet(SUMMARY_GHOST_QSS)      # ★1.64：与次级动作同一张脸
+        self.btn_hub.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_hub.setToolTip("打开「ƒ 函数库」浮窗：看 / 管函数资产。\n"
+                                "本页策略来源仍是「📈 单股回测」保存的配方（不在这里挑策略）。")
+        row2.addWidget(self.btn_hub)
+        bl.addLayout(row2)
         self.cb_strategy = NoWheelComboBox()
         bl.addWidget(_shrink(self.cb_strategy))
         self.lbl_params = _hint()
@@ -456,13 +472,32 @@ class SweepForm(QWidget):
             w.setVisible(not custom)
         if custom:
             self._presets = []
+            self._merged = ()                      # ★R7：切"自定义"就退出合并态
+            self._set_merged_locked(False)
             return
         n = self.cb_recent_n.currentData() or 0
         self._presets = windows_of(self._all_presets, kind, None if int(n) == 0 else int(n))
+        # ★R7：「合并」项取**同口径的全部窗口**（不受"取近 N"影响）并按**时间升序**
+        #   （拼接必须按日期升序，否则序列错位）；只需 1 对时不给合并项（合并=没意义）。
+        # ★R7：合并项只收**本机数据范围内**的窗口（页面会把范围推来，见 `set_data_range`）——
+        #   否则"合并全部"会把 2005 年那种本地根本没数据的窗口也带上 ⇒ 一跑整轮全失败。
+        #   被筛掉多少**如实写进标签**（"本机数据范围内 N/M 对"），绝不悄悄少算。
+        _all_kind = tuple(reversed(windows_of(self._all_presets, kind)))
+        _ds, _de = getattr(self, "_data_range", ("", ""))
+        self._merged_all = tuple(
+            p for p in _all_kind
+            if not (_ds and _de) or (_ds <= str(p.is_start) and str(p.oos_end) <= _de))
         self.cb_preset.blockSignals(True)
         self.cb_preset.clear()
         for p in self._presets:
             self.cb_preset.addItem(("★ " if p.default else "") + self._window_label(p), p.key)
+        if len(self._merged_all) >= 2:
+            _drop = len(_all_kind) - len(self._merged_all)
+            self.cb_preset.addItem(
+                f"【全部】合并 {len(self._merged_all)} 对窗口"
+                + (f"（本机数据范围内 {len(self._merged_all)}/{len(_all_kind)} 对，"
+                   f"另有 {_drop} 对没数据不参与）" if _drop else "")
+                + "（各自独立回测后按日期拼接）", f"ALL:{kind}")
         if (apply_default or self.cb_preset.currentIndex() < 0) and self._presets:
             # 默认窗口 = 缓存标了 default 的那条（= 最近一段"震荡→震荡"）；没标 ⇒ 取最近一条
             self.cb_preset.setCurrentIndex(
@@ -512,8 +547,38 @@ class SweepForm(QWidget):
         idx = int(idx)
         if 0 <= idx < len(self._presets):
             p = self._presets[idx]
+            self._merged = ()
             self.set_dates(p.is_start, p.is_end, p.oos_start, p.oos_end)
+            self._set_merged_locked(False)
+        elif idx == len(self._presets) and getattr(self, "_merged_all", ()):
+            ws = self._merged_all
+            self._merged = tuple((p.is_start, p.is_end, p.oos_start, p.oos_end)
+                                 for p in ws[1:])
+            self.set_dates(ws[0].is_start, ws[0].is_end, ws[0].oos_start, ws[0].oos_end)
+            self._set_merged_locked(True)
+            self.lbl_interval.setText(
+                f"★ 合并 {len(ws)} 对窗口（{ws[0].is_start} → {ws[-1].oos_end}）："
+                "逐对窗口**各自独立回测**后按日期拼接（段与段之间不持仓）；"
+                "四格显示的是**第一对**、不可编辑；年化 / Rank IC / PBO 按拼接序列算")
         self.preset_changed.emit(self.preset_key())
+
+    def set_data_range(self, start: str, end: str) -> None:
+        """★R7：本地数据范围（页面拿到标的日线后推过来）—— 合并项据此**如实筛选**。
+
+        范围一变 ⇒ 重建窗口（合并项要重算）；范围没变 ⇒ 原样返回（不做无谓重建）。
+        """
+        new = (str(start or ""), str(end or ""))
+        if new == getattr(self, "_data_range", None):
+            return
+        self._data_range = new
+        kind = str(self.cb_interval_kind.currentData() or "")
+        if kind and kind != "custom":
+            self._apply_kind(apply_default=False)
+
+    def _set_merged_locked(self, locked: bool) -> None:
+        """合并态 ⇒ 四格日期**锁住**（它们是"第一对"的显示，不是可改的输入）。"""
+        for w in (self.dt_is_start, self.dt_is_end, self.dt_oos_start, self.dt_oos_end):
+            w.setEnabled(not locked)
 
     def set_dates(self, is_start: str, is_end: str, oos_start: str, oos_end: str) -> None:
         from PyQt6.QtCore import QDate
@@ -551,7 +616,8 @@ class SweepForm(QWidget):
             self.dt_is_start.date().toString(fmt),
             self.dt_is_end.date().toString(fmt),
             self.dt_oos_start.date().toString(fmt),
-            self.dt_oos_end.date().toString(fmt))
+            self.dt_oos_end.date().toString(fmt),
+            more=tuple(getattr(self, "_merged", ()) or ()))   # ★R7 合并区间
 
     def grid_signature(self, fingerprint: str) -> str:
         """同一网格身份（红线① OOS 只跑一次的判定键）。"""

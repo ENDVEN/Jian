@@ -13,11 +13,11 @@
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **`1.66`**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / commit 首词 `1.66` ✅）。**本轮（§7-B15 参数研究重做：R0–R5 + 四视图按稿重做 + 口径改严）已提交并 **push**（用户 2026-10-01 当次同意）**：`origin/main` 由 `17f535a`（1.58）推进到本次 `1.66`，本地 `1.59`–`1.66` **八条**一并推上去。⚠ 本轮代码注释里的 ★1.66/★1.66/★1.66 与 ★R4-b~e **同属 1.66 这一个版本**（1.67/1.68 不作为独立版本号存在，已在提交前统一归并为 ★1.66）。 |
-| 文档版本 | **v6.86**（**§7-B16 H0–H7 已落地**（函数总库全套，见 `docs/JIAN_HUB_PLAN.md`）；**净值图"买入持有基准"**（现场 + 历史回放都画）；**M2/M3 视觉重塑已落地**（chip / 主次按钮 / M2 小号 KPI 卡三页同源；范围组进配置抽屉；胶囊可点开配置；M3 只重塑工具栏）；**结果图不画策略叠层**（★1.65：跨量纲会把 K 线压扁）；**§7-B15 MVP 已落地**（SW-0…SW-7 · 2026-10-01 · 待用户手验）） |
-| 最近三版 | **`1.66`** 参数研究重做（四视图/候选表/快照卡/口径改严） · **`1.65`** M2M3视觉统一 · 范围进配置 · 结果图不画策略叠层 · **`1.64`** 净值买入持有基准 · M2/M3 重塑样板 |
+| APP 版本 | **`1.67`**（三处同步 §9-A：`APP_VERSION` ✅ / `version.json` ✅ / commit 首词 `1.67` ✅）。**本轮（§7-B15 收尾：R6「ƒ 库」入口 + R7 合并区间）本次提交并 **push**（用户 2026-10-01 当次同意）**；上一版 `1.66` = 参数研究重做（R0–R5 + 四视图按稿重做 + 口径改严），已在远端。⚠ 代码注释里的 ★1.66 与 ★R4-b~e **同属 1.66 那一个版本**（1.67/1.68 不作为独立版本号存在，已统一归并为 ★1.66）。 |
+| 文档版本 | **v6.87**（**§7-B16 H0–H7 已落地**（函数总库全套，见 `docs/JIAN_HUB_PLAN.md`）；**净值图"买入持有基准"**（现场 + 历史回放都画）；**M2/M3 视觉重塑已落地**（chip / 主次按钮 / M2 小号 KPI 卡三页同源；范围组进配置抽屉；胶囊可点开配置；M3 只重塑工具栏）；**结果图不画策略叠层**（★1.65：跨量纲会把 K 线压扁）；**§7-B15 MVP 已落地**（SW-0…SW-7 · 2026-10-01 · 待用户手验）） |
+| 最近三版 | **`1.67`** 参数研究收尾（合并区间 / ƒ 库入口） · **`1.66`** 参数研究重做（四视图/候选表/快照卡/口径改严） · **`1.65`** M2M3视觉统一 · 范围进配置 · 结果图不画策略叠层 |
 | **当前主线** | **§7-B16 函数总库：H0–H6 已落地**（左轨 `ƒ 函数库` A 管理台页 + `formula_store` 升格资产库 + 启动一次性收编 + **统一浮窗两区**（`ƒ 函数` 三态 + `📚 本页方案`）+ **H4「总库有更新版」显式更新动作** + **护栏6 `hub_ui` 位置/开合记忆** + **H6 页面侧入口全收口：每页只留一个「ƒ 库」**）——**H5 收口已完成**；**H7 浮窗交互重做已落地并提交**（用户实测 5 条）；**净值图"买入持有基准"已落地**（★1.64）⇒ 接 **M2/M3 视觉重塑**（样板 `design/1.64-m2m3-restyle/` **已拍板**，实施中）⇒ 再 **§7-B15 参数稳健性研究 MVP**（方案书 `docs/JIAN_SWEEP_PLAN.md` v3.1 · **SW-0…SW-7 已全部落地（2026-10-01）**· 待用户手验后提交顺推 1.66）。 |
-| **断点** | **v6.86 / B15 MVP 施工完成（2026-10-01 · 本地未提交）**：§7-B15 参数稳健性研究 SW-0…SW-7 全部落地 —— `core/sweep_plan.py`（网格闸门：≤2维/≤15档/≤2000组，拒绝+建议）· `core/sweep_stats.py`（**统计唯一真源**：Rank IC 全网格 / 邻域 / PBO-CSCV 冠军只在 A 段选）· `core/index_regimes.py` + `scripts/analyze_index_regimes.py`（上证切块 + 缓存，真机跑通：2005→2026 共 40 段 47 对，默认=最近震荡→震荡）· `core/param_sweep.py`（编排：复用 M1 管线，**§8-17 逐位一致有断言**；stage 两段式 = 红线①的流程形态）· `ui/workers.ParamSweepWorker`（取消照样回包，与 M2 语义故意不同）· `data/sweep_archive.py`（不可变快照 + **OOS 诚实计数器** + 段矩阵/Top-N 逐日）· `ui/widgets/sweep_form.py`/`sweep_chart.py` + `ui/views/param_sweep.py`（子页签插在 M1/M2 之间；结论条同屏不可折叠印 IC/PBO/区间/试验数/fill/risk；候选表列宽固定禁 ResizeToContents；重跑样本外必过「污染」确认；折叠记 `sweep_ui.panel_collapsed`；指数门控策略诚实拒绝）。验收：`smoke_chart` **974/0** · `smoke_pages_overlay` **983/0**（chart **982/0**）（页签序护栏已按新序更新；防污染名单 +2：`index_regimes.json` / `sweep_results/`）。**已知越线**：`ui/views/param_sweep.py` **433** 行（§4 已登记拆法；第二轮第一件事拆 `sweep_results.py`）。**★v6.86 视觉返工（用户实测"完全不可用"当夜）**：左栏死胡同（折叠记忆还原后无展开钮）→ 照设计稿改 306px 定宽白卡 + 46px 竖条（展开钮常驻，§11.5-111）；分栏弃用 QSplitter；表单 694→306 收缩；图例改 QLabel 底色 chips（手绘 ■ 字形乱码）；图表空态隐藏 + 卡片化；结论条状态配色（bad/warn/ok）。离屏三态截图人眼核验 ✓；`smoke_pages_overlay` 930→**934**（死胡同回归 / 空态 / 定宽 / **右栏吃满**四断言）。**v2 返工（用户第二张截图，同日）**：右栏被裸 `addStretch` 平分成半宽 + 中间大空白 → 删裸 stretch；`cb_preset` minHint 270 溢出 → 全控件 Ignored 收缩；第二维隐藏漏"起止步"标签 → 标签进 row_widgets；卡片/表头/空态全面切到 **M1/M2/M3 同族语言**（#EDF0F5 圆角 8 + #FAFBFD 头条 + 步号徽标，样式常量收 `styles.py`）。坑补 §11.5-111 ⑤⑥⑦。**待办**：① **用户手验**（清单 → 方案书 §13 表尾「手验清单」）；② 提交 + push（**须用户当次同意**；版本三处同批顺推 **1.66**）；③ 第二轮 = 邻域稳健视图 + 成本敏感性 + 快照历史对比 + `param_sweep.py` 拆件。 |
+| **断点** | **v6.86 / B15 MVP 施工完成（2026-10-01 · 本地未提交）**：§7-B15 参数稳健性研究 SW-0…SW-7 全部落地 —— `core/sweep_plan.py`（网格闸门：≤2维/≤15档/≤2000组，拒绝+建议）· `core/sweep_stats.py`（**统计唯一真源**：Rank IC 全网格 / 邻域 / PBO-CSCV 冠军只在 A 段选）· `core/index_regimes.py` + `scripts/analyze_index_regimes.py`（上证切块 + 缓存，真机跑通：2005→2026 共 40 段 47 对，默认=最近震荡→震荡）· `core/param_sweep.py`（编排：复用 M1 管线，**§8-17 逐位一致有断言**；stage 两段式 = 红线①的流程形态）· `ui/workers.ParamSweepWorker`（取消照样回包，与 M2 语义故意不同）· `data/sweep_archive.py`（不可变快照 + **OOS 诚实计数器** + 段矩阵/Top-N 逐日）· `ui/widgets/sweep_form.py`/`sweep_chart.py` + `ui/views/param_sweep.py`（子页签插在 M1/M2 之间；结论条同屏不可折叠印 IC/PBO/区间/试验数/fill/risk；候选表列宽固定禁 ResizeToContents；重跑样本外必过「污染」确认；折叠记 `sweep_ui.panel_collapsed`；指数门控策略诚实拒绝）。验收：`smoke_chart` **974/0** · `smoke_pages_overlay` **990/0**（chart **990/0**）（页签序护栏已按新序更新；防污染名单 +2：`index_regimes.json` / `sweep_results/`）。**已知越线**：`ui/views/param_sweep.py` **446** 行（§4 已登记拆法；第二轮第一件事拆 `sweep_results.py`）。**★v6.86 视觉返工（用户实测"完全不可用"当夜）**：左栏死胡同（折叠记忆还原后无展开钮）→ 照设计稿改 306px 定宽白卡 + 46px 竖条（展开钮常驻，§11.5-111）；分栏弃用 QSplitter；表单 694→306 收缩；图例改 QLabel 底色 chips（手绘 ■ 字形乱码）；图表空态隐藏 + 卡片化；结论条状态配色（bad/warn/ok）。离屏三态截图人眼核验 ✓；`smoke_pages_overlay` 930→**934**（死胡同回归 / 空态 / 定宽 / **右栏吃满**四断言）。**v2 返工（用户第二张截图，同日）**：右栏被裸 `addStretch` 平分成半宽 + 中间大空白 → 删裸 stretch；`cb_preset` minHint 270 溢出 → 全控件 Ignored 收缩；第二维隐藏漏"起止步"标签 → 标签进 row_widgets；卡片/表头/空态全面切到 **M1/M2/M3 同族语言**（#EDF0F5 圆角 8 + #FAFBFD 头条 + 步号徽标，样式常量收 `styles.py`）。坑补 §11.5-111 ⑤⑥⑦。**待办**：① **用户手验**（清单 → 方案书 §13 表尾「手验清单」）；② 提交 + push（**须用户当次同意**；版本三处同批顺推 **1.66**）；③ 第二轮 = 邻域稳健视图 + 成本敏感性 + 快照历史对比 + `param_sweep.py` 拆件。 |
 | ⏸ 另拍 | 下载偏快档（放宽到 K>3 或降 interval）仍待实测后另拍 → 见 §7-B11 与 §11.6 顶部。 |
 
 ### 📚 文档地图（先看这里，再定点检索）
@@ -162,12 +162,12 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   ⚠ **新** `ui/widgets/scan_layout.py` **450**（★v6.79 实测**新越线**；★v6.80 H6 删方案库三颗 ⇒ 回落，
     又加摘要条「ƒ 库」⇒ 回到 411 —— **再加东西先拆**：候选 = "顶栏 / 摘要条 / 结果区"三段各自成件，
     或把两个 `EditPane` 子类挪出去）>
-  ⚠ **新** `ui/views/param_sweep.py` **433**（★v6.86 / §7-B15 越线且视觉返工后更重：薄壳+编排+统计装配同居；
+  ⚠ **新** `ui/views/param_sweep.py` **446**（★v6.86 / §7-B15 越线且视觉返工后更重：薄壳+编排+统计装配同居；
     **再动先拆** —— 候选 = "统计装配与结果渲染（_compute_and_show/_show_heatmap/_fill_table/_save_snapshot）
     → `ui/widgets/sweep_results.py`"，视图回到纯装配）
-  ⚠ `ui/widgets/sweep_form.py` **500**（★R2 已把 ⑤门槛 + ⑥运行 + 构件原语拆出去 ⇒ 从 488 回落；仍在 400 上 —— **再动先拆**：候选 = "③ 网格编辑 / ④ 口径与窗口"两段各自成件）>
-  ✅ **B15 新建且 <400**：`core/sweep_plan.py` 180 · `core/sweep_stats.py` 150 · `core/index_regimes.py` 254 ·
-    `core/param_sweep.py` 232 · `data/sweep_archive.py` 246 · `core/conditions.py` 90（★1.66 新建：**条件配置 → DSL 唯一真源**，UI / data 两侧共用）·
+  ⚠ `ui/widgets/sweep_form.py` **563**（★R2 已把 ⑤门槛 + ⑥运行 + 构件原语拆出去 ⇒ 从 488 回落；仍在 400 上 —— **再动先拆**：候选 = "③ 网格编辑 / ④ 口径与窗口"两段各自成件）>
+  ✅ **B15 新建且 <400**：`core/sweep_plan.py` **228** · `core/sweep_stats.py` 150 · `core/index_regimes.py` 254 ·
+    `core/param_sweep.py` 232 · `data/sweep_archive.py` 281 · `core/conditions.py` 90（★1.66 新建：**条件配置 → DSL 唯一真源**，UI / data 两侧共用）·
     `ui/widgets/sweep_chart.py` **976** · ★R0/R2 新建：`ui/widgets/sweep_results.py` 312（结果装配与渲染）· `ui/widgets/sweep_run_form.py` 98（⑤⑥ 运行面板）· `ui/widgets/sweep_parts.py` 93 · `ui/widgets/symbol_pick.py` 41（选标的共用件）· **★1.66 新建**：`ui/widgets/sweep_input.py` 96（输入侧：页面刷新 + 策略/标的联动）· **★R3 新建**：`ui/widgets/sweep_regimes.py` 106（切块与区间：时间轴卡 + 预设组织 + 重新切块）（表单构件原语）（非空行，2026-10-01 实测）
   ★**设置类四件**：`ui/settings_registry.py` **507**（设置项唯一真源；支持**动态只读** `value_fn`
     与**动作项** `action`）· `ui/views/settings_view.py` **219** · `ui/widgets/settings_render.py` **80**
@@ -631,12 +631,12 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 （`sweep_stats` 签名只收收益矩阵，物理上杜绝泄漏）· **策略真源 = `strategy_store`**（整体含条件/风控/成交口径，
 **不是** `formula_store`）· fill/risk 随策略保存值并印进结论条 · IS/OOS 两段独立跑 · OOS 诚实计数器 · `sweep_form.py` 预登记。
 **分期**：MVP（单标的·2 参数·散点+热力图·IC/PBO·结论条·落盘·左栏折叠·区间预设·门槛滑块）→ 池化（≤20 只）→ 全量。
-**★v6.86 施工结论（2026-10-01）**：MVP 全部落地，验收 = `smoke_chart` **974/0** · `smoke_pages_overlay` **983/0**（chart **982/0**）；真机切块已跑通（上证 2005→2026）。断点行有全景；手验清单在方案书 §13 表尾。**设计稿（唯一目录，勿再新建）**：`design/1.58-param-sweep/`（主方案 `p2-双栏可折叠.html`）。
-**★1.66 真机四修（2026-10-01 · 用户实测"完完全全都没办法运行"）**：① 读档只认 `segments` ⇒ 交 `strategy_store.segments_of()`（旧档回落 `function` 的唯一出口，M1 也改调它）；② 条件**配置 dict** 直递引擎（还先 `str()` 了一道）⇒ 下沉 `core/conditions.py`，`SweepSpec.buy_expr/sell_expr` 求值前转换；③ 预设只填下拉不落日期 + 按 key 反查（key 重复几十条）⇒ 首次装配落默认预设日期、改按索引取；④ 标的按策略保存值自动带入。验收 `smoke_chart` **974/0** · `smoke_pages_overlay` **983/0**（chart **982/0**）（新增 10 条**真实路径**断言，一律从存档 payload 出发）。教训 → PLAYBOOK §11.5-112。
+**★v6.86 施工结论（2026-10-01）**：MVP 全部落地，验收 = `smoke_chart` **974/0** · `smoke_pages_overlay` **990/0**（chart **990/0**）；真机切块已跑通（上证 2005→2026）。断点行有全景；手验清单在方案书 §13 表尾。**设计稿（唯一目录，勿再新建）**：`design/1.58-param-sweep/`（主方案 `p2-双栏可折叠.html`）。
+**★1.66 真机四修（2026-10-01 · 用户实测"完完全全都没办法运行"）**：① 读档只认 `segments` ⇒ 交 `strategy_store.segments_of()`（旧档回落 `function` 的唯一出口，M1 也改调它）；② 条件**配置 dict** 直递引擎（还先 `str()` 了一道）⇒ 下沉 `core/conditions.py`，`SweepSpec.buy_expr/sell_expr` 求值前转换；③ 预设只填下拉不落日期 + 按 key 反查（key 重复几十条）⇒ 首次装配落默认预设日期、改按索引取；④ 标的按策略保存值自动带入。验收 `smoke_chart` **974/0** · `smoke_pages_overlay` **990/0**（chart **990/0**）（新增 10 条**真实路径**断言，一律从存档 payload 出发）。教训 → PLAYBOOK §11.5-112。
 **★翻新计划书 = `docs/JIAN_SWEEP_REWORK.md`（R0–R6 · 2026-10-01 立项 · **未开工**）**：用户口径"整个 ui 都没样式那样的完成度、右栏图表列差很多东西、切块视图看不懂" ⇒ 逐件对照设计稿 `p2-双栏可折叠.html`：R0 拆件（`ui/widgets/sweep_results.py` + 运行/门槛成件，公共面不变）· R1 统一件接入（chip/KPI/卡/按钮，禁自造）· R2 左栏（引导卡 + 预设重做成"单边上涨/单边下跌/震荡/牛→熊/熊→牛/自定义" + **近 N 组** + 自动收起一次）· R3 右栏 ⓪ 区间全景重做（价格线 + 年份刻度 + 悬停 + Shift 只设 OOS + 当前配对高亮 = 解决"看不懂"）· R4 四视图补齐（缺 ③邻域稳健 ④滚动 IC 12 折）· R5 候选表补齐（✓✗ 门槛列 + 平台/尖峰判定）+ ⑨ 研究快照卡（接 archive 的 list/load/delete/pinned）· R6 左栏加「ƒ 库」入口（复用 1.63 H7 浮窗；策略真源仍是 strategy_store）。**期间不提交不 push**。
-**★R0/R2 已开工（2026-10-01）**：R0 拆件 `ui/views/param_sweep.py` **433** → 455**（结果侧搬到 `ui/widgets/sweep_results.py` 312，混入类、公共面零改动）；R2 左栏预设重做成**三级**（口径 4 项：单边上涨 / 单边下跌 / 震荡箱体 / 自定义 → 窗口（标签带四日期）→ **取近 N 组**，默认 5，用户拍板），组织口径下沉 `core/index_regimes.windows_of / preset_for_kind / kind_entries`；顺带拆出 `sweep_run_form.py`（⑤⑥）与 `sweep_parts.py`（构件原语）。**四项拍板已记进计划书 §6**（色义=全站绿涨红跌 · 四视图=单张 + 热力图/邻域并排 · 近 N 组默认 5 · 快照只读回放）。验收 `smoke_chart` **974/0** · `smoke_pages_overlay` **983/0**（chart **982/0**）。**★R1 统一件接入（同日）**：① KPI 小卡的唯一实现从 M2 结果区抽成 `ui/widgets/kpi_card.py`（M2 只留"key → 标签/颜色"语义层，观感逐值不变）⇒ 结论条上方多了一排 KPI 小卡（与 M2 同族，状态色复用 `ACCORD_STATE_COLOR`）；② 卡的构造收进 `sweep_parts.panel_card/panel_head`（页面不再自造 `_card()`、也不直接用卡 QSS）；③ 一页只留一颗蓝底实心主按钮 —— 「💾 存快照」降为 ghost 次级；④ 四视图 chip **有意留到 R4**（③④ 两张图还没做，先放 chip = 点了没反应的假控件）。`param_sweep.py` **455 → 437**。验收 `smoke_pages_overlay` **983/0**（chart **982/0**）（+4 R1 护栏 · 含离屏两态截图人眼核验）。
-**★追加需求（用户 2026-10-01 同日补充）**：左栏 ① 标的要"像 M1 一样"：手输（回车即选）+ 一颗「选择」按钮 + 选好后**M1 同款文字提示** ⇒ 抽共用件 `ui/widgets/symbol_pick.py`（搜索 `engine.search_symbol` → 校验 A 股 → 提示 `贵州茅台 (600519) · 已缓存`），**M1 的 `select_symbol` 也改调它**（提示文案与校验口径只留一份）；选完顺手写本地数据回执（'本地数据 2010-01-04 → 2026-09-29（4037 根）' / '没有 ⇒ 先去预下载'）。验收 `smoke_pages_overlay` **983/0**（chart **982/0**）（+4：口径一处 / 按钮与提示在屏 / **真点选择**回填正确 / 回执）。余 R3/R4/R5/R6。
-**★R3 区间全景重做（同日）**：时间轴从"一条彩带"改成**看得懂**的三要素 —— ① 上证**收盘线**（5279 点）② **年份刻度** + 段色带（绿涨/红跌/灰蓝震荡 = 全站口径）③ **当前选择**（样本内蓝框 / 样本外橙框 + 顶部区间条）；**Shift+点 = 只设样本外**；悬停右上角常驻读数（段型 / 起止 / 交易日数 / **段内涨跌 + 判定窗口涨跌** —— 后者回答"为什么这段标成跌"）；新增「⟳ 重新切块」（算法与离线脚本同源，缓存落点可注入 ⇒ 冒烟真点重算写临时目录）；顺带按纪律拆出 `ui/widgets/sweep_regimes.py`（页面 507 → **430**）。验收 `smoke_pages_overlay` **983/0**（chart **982/0**） · `smoke_chart` **974/0**。余 R4/R5/R6。
+**★R0/R2 已开工（2026-10-01）**：R0 拆件 `ui/views/param_sweep.py` **446** → 455**（结果侧搬到 `ui/widgets/sweep_results.py` 312，混入类、公共面零改动）；R2 左栏预设重做成**三级**（口径 4 项：单边上涨 / 单边下跌 / 震荡箱体 / 自定义 → 窗口（标签带四日期）→ **取近 N 组**，默认 5，用户拍板），组织口径下沉 `core/index_regimes.windows_of / preset_for_kind / kind_entries`；顺带拆出 `sweep_run_form.py`（⑤⑥）与 `sweep_parts.py`（构件原语）。**四项拍板已记进计划书 §6**（色义=全站绿涨红跌 · 四视图=单张 + 热力图/邻域并排 · 近 N 组默认 5 · 快照只读回放）。验收 `smoke_chart` **974/0** · `smoke_pages_overlay` **990/0**（chart **990/0**）。**★R1 统一件接入（同日）**：① KPI 小卡的唯一实现从 M2 结果区抽成 `ui/widgets/kpi_card.py`（M2 只留"key → 标签/颜色"语义层，观感逐值不变）⇒ 结论条上方多了一排 KPI 小卡（与 M2 同族，状态色复用 `ACCORD_STATE_COLOR`）；② 卡的构造收进 `sweep_parts.panel_card/panel_head`（页面不再自造 `_card()`、也不直接用卡 QSS）；③ 一页只留一颗蓝底实心主按钮 —— 「💾 存快照」降为 ghost 次级；④ 四视图 chip **有意留到 R4**（③④ 两张图还没做，先放 chip = 点了没反应的假控件）。`param_sweep.py` **455 → 437**。验收 `smoke_pages_overlay` **990/0**（chart **990/0**）（+4 R1 护栏 · 含离屏两态截图人眼核验）。
+**★追加需求（用户 2026-10-01 同日补充）**：左栏 ① 标的要"像 M1 一样"：手输（回车即选）+ 一颗「选择」按钮 + 选好后**M1 同款文字提示** ⇒ 抽共用件 `ui/widgets/symbol_pick.py`（搜索 `engine.search_symbol` → 校验 A 股 → 提示 `贵州茅台 (600519) · 已缓存`），**M1 的 `select_symbol` 也改调它**（提示文案与校验口径只留一份）；选完顺手写本地数据回执（'本地数据 2010-01-04 → 2026-09-29（4037 根）' / '没有 ⇒ 先去预下载'）。验收 `smoke_pages_overlay` **990/0**（chart **990/0**）（+4：口径一处 / 按钮与提示在屏 / **真点选择**回填正确 / 回执）。余 R3/R4/R5/R6。
+**★R3 区间全景重做（同日）**：时间轴从"一条彩带"改成**看得懂**的三要素 —— ① 上证**收盘线**（5279 点）② **年份刻度** + 段色带（绿涨/红跌/灰蓝震荡 = 全站口径）③ **当前选择**（样本内蓝框 / 样本外橙框 + 顶部区间条）；**Shift+点 = 只设样本外**；悬停右上角常驻读数（段型 / 起止 / 交易日数 / **段内涨跌 + 判定窗口涨跌** —— 后者回答"为什么这段标成跌"）；新增「⟳ 重新切块」（算法与离线脚本同源，缓存落点可注入 ⇒ 冒烟真点重算写临时目录）；顺带按纪律拆出 `ui/widgets/sweep_regimes.py`（页面 507 → **430**）。验收 `smoke_pages_overlay` **990/0**（chart **990/0**） · `smoke_chart` **974/0**。余 R4/R5/R6。
 
 ### B16 · ƒ 函数总库（**H0–H6 已落地 · 剩 H5 收口** · `2026-09-29` 用户提出 / `2026-09-30` 施工）
 
@@ -1381,16 +1381,16 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       机器护栏在 `smoke_pages_overlay` 末段（读 HEAD 的 `%s`）。
 - [ ] 同类防护（竞态守卫 / 口径 / 文案）是不是只改了一处、漏了另一处？（§11.5-11）
 - [ ] **改了公式引擎 / 图表渲染 / 图层公共件 / 控件样式（含 `SegmentedControl`）/ **工具行 chips 规则（`chip_mru`）** / 标注模型 / 配方库 / 周期重采样（含**分钟档位**）/ 自选股 / 复权口径 / 图元拖动 / 坐标轴 / 图表宿主读数条（§7-B6）/ 回测成交口径（§7-B5）/ **数据源护栏（§9-V：非正价拦下 · 兜底源单位统一）** / **K 线图元画法（§9-V-3：一字板横档）** / **画线类型规格表 / 附属图元 / 图元小件 / 绘制会话 / 画线填充配色（`chart_style.annotation_fill`）**（即 `annotation_shapes` / `annotation_decos` / `annotation_items` / `annotation_draw_session` / `chart_style` 任一文件），跑过 `py tests/smoke_chart.py` 吗？**（**964 项**，纯组件、离屏）
-- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**983 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
+- [ ] **改了行情工作台页面（`trading_desk.py`）/ `ui/widgets/desk_*.py` 任一模块 / 回测页「成交模型」行 / 标注交互层 / **画线类型目录（新增类型、`implemented` 翻牌）**？** → 跑 `py tests/smoke_pages_overlay.py`（**990 项**，含 **§7-B6 的「迁移护栏」+ 顶栏分段控件/分钟档位 + 工具行 chips + 图标轨/分页面板/折起（含**富余宽度归图表、折起后左侧只剩图标轨**两条不变量）+ 读数条 + **口径回执的"除权跳空定位 / 数据体检"**+ STEP 6 的"实现落在哪个 `desk_*.py`"**：公共面被改名、旧入口（`cb_period`/`cb_adjust`/`cmb_tool`）被复活、**把薄壳写成空函数**、**分栏比例退化**、**回执退回"不解释"**，都会立刻红）；
       并在其收尾的防污染自检名单里**加上任何新写的 `~/.jian_data/*.json`**（现在有 annotations /
       formula_library / watchlist / backtest_strategies / **preferences（1.23 起）** / **backtest_results（1.37 起）** /
       **scan_strategies（1.46 P3 起）** / **industry_map（1.46 P6 起）** 八个 / **index_regimes.json + sweep_results/_index.json（B15 起，§8-18）**）
 - [ ] **改了复盘页（`ui/views/review.py`）/ `ui/widgets/review_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**983 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
+      `py tests/smoke_pages_overlay.py`（**990 项**，含 **「复盘页迁移护栏」+ §9-U 分栏不变量**：
       公共面被改名、**把薄壳写成空函数**、宏观/微观**分栏退化成写死的 5:4 平铺**、
       分栏高度不落 `review_ui.v_sizes`，都会立刻红）
 - [ ] **改了全市场筛选页（`ui/views/scan_view.py`）/ `ui/widgets/scan_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**983 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
+      `py tests/smoke_pages_overlay.py`（**990 项**，含 **「M2 公共面护栏」+ 版式与口径不变量**）。
       ⚠ 六条最容易顺手改坏的：① **常驻行必须 ≤3**（粗筛阈值收在抽屉里，别往结果区上方加行）；
       ② **阈值"内核 ⇄ 界面"换算只许在 `ScanFilterPane` 一处**（界面亿元/% ⇄ 内核元/小数，
       换手率/市值**关闭时必须是 None**，变成 0 = 误杀一片）；
@@ -1401,7 +1401,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ⑥ **缺数据闸门不许删**（`_confirm_scan_with_gaps`：体检有缺口/未完成 ⇒ 二次确认才能扫，
         选「否」不得启动任何线程；本地齐了不打扰）
 - [ ] **改了广度统计页（`ui/views/breadth_view.py`）/ `ui/widgets/breadth_*.py` 任一模块？** → 跑
-      `py tests/smoke_pages_overlay.py`（**983 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
+      `py tests/smoke_pages_overlay.py`（**990 项**，含 **「M3 公共面护栏」+ 双窗格/区间/增量不变量**）。
       ⚠ 七条最容易顺手改坏的：① **常驻行必须 ≤3**（⚡/⟳ 收在摘要条，别往结果区上方加行）；
       ② **双窗格必须 x 联动**（`ChartHost` 编排，禁止页面自己 `addPlot` 拼副图，§10-12）；
       ③ **广度占比的分母 = 有效样本**（命中+未命中）—— 换成"全市场只数" = 系统性压低且看不出来；
@@ -1449,7 +1449,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 - [ ] **改了 `QComboBox` / `QDateEdit` / `QDateTimeEdit` 的样式吗？**
       → 只能用 `custom_widgets` 的常量（`::drop-down` 与 `::down-arrow` 必须成对，否则箭头消失）；
       改完跑 `py tests/smoke_chart.py` 看**箭头像素断言**（§11.5-17）
-- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**983 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；四条离屏打桩见 §11.5-20 与 §11.5-79（★第④条 v1.42 补：**异步回测与后台下载也不许写真目录** —— 看到"只有几条真实数据类断言红"先问“有没有东西正在写”），**别删**）
+- [ ] **改了回测页/工作台/复盘页的叠层、检测、图层开关、公式对话框、窗格编排、用户标注、配方库/互送、自选股/周期/复权、成交模型行，跑过 `py tests/smoke_pages_overlay.py` 吗？**（**990 项**，页面级；标注与配方一律用**临时库**，脚本末尾还有"用户真实库未被写"的**防污染自检**（现含 `backtest_strategies.json`）；四条离屏打桩见 §11.5-20 与 §11.5-79（★第④条 v1.42 补：**异步回测与后台下载也不许写真目录** —— 看到"只有几条真实数据类断言红"先问“有没有东西正在写”），**别删**）
 - [ ] **新加了"往用户数据目录写文件"的功能吗？** → ① 用 `tmp + os.replace` 原子写；② 给 `tests/smoke_pages_overlay.py` 的收尾自检加一行文件名（§11.7 上一条）；③ 单条坏数据必须**跳过自己**而不是拖垮整库；
       ④ ⚠ 若它会**自动落盘**（"记住上次"类偏好，如 `backtest_ui` / `desk_ui`）→ **必须在冒烟脚本里
       把偏好单例的 `path` 重定向到临时目录**（只给 `Preferences.save` 打桩**实测不够**，仍被写脏过一次），
@@ -1460,7 +1460,7 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
       ③ 关键概念有没有**示例弹窗**？④ 术语有没有换成**用户量纲**（"1 跳"→"0.01 元"、
       "当根"→"当天"）？参数是否只在**有意义的档位**才出现？
       （§10-10 追加条款 / §11.5-22；参考 `fill_mode_oneliner` + `ui/dialogs/fill_model_help.py`）
-- [ ] **改了后台下载（`ui/download_hub.py` / `ui/widgets/download_bar.py` / `download_queue_panel.py`）或四个下载入口（`bulk_download` / `data_manager` / `readiness_flow` / `main_window.downloads`）吗？** → 跑 `py tests/smoke_pages_overlay.py`（**983 项**，含「§7-B11 后台下载」段）。⚠ 四条红线：
+- [ ] **改了后台下载（`ui/download_hub.py` / `ui/widgets/download_bar.py` / `download_queue_panel.py`）或四个下载入口（`bulk_download` / `data_manager` / `readiness_flow` / `main_window.downloads`）吗？** → 跑 `py tests/smoke_pages_overlay.py`（**990 项**，含「§7-B11 后台下载」段）。⚠ 四条红线：
   ① **测前必须把 `download_hub.SyncWorker` 打桩为不 `start()`**（否则跑测试 = 真下载，写脏数据湖并撞 §11.5-79）；
   ② **进度真源只能在 hub**，页面/弹窗/下载条都是投影（只认自己那个 `job_id`）；
   ③ **弹窗与页面不得自己持有 `SyncWorker`**（旧版 `_try_stop_worker` 已退役，有源码级断言盯着）；
@@ -1620,3 +1620,15 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
   ③ **判定列与图共用同一函数**：候选表的"平/尖"与热力图的绿框/橙圈都调
   `core.sweep_stats.platform_spike_flags`（用户拍板把平台从"≥ 中位数"改严到"**前 25%**"后，
   两处一起变、不会各说各话）。
+
+- **11.5-123** 【★R7 · §7-B15】**"合并"= 逐段独立回测后拼接，不是拉包络；选项要按本机数据如实筛**：
+  用户要的"把所有压力测试/反转区间合并成一个总子项"落地时的四条：
+  ① **合并 ≠ 把首尾拉成包络**（那会把中间的震荡/下跌段也算进"压力测试" = **造数据**）；
+  正确做法 = 逐对窗口**各自从空仓开始独立回测**，再把逐日收益**按日期拼接** ⇒ 段与段之间
+  **没有跨窗口持仓**（可验证：合并后的交易数 = 各窗口之和；实测逐日收益逐字节等于各段串联）。
+  ② **合并项的筛选要如实**：同一口径的窗口可能落在**本机没有数据**的年份（实测 26 对里有 2 对）
+  ⇒ 只收数据范围内的，且把"本机数据范围内 N/M 对，另有 D 对没数据不参与"**写进标签**；
+  否则一跑整轮全失败（用户会当成"坏了"）。
+  ③ **新增一个下拉项 ⇒ 既有"数项数"的断言要跟着改**（实测：R2 那几条 `count() <= 5` 被
+  新增的合并项带红）——改判据时**只数单段窗口项**，别把新功能算进老口径。
+  ④ **测试段改过的状态要还原**（把假预设塞进表单后不还回去，会污染后面依赖真缓存的断言）。

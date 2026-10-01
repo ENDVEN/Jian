@@ -149,7 +149,9 @@ def build_snapshot(*, spec: SweepSpec, strategy_name: str, asset_id: str,
                  "n_combos": int(grid.n_combos)},
         "interval": {"preset_key": str(preset_key or "custom"),
                      "is_start": interval.is_start, "is_end": interval.is_end,
-                     "oos_start": interval.oos_start, "oos_end": interval.oos_end},
+                     "oos_start": interval.oos_start, "oos_end": interval.oos_end,
+                     # ★R7：合并区间的其余窗口（不存 ⇒ 快照复现不出合并研究，那是造假）
+                     "more": [list(w) for w in (getattr(interval, "more", ()) or ())]},
         "gate": {"min_trades": int(min_trades)},
         "stats": {
             "rank_ic": stats.get("rank_ic"),
@@ -284,6 +286,7 @@ class SweepArchive:
             # ★R5b：快照卡要这两项 —— 门槛（列表行要显示）与版本（判"旧版本存档"标签）。
             #   索引里**不存**它们的话，卡片只能显示 None / 永远不出标签（实测踩过）。
             "min_trades": (snapshot.get("gate") or {}).get("min_trades"),
+            "n_windows": 1 + len(interval.get("more") or []),      # ★R7：1 = 常规单窗口
             "app_version": snapshot.get("app_version"),
             "rank_ic": (snapshot.get("stats") or {}).get("rank_ic"),
             "pbo": (snapshot.get("stats") or {}).get("pbo"),

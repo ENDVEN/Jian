@@ -161,6 +161,10 @@ def run_sweep(df, spec: SweepSpec, grid: GridPlan, interval: StudyInterval, *,
         raise ValueError(f"网格未通过闸门：{grid.rejection}")
 
     out = SweepOutcome()
+    if interval.merge_count > 1:
+        out.notes.append(
+            f"合并区间：{interval.merge_count} 对窗口**各自独立回测**后按日期拼接"
+            "（段与段之间不持仓）；年化 / Rank IC / PBO 都按这条拼接序列算")
     try:
         programs = [parse_program(t) for t in spec.segments if str(t or "").strip()]
     except FormulaProgramError as e:
@@ -194,21 +198,63 @@ def run_sweep(df, spec: SweepSpec, grid: GridPlan, interval: StudyInterval, *,
             run_is = stage in ("is", "both")
             run_oos = stage in ("oos", "both")
             merged = _merged_frame(df, programs, params)
-            res_is = engine.run(merged, buy_expr, sell_expr,
-                                symbol=spec.symbol, start_date=interval.is_start,
-                                end_date=interval.is_end, risk=spec.risk,
-                                fill_mode=spec.fill_mode, trigger_tick=spec.trigger_tick,
-                                commission_rate=commission_rate) if run_is else None
-            res_oos = engine.run(merged, buy_expr, sell_expr,
-                                 symbol=spec.symbol, start_date=interval.oos_start,
-                                 end_date=interval.oos_end, risk=spec.risk,
-                                 fill_mode=spec.fill_mode, trigger_tick=spec.trigger_tick,
-                                 commission_rate=commission_rate) if run_oos else None
-            if (run_is and res_is.equity.empty) or (run_oos and res_oos.equity.empty):
-                out.failed[key] = "样本内或样本外区间没有行情数据（数据不足，不是缺陷）"
-                continue
-            is_dates = _dates_of(res_is.equity) if run_is else None
-            oos_dates = _dates_of(res_oos.equity) if run_oos else None
+
+            def _run(a: str, b: str):
+                return engine.run(merged, buy_expr, sell_expr, symbol=spec.symbol,
+                                  start_date=a, end_date=b, risk=spec.risk,
+                                  fill_mode=spec.fill_mode,
+                                  trigger_tick=spec.trigger_tick,
+                                  commission_rate=commission_rate)
+
+            pairs = interval.pairs()
+            if len(pairs) == 1:                      # 常规单窗口（与改动前逐字节等价）
+                res_is = _run(interval.is_start, interval.is_end) if run_is else None
+                res_oos = _run(interval.oos_start, interval.oos_end) if run_oos else None
+                if (run_is and res_is.equity.empty) or (run_oos and res_oos.equity.empty):
+                    out.failed[key] = "样本内或样本外区间没有行情数据（数据不足，不是缺陷）"
+                    continue
+                is_ret = _daily_returns(res_is.equity) if run_is else None
+                oos_ret = _daily_returns(res_oos.equity) if run_oos else None
+                is_dates = _dates_of(res_is.equity) if run_is else None
+                oos_dates = _dates_of(res_oos.equity) if run_oos else None
+                n_is = len(res_is.trades) if run_is else 0
+                n_oos = len(res_oos.trades) if run_oos else 0
+            else:
+                # ★R7 合并区间：**逐对窗口各自独立回测**（每段从空仓开始）⇒ 按日期拼接。
+                #   段与段之间**不持仓**：拼接的是"逐日收益序列"，不是一把连续持仓。
+                parts_is, parts_oos = [], []
+                ds_is: list[str] = []
+                ds_oos: list[str] = []
+                n_is = n_oos = 0
+                bad = ""
+                for wi, (a, b, c, d) in enumerate(pairs, 1):
+                    if run_is:
+                        r = _run(a, b)
+                        if r.equity.empty:
+                            bad = f"第 {wi} 对窗口的样本内（{a}~{b}）没有行情数据"
+                            break
+                        parts_is.append(_daily_returns(r.equity))
+                        ds_is += list(_dates_of(r.equity))
+                        n_is += len(r.trades)
+                    if run_oos:
+                        r = _run(c, d)
+                        if r.equity.empty:
+                            bad = f"第 {wi} 对窗口的样本外（{c}~{d}）没有行情数据"
+                            break
+                        parts_oos.append(_daily_returns(r.equity))
+                        ds_oos += list(_dates_of(r.equity))
+                        n_oos += len(r.trades)
+                if bad:
+                    out.failed[key] = f"合并区间里有窗口没数据：{bad}（数据不足，不是缺陷）"
+                    continue
+                if ds_is != sorted(ds_is) or ds_oos != sorted(ds_oos):
+                    out.failed[key] = ("合并区间的窗口不是时间升序（拼出来的序列会错位）"
+                                       "——诚实记失败，不拼错位矩阵")
+                    continue
+                is_ret = np.concatenate(parts_is) if run_is else None
+                oos_ret = np.concatenate(parts_oos) if run_oos else None
+                is_dates = tuple(ds_is) if run_is else None
+                oos_dates = tuple(ds_oos) if run_oos else None
             # 交易日轴对齐守卫：首组记轴，后续组必须逐日一致
             if run_is:
                 if ref_is is None:
@@ -225,16 +271,12 @@ def run_sweep(df, spec: SweepSpec, grid: GridPlan, interval: StudyInterval, *,
             prev = out.completed.get(key)
             out.completed[key] = ComboOutcome(
                 key=key, combo=dict(combo),
-                is_returns=_daily_returns(res_is.equity) if run_is else (
-                    prev.is_returns if prev else None),
-                oos_returns=_daily_returns(res_oos.equity) if run_oos else (
-                    prev.oos_returns if prev else None),
+                is_returns=is_ret if run_is else (prev.is_returns if prev else None),
+                oos_returns=oos_ret if run_oos else (prev.oos_returns if prev else None),
                 is_dates=is_dates or (prev.is_dates if prev else None),
                 oos_dates=oos_dates or (prev.oos_dates if prev else None),
-                is_trades=len(res_is.trades) if run_is else (
-                    prev.is_trades if prev else 0),
-                oos_trades=len(res_oos.trades) if run_oos else (
-                    prev.oos_trades if prev else 0))
+                is_trades=n_is if run_is else (prev.is_trades if prev else 0),
+                oos_trades=n_oos if run_oos else (prev.oos_trades if prev else 0))
         except (FormulaProgramError, FormulaEvalError) as e:
             out.failed[key] = f"条件求值失败：{e}"
         except Exception as e:  # noqa: BLE001 —— 单组失败不拖垮整轮（诚实记账）

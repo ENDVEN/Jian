@@ -108,3 +108,5 @@ class SweepInputMixin:
         self.form.set_data_receipt(
             f"{symbol} 本地数据 {d.min().date()} → {d.max().date()}（{len(df)} 根日线）"
             " —— 样本内/样本外都要落在这段里")
+        # ★R7：把范围推给表单 ⇒「合并全部」只收**本机有数据**的窗口（并如实标注筛掉了多少对）
+        self.form.set_data_range(str(d.min().date()), str(d.max().date()))

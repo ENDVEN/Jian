@@ -75,8 +75,10 @@ class SweepSnapshotsMixin:
         ic = e.get("rank_ic")
         pbo = e.get("pbo")
         gate = e.get("min_trades")          # 老索引没有这一项 ⇒ 如实显示 "—"（不写 None）
+        n_win = int(e.get("n_windows") or 1)
         txt = (f"{str(e.get('created_at') or '')[:16].replace('T', ' ')} · {iv} · "
-               f"门槛 {'—' if gate is None else gate} · 试验 {e.get('n_combos')} · "
+               + (f"合并 {n_win} 段 · " if n_win > 1 else "")
+               + f"门槛 {'—' if gate is None else gate} · 试验 {e.get('n_combos')} · "
                f"IC {'—' if ic is None else f'{float(ic):.2f}'} · "
                f"PBO {'—' if pbo is None else f'{float(pbo):.0%}'}")
         lab = QLabel(txt)
@@ -125,7 +127,9 @@ class SweepSnapshotsMixin:
             f"Rank IC <b>{'—' if ic is None else f'{float(ic):.2f}'}</b> · PBO "
             f"<b>{'—' if pbo is None else f'{float(pbo):.0%}'}</b><br>"
             f"区间 <b>{iv.get('is_start', '')} ~ {iv.get('is_end', '')}</b>（样本内）→ "
-            f"<b>{iv.get('oos_start', '')} ~ {iv.get('oos_end', '')}</b>（样本外）· "
+            f"<b>{iv.get('oos_start', '')} ~ {iv.get('oos_end', '')}</b>（样本外）"
+            + (f"· **合并 {1 + len(iv.get('more') or [])} 对窗口**（按日期拼接）"
+               if (iv.get("more") or []) else "") + " · "
             f"门槛 <b>{gate}</b> 笔 · 标的 <b>{snap.get('symbol')}</b> · "
             f"策略 <b>{(snap.get('strategy') or {}).get('name')}</b><br>"
             "⚠ 这是**历史快照的只读回放**：图区不重绘、也不参与任何挑参数（红线①）。"
