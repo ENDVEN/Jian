@@ -23,7 +23,9 @@ class FuturesImportDialog(QDialog):
         self.main_win = parent
         self.setWindowTitle("📥 导入期货交割单 (CFMMC)")
         self.resize(540, 470)
-        self.setStyleSheet("QDialog { background-color: white; font-family: -apple-system, sans-serif; }")
+        # ★1.69 / §10-15：删掉 `font-family: -apple-system…`（macOS 专有名 ⇒ Windows 静默
+        #   回落雅黑，且把本弹窗整棵树钉死，开源字体栈永不生效）—— 字体由应用层默认字体统一给。
+        self.setStyleSheet("QDialog { background-color: white; }")
 
         self.parsed_result = None
 

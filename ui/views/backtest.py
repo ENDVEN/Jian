@@ -43,7 +43,8 @@ from core.formula.program import (parse_program, execute_programs_with_draws,
                                   probe_missing_parameters, FormulaProgramError)
 # v5.15：离场原因标签/配色/风控文案从 core.backtest 统一导入（CSV 表头 / 明细着色 / PNG 报告同源）
 # v6.17：成交时点模型的三档常量/文案/归一化与 T+1 说明同样只有一份来源（§7-B5）
-from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS,
+from core.backtest import (DEFAULT_START_DATE,
+                           EXIT_REASON_COLORS, EXIT_REASON_LABELS,
                            FILL_CLOSE, FILL_MODE_LABELS, FILL_NEXT_OPEN, FILL_TRIGGER,
                            T1_SUMMARY, fill_mode_oneliner, fill_summary, normalize_fill,
                            risk_summary, tick_to_yuan, yuan_to_tick)
@@ -82,8 +83,12 @@ from ui.dialogs.fill_model_help import FillModelHelpDialog
 # 本页与 PNG 报告图共用同一来源，禁止在此再定义副本。
 
 # 快捷区间（数组顺序 = 下拉展示顺序，单一事实来源，不再另设无人使用的映射表）
-# 下沿 2016 与 core/backtest.DEFAULT_START_DATE 保持一致（回测意义窗）
-_PRESET_ORDER = ["近3个月", "近6个月", "近1年", "近3年", "近5年", "全部(2016起)"]
+# ★1.69：末档「全部(…起)」的**下限与标签**都从 `core/backtest.DEFAULT_START_DATE` 派生
+#   （= 2010-04-16，中国股指期货上市首日）—— 日期字面量只允许存在 core 侧一处；
+#   设置页那个「默认回测区间」选项清单也引用同一常量派生（冒烟断言两处清单**逐项相等**）。
+_PRESET_FLOOR = QDate.fromString(DEFAULT_START_DATE, "yyyy-MM-dd")
+_PRESET_LABEL_ALL = f"全部({DEFAULT_START_DATE[:7]}起)"          # 形如「全部(2010-04起)」
+_PRESET_ORDER = ["近3个月", "近6个月", "近1年", "近3年", "近5年", _PRESET_LABEL_ALL]
 
 # 卡片外观唯一来源 = ui/widgets/backtest_panes.CARD_QSS（1.22 起本页不再自带副本）
 _CARD_QSS = CARD_QSS
@@ -263,11 +268,11 @@ class SingleStockBacktestView(QWidget):
         self.cmb_range_preset.addItems(_PRESET_ORDER)
         self.cmb_range_preset.currentTextChanged.connect(self._on_range_preset)
         run_lay.addWidget(self.cmb_range_preset)
-        self.date_start = NoWheelDateEdit(QDate(2016, 1, 1))
+        self.date_start = NoWheelDateEdit(_PRESET_FLOOR)
         self.date_start.setCalendarPopup(True)
         self.date_start.setDisplayFormat("yyyy-MM-dd")
-        # 最早可回溯到 2016-01-01：与 core/backtest.DEFAULT_START_DATE 同源，避免两处漂移
-        self.date_start.setMinimumDate(QDate(2016, 1, 1))
+        # 下限 = `core/backtest.DEFAULT_START_DATE`（★1.69 = 2010-04-16，评估窗下沿）
+        self.date_start.setMinimumDate(_PRESET_FLOOR)
         run_lay.addWidget(self.date_start)
         run_lay.addWidget(QLabel("至"))
         self.date_end = NoWheelDateEdit(QDate.currentDate())
@@ -286,7 +291,8 @@ class SingleStockBacktestView(QWidget):
         run_lay.addWidget(self.lbl_range_note)
         run_lay.addStretch()
         run_lay.addWidget(self._hint_icon(
-            "回测数据最早可回溯到 2016-01-01（与引擎 DEFAULT_START_DATE 同源）。"
+            f"回测数据最早可回溯到 {DEFAULT_START_DATE}"
+            "（= 中国股指期货上市首日 · 与引擎 DEFAULT_START_DATE 同源）。"
             "改完区间直接点摘要条右侧「▶ 开始回测」。"))
         # ★v6.74 S2-4：**默认区间来自设置页**（「回测与扫描默认」组）—— 页内改只影响本次任务。
         #   ⚠ 必须放在**起止日期控件建好之后**（处理函数会写 `date_start/date_end`，早调会 AttributeError）

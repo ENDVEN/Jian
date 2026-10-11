@@ -3600,10 +3600,18 @@ try:
 
     # ---- ⑤ bulk_download「全市场扫描就绪」预设（D6-2）----
     _dlg9 = _BDD6(win)
+    from config import settings as _S9b  # noqa: E402
+    _exp9b = _QDate6.fromString(_S9b.DOWNLOAD_DEFAULT_START, "yyyy-MM-dd")
+    # ★1.69：起点默认值 = `settings.DOWNLOAD_DEFAULT_START`（中国股指期货上市首日 2010-04-16）。
+    #   ⚠ 断言只钉"**弹窗初值/预设值 == 唯一真源**，且不早于数据窗下沿" —— 不把具体日期写死：
+    #     哪天用户又调整产品口径（改常量一处即可），这里不该跟着红（§9-M3 三权分立）。
+    check("★ 批量预下载：弹窗**初值** = 下载默认起点（唯一真源，非硬编码）",
+          _exp9b.isValid() and _dlg9.date_start.date() == _exp9b)
     _dlg9._apply_scan_ready_preset()
-    check("★「全市场扫描就绪」一键预设：来源=全A · 起点 2016-01-01 · 不全量重下",
+    check("★「全市场扫描就绪」一键预设：来源=全A · 起点 = 下载默认起点 · 不早于数据窗下沿 · 不全量重下",
           _dlg9._radios['all'].isChecked()
-          and _dlg9.date_start.date() == _QDate6(2016, 1, 1)
+          and _dlg9.date_start.date() == _exp9b
+          and _exp9b >= _QDate6(2010, 1, 1)
           and not _dlg9.chk_force.isChecked())
     _dlg9.deleteLater()
 except Exception as _e:  # noqa: BLE001
@@ -5735,8 +5743,70 @@ try:
           'def ui_font(' not in _pl15.Path("ui/widgets/custom_widgets.py").read_text(encoding="utf-8")
           and _cwmod15.UI_FONT_STACK is _st15.UI_FONT_STACK
           and _cwmod15.apply_ui_font is _st15.apply_ui_font)
+    # ★1.69 / §10-15 追补：**macOS 专有名**也不许进 `ui/` 的 QSS/QFont ——
+    #   它们不在上面那份专有名单里（名单只盯雅黑/宋体/Consolas 这类**Windows 专有**名），
+    #   但能静默回落到"通用无衬线"，把整棵子树钉死（实测漏网点 = 主窗口 QSS 的
+    #   `font-family: -apple-system, sans-serif;` ⇒ 开源字体栈永不生效、界面实际跑在雅黑上）。
+    #   ⚠ 只扫 `ui/`：`design/*.html` 是**网页样板**，`-apple-system` 在 CSS 里是正当写法。
+    _mac15 = _re15.compile(r"(-apple-system|BlinkMacSystemFont)", _re15.I)
+    # 先剥掉**文档字符串**再逐行扫：注释/文档里"点名说这件事"是正当的（本仓注释大量引用被禁字面量），
+    # 只盯**代码里真写出来的** QSS / QFont 字面量（`setStyleSheet("…-apple-system…")` 这种必须被抓）。
+    _q315, _q315b = '"' * 3, "'" * 3
+    _doc15 = _re15.compile(_q315 + r"[\s\S]*?" + _q315 + "|" + _q315b + r"[\s\S]*?" + _q315b)
+    _mac_hits15 = []
+    for _p15b in sorted(_pl15.Path("ui").rglob("*.py")):
+        _src15 = _doc15.sub("", _p15b.read_text(encoding="utf-8", errors="ignore"))
+        for _ln15b in _src15.splitlines():
+            if _mac15.search(_ln15b.split("#", 1)[0]):
+                _mac_hits15.append(f"{_p15b.name}: {_ln15b.strip()[:50]}")
+                break
+    check(f"★ §10-15：ui/ 无 macOS 专有字体名（-apple-system / BlinkMacSystemFont）"
+          f"（越界 {len(_mac_hits15)} 处：{_mac_hits15[:3]}）", not _mac_hits15)
 except Exception as _e15:  # noqa: BLE001
     check(f"§10-15 字体断言整段抛异常: {type(_e15).__name__}: {_e15}", False)
+
+# ==========================================
+# §10-17 · 外观确定性（调色板必须钉浅色 —— 2026-10-11 用户实测"黑块 + 白底白字"的根因）
+#   背景：本项目**没有主题系统**（各页背景色靠内联 QSS 各自声明）⇒ "没写背景/没写文字色"的
+#   控件全吃系统调色板。用户本机 `AppsUseLightTheme=0`（Windows 深色）下实测：
+#     ① 交易流水表 `Text=#ffffff / Base=#ffffff` ⇒ 对比度 **1.00**（整列不可读，逐列墨迹像素 0）；
+#     ② 设置页 / 函数总库等未设背景处透出 `#1e1e1e` ⇒ 暗像素占比 **32% / 49.6%**。
+#   修法 = `styles.apply_app_palette(app)`（唯一出口）+ `main.py` 建窗前调用。
+# ==========================================
+print("\n== §10-17 · 外观确定性：应用调色板钉浅色 ==")
+try:
+    import pathlib as _pl17  # noqa: E402
+    from PyQt6.QtGui import QPalette as _QP17  # noqa: E402
+    from PyQt6.QtWidgets import QApplication as _QA17  # noqa: E402
+
+    _st17 = _pl17.Path("ui/widgets/styles.py").read_text(encoding="utf-8")
+    _mn17 = _pl17.Path("main.py").read_text(encoding="utf-8")
+    check("★ §10-17：调色板唯一出口 = `styles.apply_app_palette`（定义存在）",
+          "def apply_app_palette(" in _st17)
+    _call17 = _mn17.find("apply_app_palette(app)")
+    check("★ §10-17：`main.py` 在**建窗之前**调用 `apply_app_palette(app)`（顺序断言）",
+          _call17 != -1 and _call17 < _mn17.find("JianMainWindow()"))
+    _app17 = _QA17.instance()
+    if _app17 is None:
+        check("★ §10-17：调色板实测（无 QApplication 实例 ⇒ 只验源码，跳过功能断言）", True)
+    else:
+        from ui.widgets.styles import apply_app_palette as _ap17  # noqa: E402
+
+        _ap17(_app17)
+        _pal17 = _app17.palette()
+        _tx17 = _pal17.color(_QP17.ColorRole.Text)
+        _bs17 = _pal17.color(_QP17.ColorRole.Base)
+
+        def _lum17(c):
+            return 0.2126 * c.redF() + 0.7152 * c.greenF() + 0.0722 * c.blueF()
+
+        _hi17, _lo17 = max(_lum17(_tx17), _lum17(_bs17)), min(_lum17(_tx17), _lum17(_bs17))
+        _ratio17 = (_hi17 + 0.05) / (_lo17 + 0.05)
+        check(f"★ §10-17：调色板实测**浅色且可读**（Text={_tx17.name()} / Base={_bs17.name()}"
+              f" · 对比度={_ratio17:.2f} ≥ 4.5 · Base 亮度={_bs17.lightness()})",
+              _ratio17 >= 4.5 and _bs17.lightness() > 200)
+except Exception as _e17:  # noqa: BLE001
+    check(f"§10-17 外观断言整段抛异常: {type(_e17).__name__}: {_e17}", False)
 
 # ==========================================
 # §9-F③ · 按钮样式唯一出口（v6.70）：**同一类按钮只允许有一份定义**
@@ -6705,8 +6775,13 @@ try:
               ('defaults.range_preset', 'archive.auto', 'defaults.first_scan_hint')))
     _bt81 = _pl81.Path('ui/views/backtest.py').read_text(encoding='utf-8')
     _rp81 = _sr81.find('defaults.range_preset')
-    check("★ S2-4：默认区间选项与 M1 快捷区间**同一份清单**（防两处漂移）",
-          all(str(v) in _bt81 for v, _lbl in _rp81.choices))
+    # ★1.69：判据从"源码里出现该字符串"升级为**逐项相等**——两处清单现在都由
+    #   `core.backtest.DEFAULT_START_DATE` 派生（末档标签不再各写一份字面量），
+    #   所以直接比对列表比扫源码更强、也不怕派生写法。
+    import ui.views.backtest as _btmod81  # noqa: E402
+
+    check("★ S2-4：默认区间选项与 M1 快捷区间**同一份清单**（逐项相等，防两处漂移）",
+          [v for v, _lbl in _rp81.choices] == list(_btmod81._PRESET_ORDER))
     check("★ S2-4：M1 页**真读它**（`_apply_default_range` ⇒ 文本与日期一起落地，页面不矛盾）",
           '_apply_default_range()' in _bt81 and 'get_setting(' in _bt81
           and 'self._on_range_preset(self.cmb_range_preset.currentText())' in _bt81)

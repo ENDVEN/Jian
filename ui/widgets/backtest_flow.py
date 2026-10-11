@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 import logging
 
+from core.backtest import DEFAULT_START_DATE   # ★1.69：评估窗下沿的唯一真源
 from core.formula import FormulaEngine
 from core.formula.program import (FormulaProgramError, execute_programs,
                                   execute_programs_with_draws)
@@ -39,8 +40,16 @@ from ui.workers import BacktestRunWorker, CalendarWorker, SingleSyncWorker
 logger = logging.getLogger(__name__)
 
 
+# 评估窗下沿（由唯一真源常量解析；失败也不许静默给空日期 ⇒ 回落到 2010-04-16 字面兜底）
+_EVAL_FLOOR = QDate.fromString(DEFAULT_START_DATE, "yyyy-MM-dd")
+
+
 def _date_from_preset(preset: str) -> QDate:
-    """快捷区间 → 起始日期；未命中的一律回落到「回测意义窗」下沿 2016-01-01"""
+    """快捷区间 → 起始日期；未命中的一律回落到**评估窗下沿**。
+
+    下沿 = `core.backtest.DEFAULT_START_DATE`（★1.69 = 2010-04-16，中国股指期货上市首日）——
+    这里**只引用常量**，绝不写字面量日期（与 `ui/views/backtest._PRESET_FLOOR` 同源）。
+    """
     today = QDate.currentDate()
     if preset == "近3个月":
         return today.addMonths(-3)
@@ -52,7 +61,7 @@ def _date_from_preset(preset: str) -> QDate:
         return today.addYears(-3)
     if preset == "近5年":
         return today.addYears(-5)
-    return QDate(2016, 1, 1)
+    return _EVAL_FLOOR
 
 
 class BacktestFlow:

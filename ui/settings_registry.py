@@ -22,9 +22,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from core.backtest import DEFAULT_START_DATE   # ★1.69：末档「全部(…起)」与评估窗下沿同源
 from core.preferences import preferences
 
 logger = logging.getLogger(__name__)
+
+# 回测区间末档的**显示名**（由唯一真源派生，形如「全部(2010-04起)」）——
+# ⚠ 与 `ui/views/backtest._PRESET_LABEL_ALL` 必须逐字符相同：冒烟断言两处清单**逐项相等**
+#   （旧写法在两边各写一份 `全部(2016起)` 字面量，靠源码扫描兜底；★1.69 改成同源派生）。
+_ALL_PRESET = f"全部({DEFAULT_START_DATE[:7]}起)"
 
 # 控件类型（渲染层一一对应一个工厂，见 `ui/widgets/settings_render.py`）
 KIND_TOGGLE = 'toggle'        # 开关
@@ -415,10 +421,13 @@ _ITEMS_V1 = (
     Item('defaults.range_preset', 'defaults', '默认回测区间', KIND_ENUM, default='近3个月',
          where='defaults.range_preset',
          choices=(('近3个月', '近3个月'), ('近6个月', '近6个月'), ('近1年', '近1年'),
-                  ('近3年', '近3年'), ('近5年', '近5年'), ('全部(2016起)', '全部（2016 起）')),
+                  ('近3年', '近3年'), ('近5年', '近5年'),
+                  (_ALL_PRESET, f'全部（{DEFAULT_START_DATE[:7]} 起）')),
          tip='新打开「回测」页时的默认区间；页内随时可改（只影响那一次）。',
-         help='选项与 `ui/views/backtest.py` 的快捷区间**同一份清单**（改这里不影响引擎口径）。\n'
-              '数据最早只到 2016-01-01（`core/backtest.DEFAULT_START_DATE`），所以没有更早的档。'),
+         help='选项与 `ui/views/backtest.py` 的快捷区间**同一份清单**'
+              '（两处都由 `core/backtest.DEFAULT_START_DATE` 派生，冒烟断言逐项相等）。\n'
+              f'评估窗最早到 {DEFAULT_START_DATE}（= 中国股指期货上市首日），所以没有更早的档；'
+              '想更早的历史请去「数据管理 → 批量预下载」调早起点。'),
     Item('archive.auto', 'defaults', '自动存档回测/扫描结果', KIND_TOGGLE, default=True,
          where='backtest_archive.auto',
          tip='每次回测/扫描成功后自动落一份不可变快照（可在「运行历史」里查看/复用/删除）。',

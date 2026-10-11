@@ -49,10 +49,16 @@ import pandas as pd
 
 from core.formula import FormulaEngine
 
-# 默认回测数据起点：更早行情对量化回测参考意义有限 (产品决策)
+# 默认回测**评估窗**起点（口径 = "从哪天开始算收益"，与"下载了多少历史"无关 ——
+# 三权分立即见 `config/settings.DOWNLOAD_DEFAULT_START` 上方注释；§9-M3 血泪：两者混过
+# ⇒ 数据窗被当成评估窗，用户曾经能看到的 2010~2016 K 线凭空消失）。
 # v5.6：下沿由 2018 放宽到 2016（用户要求更长样本窗）；
-#       必须与 ui/views/backtest.py 的「全部(2016起)」预设 + 起始日期 minimumDate 保持一致。
-DEFAULT_START_DATE = "2016-01-01"
+# ★1.69（用户 2026-10-11 拍板）：再下移到 **2010-04-16 = 中国股指期货上市首日**
+#   （中金所 CFFEX 沪深300股指期货 IF；⚠ 不在上期所）⇒ 与批量下载默认起点取同一个日子，
+#   做到"下多少历史就能回测多远"，不再出现"下了却测不了"。
+# ⚠ 本常量是**唯一真源**：UI 侧（起始控件 / 下限 / 「全部(…起)」档位 / 设置页选项清单）
+#   一律引用它派生，**不许再各写一份日期字面量**（防两处漂移，§9-M3 同源纪律）。
+DEFAULT_START_DATE = "2010-04-16"
 
 # 默认双边佣金率 (万3)
 DEFAULT_COMMISSION_RATE = 0.0003
@@ -316,7 +322,8 @@ class BacktestEngine:
                 data[col] = pd.to_numeric(data[col], errors='coerce')
         data = data.dropna(subset=['close', 'open'])
 
-        # 默认数据窗: 2016-01-01 起 (回测意义窗)，终点不设上限
+        # 默认评估窗: DEFAULT_START_DATE（★1.69 = 2010-04-16）起，终点不设上限
+        #   ⚠ 口径是"评估起点"，不是"数据可得起点"（数据窗下沿 = sync_service.DEFAULT_MIN_DATE）
         start_ts = pd.Timestamp(start_date or DEFAULT_START_DATE)
         data = data[data['date'] >= start_ts]
         if end_date:

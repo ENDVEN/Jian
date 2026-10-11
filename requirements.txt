@@ -1,8 +1,29 @@
-# Jian - 专业量化交易复盘系统 依赖清单
-PyQt6>=6.5.0
-pyqtgraph>=0.13.3
-pandas>=2.0.0
-numpy>=1.24.0
-pyarrow>=12.0.0
-akshare>=1.12.0
-openpyxl>=3.1.0
+# Jian - Professional Trading Review System
+#
+# Dependency policy: this is an APPLICATION (not a library), so every entry has
+# both a lower and an UPPER bound. The upper bound buys reproducibility: pip
+# installs the newest matching version, so without it users get a different
+# major version depending on the day they install.
+#
+# Upper bounds are not frozen forever: tests/smoke_chart.py (990 assertions) and
+# tests/smoke_pages_overlay.py are the gate for every upgrade window - bump, run
+# the smoke, raise the bound only if all green.
+#
+# BLOCKED: pandas 3.x. Measured 2026-10-04 on pandas 3.0.6 -> smoke_chart
+# 980 passed / 1 failed, smoke_pages_overlay 918 passed (62 assertions never
+# ran); the data-lake scan path silently returns an empty result. Cause is
+# major-version semantics: Copy-on-Write on by default, dedicated str dtype,
+# datetime unit inference (ns -> us). Crossing needs its own migration round.
+#
+# For exact reproduction use requirements.lock.txt.
+# Rationale (in Chinese) and upgrade log: docs/JIAN_SETUP.md
+#
+# NOTE: pip on Windows decodes this file as cp936 (GBK) before falling back to
+# UTF-8, so non-ASCII comments can break the install. Keep this file ASCII-only.
+PyQt6>=6.5,<7
+pyqtgraph>=0.13.3,<0.15
+pandas>=2.2,<3
+numpy>=1.26,<3
+pyarrow>=12,<26
+akshare>=1.12,<2
+openpyxl>=3.1,<4

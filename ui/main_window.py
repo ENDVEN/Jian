@@ -4,7 +4,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
                              QVBoxLayout, QPushButton, QFrame, QStackedWidget,
                              QDialog, QMessageBox, QFileDialog, QLabel,
-                             QApplication)
+                             QApplication, QLayout)
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtCore import QEventLoop, Qt, QThread, QUrl
 
@@ -39,6 +39,7 @@ from ui.dialogs.list_manager import ListManagerDialog
 from ui.dialogs.manual_entry import ManualEntryDialog
 from ui.dialogs.import_futures import FuturesImportDialog
 from ui.views.settings_view import SettingsView      # ★v6.73 / §7-B13 S2-0：设置页（S2 双栏）
+from ui.widgets.styles import apply_ui_font           # ★1.69 / §10-15：界面字体唯一出口
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,13 @@ class JianMainWindow(QMainWindow):
         self.setWindowTitle(settings.APP_NAME)
         self.resize(settings.MAIN_WINDOW_WIDTH, settings.MAIN_WINDOW_HEIGHT) 
         
+        # ★1.69 / §10-15：这里**删掉**了 `font-family: -apple-system, sans-serif` ——
+        #   `-apple-system` 是 **macOS 专有名**，Windows 上不存在 ⇒ Qt 静默回落"通用无衬线"
+        #   （实测 = 微软雅黑 UI），且 QSS 把**整棵子树**钉死在那一层 ⇒ `styles.UI_FONT_STACK`
+        #   根本没机会生效（而启动日志当时还报"命中开源字体"，见 `ui_font_status` 旧版缺陷）。
+        #   字体改由 `apply_ui_font(self)` 在构造末尾**钉一次**（唯一出口），QSS 只管颜色。
         self.setStyleSheet("""
-            QMainWindow { background-color: #FAFAFA; font-family: -apple-system, sans-serif; }
+            QMainWindow { background-color: #FAFAFA; }
             QFrame#Sidebar { background-color: #FFFFFF; border-right: 1px solid #E0E0E0; }
             QPushButton.NavBtn { background-color: transparent; color: #424242; text-align: left; padding: 15px 20px; border-radius: 8px; font-size: 15px; font-weight: bold; border: none; margin: 2px 10px;}
             QPushButton.NavBtn:hover { background-color: #F5F5F5; }
@@ -192,6 +198,44 @@ class JianMainWindow(QMainWindow):
         # ★1.61 / §7-B16 护栏6：按偏好还原总库浮窗（偏移 / 上次选中 / 是否开着）。
         #   ⚠ 放在**最后**：它只碰浮窗自己，不该插进页面构造与数据渲染之间。
         self._load_hub_ui_state()
+
+        # ★1.69 / §10-15：界面字体**只在这一处钉一次**（唯一出口）——
+        #   它 `setFont` 到整棵子树（Qt 字体向下继承），页面里只写 `font-size` 的 QSS
+        #   会自动跟着换成开源栈；放在**所有页面构造之后**最稳（后建的控件才继承得到）。
+        apply_ui_font(self)
+        # ★1.69 / §10-16：把窗口尺寸夹进屏幕可用区域（否则 125% 缩放屏上窗口比屏幕还宽）
+        self._clamp_to_screen()
+
+    # ==========================================
+    # 窗口尺寸策略（v1.69 · §10-16）
+    # ==========================================
+    # 【为什么必须由窗口兜底】本项目是"一窗装 8 页"的形态，而 `QStackedWidget` 的最小宽度
+    #   在 Qt 语义里 = **所有页里最宽的那页**（与当前显示哪页无关）⇒ 单页版式会把**整窗**顶宽。
+    #   实测（2026-10-11，屏 2048x1280 + 125% 缩放）：市场回测页摘要条最小 1391 DIP
+    #   ⇒ 内容区 1447 + 左栏 200 ⇒ 整窗最小 **1653 DIP**；而该屏可用宽只有 **1638 DIP**
+    #   ⇒ 窗口比屏幕还宽：右侧内容被挤出屏外，Qt 再强制压缩布局（弹窗文字被压成一列、
+    #   分组框边框错位）。根因、证据与判据见 §10-16。
+    # 【做法】① 解开"布局最小宽 ⇒ 窗口最小宽"的传递（`SetNoConstraint`）；
+    #   ② 最小尺寸改用"人肉可缩下限"并夹到屏幕内；③ 初始尺寸 = 设计尺寸 ∩ 可用区域。
+    # ⚠ 不去强行缩窄某页版式 —— 回测页摘要条是设计锁定的**单行常驻**（§10-14），
+    #    "窄屏下摘要条怎么收缩"是另一轮决策，不在本条范围。
+    _MIN_WINDOW_W = 1180      # 人肉可缩下限（再窄就没法读了）
+    _MIN_WINDOW_H = 700
+
+    def _clamp_to_screen(self) -> None:
+        """把窗口夹进屏幕：初始尺寸 = 设计尺寸 ∩ 可用区域，且最小尺寸不超屏幕。"""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        lay = self.layout()
+        if lay is not None:
+            # 关键一步：不解除这一条，Qt 会把"内容区最小宽"写成窗口最小宽 ⇒ 窄屏必然越界
+            lay.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self.setMinimumSize(min(self._MIN_WINDOW_W, avail.width()),
+                            min(self._MIN_WINDOW_H, avail.height()))
+        self.resize(min(settings.MAIN_WINDOW_WIDTH, avail.width()),
+                    min(settings.MAIN_WINDOW_HEIGHT, avail.height()))
 
     # ==========================================
     # 页面切换 + 函数配方互送（P7 · §7-B3 P7）

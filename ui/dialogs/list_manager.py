@@ -6,7 +6,9 @@ class ListManagerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(350, 450)
-        self.setStyleSheet("QDialog { background-color: #FAFAFA; font-family: -apple-system, sans-serif; } QListWidget { background: white; border: 1px solid #E0E0E0; border-radius: 8px; outline: none; } QListWidget::item { border-bottom: 1px solid #F5F5F5; }")
+        # ★1.69 / §10-15：删掉 `font-family: -apple-system…`（macOS 专有名 ⇒ 静默回落雅黑）
+        #   —— 字体由应用层默认字体统一给，弹窗不再各自钉字体族。
+        self.setStyleSheet("QDialog { background-color: #FAFAFA; } QListWidget { background: white; border: 1px solid #E0E0E0; border-radius: 8px; outline: none; } QListWidget::item { border-bottom: 1px solid #F5F5F5; }")
         self.delete_callback = delete_callback
         
         layout = QVBoxLayout(self)

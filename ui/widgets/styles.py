@@ -12,7 +12,10 @@
 【纪律不变】§10-9（完整 QSS、禁半截子控件、箭头成对）· §10-15（专有字体名禁入 QSS/QFont，
 唯一出口 = 本文件的字体栈）——冒烟的源码级断言已改指本文件。
 """
-from PyQt6.QtGui import QFont, QFontInfo
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QFont, QFontInfo, QPalette
+
+from config import settings
 
 
 # ==========================================
@@ -93,17 +96,75 @@ def apply_ui_font(widget, size_px: int = UI_FONT_SIZE_PX) -> None:
     widget.setFont(font)
 
 
-def ui_font_status() -> str:
+def ui_font_status(widget=None) -> str:
     """**实测**当前真正用上的字体族 —— 诚实报告"命中了开源栈 / 回落了系统默认"。
+
+    ⚠ **必须传一个界面里真实存在的 widget**（口径 = `QFontInfo(widget.font())`）。
+    【为什么旧版是错的】旧版对**新造的 `QFont`** 取 `QFontInfo` ⇒ 测的是"这个字体栈**会**
+      解析成谁"，**不是**"界面**实际**用了谁"。用户实测（2026-10-11）抓到反例：日志报
+      「Noto Sans SC（开源字体）」，而界面实际渲染在**微软雅黑 UI** 上（主窗口 QSS 当时写了
+      `font-family: -apple-system, sans-serif` ⇒ 把整棵子树钉死在这一层）——
+      **日志在说谎**，排障时把人和 AI 一起带偏。传 widget 后报的就是眼睛看到的那一款。
 
     给启动日志用：用户反馈"字体不对"时，第一眼就能确认本机到底装没装开源中文字体。
     """
-    fam = str(QFontInfo(ui_font()).family() or "")
+    if widget is None:
+        # 兜底（不传控件时**不许**假装实测）：只报"栈能解析到谁"，并说清这不是界面现状。
+        fam = str(QFontInfo(ui_font()).family() or "")
+        return (f"字体栈可解析目标：{fam}"
+                f"（未传控件 ⇒ 不代表界面实际用上；正式口径请在窗口构造后传 widget）")
+    fam = str(QFontInfo(widget.font()).family() or "")
     low = fam.lower()
     if any(name.lower() in low or low in name.lower() for name in UI_FONT_STACK):
         return f"界面字体：{fam}（开源字体 · 与设计样板一致）"
     return (f"界面字体：{fam}（本机未装开源中文字体 ⇒ 回落系统默认；"
             "装「思源黑体 / Noto Sans CJK SC」（免费可商用）即可还原设计观感）")
+
+# ==========================================
+# 应用调色板：**钉死浅色**（v1.69 · §10-17）
+# ==========================================
+# 【为什么必须有这一条】本项目**没有主题系统**（全站背景色由各页内联 QSS 各自声明），
+#   于是"没写背景色 / 没写文字色"的控件**全部吃系统调色板**。用户实测（2026-10-11，
+#   本机 `AppsUseLightTheme=0` = Windows 深色模式）撞出两类硬伤：
+#     ① **白底白字 ⇒ 整列不可读**：交易流水表内联 QSS 只写了 `background: white`，
+#        文字色没写 ⇒ 吃 `Palette.Text`（深色下 = `#ffffff`）⇒ 实测 Text/Base 对比度 **1.00**；
+#     ② **黑块**：未设背景的容器与分栏间隙透出 `Palette.Window`（`#1e1e1e`）/
+#        `Base`（`#2d2d2d`）⇒ 设置页下半、函数总库面板、复盘分栏间隙、预下载弹窗整片发黑。
+#   ⇒ **设计稿与全部 QSS 都是浅色**，本应用就必须**显式钉浅色**、不得随系统漂移。
+#   深色主题是 §7-B13 S2-3 的正式课题（那要"分批令牌化"，不是让每个控件去猜系统色）。
+#
+# ⚠ 只在**应用层**调用一次（`main.py` 建 `QApplication` 之后、建窗之前）；控件级禁改调色板
+#   （唯一例外 = `backtest_history_ui` 的 delegate：它按单元格语义改前景色，不碰全局）。
+def apply_app_palette(app) -> None:
+    """把应用调色板钉成浅色（唯一出口）。传 `QApplication` 实例。"""
+    if app is None:
+        return
+    if hasattr(app, "styleHints"):                 # Qt 6.8+：连标题栏一起回到浅色
+        try:
+            app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+        except Exception:                          # noqa: BLE001 —— 老 Qt 无此 API，不影响
+            pass
+    pal = QPalette()
+    txt = QColor(settings.COLOR_TEXT_PRIMARY)
+    base = QColor(settings.COLOR_BACKGROUND)
+    pal.setColor(QPalette.ColorRole.Window, QColor("#FAFAFA"))
+    pal.setColor(QPalette.ColorRole.WindowText, txt)
+    pal.setColor(QPalette.ColorRole.Base, base)
+    pal.setColor(QPalette.ColorRole.AlternateBase, QColor("#F5F7FA"))
+    pal.setColor(QPalette.ColorRole.Text, txt)
+    pal.setColor(QPalette.ColorRole.Button, QColor("#F5F5F5"))
+    pal.setColor(QPalette.ColorRole.ButtonText, txt)
+    pal.setColor(QPalette.ColorRole.ToolTipBase, base)
+    pal.setColor(QPalette.ColorRole.ToolTipText, txt)
+    pal.setColor(QPalette.ColorRole.PlaceholderText, QColor("#9E9E9E"))
+    pal.setColor(QPalette.ColorRole.Highlight, QColor("#1976D2"))
+    pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#FFFFFF"))
+    pal.setColor(QPalette.ColorRole.Link, QColor("#1976D2"))
+    for _role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text,
+                  QPalette.ColorRole.ButtonText, QPalette.ColorRole.PlaceholderText):
+        pal.setColor(QPalette.ColorGroup.Disabled, _role, QColor("#9E9E9E"))
+    app.setPalette(pal)
+
 
 # ==========================================
 # 数值控件统一视觉契约 (v5.6 · 详见 JIAN_RULES.md §10-9)
@@ -205,7 +266,9 @@ LINE_COMBO_QSS = (                                                # 工具栏：
 DATEEDIT_QSS_WARN = date_edit_qss(border="#FFCC80", radius=4, padding="3px",
                                   arrow="#E65100")                # 复盘页孤儿补录日期
 DIALOG_INPUT_QSS = (                                              # 手工录入等表单弹窗
-    "QDialog { background-color: #FAFAFA; font-family: -apple-system, sans-serif; }"
+    # ★1.69 / §10-15：此处原写 `font-family: -apple-system, sans-serif`（macOS 专有名）
+    #   ⇒ Windows 上静默回落雅黑、把弹窗整棵树钉死。已删：字体统一由应用层默认字体给。
+    "QDialog { background-color: #FAFAFA; }"
     "QLabel { font-weight: bold; color: #424242; }"
     "QLineEdit, QComboBox, QDateTimeEdit { border: 1px solid #E0E0E0; border-radius: 6px;"
     " padding: 6px; background: white; font-size: 14px; }"

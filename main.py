@@ -3,11 +3,13 @@ import sys
 import logging
 import os
 import pyqtgraph as pg  
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 
 from config import settings
 from ui.main_window import JianMainWindow
-from ui.widgets.custom_widgets import ui_font_status
+from ui.widgets.styles import apply_app_palette, ui_font, ui_font_status
 
 def _attach_log_file() -> None:
     """★v6.74：日志**落文件（轮转）** —— 唯一出处。
@@ -66,7 +68,38 @@ def setup_env():
 
 def main():
     setup_env()
+
+    # ★1.69 / §10-16：高 DPI **分数缩放归整** —— 必须在 `QApplication` 构造**之前**设，晚一行无效。
+    #
+    # 【为什么必须做】用户实测（2026-10-11，2048x1280 屏 + Windows 125% 缩放）暴露两个后果：
+    #   ① **窗口放不下**：dpr=1.25 ⇒ 可用区只剩 1638x986 DIP，而主窗口最小宽 1647 DIP
+    #      （左侧栏 200 固定 + 内容区被"市场回测页"的摘要条撑到 1447）⇒ 窗口比屏幕还宽，
+    #      右侧内容被挤出屏外，且 Qt 强制压缩布局 ⇒ 弹窗文字被压成一列、分组框边框错位；
+    #   ② **1px 边框错位**：1.25 是分数倍率，1px 边框落在分数设备像素上 ⇒ 圆角/分隔线出现
+    #      双线、错位（实测截图证据见 §10-16）。
+    #   归整到整数倍率后：125% → 100%（可用宽度 1638 → 2048 DIP，窗口装得下），
+    #   且所有 1px 线条落在整数设备像素上，观感与本项目设计样板一致。
+    #
+    # ⚠ 为什么取 RoundPreferFloor 而不是 RoundNearest：150% 缩放下 RoundNearest 会**向上**取到
+    #   2.0（界面被放大一倍、可用 DIP 反而腰斩）；PreferFloor 取 1.0，方向始终对用户友好。
+    #   代价是界面按 100% 渲染（比 125% 视觉略小）——这是"能完整显示"与"看起来大一点"之间的
+    #   取舍，用户 2026-10-11 拍板取前者。
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.RoundPreferFloor)
     app = QApplication(sys.argv)
+
+    # ★1.69 / §10-15：全站字体**在应用层钉一次**（唯一出口）—— 必须在建窗 / 建页**之前**。
+    # 【为什么不能只"在窗口根 setFont"】页内大量 QSS 只写 `font-size`，字体族靠**继承**，
+    #   而继承发生在控件**创建时**；离屏实测：构造完再对窗口根 `apply_ui_font` ⇒ 窗口字体已是
+    #   Noto Sans SC，`content_area` 仍是 **Microsoft YaHei UI**（子件早已各自定型，改不动）。
+    #   应用层设默认字体后，之后建的每一棵树都以开源栈为基准 ⇒ 与设计样板一致。
+    app.setFont(ui_font())
+
+    # ★1.69 / §10-17：把应用调色板**钉死浅色** —— 系统深色模式下这是"黑块 + 白底白字"的唯一解。
+    #   实测（2026-10-11，本机 `AppsUseLightTheme=0`）：交易流水表 `Text=#ffffff / Base=#ffffff`
+    #   ⇒ 对比度 **1.00**（整列不可读）；未设背景的容器透出 `#1e1e1e` ⇒ 用户看到的"黑块"。
+    #   ⚠ 必须在建窗 / 建页**之前**（调色板按继承生效，晚一步子件已经定型）。
+    apply_app_palette(app)
 
     # ★1.61 / §7-B16：函数总库**一次性资产收编**（幂等）—— 把 M1 策略 / M2·M3 方案里的
     #   公式导进资产库并写回 asset_id。必须在**各页面构造之前**做：页面随后 load 才能带上引用。
@@ -79,11 +112,12 @@ def main():
     except Exception as _e:                            # noqa: BLE001 —— 迁移失败不拦启动（总库打开时兜底重试）
         logging.warning(f"函数总库迁移失败（总库打开时会重试）: {type(_e).__name__}: {_e}")
 
-    # 诚实报告本机**实际用上**的界面字体：开源栈命中 / 回落系统默认（§10-9 字体只此一处）。
-    # 用户反馈"字体不对"时，看这一行即可判断要不要装「思源黑体 / Noto Sans CJK SC」。
-    logging.info(ui_font_status())
     logging.info(f"正在启动 {settings.APP_NAME} v{settings.APP_VERSION}...")
     window = JianMainWindow()
+    # ★1.69 / §10-15：字体自检**挪到窗口构造之后**，并把窗口传进去 ——
+    #   传 widget 才报得准"界面**实际**用上哪一款"；旧版对新造的 QFont 取 QFontInfo，
+    #   报的是"字体栈**会**解析成谁"，于是出现过"日志说开源字体、界面其实跑在雅黑上"。
+    logging.info(ui_font_status(window))
     window.show()
     
     sys.exit(app.exec())

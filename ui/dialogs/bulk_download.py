@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QCheckBox, QProgressBar, QListWidget,
                              QPushButton, QMessageBox, QApplication, QFrame)
 
+from config import settings
 from data.akshare_feed import INDEX_PRESETS
 from data.sync_service import (ZONE_KLINE, ZONE_KLINE_RAW, ZONE_INDEX,
                                abort_reason_text, estimate_seconds,
@@ -36,6 +37,17 @@ from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
                                        mono_font_css)   # ★v1.46 §10-15 开源等宽栈
 # 【架构纪律 v5.12 · §9-O2】线程一律用 ui/workers.py 的，弹窗不自造 QThread
 from ui.workers import ConstituentsWorker, JobGuard
+
+
+def _default_start_date() -> QDate:
+    """下载弹窗的**默认起点** —— 唯一真源 = `config.settings.DOWNLOAD_DEFAULT_START`
+    （中国股指期货上市首日 2010-04-16）。
+
+    ⚠ 解析失败一律回落到 2010-04-16：绝不把"无效 QDate"递给控件 —— 那会让起点显示成空、
+      进而把空日期传进下载链路（本仓最恨静默降级）。
+    """
+    d = QDate.fromString(settings.DOWNLOAD_DEFAULT_START, "yyyy-MM-dd")
+    return d if d.isValid() else QDate(2010, 4, 16)
 
 # 成分股可选指数（代码 -> 展示名）
 CONSTITUENT_INDEXES = {
@@ -110,12 +122,13 @@ class BulkDownloadDialog(QDialog):
         # ---------- ⚡ 预设（§7-B1/B2 D6-2）：一键填好"全市场扫描就绪"底座 ----------
         preset_row = QHBoxLayout()
         preset_row.setSpacing(8)
-        self.btn_preset_scan = QPushButton("⚡ 预设：全市场扫描就绪（全A · 2016起）")
+        self.btn_preset_scan = QPushButton("⚡ 预设：全市场扫描就绪（全A · 2010-04起）")
         self.btn_preset_scan.setStyleSheet(_FLAT_BTN)
         self.btn_preset_scan.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_preset_scan.setToolTip(
             "为「🌐 全市场筛选 / 📊 广度统计」一次备齐全 A 日线底座：\n"
-            "来源 = 全市场 A 股 · 起点 2016-01-01 · 勾「跳过已最新」（断点续传）。\n"
+            f"来源 = 全市场 A 股 · 起点 {settings.DOWNLOAD_DEFAULT_START}"
+            "（= 中国股指期货上市首日）· 勾「跳过已最新」（断点续传）。\n"
             "已下载过的会自动跳过，可分多次补齐。")
         self.btn_preset_scan.clicked.connect(self._apply_scan_ready_preset)
         preset_row.addWidget(self.btn_preset_scan)
@@ -212,15 +225,18 @@ class BulkDownloadDialog(QDialog):
         params = QHBoxLayout()
         params.setSpacing(14)
         params.addWidget(self._minor("起点"))
-        self.date_start = NoWheelDateEdit(QDate(2016, 1, 1))
+        # ★1.69 / 用户 2026-10-11 拍板：默认起点 = 中国股指期货上市首日（`DOWNLOAD_DEFAULT_START`）。
+        #   下沿仍放宽到 2010-01-01（个股全历史）—— 下沿只许放宽、默认值可随产品口径变，两者别混。
+        self.date_start = NoWheelDateEdit(_default_start_date())
         self.date_start.setCalendarPopup(True)
         self.date_start.setDisplayFormat("yyyy-MM-dd")
-        # 起点下沿放宽到 2010（个股全历史），默认仍给 2016 平衡下载量，用户可自行调早
         self.date_start.setMinimumDate(QDate(2010, 1, 1))
         self.date_start.setFixedHeight(28)
-        self.date_start.setToolTip("首次拉取的起点；默认 2016（够回测评估窗）。"
-                                   "如需更早历史（个股可到 2010）可手动调早；"
-                                   "已存在的数据按增量更新，不受此值影响")
+        self.date_start.setToolTip(
+            f"首次拉取的起点；默认 {settings.DOWNLOAD_DEFAULT_START}"
+            "（= 中国股指期货上市首日 · 中金所沪深300 IF）。"
+            "如需更早（个股可到 2010-01-01）可手动调早；"
+            "已存在的数据按增量更新，不受此值影响")
         params.addWidget(self.date_start)
         params.addStretch()
         root.addLayout(params)
@@ -345,7 +361,7 @@ class BulkDownloadDialog(QDialog):
     def _apply_scan_ready_preset(self):
         """「全市场扫描就绪」预设（D6-2）：只**填控件**，不替用户点开始 —— 下载永远手动发起。"""
         self._radios["all"].setChecked(True)
-        self.date_start.setDate(QDate(2016, 1, 1))
+        self.date_start.setDate(_default_start_date())
         self.chk_force.setChecked(False)
         self.lbl_status.setText("已按「全市场扫描就绪」填好参数 —— 确认后点「▶ 开始下载」")
         self._refresh_estimate()
