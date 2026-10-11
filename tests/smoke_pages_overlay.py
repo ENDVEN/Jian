@@ -5679,6 +5679,63 @@ for _name in ("annotations.json", "formula_library.json", "watchlist.json",
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)
 
 # ==========================================
+# §11.5-125 · 新用户引导（花名册为空 + 代码直通）—— ★1.70
+#   背景：用户在新机器上输 600519 / 输"茅台"都得到"未找到，请确认花名册已更新" ——
+#   **没有任何可执行的出路**（花名册天然为空，而他不知道要跑哪个脚本）。属严重体验问题。
+#   修法：① 纯函数 `symbol_pick.decide_keyword` 四态分流（本段可断言）；
+#         ② 合法 6 位代码**直通**（花名册只该用于"按名字找代码"，不该当门票）；
+#         ③ 花名册为空 ⇒ "两条路 + 一键同步"（`data/roster_sync.sync_roster` 与运维脚本同门面）。
+# ==========================================
+print("\n== §11.5-125 · 新用户引导：花名册为空也有出路 ==")
+try:
+    import pathlib as _pl125  # noqa: E402
+
+    import pandas as _pd125  # noqa: E402
+
+    from ui.widgets import symbol_pick as _sp125  # noqa: E402
+
+    check("★ 1.70：`normalize_stock_code` 认 6 位纯码与带前缀写法（直通判据）",
+          _sp125.normalize_stock_code("600519") == "600519"
+          and _sp125.normalize_stock_code("sh600519") == "600519"
+          and _sp125.normalize_stock_code("SZ000001") == "000001"
+          and _sp125.normalize_stock_code("bj920000") == "920000")
+    check("★ 1.70：`normalize_stock_code` **不认**中文名 / 期货码 / 位数不对（防误直通）",
+          all(_sp125.normalize_stock_code(k) is None
+              for k in ("茅台", "RB", "IF", "60051", "6005199", "", "  ")))
+    _hit125 = _pd125.DataFrame([{"symbol": "600519", "name": "贵州茅台"}])
+    _none125 = _pd125.DataFrame()
+    check("★ 1.70：决策①命中 ⇒ hit（名称来自花名册）",
+          _sp125.decide_keyword("600519", _hit125, roster_empty=False)
+          == ("hit", "600519", "贵州茅台"))
+    check("★ 1.70：决策②没命中但输入是合法代码 ⇒ **direct（代码直通）**",
+          _sp125.decide_keyword("600519", _none125, roster_empty=False)
+          == ("direct", "600519", ""))
+    check("★ 1.70：决策③花名册为空且不是代码 ⇒ **need_roster**（必须给引导，不许死路）",
+          _sp125.decide_keyword("茅台", _none125, roster_empty=True)
+          == ("need_roster", "", ""))
+    check("★ 1.70：决策④花名册非空但确实没有 ⇒ not_found（照旧，但文案补出路）",
+          _sp125.decide_keyword("茅台", _none125, roster_empty=False)
+          == ("not_found", "", ""))
+    check("★ 1.70：空名册时**代码依然直通**（直通优先于引导 —— 用户不该被门槛拦住）",
+          _sp125.decide_keyword("sh600519", _none125, roster_empty=True)[:2]
+          == ("direct", "600519"))
+    check("★ 1.70：引导文案含**两条可执行出路**（输代码 / 一键同步），不是空安慰",
+          "6 位代码" in _sp125.ROSTER_EMPTY_GUIDE
+          and "立即同步花名册" in _sp125.ROSTER_EMPTY_GUIDE)
+    _rs125 = _pl125.Path("data/roster_sync.py").read_text(encoding="utf-8")
+    _sc125 = _pl125.Path("scripts/sync_roster.py").read_text(encoding="utf-8")
+    _dd125 = _pl125.Path("ui/widgets/desk_data.py").read_text(encoding="utf-8")
+    check("★ 1.70：同步逻辑**只有一份门面**（`data/roster_sync` 定义 + 脚本薄壳 + 数量闸在场）",
+          "def sync_roster(" in _rs125 and "MIN_A_SHARE_ROWS" in _rs125
+          and "from data.roster_sync import sync_roster" in _sc125
+          and "fetch_a_share_roster" not in _sc125)
+    check("★ 1.70：行情工作台不再丢「未找到」死路（旧文案已清除，改走共用决策）",
+          "未找到该标的，请确认花名册已更新" not in _dd125
+          and "symbol_pick.decide_keyword" in _dd125)
+except Exception as _e125:  # noqa: BLE001
+    check(f"§11.5-125 引导断言整段抛异常: {type(_e125).__name__}: {_e125}", False)
+
+# ==========================================
 # §9-A 末条 · 提交备注规范（v6.68 · 用户 2026-09-26 拍板：**照 1.12–1.33 的短写法**）
 #   【为什么要机器钉】备注长度靠"自觉"必然反弹 —— 我上一轮就写成 200–900 字，用户在 GitHub 里看着头晕。
 #   判据（只查 **HEAD**，也就是"即将被 push 的那一条"）：

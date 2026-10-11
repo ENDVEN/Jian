@@ -251,9 +251,44 @@ class AkShareFeed:
 
     @staticmethod
     def fetch_a_share_roster() -> pd.DataFrame:
-        """拉取 A 股全市场代码与名称对照表"""
-        logging.info("开始从云端拉取 A股全市场名册...")
+        """拉取 A 股全市场代码与名称对照表。
+
+        ★1.70 / §11.5-124（同族②）：**改走交易所官方名单**（沪 / 深 / 北各 1 个请求），
+          不再用东财 `stock_zh_a_spot_em()` —— 后者内部是 `pz=100` **逐页翻的 ~56 页突发**，
+          实测会把东财**匿名额度**自己打光（§11.5-100）。用户 2026-10-11 实测：连跑两次都
+          `RemoteDisconnected('Remote end closed connection without response')` ⇒ **花名册长期为空**
+          ⇒ 行情工作台"查谁都查不到"（还以为是 app 坏了）。
+          官方源不吃东财额度、本身也是权威名单（沪 1702 + 深 2904 + 北 349 ≈ 4955 只）。
+        ⚠ 三个源**逐个容错**（任一失败只少一家市场，不整体失败），但**数量不够就转兜底**——
+          绝不用"只剩半份名单"去覆盖数据库（与 `scripts/sync_roster.py` 的安全闸同一条纪律，§9-G）。
+        """
+        logging.info("开始拉取 A股全市场名册（交易所官方源优先）...")
+        frames = []
+        for tag, fn_name, code_col, name_col in (
+                ("上交所", "stock_info_sh_name_code", "证券代码", "证券简称"),
+                ("深交所", "stock_info_sz_name_code", "A股代码", "A股简称"),
+                ("北交所", "stock_info_bj_name_code", "证券代码", "证券简称")):
+            try:
+                df = getattr(ak, fn_name)()
+                if df is None or df.empty:
+                    logging.warning(f"{tag}官方名单为空（跳过该市场）")
+                    continue
+                d = df[[code_col, name_col]].copy()
+                d.columns = ['symbol', 'name']
+                d['symbol'] = d['symbol'].astype(str).str.strip().str.zfill(6)
+                d = d[d['symbol'].str.match(r'^\d{6}$')]
+                logging.info(f"{tag}官方名单: {len(d)} 只")
+                frames.append(d)
+            except Exception as e:                          # noqa: BLE001
+                logging.warning(f"{tag}官方名单拉取失败（跳过该市场）: {e}")
+        if frames:
+            out = pd.concat(frames, ignore_index=True).drop_duplicates('symbol')
+            if len(out) >= 3000:
+                return out
+            logging.warning(f"官方名单只凑到 {len(out)} 只（阈值 3000）⇒ 转兜底源")
+        # 兜底：东财全市场快照（历史源；额度被拒时同样会失败 ⇒ 返回空表，安全闸会拦住覆写）
         try:
+            logging.info("官方名单不足 ⇒ 兜底走东财全市场快照...")
             df = ak.stock_zh_a_spot_em()
             if df.empty: return pd.DataFrame()
             df = df.rename(columns={'代码': 'symbol', '名称': 'name'})[['symbol', 'name']]
@@ -492,6 +527,10 @@ class AkShareFeed:
         logging.info(f"开始拉取 A股 {symbol} 日线数据 (adjust={adjust or 'none'})...")
 
         # 1) 主源：新浪 (需带市场前缀)
+        #   ⚠ ★1.70 / §11.5-124：**别在这里补 `timeout=`** —— `ak.stock_zh_a_daily` 的签名里没有
+        #     这个参数（内部 6 处 `requests.get` 全裸奔），传了只会被 TypeError 吃掉、看着像修了。
+        #     本路径的超时由**进程级 socket 默认超时**兜住：`data/net_env.apply()`（默认 20s）。
+        #     实证：2026-10-11 用户实测就是卡在这一行的 TLS 握手，永久阻塞 ⇒ 点中断无效。
         sina_symbol = AkShareFeed._to_sina_stock_symbol(symbol)
         if sina_symbol:
             try:

@@ -22,7 +22,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 ├── JIAN_RULES.md        #     本文件（唯一权威记忆，**故意**留在根目录：打开仓库第一眼就要看见）
 ├── .gitignore           #     忽略 __pycache__ / screenshots / *.db / samples/* / 实例* 等隐私
 ├── scripts/             # 【运维脚本：只给人手动敲命令，**不进 app import 图**】
-│   ├── sync_roster.py   #     花名册同步(__main__)：A股+期货名册→DB market_symbols
+│   ├── sync_roster.py   #     ★1.70 花名册同步**薄壳**（逻辑在 `data/roster_sync.py`，与 app 内一键同步同一门面）
 │   └── analyze_index_regimes.py  # §7-B15 SW-2 上证切块离线脚本（只读 index_daily/sh000001，
 │                       #     切块+配对 → 打印 + 写缓存；⚠ DataLakeManager 文件名**不含 .parquet**）
 ├── tests/               # 【验收脚本：同上，独立入口】⚠ 一律用 `__file__` 反推仓库根，**禁止写死相对路径**
@@ -489,6 +489,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | 回测页「抽屉开合/记忆」 | `_open_pane(key)`（None = 关闭）+ `_layout_overlay()`（覆盖层几何，`resizeEvent` 重算）+ `preferences` 键 `backtest_ui`（`{"pane":..., "last":...}`）；`_refresh_summary()` 是"控件状态 → 胶囊文案"的唯一汇总点 |
 | 行情工作台页面 UI / 公式叠加 / 自选 / 周期 / 画线工具栏 | `ui/views/trading_desk.py`（⚠ **898 行，P8 新页；旧 `market.py` 已删除，别再"找回"它**）+ 编辑器 `ui/dialogs/formula_overlay.py` |
 | 自选股（增删/排序/名称） | `data/watchlist_store.py` —— 顺序 = 用户关注顺序；`update_name()` 在花名册刷新后同步名称（旧名不当真相）。⚠ 与"花名册 `market_symbols`（全市场）"是两回事 |
+| **花名册（全市场代码↔名称）同步** | **`data/roster_sync.sync_roster()` = 唯一门面**（交易所官方源 + **数量安全闸** `<3000` 拒绝覆写；与运维脚本同门面）；`scripts/sync_roster.py` = 薄壳；app 内一键 = `ui/workers.RosterSyncWorker` + 行情页空态引导（§11.5-125）；改标的搜索/直通口径 = `ui/widgets/symbol_pick.py`（**纯函数 `decide_keyword` 四态**，各页共用） |
 | 行情周期（日/周/月） | `core/utils.resample_ohlcv`（纯本地聚合，列名与日线一致 ⇒ 下游零改动）。**纪律：指标必须在聚合之后算**，否则"周线 MA5"会变成"日线 MA5 被抽样" |
 | 行情复权（前复权/不复权） | **`data/sync_service.zone_for_adjust(adjust)`** → 分区（`kline_daily` / `kline_daily_raw`）+ `ADJUST_QFQ/NONE` + `adjust_label`。**页面禁止自己拼分区名**（§11.5-19）。⚠ 想加第三种口径（如后复权）= 加一个常量 + 一个分区，**不要**在原分区里加列 |
 | 抓取时的复权口径 | `akshare_feed` 的 `adjust` 参数，必须**透传到新浪与东财两个源**（`fetch_a_share_daily` 内部两个分支都用同一个 `adjust`）—— 否则主源失败降级时会**静默换一种复权**，这是最阴的数据事故 |

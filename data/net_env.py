@@ -40,8 +40,24 @@ DEFAULT_FORCE_IPV4 = True
 DEFAULT_PROXY_MODE = 'auto'
 PROXY_MODES = ('auto', 'direct', 'proxy')
 
+# ★1.70 / §11.5-124：**进程级 socket 默认超时（秒）** —— 终结"无超时网络调用永久挂起"。
+# 【为什么必须落在 socket 层】akshare 的**新浪**日线接口（`stock_zh_a_daily`）**不接受 timeout 参数**，
+#   内部 6 处 `requests.get(...)` 全裸奔 ⇒ 对端"连上了却不回 TLS 响应"时 `recv` **永久阻塞**。
+#   用户 2026-10-11 实测（py-spy 抓栈）：两个下载线程卡在 `ssl.do_handshake`，CPU 4 秒纹丝不动、
+#   点「中断」毫无反应、连关窗都要等它 —— 因为取消只在请求**之间**检查。
+#   `socket.setdefaulttimeout()` 是**唯一**能同时管住"连接 / TLS 握手 / 读取"的层，且作用于整个进程
+#   （含 akshare 内部）。与 `_set_ipv4_only` 同性质：正因影响面大，所以必须可配置、且进启动日志。
+DEFAULT_TIMEOUT_SECONDS = 20
+TIMEOUT_MIN, TIMEOUT_MAX = 5, 120
+
 # 已生效的地址族设置（幂等：重复 apply 不会反复 patch/还原）
 _applied_ipv4 = None
+
+# 已生效的进程级 socket 默认超时（★1.70，幂等）
+_applied_timeout = None
+
+# ★1.70：**当前生效的 requests 默认超时**（注入的包装函数闭包读它 ⇒ 改设置无需重打补丁）
+_req_timeout = DEFAULT_TIMEOUT_SECONDS
 
 # ★v1.38 / §7-E2 的**本机代理问题**指纹（原住 `data/sync_service.py`，v6.72 搬到本模块 ——
 #   因为 `em_market` 也要用它，而 sync_service → akshare_feed → em_market 是既有的单向链，
@@ -84,9 +100,16 @@ def settings_dict() -> dict:
     """当前网络策略（逐项回落默认，绝不因偏好脏了而报错）。"""
     raw = preferences.get(NET_KEY)
     d = raw if isinstance(raw, dict) else {}
+    try:
+        timeout = int(d.get('timeout', DEFAULT_TIMEOUT_SECONDS))
+    except (TypeError, ValueError):
+        timeout = DEFAULT_TIMEOUT_SECONDS
     return {'force_ipv4': bool(d.get('force_ipv4', DEFAULT_FORCE_IPV4)),
             'proxy_mode': (d.get('proxy_mode') if d.get('proxy_mode') in PROXY_MODES
-                           else DEFAULT_PROXY_MODE)}
+                           else DEFAULT_PROXY_MODE),
+            # ★1.70：夹进合理区间 —— 脏偏好**不可能**把超时设成 0/负数/999（那就等于没有超时，
+            #   正是本轮要根除的形态）；越界一律夹回边界，绝不静默放行。
+            'timeout': max(TIMEOUT_MIN, min(TIMEOUT_MAX, timeout))}
 
 
 def force_ipv4_enabled() -> bool:
@@ -95,6 +118,62 @@ def force_ipv4_enabled() -> bool:
 
 def proxy_mode() -> str:
     return settings_dict()['proxy_mode']
+
+
+def default_timeout() -> int:
+    """单次网络操作的**进程级**超时秒数（唯一真源 = 偏好 `net.timeout`，默认 20）。"""
+    return settings_dict()['timeout']
+
+
+def _install_requests_default_timeout(seconds: int) -> None:
+    """给 `requests` 注入**默认超时**（幂等）—— 这才是真正管住 akshare 的那一层。
+
+    【为什么 socket 默认超时不够（实测打脸，别删这段）】`socket.setdefaulttimeout()` 看着万能，
+      但 `requests`/`urllib3` 建连接时会**显式**调 `sock.settimeout(self.timeout)`，而调用方不传
+      timeout 时它就是 `None` ⇒ **把进程默认超时覆盖回"永久阻塞"**。2026-10-11 用本地黑洞端口实测：
+      `socket 默认超时 = 20.0` 的前提下，`requests.get(url)` 与 `requests.get(url, timeout=None)`
+      **30 秒都不返回**（= 等于没修）。⇒ 结论：**必须在 requests 层注入**（akshare 内部全是
+      `requests.get(...)`，全部经 `Session.request` 这一处）；socket 默认超时只当"非 requests 通道"的兜底。
+
+    【注入口径】只在调用方**没给** timeout（或显式给了 None）时补 `(n, n)`（连接与读取各自计时）；
+      调用方自己指定的（如东财的 `timeout=15`）**一律尊重**，绝不覆盖 —— 否则会悄悄改写其它模块的口径。
+    """
+    try:
+        import requests
+    except Exception as e:                                # noqa: BLE001
+        logger.warning(f"无法给 requests 注入默认超时（保持各调用点原样）: {e}")
+        return
+    session_cls = requests.sessions.Session
+    if getattr(session_cls, '_jian_orig_request', None) is None:
+        session_cls._jian_orig_request = session_cls.request
+
+    def _request_with_default_timeout(self, method, url, *args, **kwargs):
+        # `timeout` 在 `Session.request` 里是第 7 个位置参数 ⇒ 位置传了就绝不碰（防"重复赋值"）
+        if len(args) < 7 and kwargs.get('timeout') is None:
+            kwargs['timeout'] = (_req_timeout, _req_timeout)
+        return session_cls._jian_orig_request(self, method, url, *args, **kwargs)
+
+    session_cls.request = _request_with_default_timeout
+    logger.info(f"已为 requests 注入默认超时 = {seconds}s（连接与读取各自计时）")
+
+
+def _set_default_timeout(seconds: int) -> None:
+    """设**进程级**网络超时（幂等）：① requests 层注入（**主**）；② socket 默认超时（兜底）。
+
+    ⚠ 影响本进程**所有**出网请求（含 akshare 内部没写 timeout 的调用）—— 这正是目的；
+      代价是"慢但会成功"的长请求也会被判超时，所以区间夹在 5~120 秒、且可在设置里改。
+    ⚠ 只管**新建立**的连接（两者都是"创建/发起时"生效），存量连接不动。
+    """
+    global _applied_timeout, _req_timeout
+    if seconds == _applied_timeout:
+        return
+    _req_timeout = seconds                                 # 闭包读它 ⇒ 改值无需重打补丁
+    if not getattr(_install_requests_default_timeout, '_patched', False):
+        _install_requests_default_timeout(seconds)
+        _install_requests_default_timeout._patched = True
+    socket.setdefaulttimeout(float(seconds))               # 兜底：非 requests 通道（裸 socket 等）
+    _applied_timeout = seconds
+    logger.info(f"网络默认超时 = {seconds}s（requests 注入为主 + 进程级 socket 兜底）")
 
 
 def _set_ipv4_only(flag: bool) -> None:
@@ -127,13 +206,14 @@ def apply() -> dict:
     """应用当前策略（幂等、零网络）⇒ 返回生效设置。**每次取数前调一次**也无所谓（很便宜）。"""
     s = settings_dict()
     _set_ipv4_only(s['force_ipv4'])
+    _set_default_timeout(s['timeout'])          # ★1.70 / §11.5-124：进程级 socket 默认超时
     return s
 
 
 def describe() -> str:
-    """给人话的一行（日志 / tooltip 用）：`IPv4 优先 · 代理=自动（失败即降级直连）`。"""
+    """给人话的一行（日志 / tooltip 用）：`IPv4 优先 · 代理=自动（失败即降级直连）· 超时=20s`。"""
     s = settings_dict()
     _ip = "IPv4 优先" if s['force_ipv4'] else "地址族=系统默认"
     _proxy = {'auto': "代理=自动（失败即降级直连）", 'direct': "代理=直连",
               'proxy': "代理=只用系统代理"}.get(s['proxy_mode'], s['proxy_mode'])
-    return f"{_ip} · {_proxy}"
+    return f"{_ip} · {_proxy} · 超时={s['timeout']}s"

@@ -26,6 +26,7 @@ from data.sync_service import (ADJUST_QFQ, ZONE_KLINE, ZONE_KLINE_RAW, ZONE_MIN,
                                adjust_label, friendly_fetch_message, minute_key,
                                zone_for_adjust)
 from ui.download_jobs import SingleSyncGate   # ★1.59：真源直连（不再经 hub 再导出）
+from ui.widgets import symbol_pick            # ★1.70 / §11.5-125：查标的的**唯一口径**（含代码直通）
 from ui.workers import SingleSyncWorker
 
 # 一级周期档位：日/周/月/**分钟**（选"分钟"才出现二级档位 —— 参数只在有意义的档位出现，§10-10）
@@ -77,15 +78,38 @@ class DeskData:
     # 查询（UI 不发网络：统一走 SingleSyncWorker → MarketSyncService）
     # ==========================================
     def search_and_load(self):
+        """搜索并加载；★1.70 / §11.5-125：**直通 + 明确出口**，不再丢一句"未找到"就完事。
+
+        三态分流（判据 = `symbol_pick.decide_keyword` 纯函数，与回测/参数研究**同一口径**）：
+          · 命中 / 代码直通 ⇒ 直接打开；
+          · 花名册为空且输入又不是代码 ⇒ 给"两条路 + 一键同步"，同步成功后**自动重试一次**；
+          · 花名册非空但没这只 ⇒ 照旧"未找到"，但补一句"可换 6 位代码试试"。
+        """
         p = self.page
         keyword = p.txt_search.text().strip()
         if not keyword:
             return
-        result = p.main_win.engine.search_symbol(keyword)   # 经门面取数，UI 不碰 DAO
-        if result.empty:
-            QMessageBox.warning(p, "未找到", "未找到该标的，请确认花名册已更新。")
+        try:
+            result = p.main_win.engine.search_symbol(keyword)   # 经门面取数，UI 不碰 DAO
+        except Exception as e:                                  # noqa: BLE001 —— 查询失败也要给出路
+            QMessageBox.warning(p, "查询失败",
+                                f"查花名册时出错：{e}\n\n可直接输 6 位代码（如 600519）。")
             return
-        p.load_symbol(str(result.iloc[0]['symbol']), str(result.iloc[0]['name']))
+        state, symbol, name = symbol_pick.decide_keyword(
+            keyword, result, roster_empty=symbol_pick.roster_empty(p))
+        if state == "need_roster":
+            QMessageBox.information(p, "花名册是空的（要先同步一次）",
+                                    symbol_pick.ROSTER_EMPTY_GUIDE)
+            if symbol_pick.offer_roster_sync(p):
+                self.search_and_load()          # 同步好就地重试，省用户再敲一次
+            return
+        if state == "not_found":
+            QMessageBox.warning(p, "未找到",
+                                f"花名册里没有 '{keyword}'。\n\n"
+                                "试试 6 位代码（如 600519），或核对名称是否写全。")
+            return
+        # `hit` / `direct` 都要落进页面：直通时 name 可能是空 ⇒ 用代码当显示名（绝不编造名称）
+        p.load_symbol(symbol, name or symbol)
 
     # ==========================================
     # 取数：分区/键的**唯一入口**（防串档 · §11.5-19）

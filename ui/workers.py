@@ -359,12 +359,52 @@ class SyncWorker(QThread):
                 self.failed.emit(symbol, fail_reason)
 
         workers = max(1, min(int(policy.concurrency), 4, total or 1))
-        with ThreadPoolExecutor(max_workers=workers) as ex:
+        ex = ThreadPoolExecutor(max_workers=workers)
+        try:
             for symbol in self._symbols:
                 ex.submit(one, symbol)
-            # `with` 退出 = shutdown(wait=True)：在途那只自然跑完、排队的靠 stop/cancel 秒退
+        finally:
+            # ★1.70 / §11.5-124：收尾两条口径，**互不可少**：
+            #   ① `wait=True`（照旧）：每一笔网络请求现在都有**硬超时**（`data/net_env` 在 requests
+            #      层注入默认 20s）⇒ 在途那只**最迟 20 秒必然返回**，收尾自然有界，不会再出现
+            #      "永远收不了尾 / 点中断毫无反应 / 关窗也卡住"。**真正的解药是超时，不是不等。**
+            #      ⚠ 别改成本质上的"不等"：那会让 `finished` 在在途请求还没回来时就发出
+            #        （"完成 = 全干完"的语义被打破、统计收尾后还在变），冒烟并发断言会红。
+            #   ② `cancel_futures` **只在真的要停时才给 True**（用户点了中断 / 已熔断）⇒ 排队的立刻停发。
+            #      ⚠ **绝不能无条件给 True**：正常跑完时它会把**还没启动**的任务直接取消
+            #        （实测 5 只只跑 3 只 —— 冒烟"每只都收到 sleep_fn"断言红的根因，属静默漏抓）。
+            _stopping = bool(self._cancel) or bool(stats.get("aborted"))
+            ex.shutdown(wait=True, cancel_futures=_stopping)
         if self._cancel and not stats.get("aborted"):
             stats.update(aborted=True, aborted_by="cancel")   # 与串行一致：用户中断单独归类
+
+
+class RosterSyncWorker(QThread):
+    """★1.70 / §11.5-125：**同步花名册**（全市场 A 股 + 期货）。
+
+    【为什么要它】新机器上花名册天然为空 ⇒ "按名字搜标的"全部落空；此前唯一的出路是让用户
+      自己去跑 `py scripts/sync_roster.py`（命令行 = 新用户门槛，他连该跑哪个都不知道）。
+      本 worker 让 app 内能给「立即同步花名册」一键按钮。
+
+    【口径】只做"加载 + 转发"：真正的同步逻辑（含**数量安全闸**）在 `data/roster_sync.sync_roster()`
+      —— 与运维脚本**同一个门面**，闸门只有一份（§9-G）。
+    【线程纪律】全 app QThread 只此一处（§10-12）；信号名避开 QThread 自带的 `finished`。
+    """
+
+    finished_ok = pyqtSignal(dict)      # 报告 dict（ok=True：a_share/futures/total/elapsed）
+    failed = pyqtSignal(str)            # 人话原因（含"残缺名单已中止入库"这类）
+
+    def run(self):
+        try:
+            from data.roster_sync import sync_roster
+            rep = sync_roster()
+        except Exception as e:                      # noqa: BLE001 —— 异常绝不穿透 QThread
+            self.failed.emit(f"{type(e).__name__}: {e}")
+            return
+        if rep.get("ok"):
+            self.finished_ok.emit(rep)
+        else:
+            self.failed.emit(str(rep.get("reason") or "未知原因"))
 
 
 class SingleSyncWorker(QThread):

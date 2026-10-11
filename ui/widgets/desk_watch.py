@@ -27,6 +27,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QDialog, QInputDialog, QListWidgetItem, QMenu, QMessageBox
 
 from data.sync_service import ADJUST_NONE, ADJUST_QFQ, zone_for_adjust
+from ui.widgets.symbol_pick import normalize_stock_code   # ★1.70 / §11.5-125：代码直通（唯一口径）
 from data.watchlist_change import (ChangeSnapshot, baseline_date, direction_of,
                                    format_pct, group_summary)
 from data.watchlist_store import DEFAULT_GROUP
@@ -58,7 +59,11 @@ class DeskWatch:
         return bool(p.watch_group) and p.watch_group != DEFAULT_GROUP
 
     def _resolve_keyword(self, keyword: str):
-        """关键词 → (代码, 名称)。走主窗口门面取花名册（UI 不碰 DAO，§10-3）。"""
+        """关键词 → (代码, 名称)。走主窗口门面取花名册（UI 不碰 DAO，§10-3）。
+
+        ★1.70 / §11.5-125：花名册没命中时**代码直通**（纯 6 位 / 带 sh·sz·bj 前缀都认）——
+          否则新机器（花名册天然为空）连"加自选"都做不到，而这一步本来不需要名称。
+        """
         p = self.page
         engine = getattr(p.main_win, "engine", None)
         if engine is None:
@@ -69,7 +74,8 @@ class DeskWatch:
             print(f"自选快添加：查询失败 {e}")
             return "", ""
         if result is None or len(result) == 0:
-            return "", ""
+            code = normalize_stock_code(keyword)     # 直通：名称留空，加载后再由花名册补
+            return (code, "") if code else ("", "")
         row = result.iloc[0]
         return str(row["symbol"]), str(row.get("name", "") or "")
 

@@ -331,6 +331,15 @@ _ITEMS_V1 = (
          choices=(('auto', '自动（代理报错时降级直连）'), ('direct', '直连（不用代理）'),
                   ('proxy', '只用系统代理（不降级）')),
          tip='必须走代理的网络选"只用系统代理"；默认"自动"只在代理报错时才降级一次。'),
+    Item('net.timeout', 'account', '网络超时', KIND_NUMBER, default=20,
+         where='net.timeout', lo=5, hi=120, step=1, unit='秒',
+         tip='单次网络操作的**进程级**超时：对端"连上了却不回包"时，等这么久就判失败、换下一只。',
+         help='★1.70 新增（用户实测"卡死 + 中断无效"驱动）：新浪日线接口**不接受 timeout 参数**，'
+              '其内部 `requests` 默认**永不超时** ⇒ 一条半死连接就能把整批下载永久挂住。\n'
+              '本项由 `data/net_env.apply()` 落两层：① **给 requests 注入默认超时**（主，'
+              '不传 timeout 的调用全被套上；连 TLS 握手一起管）；② 进程级 socket 默认超时（兜非 requests 通道）。\n'
+              '⚠ 实测提醒：**只设 socket 默认超时是没用的** —— requests/urllib3 会 `settimeout(None)` 覆盖它。\n'
+              '调大 = 容忍更慢的源（坏连接也拖得更久）；调小 = 更早判失败（但慢源会被误判成失败）。'),
     # ---- ★v6.73 S2-1：东财登录（凭据只落本机、加密保存；**日志/界面永不回显值**）----
     # ---- ★v6.76 S2-7：关于与更新（版本 / 检查更新 / 发布页 / 反馈 / 诊断 / 日志目录）----
     Item('about.version', 'about', '当前版本', KIND_READONLY, default='—',
@@ -451,6 +460,7 @@ ITEMS = list(_ITEMS_V1)
 _AFTER_SET = {
     'net.force_ipv4': lambda _v: _apply_net(),
     'net.proxy_mode': lambda _v: _apply_net(),
+    'net.timeout': lambda _v: _apply_net(),                  # ★1.70：改完即时生效（进程级超时）
     'storage.log_level': lambda v: _apply_log_level(v),      # ★v6.75 S2-5：改完即时生效
 }
 

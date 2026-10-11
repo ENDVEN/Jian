@@ -4646,6 +4646,66 @@ try:
               and _ne72.looks_like_proxy_error("ProxyError: Unable to connect to proxy")
               and not _ne72.looks_like_proxy_error("RemoteDisconnected('Remote end closed')"))
 
+        # ---- ③ 网络默认超时（★1.70 / §11.5-124）----
+        #   背景：用户 2026-10-11 实测"后台同步卡死、点中断无效"，py-spy 抓栈 = 两个下载线程
+        #   卡在 `ssl.do_handshake`（新浪源不接受 timeout 参数 ⇒ 内部裸 requests 永久阻塞）。
+        #   ⚠ 关键事实（本地"只收连接不回包"的黑洞端口实测）：**只设 socket 默认超时是无效的** ——
+        #     requests/urllib3 建连接时会显式 `sock.settimeout(None)` 把它覆盖回永久阻塞
+        #     （实测：socket 默认 20s，而 `requests.get(url)` 30 秒都不返回）⇒ **必须在 requests 层注入**。
+        _to_back74 = _sock72.getdefaulttimeout()
+        _pref72.set('net', {'force_ipv4': True, 'proxy_mode': 'auto', 'timeout': 20})
+        _ne72.apply()
+        check("★ 1.70 / §11.5-124：socket 兜底层生效（管非 requests 通道）",
+              _sock72.getdefaulttimeout() == 20.0)
+        check("★ 1.70：`describe()` 如实报告超时值（排障第一眼要能看到）",
+              '超时=20s' in _ne72.describe())
+
+        # 决定性断言：调用方**不传 timeout** 时，注入值必须真的走到传输层。
+        # 做法 = 拦掉 `Session.send`（比"挂 adapter"少一层机器，且**绝不联网**），看它收到什么。
+        import requests as _rq74  # noqa: E402
+
+        _cap74 = {}
+        _orig_send74 = _rq74.Session.send
+
+        def _fake_send74(self, request, **kwargs):
+            _cap74.update(kwargs)
+            raise RuntimeError("stop-before-network")
+
+        try:
+            _rq74.Session.send = _fake_send74
+            _sess74 = _rq74.Session()
+            try:
+                _sess74.get('http://jian.invalid/probe')      # 不传 timeout ⇒ 应被注入
+            except Exception:  # noqa: BLE001
+                pass
+            _sess74.close()
+        finally:
+            _rq74.Session.send = _orig_send74
+        check("★ 1.70 / §11.5-124：**requests 层注入**生效（不传 timeout ⇒ 传输层收到 (20, 20)）"
+              " —— 只设 socket 默认超时会被 urllib3 的 `settimeout(None)` 覆盖成「永不超时」，"
+              f"实测收到 = {_cap74.get('timeout')!r}",
+              tuple(_cap74.get('timeout') or ()) == (20, 20))
+
+        _pref72.set('net', {'force_ipv4': True, 'proxy_mode': 'auto', 'timeout': 999})
+        _ne72.apply()
+        check("★ 1.70：脏偏好**不可能把超时关掉**（999 ⇒ 夹到上界 120s；0/负数同理）",
+              _ne72.settings_dict()['timeout'] == 120 and _sock72.getdefaulttimeout() == 120.0)
+        _pref72.set('net', {'force_ipv4': True, 'proxy_mode': 'auto', 'timeout': 'abc'})
+        check("★ 1.70：坏值回落默认 20s（不报错、也不静默放行）",
+              _ne72.settings_dict()['timeout'] == 20)
+        _pref72.set('net', {'force_ipv4': True, 'proxy_mode': 'auto', 'timeout': 20})
+        _ne72.apply()                                     # 后续断言按 20s 口径
+        _sock72.setdefaulttimeout(_to_back74)             # 还原 socket 默认（别漏给后续断言）
+
+        # ---- ④ 收尾口径（源码级，先剥注释再扫 —— 否则会被"讲这条纪律的注释"自己触发）----
+        import pathlib as _pl74  # noqa: E402
+        _wk74 = _pl74.Path('ui/workers.py').read_text(encoding='utf-8')
+        _code74 = '\n'.join(_l.split('#', 1)[0] for _l in _wk74.splitlines())
+        check("★ 1.70 / §11.5-124：并发池**收尾有界**（`wait=True` 靠硬超时兜底）且 `cancel_futures`"
+              "**只在真的要停时才给**（无条件 True 会把没启动的任务也取消 —— 实测 5 只只跑 3 只 = 静默漏抓）",
+              'shutdown(wait=True, cancel_futures=_stopping)' in _code74
+              and 'wait=False' not in _code74)
+
         # ---- ② 代理报错 ⇒ 降级直连重试一次；直连再失败 ⇒ 仍按"代理"报（不是限流）----
         _pref72.set('net', {'force_ipv4': True, 'proxy_mode': 'auto'})
         _et72.reset()
