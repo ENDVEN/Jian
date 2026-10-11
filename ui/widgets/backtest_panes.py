@@ -26,9 +26,10 @@
   fill  🎯 成交模型      → FillPane        （中频：v6.17/§7-B5 新增）
 """
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (QCheckBox, QComboBox, QCompleter, QFrame, QHBoxLayout,
-                             QLabel, QLineEdit, QPushButton, QScrollArea,
-                             QStackedWidget, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QCompleter, QFrame, QGridLayout,
+                             QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                             QScrollArea, QSizePolicy, QStackedWidget,
+                             QVBoxLayout, QWidget)
 
 from config import settings
 from core.backtest import FILL_CLOSE, FILL_MODE_LABELS, FILL_NEXT_OPEN, FILL_TRIGGER
@@ -126,6 +127,15 @@ class EditPane(QFrame):
         self.lbl_title = QLabel(title)
         self.lbl_title.setStyleSheet(
             f"font-size: 14px; font-weight: bold; color: {accent};")
+        # ★1.70 / §11.5-126：**标题让位给操作按钮** —— 用户实测（2026-10-11）：抽屉宽
+        #   = min(560, 页宽×0.42)，标题 + 三个头部按钮放不下时，Qt 会把**尾部的按钮**挤出可视区
+        #   （截图里那一行只剩标题）⇒ 用户"写完函数找不到检测按钮"。
+        #   给标题 `Ignored` 水平策略（可被压到最小宽、文字截断但全文进 tooltip），
+        #   按钮拿 minimumSizeHint ⇒ **永远优先保住可点区域**（入口不该因为窗口窄就消失）。
+        self.lbl_title.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                     QSizePolicy.Policy.Preferred)
+        self.lbl_title.setMinimumWidth(48)
+        self.lbl_title.setToolTip(title)
         self.head.addWidget(self.lbl_title)
         self.head.addStretch()
 
@@ -244,7 +254,12 @@ class EditDrawer(QFrame):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # ★1.70 / §11.5-127：横向滚动从"**永久禁用**"改为"**按需**"（安全网）——
+        #   旧设定是"界面够窄就不该出现横向滚动条"的洁癖，但代价是：卡片只要比视口宽一点，
+        #   右侧内容就**彻底看不见、也够不着**（用户实测："后面的我完全看不到"）。
+        #   现在卡片都改成了单列/网格（最小宽 < 抽屉），所以这条滚动条**平时不会出现**；
+        #   一旦将来某张卡再长胖（或窗口极窄），最少还能滚过去看，而不是凭空消失。
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
             "QScrollArea > QWidget > QWidget { background: transparent; }")
@@ -294,10 +309,7 @@ class FunctionPane(EditPane):
         self.btn_send_market.setToolTip("把函数与参数送到「📈 市场行情」的公式叠加区，"
                                         "在真实 K 线上看它长什么样（每段默认落主图）")
 
-        self.btn_detect = QPushButton("🩺 检测")
-        self.btn_detect.setStyleSheet(DETECT_QSS)
-
-        for w in (self.btn_library, self.btn_send_market, self.btn_detect):
+        for w in (self.btn_library, self.btn_send_market):
             self.add_head(w)
 
         self.segments = FunctionSegments(
@@ -307,10 +319,24 @@ class FunctionPane(EditPane):
             "粘贴你编写的整段函数后点击「检测函数」(示例为通用公开写法)")
         self.body_lay.addWidget(self.segments)
 
-        self.lbl_detect = QLabel("尚未检测")
+        # ★1.70 / §11.5-126：**「🩺 检测」从标题行搬进内容体** —— 用户实测（2026-10-11）：
+        #   "写完函数找不到检测按钮，卡在尚未检测不知道怎么办"。两个原因叠在一起：
+        #     ① 标题行放不下（见 `EditPane` 的标题让位说明）⇒ 尾部的检测按钮被挤出可视区；
+        #     ② 写完函数时视线在**正文底部**，而入口在卡片顶部 —— 找到要往回翻。
+        #   ⇒ 放进正文流、紧跟状态回执（按钮在左、回执在右），与 M2/M3 的「🩺 检测条件」同款同位。
+        detect_row = QHBoxLayout()
+        detect_row.setSpacing(8)
+        self.btn_detect = QPushButton("🩺 检测函数")
+        self.btn_detect.setStyleSheet(DETECT_QSS)
+        self.btn_detect.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_detect.setToolTip("检查语法 / 探测缺少的参数 / 列出本期不渲染的绘图语句\n"
+                                   "（与「▶ 开始回测」前同一道闸：检测不过一定跑不动）")
+        detect_row.addWidget(self.btn_detect)
+        self.lbl_detect = QLabel("尚未检测 —— 写完函数点左边「🩺 检测函数」")
         self.lbl_detect.setWordWrap(True)
         self.lbl_detect.setStyleSheet("font-size: 12px; color: #9AA3B2;")
-        self.body_lay.addWidget(self.lbl_detect)
+        detect_row.addWidget(self.lbl_detect, 1)
+        self.body_lay.addLayout(detect_row)
 
 
 # ==========================================
@@ -336,13 +362,17 @@ class ConditionPane(EditPane):
         param_row.addWidget(self.txt_params, 1)
         self.body_lay.addLayout(param_row)
 
-        gates = QHBoxLayout()
-        gates.setSpacing(16)
+        # ★1.70 / §11.5-127：**两组从"并排"改成"上下堆叠"**（排版重设计 · 美观 + 易用）——
+        #   抽屉宽 = min(640, 页宽×0.42)（实测 525，窄窗 378），而"买入 + 卖出"并排时每侧只剩
+        #   约 250；一组条件行（变量 + 规则 + 数值 + ✕）最小就要 ~360 ⇒ 右侧那组被压到 ~130、
+        #   **内容直接截断不可见**（用户实测：卖出条件只剩标题 + 半行，且拉宽窗口也救不回来）。
+        #   堆叠后每组拿到**整幅抽屉宽**，行内控件不再互抢空间；抽屉本来就能竖向滚动，
+        #   多出来的高度不会挤掉任何东西（比"并排硬塞"既好看又好用）。
         self.gate_buy = ConditionGate("买入条件", settings.COLOR_PROFIT_TEXT)
         self.gate_sell = ConditionGate("卖出条件", settings.COLOR_LOSS_TEXT)
-        gates.addWidget(self.gate_buy, 1)
-        gates.addWidget(self.gate_sell, 1)
-        self.body_lay.addLayout(gates)
+        self.body_lay.addWidget(self.gate_buy)
+        self.body_lay.addSpacing(6)
+        self.body_lay.addWidget(self.gate_sell)
 
 
 # ==========================================
@@ -382,13 +412,13 @@ class IndexPane(EditPane):
             "首次回测若本地无指数数据将自动联网同步。"))
         self.body_lay.addLayout(top)
 
-        gates = QHBoxLayout()
-        gates.setSpacing(16)
+        # ★1.70 / §11.5-127：与「买卖条件」同款 —— 两组**上下堆叠**（并排时最小宽 846 > 抽屉 525，
+        #   右侧那组必然被截断）。
         self.gate_index_buy = ConditionGate("指数买入许可", "#6A1B9A")
         self.gate_index_sell = ConditionGate("指数卖出破位", "#E65100")
-        gates.addWidget(self.gate_index_buy, 1)
-        gates.addWidget(self.gate_index_sell, 1)
-        self.body_lay.addLayout(gates)
+        self.body_lay.addWidget(self.gate_index_buy)
+        self.body_lay.addSpacing(6)
+        self.body_lay.addWidget(self.gate_index_sell)
 
 
 # ==========================================
@@ -402,30 +432,34 @@ class RiskPane(EditPane):
             "硬性保护规则：盘中触发即离场，优先于卖出信号，谁先到谁执行。"
             "任意一项设 0 即关闭；悬停各项输入框可看单独说明。"))
 
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        row.addWidget(mini_label("最长持仓"))
+        # ★1.70 / §11.5-127：**四项从"一行排开"改成 2×2 网格**（排版重设计）——
+        #   单行最小需求实测 **666 > 抽屉 525** ⇒ 最右侧的「移动止盈回撤」整组被截断看不见。
+        #   2×2 = 两列标签对齐、两行读完：比"竖排四行"省高度，比"挤一行"看得全（且留白更均匀）。
         self.spin_risk_bars = number_spin(
             "若持有超过 N 根 K 线仍未卖出则当日收盘强平", 0, 0, 999, 0)
-        row.addWidget(self.spin_risk_bars)
-        row.addWidget(mini_label("根"))
-        row.addWidget(mini_label("固定止损"))
         self.spin_risk_stop = number_spin(
             "收盘/盘中自开仓价回撤达到该百分比即离场 (0=关闭)", 0, 0, 100, 1)
-        row.addWidget(self.spin_risk_stop)
-        row.addWidget(mini_label("%"))
-        row.addWidget(mini_label("固定止盈"))
         self.spin_risk_take = number_spin(
             "自开仓价上涨达到该百分比即止盈离场 (0=关闭)", 0, 0, 100, 1)
-        row.addWidget(self.spin_risk_take)
-        row.addWidget(mini_label("%"))
-        row.addWidget(mini_label("移动止盈回撤"))
         self.spin_risk_trail = number_spin(
             "自持仓最高点回落该百分比即离场，保护浮盈 (0=关闭)", 0, 0, 100, 1)
-        row.addWidget(self.spin_risk_trail)
-        row.addWidget(mini_label("%"))
-        row.addStretch()
-        self.body_lay.addLayout(row)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(8)
+        for idx, (label, spin, unit) in enumerate((
+                ("最长持仓", self.spin_risk_bars, "根"),
+                ("固定止损", self.spin_risk_stop, "%"),
+                ("固定止盈", self.spin_risk_take, "%"),
+                ("移动止盈回撤", self.spin_risk_trail, "%"))):
+            cell = QHBoxLayout()
+            cell.setSpacing(6)
+            cell.addWidget(mini_label(label))
+            cell.addWidget(spin)
+            cell.addWidget(mini_label(unit))
+            cell.addStretch()
+            grid.addLayout(cell, idx // 2, idx % 2)
+        self.body_lay.addLayout(grid)
 
 
 # ==========================================
@@ -469,7 +503,6 @@ class FillPane(EditPane):
             0.01, 0.01, 1.00, 2)
         off.addWidget(self.spin_fill_offset)
         off.addWidget(mini_label("元才动手"))
-        top.addWidget(self._fill_offset_box)
         top.addStretch()
 
         self.btn_fill_help = QPushButton("📖 三档怎么选？")
@@ -478,6 +511,16 @@ class FillPane(EditPane):
                                       "「当天买的当天不能卖」")
         self.add_head(self.btn_fill_help)
         self.body_lay.addLayout(top)
+        # ★1.70 / §11.5-127：「多等多少钱才动手」**自成一行**（默认隐藏，只在第三档出现）——
+        #   与"什么时候成交"挤同一行时最小宽 532，会把整个抽屉叠层顶到 558
+        #   （`QStackedWidget` 的最小宽 = **所有页里最大**的那页）⇒ 五张卡**全部**多一条
+        #   33px 横向滚动条（用户实测："后面的我完全看不到，拉长窗口也不显示"）。
+        #   拆开后每一行都远小于抽屉宽 ⇒ 滚动条不再出现，行与行也更好读。
+        _off_row = QHBoxLayout()
+        _off_row.setSpacing(8)
+        _off_row.addWidget(self._fill_offset_box)
+        _off_row.addStretch()
+        self.body_lay.addLayout(_off_row)
 
         # 行内实时说明：**这就是"用户指引"的主体**（随选择变化，不必悬停也能看懂）
         self.lbl_fill_desc = QLabel("")

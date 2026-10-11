@@ -22,6 +22,7 @@ from core.index_regimes import (DEFAULT_KIND, IntervalPreset, kind_entries,  # �
                                 windows_of)
 from core.sweep_plan import (MAX_COMBOS, MAX_DIMS, REF_BARS,
                              estimate_seconds, make_dimension)
+from data.strategy_store import index_gate_enabled   # ★1.70 / §11.5-128：门控要判 `enabled`
 from ui.widgets.custom_widgets import (NoWheelComboBox, NoWheelDateEdit,
                                        NoWheelDoubleSpinBox)
 from ui.widgets.sweep_chart import TradesDistribution
@@ -404,7 +405,7 @@ class SweepForm(QWidget):
         self.cb_strategy.clear()
         for p in payloads:
             label = str(p.get("name") or "未命名")
-            if p.get("index"):
+            if index_gate_enabled(p.get("index")):      # ★1.70 / §11.5-128：别判字典非空
                 label += "（指数门控 — 本页暂不支持）"
             self.cb_strategy.addItem(label, p)
         self.cb_strategy.blockSignals(False)
@@ -444,7 +445,14 @@ class SweepForm(QWidget):
         self._all_presets = list(presets or [])
         self._entries = list(entries if entries is not None
                              else kind_entries(self._all_presets))
-        if first_time:
+        # ★1.70 / §11.5-129：**口径项集变了就重建**（旧版只在"首次"建一次）——
+        #   否则后加的兜底项「按本机数据对折」会在某些调用顺序下**悄悄缺失**，
+        #   而"下拉里到底有哪些口径"是用户唯一的选区间入口，不许靠初始化时机决定。
+        _kinds_now = [self.cb_interval_kind.itemData(i)
+                      for i in range(self.cb_interval_kind.count())]
+        _kinds_new = [e["kind"] for e in self._entries] + ["custom"]
+        if first_time or _kinds_now != _kinds_new:
+            _keep_kind = str(self.cb_interval_kind.currentData() or "")
             self.cb_interval_kind.blockSignals(True)
             self.cb_interval_kind.clear()
             for e in self._entries:
@@ -452,6 +460,8 @@ class SweepForm(QWidget):
             self.cb_interval_kind.addItem("自定义（手工填四格日期）", "custom")
             idx = next((i for i, e in enumerate(self._entries) if e["kind"] == DEFAULT_KIND),
                        0 if self._entries else -1)
+            if not first_time and _keep_kind in _kinds_new:
+                idx = _kinds_new.index(_keep_kind)      # 保留用户当前选的口径
             if idx >= 0:
                 self.cb_interval_kind.setCurrentIndex(idx)
             self.cb_interval_kind.blockSignals(False)
@@ -464,16 +474,25 @@ class SweepForm(QWidget):
         """
         kind = str(self.cb_interval_kind.currentData() or "")
         custom = kind == "custom"
+        # ★1.70 / §11.5-129：「按本机数据对折」= **不依赖切块缓存**的兜底口径（离线可用）。
+        #   它同样没有"窗口 / 取近 N 组"的概念（只有一对），所以与"自定义"一起藏那两个控件。
+        fold = kind == "fold"
         entry = next((e for e in self._entries if e["kind"] == kind), None)
         self.lbl_why.setText("手工填下面四个日期（样本内起点/终点 · 样本外起点/终点）"
                              if custom else str((entry or {}).get("why") or ""))
         self.lbl_why.setVisible(bool(self.lbl_why.text()))
         for w in (self.cb_preset, self.lbl_recent, self.cb_recent_n):
-            w.setVisible(not custom)
+            w.setVisible(not (custom or fold))
         if custom:
             self._presets = []
             self._merged = ()                      # ★R7：切"自定义"就退出合并态
             self._set_merged_locked(False)
+            return
+        if fold:
+            self._presets = []
+            self._merged = ()
+            self._set_merged_locked(False)
+            self._apply_fold()                     # ★1.70：按本机数据范围对折填四格
             return
         n = self.cb_recent_n.currentData() or 0
         self._presets = windows_of(self._all_presets, kind, None if int(n) == 0 else int(n))
@@ -506,8 +525,32 @@ class SweepForm(QWidget):
         if self._presets:
             self._on_preset(self.cb_preset.currentIndex())
         else:
+            # ★1.70 / §11.5-129：旧文案只指向"换个口径 / 去区间全景点一段"，而**没有切块缓存时
+            #   时间轴同样是空的**（用户实测：点了切块按钮也没反应）⇒ 现在明确给出**两条能走的路**。
             self.lbl_interval.setText(
-                "本机切块缓存里这个口径没有成对窗口 —— 换个口径，或到右栏「区间全景」里点一段选区间")
+                "本机还没有切块数据（这个口径没有成对窗口）—— 两条路："
+                "① 点右上「⟳ 重新切块」（缺上证指数时会出现「⬇ 下载上证指数」一键补）；"
+                "② 口径改成「按本机数据对折」，不需要指数数据也能开始")
+
+    def _apply_fold(self) -> None:
+        """★1.70 / §11.5-129：按**所选标的本机数据范围**对折，填进四格（无需切块缓存）。
+
+        数据范围由 `set_data_range` 推来（标的本地前复权日线的首末日）；拿不到 ⇒ **如实说明
+        还缺什么**（绝不把无效日期留在四格里 —— 那正是"选不了区间"的老形态）。
+        """
+        from core.index_regimes import fold_pair
+
+        ds, de = getattr(self, "_data_range", ("", ""))
+        pair = fold_pair(ds, de) if (ds and de) else None
+        if pair is None:
+            self.lbl_interval.setText(
+                "对折需要先知道本机数据范围：在上面填一个**本地已有日线**的标的并点「选择」——"
+                "拿到范围后这里会自动拆成「前半段调 / 后半段验」")
+            return
+        self.set_dates(pair.is_start, pair.is_end, pair.oos_start, pair.oos_end)
+        self.lbl_interval.setText(
+            f"已按本机数据 {ds}~{de} 对折：{pair.is_start}~{pair.is_end} 调 → "
+            f"{pair.oos_start}~{pair.oos_end} 验（不走切块缓存）")
 
     @staticmethod
     def _window_label(p: IntervalPreset) -> str:

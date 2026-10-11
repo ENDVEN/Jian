@@ -342,6 +342,12 @@ class ScanFlow:
         if not formula:
             p.lbl_receipt.setText('筛选条件是空的 —— 点「⚙ 配置」写一段条件。')
             return
+        # ★1.70 / §11.5-126：**前置检测闸** —— 与 M1「未检测不让跑」同一口径。
+        #   语法 / 可判定变量 / 缺参在这里就拦下（用的是与扫描**同一道内核闸**），
+        #   别让用户等一轮扫描才发现写错（那正是"写完不知道下一步"的另一半）。
+        if not p._formula_pane.check_formula():
+            p.lbl_receipt.setText('筛选条件没通过检测 —— 看配置抽屉里「🩺 检测条件」旁边那行说明。')
+            return
         p._thresholds = p._filter_pane.to_thresholds()
         problems = p._thresholds.problems()
         if problems:

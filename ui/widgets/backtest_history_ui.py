@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboB
 from config import settings
 from core.cross_section import human_amount, human_mktcap
 from data.backtest_archive import KIND_M1, KIND_LABELS, SOURCE_LABELS
+from data.strategy_store import index_gate_enabled   # ★1.70 / §11.5-128：门控要判 `enabled`
 from ui.widgets.chart_style import apply_pokorny_style
 from ui.widgets.custom_widgets import (OUTLINE_QSS, FlowHost, ScrollRegion,
                                         apply_ui_font, mono_font_css)
@@ -771,7 +772,7 @@ class HistoryPreviewPane(QFrame):
         config = record.get("config") or {}
         risk = meta.get("risk") or {}
         fill = meta.get("fill") or {}
-        index = meta.get("index")
+        index = meta.get("index") if index_gate_enabled(meta.get("index")) else None
         lines = [f"参数：{meta.get('params_text') or '（无）'}"]
         risk_bits = []
         if risk.get("max_bars"):

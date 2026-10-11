@@ -65,14 +65,17 @@ class _ConditionRow(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
+        # ★1.70 / §11.5-127：行内三件套的最小宽**收窄**（120/150/90 → 96/130/84）——
+        #   一行最小需求从 ~408 降到 ~358：抽屉最窄时（页宽 900 ⇒ 378）也能整行放下，
+        #   不再"右侧的 ✕ 与预览被推出可视区"。⚠ 数值框 84 仍 ≥ 全站契约 72（§10-9）。
         self.cb_var = NoWheelComboBox()
-        self.cb_var.setMinimumWidth(120)
+        self.cb_var.setMinimumWidth(96)
         self.cb_var.setStyleSheet(_CTRL_QSS)
         self.cb_var.currentIndexChanged.connect(lambda *_: self.changed.emit())
         lay.addWidget(self.cb_var, 3)
 
         self.cb_rule = NoWheelComboBox()
-        self.cb_rule.setMinimumWidth(150)
+        self.cb_rule.setMinimumWidth(130)      # ★1.70 / §11.5-127：150→130（仍够放"出现 (由假变真)"）
         self.cb_rule.setStyleSheet(_CTRL_QSS)
         for text, _ in CONDITION_RULES:
             self.cb_rule.addItem(text)
@@ -84,7 +87,7 @@ class _ConditionRow(QWidget):
         self.spin.setRange(-9999999, 9999999)
         self.spin.setDecimals(4)
         self.spin.setValue(1.0)
-        self.spin.setMinimumWidth(90)
+        self.spin.setMinimumWidth(84)          # ★1.70 / §11.5-127：90→84（≥ 全站契约 72，§10-9）
         self.spin.valueChanged.connect(lambda *_: self.changed.emit())
         lay.addWidget(self.spin, 2)
 

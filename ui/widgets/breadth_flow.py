@@ -254,6 +254,11 @@ class BreadthFlow:
         if not formula:
             p.lbl_receipt.setText('筛选条件是空的 —— 点「⚙ 配置」写一段条件。')
             return False
+        # ★1.70 / §11.5-126：**前置检测闸**（与 M1/M2 同款）—— 语法 / 可判定变量 / 缺参先拦下，
+        #   回执与抽屉里「🩺 检测条件」那行**同一条**（同一实现，不另写文案）。
+        if not p._formula_pane.check_formula():
+            p.lbl_receipt.setText('筛选条件没通过检测 —— 看配置抽屉里「🩺 检测条件」旁边那行说明。')
+            return False
         p._thresholds = p._filter_pane.to_thresholds()
         problems = p._thresholds.problems()
         if problems:

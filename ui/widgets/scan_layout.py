@@ -99,10 +99,83 @@ class ScanFormulaPane(EditPane):
         self.txt_params.setStyleSheet(
             "QLineEdit { border:1px solid #E0E0E0; border-radius:8px; padding:5px 8px; }")
         row.addWidget(self.txt_params, 1)
-        self.lbl_signal = QLabel('')
-        self.lbl_signal.setStyleSheet('font-size: 11.5px; color: #8A94A6;')
-        row.addWidget(self.lbl_signal)
         self.body_lay.addLayout(row)
+
+        # ★1.70 / §11.5-126：**写完就能点的检测出口**（M2/M3 共用本窗格 ⇒ 一处改动两页都有）。
+        #   【为什么必须有】此前 M2/M3 只有"点「▶ 开始扫描」之后才会发现的错误" —— 语法写错、
+        #   没有可判定变量、参数没填…… 用户写完条件不知道下一步该干什么（与 M1 同一个体验缺口，
+        #   用户 2026-10-11 实测报的就是这个）。
+        #   【口径】**语法与可判定变量照抄内核同一道闸**（`core/cross_section.scan()` 编译段：
+        #   `parse_program` + `output_names` 非空 + unsupported 只提示）；**缺参**用与 M1 同一个
+        #   `probe_missing_parameters`（否则同一段函数"这里说能跑、那里说缺参"，§11.5-11）。
+        #   ⚠ 绝不在这里另写一套"看起来像校验"的规则 —— 两套口径必然打架。
+        check_row = QHBoxLayout()
+        check_row.setSpacing(8)
+        self.btn_check = QPushButton('🩺 检测条件')
+        self.btn_check.setStyleSheet(FLAT_QSS)
+        self.btn_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_check.setToolTip('检查语法 / 列出可判定的变量（最后一条即默认判定变量）/ '
+                                  '探测缺少的参数 / 指出本期不渲染的绘图函数\n'
+                                  '与「▶ 开始扫描」用的是**同一道内核闸**：检测不过一定扫不动')
+        self.btn_check.clicked.connect(self.check_formula)   # 自接线 ⇒ M2/M3 两页零改动
+        check_row.addWidget(self.btn_check)
+        self.lbl_check = QLabel('尚未检测 —— 写完条件点左边「🩺 检测条件」')
+        self.lbl_check.setWordWrap(True)
+        self.lbl_check.setStyleSheet('font-size: 11.5px; color: #8A94A6;')
+        check_row.addWidget(self.lbl_check, 1)
+        self.body_lay.addLayout(check_row)
+
+    # ---------- 检测（唯一实现；M2/M3 共用本窗格）----------
+    def check_formula(self) -> bool:
+        """语法 + 可判定变量 + 缺参 —— **与真正扫描同一道闸**，写完就能点。
+
+        :return: True = 现在可以扫（不代表一定命中）；False = 现在扫一定报错，回执已说清原因。
+        """
+        from core.formula.program import (FormulaProgramError, parse_program,
+                                          probe_missing_parameters)
+        from core.utils import parse_params_text, synthetic_bars
+
+        text = self.txt_formula.toPlainText().strip()
+        if not text:
+            self._set_check(False, '❌ 筛选条件是空的 —— 先写一段「变量 := 表达式」的条件。')
+            return False
+        try:
+            program = parse_program(text)
+        except FormulaProgramError as e:
+            self._set_check(False, f'❌ {e}')
+            return False
+        except Exception as e:                       # noqa: BLE001 —— 引擎异常也要给人话
+            self._set_check(False, f'❌ {type(e).__name__}: {e}')
+            return False
+        names = list(getattr(program, 'output_names', None) or [])
+        if not names:
+            self._set_check(False, '❌ 没有可判定的变量 —— 请写成「变量名 := 表达式」'
+                                   '（最后一条即默认判定变量）。')
+            return False
+        params = parse_params_text(self.txt_params.text())
+        try:
+            missing, _ = probe_missing_parameters([program], params, synthetic_bars(120))
+        except FormulaProgramError as e:
+            self._set_check(False, f'❌ {e}')
+            return False
+        if missing:
+            self._set_check(False, f'❌ 缺少参数：{"、".join(sorted(missing))}'
+                                   f' —— 在「参数」里填好再检测。')
+            return False
+        unsupported = list(getattr(program, 'unsupported', None) or [])
+        msg = (f'✅ 检测通过 · 可判定变量：{"、".join(names)}'
+               f'（最后一条「{names[-1]}」为默认判定变量）')
+        if unsupported:
+            msg += f'；本期不渲染的绘图函数已忽略：{"、".join(unsupported)}'
+        self._set_check(True, msg)
+        return True
+
+    def _set_check(self, ok: bool, message: str) -> None:
+        """检测回执（唯一出口）：正文里看得见 + 全文进 tooltip（长文案不截断，§10-10 不静默）。"""
+        self.lbl_check.setText(message)
+        self.lbl_check.setToolTip(message)
+        self.lbl_check.setStyleSheet(
+            f'font-size: 11.5px; color: {"#2E7D32" if ok else "#C62828"};')
 
 
 # ==========================================

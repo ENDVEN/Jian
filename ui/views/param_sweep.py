@@ -27,7 +27,7 @@ from core.param_sweep import SweepOutcome, SweepSpec
 from core.sweep_plan import StudyInterval, build_grid, validate_interval
 from core.utils import synthetic_bars
 from data.market_db import DataLakeManager
-from data.strategy_store import StrategyStore, segments_of
+from data.strategy_store import StrategyStore, index_gate_enabled, segments_of
 from data.sweep_archive import SweepArchive, oos_key_of, strategy_fingerprint
 from ui.widgets.custom_widgets import NoWheelComboBox  # noqa: F401 （表单内使用；此处锚引用）
 from ui.widgets.styles import (EMPTY_STATE_QSS, SEC_META_QSS,
@@ -302,8 +302,8 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         if payload is None:
             self.form.set_receipt("先选一个 M1 已保存的策略（只列带条件的配方）")
             return None
-        if payload.get("index"):
-            self.form.set_receipt("该策略带指数门控，本页暂不支持（红线：不复刻阶段C 门控）")
+        if index_gate_enabled(payload.get("index")):   # ★1.70 / §11.5-128：判 `enabled`，别判字典非空
+            self.form.set_receipt("该策略带指数门控（已启用），本页暂不支持（红线：不复刻阶段C 门控）")
             return None
         # ★1.66：条件在**运行前**就地判空 —— 配置 → DSL 是 `core.conditions` 的事，
         #   空条件到不了引擎（否则引擎会抛"不是表达式"的怪错，用户看不懂）。
@@ -347,7 +347,7 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
             risk=dict(payload.get("risk") or {}),
             fill_mode=(payload.get("fill") or {}).get("fill_mode"),
             trigger_tick=(payload.get("fill") or {}).get("trigger_tick"),
-            has_index_gate=bool(payload.get("index")))
+            has_index_gate=index_gate_enabled(payload.get("index")))   # ★1.70 / §11.5-128
         self._spec, self._grid, self._interval = spec, grid, iv
         self._preset_key = self.form.preset_key()
         return spec, grid, iv

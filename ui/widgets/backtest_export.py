@@ -17,6 +17,7 @@ import pandas as pd
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from core.backtest import EXIT_REASON_LABELS, T1_SUMMARY, fill_summary, risk_summary
+from data.strategy_store import index_gate_enabled   # ★1.70 / §11.5-128：门控要判 `enabled`
 from ui.widgets.backtest_report import render_result_png
 
 
@@ -101,7 +102,7 @@ def compose_result_csv(result, meta: dict) -> str:
     fill = meta.get("fill") or {}
     row("# 成交模型: " + fill_summary(fill.get("fill_mode"), fill.get("trigger_tick")))
     row(f"# {T1_SUMMARY}")
-    index = meta.get("index")
+    index = meta.get("index") if index_gate_enabled(meta.get("index")) else None
     if index:
         row("# 指数门控: 已启用 {symbol}（买入许可: {b} / 卖出破位: {s}）".format(
             symbol=index.get("symbol"),

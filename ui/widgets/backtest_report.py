@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
 from config import settings
 from core.backtest import (EXIT_REASON_COLORS, EXIT_REASON_LABELS, fill_summary,
                            risk_summary)
+from data.strategy_store import index_gate_enabled   # ★1.70 / §11.5-128：门控要判 `enabled`
 from ui.widgets.chart_style import apply_pokorny_style, plot_equity_curve
 from ui.widgets.custom_widgets import ui_painter_font   # ★v1.46 §10-15 开源字体栈（唯一出口）
 
@@ -235,7 +236,7 @@ def render_result_png(meta: dict, result, file_path: str) -> bool:
 
     # ---- 参数简表（两行内放完，超长截断）----
     params_text = meta.get("params_text") or "（无）"
-    index = meta.get("index")
+    index = meta.get("index") if index_gate_enabled(meta.get("index")) else None
     index_txt = (f"启用 {index.get('symbol')}"
                  f"（买 {index.get('expr_buy') or '—'} | 卖 {index.get('expr_sell') or '—'}）"
                  if index else "未启用")

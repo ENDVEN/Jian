@@ -172,6 +172,19 @@ def _risk_signature(risk) -> str:
     return "|".join(repr(v) for v in values)
 
 
+def index_gate_enabled(cfg) -> bool:
+    """策略快照里的**指数门控是否真的启用** —— 唯一口径（★1.70 修）。
+
+    【为什么必须是函数】旧代码各处写 `if payload.get("index"):`，而**非空字典恒为真** ⇒
+      一条"门控面板填过、但开关没打开"的策略（`{"enabled": false, ...}`）被误判成"带门控"：
+        · **参数研究直接拒绝列出参数**（用户实测 2026-10-11："我在 M1 保存的方案，在参数研究里看不见"）；
+        · 导出 CSV/XLSX/报告把"未启用"**谎报成"已启用"**（§10-4 诚实性）。
+    权威判据与运行期**同一处**：`_index_signature`（未启用与旧存档等价）与
+    `ui/widgets/backtest_strategy._apply_index_config`（缺失/非法一律回落关闭）都用 `enabled`。
+    """
+    return bool(isinstance(cfg, dict) and cfg.get("enabled"))
+
+
 def _index_signature(index) -> str:
     """指数门控未启用(或缺失) -> ''；启用 -> symbol + 买卖条件稳定化文本"""
     if not isinstance(index, dict) or not index.get("enabled"):

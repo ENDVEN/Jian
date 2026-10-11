@@ -21,7 +21,7 @@ import pandas as pd
 
 from core.formula.program import parse_program, probe_missing_parameters
 from core.utils import synthetic_bars      # ⚠ 参数探测要用"合成样本"，随块一起搬过来
-from data.strategy_store import segments_of
+from data.strategy_store import index_gate_enabled, segments_of
 from ui.widgets.symbol_pick import pick_symbol
 
 logger = logging.getLogger(__name__)
@@ -61,8 +61,11 @@ class SweepInputMixin:
         names, hint = [], ""
         if payload is None:
             hint = "还没有已保存的策略 —— 先在「📈 单股回测」里保存一个带参数的配方"
-        elif payload.get("index"):
-            hint = "⚠ 该策略带指数门控，本页暂不支持（请用不带门控的配方）"
+        elif index_gate_enabled(payload.get("index")):
+            # ★1.70 / §11.5-128：判据必须是 `enabled` —— 旧写法 `payload.get("index")` 对
+            #   **非空字典恒为真**，于是"门控面板填过、开关没打开"的策略被误判成"带门控"，
+            #   参数列表**永远为空**（用户实测："我在 M1 保存的方案，参数研究里看不见"）。
+            hint = "⚠ 该策略带指数门控（已启用），本页暂不支持（请用不带门控的配方）"
         else:
             try:
                 # ★1.66：走 `segments_of`（旧档回落 = `function`）—— 只读 `segments` 的话，

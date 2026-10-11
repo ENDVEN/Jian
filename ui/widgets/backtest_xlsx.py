@@ -24,6 +24,7 @@ from openpyxl.drawing.line import LineProperties
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from core.backtest import EXIT_REASON_LABELS, T1_SUMMARY, fill_summary
+from data.strategy_store import index_gate_enabled   # ★1.70 / §11.5-128：门控要判 `enabled`
 from ui.widgets.backtest_export import (build_daily_series, _default_stem,
                                         risk_readable)
 
@@ -45,7 +46,7 @@ def _append_detail_sheet(ws, result, meta: dict) -> None:
     fill = meta.get("fill") or {}
     ws.append(["成交模型", fill_summary(fill.get("fill_mode"), fill.get("trigger_tick"))])
     ws.append(["", T1_SUMMARY])
-    index = meta.get("index")
+    index = meta.get("index") if index_gate_enabled(meta.get("index")) else None
     if index:
         ws.append(["指数门控", "已启用 {}（买入许可: {} / 卖出破位: {}）".format(
             index.get("symbol"), index.get("expr_buy") or "—", index.get("expr_sell") or "—")])

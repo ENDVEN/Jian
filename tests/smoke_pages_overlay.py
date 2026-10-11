@@ -5279,9 +5279,13 @@ try:
 
     # ---- ★R2：预设"三级"（口径 → 窗口 → 取近 N 组），不再平铺几十条 ----
     _f2 = _psw.form
-    check(f"★R2：口径下拉只剩 4 项（3 类 + 自定义）—— 实测 {_f2.cb_interval_kind.count()} 项",
-          _f2.cb_interval_kind.count() == 4
-          and _f2.cb_interval_kind.itemData(3) == "custom")
+    # ★1.70 / §11.5-129：口径下拉**多了一项兜底「按本机数据对折」**（无切块缓存时的唯一出路，
+    #   用户实测"样本区间根本选不了"驱动）⇒ 按 §11.5-123 ③ 的纪律，老断言从"数项数"改成
+    #   **逐项点名**（新增项不该把老断言带红，但也不许悄悄多/少项）。
+    _kinds20 = [_f2.cb_interval_kind.itemData(_i)
+                for _i in range(_f2.cb_interval_kind.count())]
+    check(f"★R2 + §11.5-129：口径下拉 = 3 类 regime + 兜底「对折」 + 自定义（实测 {_kinds20}）",
+          _kinds20 == ["up>down", "down>up", "sideways>sideways", "fold", "custom"])
     # ⚠ ★R7 起，窗口下拉**末尾会多一项「合并全部」**（≥2 对窗口时）⇒ 这些断言一律
     #   **只数单段窗口项**（把合并项排除），否则会被新功能带红（实测踩过）。
     _win_items2 = lambda: [_f2.cb_preset.itemText(_i)                # noqa: E731
@@ -5607,7 +5611,14 @@ try:
     with tempfile.TemporaryDirectory(prefix="jian_recut_") as _td3:
         _msg3 = _psw._rebuild_regimes(path=os.path.join(_td3, "index_regimes.json"))
         check(f"★R3：真点重算 ⇒ 回执「{_msg3[:34]}…」（写**临时**缓存 + 刷新左右两栏）",
-              ("切块已重算" in _msg3) if _has_idx3 else ("预下载" in _msg3))
+              ("切块已重算" in _msg3) if _has_idx3 else ("下载上证指数" in _msg3))
+        # ★1.70 / §11.5-129：缺数据时不许只说"去预下载"—— 回执要**就地可见**且给出**两条出路**
+        #   （一键补指数 / 按本机数据对折）；旧版只写左栏「数据回执」⇒ 用户判定"点了没用"。
+        if not _has_idx3:
+            check("★ 1.70 / §11.5-129：缺数据回执**写在切块卡内**（按钮旁边）且同时给出"
+                  "「一键下载」与「对折」两条出路",
+                  ("对折" in _msg3) and "下载上证指数" in _msg3
+                  and _psw.lbl_recut.text() == _msg3 and not _psw.lbl_recut.isHidden())
         check("★R3：重算后时间轴仍可用（有段或诚实空提示）",
               len(_psw.timeline._segments) > 0 or bool(_psw.timeline._hint))
     _f2.cb_interval_kind.setCurrentIndex(2)      # 还原「震荡箱体」（后续段落还用）
@@ -5677,6 +5688,271 @@ for _name in ("annotations.json", "formula_library.json", "watchlist.json",
             if _untouched:
                 print(f"  [说明] {_name} 被外部改动过，但我们关心的键逐值一致 ⇒ 判定未污染")
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)
+
+# ==========================================
+# §11.5-129 · 「⟳ 重新切块」点了像没反应 + 没切块时区间被锁死 —— ★1.70
+#   用户实测（2026-10-11）："我点击这个重新切块没用啊，而且因为这个没用导致我样本区间根本选不了。"
+#   实况（本机 `index_daily` 分区为空、无 `index_regimes.json`）：
+#     ① 切块算不出来 ⇒ 回执**只写进左栏「数据回执」**，按钮旁边毫无变化 ⇒ 用户判定"这按钮没用"；
+#     ② 没有切块 ⇒ 窗口下拉是空的，四格还是控件初值 ⇒ **整页被锁死**（选不了区间就跑不了）。
+#   修法：① 回执**就地**写进切块卡（`lbl_recut`，按钮正下方）+ 缺数据时露出「⬇ 下载上证指数」
+#        （`SingleSyncWorker(zone=ZONE_INDEX)`，补完**自动重切**）；
+#        ② 口径下拉常驻「按本机数据对折（无需切块）」——只用所选标的的**本机数据范围**对折，
+#        离线也能开跑（且必须过 `validate_interval`，否则等于换个方式选不了）。
+# ==========================================
+print("\n== §11.5-129 · 切块：回执就地 + 没指数也能选区间 ==")
+try:
+    import pathlib as _pl129  # noqa: E402
+
+    from core.sweep_plan import validate_interval as _vi129  # noqa: E402
+
+    _tabs129 = getattr(win.page_backtest, 'tabs', None)
+    _ps129 = next((_tabs129.widget(i) for i in range(_tabs129.count())
+                   if type(_tabs129.widget(i)).__name__ == 'ParamSweepView'), None)
+    _card129 = _ps129.lbl_recut.parentWidget()
+    check("★ 1.70 / §11.5-129：切块回执 `lbl_recut` 与「⬇ 下载上证指数」都在**切块卡内**"
+          "（按钮旁边，不再只写左栏）",
+          _ps129.lbl_recut.parentWidget() is _card129
+          and _ps129.btn_fetch_index.parentWidget() is not None
+          and '上证指数' in _ps129.btn_fetch_index.text())
+
+    # —— 缺指数数据时：口径对 + 出路露出（用**桩湖**注入"没有指数数据"，不受真机数据影响）——
+    class _NoIndexLake129:                      # 鸭子类型：只有 exists/load_data（§10 分层）
+        def exists(self, *_a, **_k):
+            return False
+
+        def load_data(self, *_a, **_k):
+            raise AssertionError("缺数据时不该去读它")
+
+    _keep_lake129 = _ps129._lake
+    _ps129._lake = _NoIndexLake129()
+    try:
+        _msg129 = _ps129._rebuild_regimes()
+        _shown129 = (not _ps129.lbl_recut.isHidden()) and _ps129.lbl_recut.text() == _msg129
+        _btn129 = not _ps129.btn_fetch_index.isHidden()
+        _has_way129 = ('下载上证指数' in _msg129) and ('对折' in _msg129)
+    finally:
+        _ps129._lake = _keep_lake129
+    check("★ 1.70 / §11.5-129：缺指数数据 ⇒ 回执**就地可见** + 「⬇ 下载上证指数」露面 + "
+          "文案给出两条出路（一键补 / 对折）", _shown129 and _btn129 and _has_way129)
+    _ps129._recut_receipt("（自检用）", need_index=False)
+    check("★ 1.70 / §11.5-129：有数据/自检后下载按钮收起（有数据就不在界面上添乱）",
+          _ps129.btn_fetch_index.isHidden())
+
+    # —— 兜底口径：无切块也能选区间，且**必须能过区间校验** ——
+    _ps129._load_regimes()          # 重新装配口径项（不依赖前面那些块动过 combo 的后果）
+    for _ in range(3):
+        app.processEvents()
+    _cb129 = _ps129.form.cb_interval_kind
+    _fold_idx129 = _cb129.findData('fold')
+    check("★ 1.70 / §11.5-129：口径下拉常驻「按本机数据对折（无需切块）」"
+          "（没有切块缓存时用户唯一能走的路）",
+          _fold_idx129 >= 0 and '对折' in _cb129.itemText(_fold_idx129))
+    _keep_range129 = getattr(_ps129.form, '_data_range', ("", ""))
+    try:
+        _ps129.form.set_data_range('2019-01-01', '2023-12-31')
+        _cb129.setCurrentIndex(_fold_idx129)
+        for _ in range(4):
+            app.processEvents()
+        _iv129 = _ps129.form.interval()
+        check("★ 1.70 / §11.5-129：选「对折」⇒ 四格按本机数据范围**自动填好且通过区间校验**"
+              "（能选就能跑，不是换个方式选不了）",
+              _iv129.is_start == '2019-01-01' and _iv129.is_end < _iv129.oos_start
+              and _iv129.oos_end == '2023-12-31' and not _vi129(_iv129))
+        _ps129.form._data_range = ("", "")
+        _ps129.form._apply_kind(apply_default=False)
+        check("★ 1.70 / §11.5-129：连数据范围都没有 ⇒ **如实说缺什么**（绝不把无效日期留在四格）",
+              '对折需要先知道本机数据范围' in _ps129.form.lbl_interval.text())
+    finally:
+        _ps129.form._data_range = _keep_range129
+        _ps129.form._apply_kind(apply_default=False)
+
+    _sr129 = _pl129.Path('ui/widgets/sweep_regimes.py').read_text(encoding='utf-8')
+    _sf129 = _pl129.Path('ui/widgets/sweep_form.py').read_text(encoding='utf-8')
+    check("★ 1.70 / §11.5-129：一键补指数走**全站唯一线程件** + 指数分区（不另造 QThread）",
+          'SingleSyncWorker(' in _sr129 and 'zone=ZONE_INDEX' in _sr129
+          and 'Thread(' not in _sr129)
+    check("★ 1.70 / §11.5-129：对折用的是 `core.index_regimes.fold_pair`（口径唯一真源）",
+          'fold_pair' in _sf129)
+except Exception as _e129:  # noqa: BLE001
+    check(f"§11.5-129 切块断言整段抛异常: {type(_e129).__name__}: {_e129}", False)
+
+# ==========================================
+# §11.5-128 · "非空字典恒为真"把参数研究整页废掉 —— ★1.70
+#   用户实测（2026-10-11）："我在 M1 保存的方案，为什么参数研究里看不见？"
+#   实况：那条策略的 `index = {"enabled": false, ...}`（**门控没启用**），而各处写的是
+#        `if payload.get("index"):` ⇒ 非空字典恒真 ⇒ 判成"带指数门控、本页不支持"：
+#        ① 参数研究拒绝列出参数（下拉项还被标上"本页暂不支持"）；② 导出/报告把"未启用"谎报成"已启用"。
+#   修法：判据收成**一个函数** `strategy_store.index_gate_enabled(cfg)`（判 `enabled`），
+#        与运行期权威口径同源（`_index_signature` / `_apply_index_config`），8 处调用点全部改用它。
+# ==========================================
+print("\n== §11.5-128 · 门控判据：非空字典 ≠ 已启用 ==")
+try:
+    import pathlib as _pl128  # noqa: E402
+
+    from data.strategy_store import index_gate_enabled as _ig128  # noqa: E402
+
+    check("★ 1.70 / §11.5-128：`index_gate_enabled` 判 `enabled`（正负对照 + 脏值一律 False）",
+          _ig128({"enabled": False, "symbol": "sh000001", "buy": {}}) is False
+          and _ig128({"enabled": True, "symbol": "sh000001"}) is True
+          and _ig128({}) is False and _ig128(None) is False and _ig128("x") is False)
+
+    _tabs128 = getattr(win.page_backtest, 'tabs', None)
+    _ps128 = next((_tabs128.widget(i) for i in range(_tabs128.count())
+                   if type(_tabs128.widget(i)).__name__ == 'ParamSweepView'), None)
+    _pl_off = {'name': '★门控未启用', 'symbol': '600519',
+               'condition_buy': {'logic': 'all', 'n': 1,
+                                 'conditions': [{'variable': 'X', 'rule': 'eq', 'value': 1.0}]},
+               'segments': ['X := C > MA(C,5);'],
+               'index': {'enabled': False, 'symbol': 'sh000001', 'buy': {}, 'sell': {}}}
+    _ps128.form.set_strategies([dict(_pl_off)])
+    _txt_off = _ps128.form.cb_strategy.itemText(0)
+    check("★ 1.70 / §11.5-128：门控**未启用**的策略不再被标成「本页暂不支持」"
+          "（旧版被判成带门控 ⇒ 参数一片空白）", '暂不支持' not in _txt_off)
+    _pl_on = dict(_pl_off)
+    _pl_on['index'] = {'enabled': True, 'symbol': 'sh000001'}
+    _ps128.form.set_strategies([dict(_pl_on)])
+    check("★ 负向对照：门控**已启用**的策略仍被如实标注「本页暂不支持」",
+          '暂不支持' in _ps128.form.cb_strategy.itemText(0))
+    _ps128.refresh_page()                      # 还原真实名单（stub 过 save，不落盘）
+
+    _src128 = '\n'.join(_pl128.Path(f).read_text(encoding='utf-8')
+                        for f in ('ui/widgets/sweep_input.py', 'ui/views/param_sweep.py',
+                                  'ui/widgets/sweep_form.py'))
+    check("★ 1.70 / §11.5-128：参数研究三处判据**全部改用同一函数**"
+          "（源码里不再有 `if payload.get(\"index\"):` 这类真值判断）",
+          'index_gate_enabled' in _src128
+          and 'if payload.get("index"):' not in _src128
+          and 'if p.get("index"):' not in _src128
+          and 'bool(payload.get("index"))' not in _src128)
+    _rep128 = '\n'.join(_pl128.Path(f).read_text(encoding='utf-8')
+                        for f in ('ui/widgets/backtest_xlsx.py', 'ui/widgets/backtest_export.py',
+                                  'ui/widgets/backtest_report.py',
+                                  'ui/widgets/backtest_history_ui.py'))
+    check("★ 1.70 / §11.5-128：导出 / 报告 / 历史四处也不再谎报门控"
+          "（`index = … if index_gate_enabled(…)`）",
+          _rep128.count('if index_gate_enabled(meta.get("index")) else None') == 4)
+except Exception as _e128:  # noqa: BLE001
+    check(f"§11.5-128 门控判据断言整段抛异常: {type(_e128).__name__}: {_e128}", False)
+
+# ==========================================
+# §11.5-127 · M1 配置抽屉排版：**每一张卡都必须放得进抽屉** —— ★1.70
+#   用户实测（2026-10-11）：卡片内容"全挤在一处、后面的完全看不到，拉长窗口也不显示"。
+#   实测根因：`买卖条件` / `大盘门控` 两卡把"买入 + 卖出"**并排**放（各让出半幅），
+#   而一组条件行最小 ~400 ⇒ 卡片最小宽 **846** > 抽屉 525 ⇒ 右侧那组被压到 ~130、内容截断；
+#   `风控` 四项挤一行（最小 666）同理；`成交模型` 主选项 + 多等多少钱挤一行（最小 532）
+#   把 `QStackedWidget` 顶到 558（叠层最小宽 = **所有页最大**）⇒ **五张卡全多一条横向滚动条**。
+#   修法：条件组**上下堆叠**、风险项 **2×2 网格**、成交模型**拆两行**、行内最小宽收窄、
+#   抽屉横向滚动改"按需"（安全网：宁可出滚动条，也不许内容凭空消失）。
+# ==========================================
+print("\n== §11.5-127 · M1 配置卡：每张都要放得进抽屉（不许截断）==")
+try:
+    import pathlib as _pl127  # noqa: E402
+
+    _tabs127 = getattr(win.page_backtest, 'tabs', None)
+    _view127 = next((_tabs127.widget(i) for i in range(_tabs127.count())
+                     if hasattr(_tabs127.widget(i), 'pane_fn')), None)
+    _drawer127 = _view127._drawer
+    _panes127 = [(a, getattr(_view127, a)) for a in dir(_view127)
+                 if a.startswith('pane_')]
+    _bad127 = [f"{a}需要{p.minimumSizeHint().width()}"
+               for _a, p in _panes127 if p.minimumSizeHint().width() > _drawer127.width()]
+    check(f"★ 1.70 / §11.5-127：五张配置卡**都放得进抽屉**"
+          f"（最小宽 ≤ 抽屉宽 {_drawer127.width()}；放不下 = 右侧内容被截断）"
+          f"（越界：{_bad127 or '无'}）", not _bad127)
+    _stack127 = _drawer127._stack
+    check("★ 1.70 / §11.5-127：叠层不宽于抽屉视口 ⇒ **不出现横向滚动条**"
+          "（旧版 `成交模型` 最小 532 把整叠顶到 558 ⇒ 五张卡全多一条滚动条）",
+          _stack127.minimumSizeHint().width()
+          <= _drawer127._scroll.viewport().width())
+    _bp127 = _pl127.Path('ui/widgets/backtest_panes.py').read_text(encoding='utf-8')
+    check("★ 1.70 / §11.5-127：条件组**上下堆叠**（不再并排半幅）+ 风险项 2×2 网格"
+          "+ 抽屉横向滚动=按需（安全网）",
+          _bp127.count('self.body_lay.addWidget(self.gate_buy)') == 1
+          and _bp127.count('self.body_lay.addWidget(self.gate_index_buy)') == 1
+          and 'QGridLayout()' in _bp127
+          and 'ScrollBarAsNeeded' in _bp127)
+except Exception as _e127:  # noqa: BLE001
+    check(f"§11.5-127 排版断言整段抛异常: {type(_e127).__name__}: {_e127}", False)
+
+# ==========================================
+# §11.5-126 · "写完函数找不到检测出口"（M1/M2/M3 一致化）—— ★1.70
+#   用户实测（2026-10-11）：在 M1 写完函数，卡在"尚未检测"不知道下一步。三页各有各的毛病：
+#     · M1 有「🩺 检测」但塞在**标题行**，抽屉窄时被挤出可视区（截图里那一行只剩标题）；
+#     · M2/M3 **根本没有检测出口**（只有"点开始扫描之后才会发现的错误"）。
+#   修法：① 卡片标题**让位**给按钮（Ignored ⇒ 按钮永远优先）；
+#         ② M1 检测按钮搬进正文流、紧跟状态回执；
+#         ③ M2/M3 新增「🩺 检测条件」+ 开扫**前置闸**，检测口径 = 内核同一道闸。
+# ==========================================
+print("\n== §11.5-126 · 写完函数要有可点的检测出口（三页一致）==")
+try:
+    import pathlib as _pl126  # noqa: E402
+
+    from PyQt6.QtWidgets import QSizePolicy as _QSP126  # noqa: E402
+
+    from core.cross_section import signal_names as _sig126  # noqa: E402
+
+    _tabs126 = getattr(win.page_backtest, 'tabs', None)
+    _subs126 = {type(_tabs126.widget(i)).__name__: _tabs126.widget(i)
+                for i in range(_tabs126.count())}
+    _ssv126 = _subs126.get('SingleStockBacktestView')
+    _scan126 = _subs126.get('ScanView')
+    _brd126 = _subs126.get('BreadthView')
+
+    # ① 标题让位（机制级断言：不依赖窗口是否已 show / 宽度是否为 0）
+    check("★ 1.70 / §11.5-126：配置卡片标题**让位**给操作按钮（窄抽屉下按钮不再被挤出可视区）",
+          _ssv126.pane_fn.lbl_title.sizePolicy().horizontalPolicy()
+          == _QSP126.Policy.Ignored)
+
+    # ② M1 检测按钮在正文流里（不在标题行）
+    _btn126 = _ssv126.pane_fn.btn_detect
+    _walk126, _in_body126 = _btn126, False
+    while _walk126 is not None:
+        if _walk126 is _ssv126.pane_fn.body:
+            _in_body126 = True
+            break
+        _walk126 = _walk126.parentWidget()
+    check("★ 1.70 / §11.5-126：M1「🩺 检测」在**正文流**里、紧跟状态回执（写完就在手边）",
+          _in_body126 and '检测' in _btn126.text())
+
+    # ③ M2/M3 共用同一份检测实现（一处改动两页都有）
+    _pane126 = _scan126._formula_pane
+    check("★ 1.70 / §11.5-126：M2/M3 共用同一份检测实现（同窗格类 ⇒ 无第二套口径）",
+          type(_brd126._formula_pane) is type(_pane126)
+          and hasattr(_pane126, 'btn_check')
+          and hasattr(_brd126._formula_pane, 'btn_check')
+          and '检测' in _pane126.btn_check.text())
+
+    # ④ 四态口径（空 / 语法错 / 通过 / 缺参）+ 变量名与内核 signal_names 同源
+    _back126 = _pane126.txt_formula.toPlainText()
+    try:
+        _pane126.txt_formula.setPlainText('')
+        _r_empty126 = _pane126.check_formula()
+        _pane126.txt_formula.setPlainText('COND := MA(C, ;')
+        _r_bad126 = _pane126.check_formula()
+        _pane126.txt_formula.setPlainText('A1 := MA(C,5);\nB2 := A1 > MA(C,20);')
+        _r_ok126 = _pane126.check_formula()
+        _msg126 = _pane126.lbl_check.text()
+        _pane126.txt_formula.setPlainText('COND := C > MA(C, N);')
+        _r_miss126 = _pane126.check_formula()
+        _msg_miss126 = _pane126.lbl_check.text()
+    finally:
+        _pane126.txt_formula.setPlainText(_back126)
+    _names126 = _sig126('A1 := MA(C,5);\nB2 := A1 > MA(C,20);')
+    check("★ 1.70 / §11.5-126：M2 检测四态正确（空 ✗ / 语法错 ✗ / 通过 ✓ / 缺参 ✗）",
+          _r_empty126 is False and _r_bad126 is False and _r_ok126 is True
+          and _r_miss126 is False and '缺少参数' in _msg_miss126)
+    check("★ 1.70 / §11.5-126：检测报告的判定变量 == 内核 `signal_names`（两套口径不许打架）",
+          all(n in _msg126 for n in _names126) and _names126[-1] in _msg126)
+
+    # ⑤ M2/M3 开扫前都过同一道闸（源码级：两页都调同一个方法名）
+    _sf126 = _pl126.Path('ui/widgets/scan_flow.py').read_text(encoding='utf-8')
+    _bf126 = _pl126.Path('ui/widgets/breadth_flow.py').read_text(encoding='utf-8')
+    check("★ 1.70 / §11.5-126：M2/M3 开扫前都过**同一道检测闸**（未通过就拦下并给同一条回执）",
+          '_formula_pane.check_formula()' in _sf126
+          and '_formula_pane.check_formula()' in _bf126)
+except Exception as _e126:  # noqa: BLE001
+    check(f"§11.5-126 检测出口断言整段抛异常: {type(_e126).__name__}: {_e126}", False)
 
 # ==========================================
 # §11.5-125 · 新用户引导（花名册为空 + 代码直通）—— ★1.70
