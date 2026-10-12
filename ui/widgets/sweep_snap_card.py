@@ -167,7 +167,9 @@ class SweepSnapshotsMixin:
                               else f"置顶失败：{rid} 读不出来")
         self._refresh_snapshots()
 
-    def _on_snap_delete(self, rid: str) -> None:
+    def _on_snap_delete(self, rid: str) -> bool:
+        """删一份快照。★1.71：**返回值 = 真的删掉了吗**（浮窗的「📚 本页方案」区要判它，
+        不能把"用户点了取消"当成"已删除"上报 —— §10-4 诚实性）。"""
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("删除快照")
@@ -177,10 +179,51 @@ class SweepSnapshotsMixin:
         box.setDefaultButton(QMessageBox.StandardButton.No)
         if box.exec() != QMessageBox.StandardButton.Yes:
             self.form.set_receipt(f"已取消删除 {rid}")
-            return
+            return False
         ok = self._archive.delete(rid)
         self.form.set_receipt(f"已删除快照 {rid}" if ok else f"删除失败（文件不在）：{rid}")
         self._refresh_snapshots()
+        return bool(ok)
+
+
+    # ==========================================
+    # ★1.71 / §7-B16：函数总库浮窗的「📚 本页方案」区 —— 本页的"方案" = **研究快照**
+    #   与 M1（策略）/ M2·M3（筛选方案）**同一个形状**（plans / plan_label / load_plan /
+    #   save / delete_plan）：浮窗只负责画与转发，存 / 载 / 删一律调**本件已有实现**。
+    #   ⚠ 用户 2026-10-12 实测："参数研究里保存方案怎么解决" —— 根因是①主窗口按页签**下标**
+    #     路由错位（§11.5-130，在 M3 上浮窗以为"本页没有方案库"）；②本页**没有**这套取口。
+    #   ⚠ 放在本件（而不是 `param_sweep.py`）：那个文件有 **≤470 行**的拆件红线（§4），
+    #     而这套取口本身就是"快照"这件事的对外投影 ⇒ 与快照行为同文件才内聚。
+    # ==========================================
+    def plans(self) -> list[dict]:
+        """本页可载入的研究快照（浮窗列表用；索引条目自带 id / name / 区间 / 门槛）。"""
+        return list(self._archive.list() or [])
+
+    @staticmethod
+    def plan_label(plan: dict) -> str:
+        """列表行第二行：标的 + 样本内 → 样本外（与浮窗其它行的口径一致）。"""
+        return (f"{plan.get('symbol') or '—'} · "
+                f"{plan.get('is_start') or '—'}~{plan.get('is_end') or '—'} → "
+                f"{plan.get('oos_start') or '—'}~{plan.get('oos_end') or '—'}")
+
+    def load_plan(self, plan_id: str) -> bool:
+        """按 id **只读回放**快照（与卡上「回看」同一实现；找不到 ⇒ False，不撒谎）。"""
+        rid = str(plan_id)
+        if self._archive.load(rid) is None:
+            return False
+        self._on_snap_replay(rid)
+        return True
+
+    def save(self) -> None:
+        """存一份研究快照（与卡上「💾 存快照」同一实现）。
+
+        ⚠ 没跑过研究 ⇒ 它自己会如实回执"还没有可存的研究结果"（不静默、不造空档）。
+        """
+        self._save_snapshot()
+
+    def delete_plan(self, plan_id: str) -> bool:
+        """删一份快照 —— **二次确认在 `_on_snap_delete` 里**（与卡上同一个入口，闸门只此一处）。"""
+        return bool(self._on_snap_delete(str(plan_id)))
 
 
 def build_snapshot_card(page) -> QWidget:

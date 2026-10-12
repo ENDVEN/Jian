@@ -5690,6 +5690,114 @@ for _name in ("annotations.json", "formula_library.json", "watchlist.json",
     check(f"未污染用户真实库 {_name}（本脚本只用临时库）", _untouched)
 
 # ==========================================
+# §11.5-131 · 代码段前缀映射要**跟着交易所扩段走**（用户 2026-10-12 实测）—— ★1.71
+#   现象（用户原话）："但凡是 920 开头的都无法下载，显示主源与兜底源均未返回数据"。
+#   根因：`_to_sina_stock_symbol` 只列了 `90`（B股），**没有 `92`**（北交所 2023 起启用的新代码段），
+#        43/83/87/88（北交所老段）也没列 ⇒ 一律返回 `""` ⇒ **新浪源被整段跳过**，
+#        全押在东财兜底上；而 akshare 的代码映射表里**没有 920** ⇒ 东财也拿不到。
+#        实测：花名册里 **349 只北交所票全是 920 开头** ⇒ **全部下不了**。
+#        而 `ak.stock_zh_a_daily('bj920000')` 实测 **668 行** ⇒ 新浪本来就有这份数据。
+# ==========================================
+print("\n== §11.5-131 · 北交所（920/43/83/87/88）必须走新浪源 ==")
+try:
+    from data.akshare_feed import AkShareFeed as _AF131  # noqa: E402
+    from data.akshare_feed import is_stock_code as _isc131  # noqa: E402
+
+    _to131 = _AF131._to_sina_stock_symbol
+    check("★ 1.71 / §11.5-131：北交所各代码段都映射到 `bj` 前缀（920 新段 + 43/83/87/88 老段）",
+          _to131("920000") == "bj920000" and _to131("430047") == "bj430047"
+          and _to131("830799") == "bj830799" and _to131("871981") == "bj871981"
+          and _to131("889999") == "bj889999")
+    check("★ 1.71 / §11.5-131：沪 / 深 / 已带前缀的写法**一律不变**（不许改坏老路径）",
+          _to131("600519") == "sh600519" and _to131("688981") == "sh688981"
+          and _to131("000001") == "sz000001" and _to131("300750") == "sz300750"
+          and _to131("sh600519") == "sh600519" and _to131("SZ000001") == "sz000001")
+    check("★ 1.71 / §11.5-131：非 6 位 / 期货码仍返回空串（交由兜底与期货路径处理）",
+          _to131("RB") == "" and _to131("IF") == "" and _to131("60051") == ""
+          and _to131("") == "")
+    check("★ 1.71 / §11.5-131：`is_stock_code` 认 920（否则下载入口就把它筛掉了）",
+          _isc131("920000") is True and _isc131("600519") is True
+          and _isc131("RB") is False)
+except Exception as _e131:  # noqa: BLE001
+    check(f"§11.5-131 北交所前缀断言整段抛异常: {type(_e131).__name__}: {_e131}", False)
+
+# ==========================================
+# §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71
+#   现象（用户原话）："我在参数研究里面却显示 m2，我在 m2 里面显示 m3，我在 m3 里面显示在回测，
+#   这直接导致我没办法在 m2 和 m3 里面保存方案"。
+#   根因：主窗口写死一张 `_BT_TAB_LABELS`（3 项、老顺序）并按 `tabs.currentIndex()` 取；
+#   而真实页签序是 **M1 · 参数研究 · M2 · M3 · 运行历史** ⇒ 整列错位一位，
+#   M3/运行历史**越界回落"回测"**；同一套下标还被 `current_formula_draft` /
+#   `current_plan_api` 用来路由 ⇒ **M3 上浮窗认为"本页没有方案库"，方案存不了**。
+#   修法 = 全部改成**按页签控件身份**分派（顺序无关）；并给参数研究补上方案 API
+#   （本页的"方案" = 既有「研究快照」）；左轨「ƒ 函数库」前缀按**实测字宽**补齐（与 emoji 项对齐）。
+# ==========================================
+print("\n== §11.5-130 · 子页签标签/路由：按身份，不按下标 ==")
+try:
+    import pathlib as _pl130  # noqa: E402
+
+    from PyQt6.QtGui import QFontMetrics as _QFM130  # noqa: E402
+
+    _mod130 = win.page_backtest
+    _cases130 = ((_mod130.backtest_single, 'M1 单股回测', 'M1'),
+                 (_mod130.page_sweep, '参数研究', 'SWEEP'),
+                 (_mod130.page_scan, 'M2 全市场筛选', 'M2M3'),
+                 (_mod130.page_breadth, 'M3 广度统计', 'M2M3'),
+                 (_mod130.page_history, '运行历史', None))
+    _saved130 = _mod130.tabs.currentIndex()
+    _bad130, _draft130 = [], {}
+    for _w130, _label130, _kind130 in _cases130:
+        _mod130.tabs.setCurrentWidget(_w130)
+        app.processEvents()
+        _got_label = win._page_label()
+        _api130 = win.current_plan_api()
+        _got_kind = (_api130 or {}).get('kind')
+        _draft130[_label130] = win.current_formula_draft() is not None
+        if _got_label != _label130 or _got_kind != _kind130:
+            _bad130.append(f'{_label130}: 标签={_got_label!r} kind={_got_kind!r}')
+    _mod130.tabs.setCurrentIndex(_saved130)
+    check(f"★ 1.71 / §11.5-130：五个子页签的**标签胶囊与方案路由逐一对齐**"
+          f"（越界：{_bad130 or '无'}）", not _bad130)
+    check("★ 1.71 / §11.5-130：**M2 与 M3 都能存方案**（都路由到 M2M3 共用池）—— "
+          "旧版 M3 越界回落 ⇒ 浮窗以为本页没有方案库",
+          _draft130.get('M2 全市场筛选') and _draft130.get('M3 广度统计'))
+    check("★ 1.71 / §11.5-130：参数研究/运行历史**没有函数区** ⇒ 草稿如实为 None"
+          "（不是「错给了别页的函数」）",
+          not _draft130.get('参数研究') and not _draft130.get('运行历史'))
+
+    _mod130.tabs.setCurrentWidget(_mod130.page_sweep)
+    app.processEvents()
+    _sweep_api130 = win.current_plan_api() or {}
+    check("★ 1.71 / §11.5-130：参数研究也有方案 API（本页「方案」= 研究快照），"
+          "且**键集与 M1/M2·M3 完全一致**（浮窗一套实现通吃）",
+          set(_sweep_api130) == {'kind', 'noun', 'hint', 'plans', 'plan_label',
+                                 'load', 'save', 'delete'}
+          and _sweep_api130['load']('SW_NOT_EXIST_130') is False)
+    _mod130.tabs.setCurrentIndex(_saved130)
+
+    # ⚠ 源码级扫描必须**先剥掉注释与文档串** —— 本仓注释大量"点名讲这件事"（§11.5-101 老坑：
+    #   断言被自家说明文字引爆）。这里只查**代码里**有没有按下标分派。
+    import re as _re130  # noqa: E402
+
+    _mw130 = _pl130.Path('ui/main_window.py').read_text(encoding='utf-8')
+    _dq130, _sq130 = '"' * 3, "'" * 3
+    _mw130_code = _re130.sub(_dq130 + r'[\s\S]*?' + _dq130 + '|' + _sq130 + r'[\s\S]*?' + _sq130,
+                             '', _mw130)
+    _mw130_code = '\n'.join(_l130.split('#', 1)[0] for _l130 in _mw130_code.splitlines())
+    check("★ 1.71 / §11.5-130：主窗口**不再按下标**分派回测子页签"
+          "（代码里无 `tabs.currentIndex()`、无 `_BT_TAB_LABELS` ⇒ 插入/重排页签不会再错位）",
+          'tabs.currentIndex()' not in _mw130_code and '_BT_TAB_LABELS' not in _mw130_code)
+
+    _fm130 = _QFM130(win.font())
+    _ref130 = _fm130.horizontalAdvance('📊 ')
+    _hub130 = _fm130.horizontalAdvance(win.btn_hub.text().split('函数库')[0])
+    check(f"★ 1.71 / §11.5-130：左轨「ƒ 函数库」的中文与其它导航项**左起对齐**"
+          f"（前缀差 {abs(_ref130 - _hub130)}px ≤ 2 —— 旧版差约 13px，整列看着「歪」）",
+          abs(_ref130 - _hub130) <= 2)
+except Exception as _e130:  # noqa: BLE001
+    check(f"§11.5-130 页签路由断言整段抛异常: {type(_e130).__name__}: {_e130}", False)
+
+# ==========================================
 # §11.5-129 · 「⟳ 重新切块」点了像没反应 + 没切块时区间被锁死 —— ★1.70
 #   用户实测（2026-10-11）："我点击这个重新切块没用啊，而且因为这个没用导致我样本区间根本选不了。"
 #   实况（本机 `index_daily` 分区为空、无 `index_regimes.json`）：
@@ -6466,13 +6574,20 @@ try:
     #   用户口径："M1 的保存当前/移除、M2/M3 的载入/存为/管理，本质是同一件事" ⇒
     #   统一收进浮窗，且**必须认出当前页**（否则在 M1 打开、切到 M2 还能载入 M1 的策略 = 静默错配）。
     win.switch_to('backtest')
-    win.page_backtest.tabs.setCurrentIndex(0)
+    # ★1.71 / §11.5-130：**按页签控件切**（旧版用 `setCurrentIndex(1)` 期望 M2 —— 那正是"错位一位"
+    #   的旧行为：index 1 其实是参数研究）。判据与实现同源 = 按身份。
+    _modH6 = win.page_backtest
+    _modH6.tabs.setCurrentWidget(_modH6.backtest_single)
     _api_m1 = win.current_plan_api()
-    win.page_backtest.tabs.setCurrentIndex(1)
+    _modH6.tabs.setCurrentWidget(_modH6.page_sweep)
+    _api_sweep = win.current_plan_api()
+    _modH6.tabs.setCurrentWidget(_modH6.page_scan)
     _api_m2 = win.current_plan_api()
     win.switch_to('market')
-    check("★ B16 H6：方案区**认当前页**（M1=策略 / M2=筛选方案 / 行情页=无方案库）",
+    check("★ B16 H6：方案区**认当前页**（M1=策略 / 参数研究=研究快照 / M2·M3=筛选方案 / "
+          "行情页=无方案库）",
           _api_m1 is not None and _api_m1['kind'] == 'M1' and _api_m1['noun'] == '策略'
+          and _api_sweep is not None and _api_sweep['kind'] == 'SWEEP'
           and _api_m2 is not None and _api_m2['kind'] == 'M2M3'
           and win.current_plan_api() is None)
     win.switch_to('backtest')
@@ -6530,7 +6645,7 @@ try:
     check("★ B16 H7：切到别的页 ⇒ 随页收起（页面内悬浮的必然结果，不再跨页打扰）",
           _panel82.isHidden())
     win.switch_to('backtest')
-    win.page_backtest.tabs.setCurrentIndex(1)
+    win.page_backtest.tabs.setCurrentWidget(win.page_backtest.page_scan)   # ★1.71：按身份切（§11.5-130）
     win.show_formula_hub_panel()
     _m2_plans = win.current_plan_api()['plans']()
     _m2_ids = {f'p:{plan["id"]}' for plan in _m2_plans}

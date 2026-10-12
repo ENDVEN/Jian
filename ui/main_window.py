@@ -39,6 +39,7 @@ from ui.dialogs.list_manager import ListManagerDialog
 from ui.dialogs.manual_entry import ManualEntryDialog
 from ui.dialogs.import_futures import FuturesImportDialog
 from ui.views.settings_view import SettingsView      # ★v6.73 / §7-B13 S2-0：设置页（S2 双栏）
+from PyQt6.QtGui import QFontMetrics                 # ★1.71 / §11.5-130：导航前缀宽度对齐（实测字宽）
 from ui.widgets.styles import apply_ui_font           # ★1.69 / §10-15：界面字体唯一出口
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,10 @@ class JianMainWindow(QMainWindow):
         # ★1.61 / §7-B16：「ƒ 函数库」插队（用户拍板的落位 = 回测与数据管理之间）——
         #   它是函数资产的"中立的家"；设置页"最下方固定"的口径不受影响（仍加在 addStretch 之后）。
         self.btn_hub = QPushButton("ƒ 函数库")
+        # ★1.71 / §11.5-130：把前缀补足到其它导航项（emoji）的宽度 —— 否则"函数库"三个字比别行的
+        #   中文**左起约 13px**，整列看着"歪"（用户 2026-10-12 实测："这个函数库对齐，歪着难受"）。
+        #   宽度按**实测字宽**算（字体栈已由 §10-15 钉死 ⇒ 可复现），不写死空格数。
+        self.btn_hub.setText(self._nav_label_with_icon_pad("ƒ", "函数库"))
         self.btn_data = QPushButton("🗄 数据管理")
         
         for btn in [self.btn_overview, self.btn_records, self.btn_review, self.btn_market,
@@ -302,7 +307,18 @@ class JianMainWindow(QMainWindow):
     #     不会跨页活到下次启动，开机自动弹一块浮层只会在仪表盘上白占地方。
     _formula_hub_panel = None
     _hub_host = None                 # 浮窗当前挂在哪个页面（页面内悬浮的宿主）
-    _BT_TAB_LABELS = ('M1 单股回测', 'M2 全市场筛选', 'M3 广度统计')
+
+    def _nav_label_with_icon_pad(self, icon: str, text: str) -> str:
+        """`icon + text` ⇒ 让 `text` 与"emoji + text"那类导航项的中文**左起对齐**（§11.5-130）。
+
+        【为什么】其余导航项前缀是 emoji（实测约 18px），而 `ƒ` 只有约 5px ⇒ 中文左起差 ~13px。
+          宽度按实测算（不写空格数）：字体栈由 §10-15 钉死，同一台机器可复现。
+        """
+        fm = QFontMetrics(self.font())
+        want = fm.horizontalAdvance("📊 ")          # 其它项的前缀实测宽（emoji + 一个空格）
+        space = max(1, fm.horizontalAdvance(" "))
+        pad = max(1, round((want - fm.horizontalAdvance(icon)) / space))
+        return f"{icon}{' ' * pad}{text}"
 
     def _hub_ui(self) -> dict:
         """读浮窗界面态 —— **坏数据逐字段回落**（§9-D：绝不因为一个坏键把浮窗搞没）。"""
@@ -322,6 +338,27 @@ class JianMainWindow(QMainWindow):
         data.update(changes)
         preferences.set(HUB_UI_KEY, data)
 
+    def _bt_tab_name(self, tab) -> str:
+        """回测模块**子页签**的人话短名 —— **按控件身份**取，绝不按下标（★1.71 / §11.5-130）。
+
+        【踩过的坑 · 用户 2026-10-12 实测】本处原写死一张 `_BT_TAB_LABELS` 元组并按
+          `tabs.currentIndex()` 取；而子页签顺序是 **M1 · 参数研究 · M2 · M3 · 运行历史**
+          （`backtest_module` 装配序）⇒ 整列**错位一位**：参数研究显示"M2 全市场筛选"、
+          M2 显示"M3 广度统计"、M3 与运行历史**越界回落"回测"**。
+          同一张下标表还被 `current_formula_draft` / `current_plan_api` 用来路由 ⇒
+          **在 M3 上浮窗以为"本页没有方案库"，方案根本存不了**（用户："没法在 m2/m3 存方案"）。
+        ⇒ 判据改成"**这个页签控件是谁**"：将来谁插入/重排页签都不会再错位（顺序无关）。
+        """
+        view = self.page_backtest
+        for widget, label in ((getattr(view, 'backtest_single', None), 'M1 单股回测'),
+                              (getattr(view, 'page_sweep', None), '参数研究'),
+                              (getattr(view, 'page_scan', None), 'M2 全市场筛选'),
+                              (getattr(view, 'page_breadth', None), 'M3 广度统计'),
+                              (getattr(view, 'page_history', None), '运行历史')):
+            if widget is not None and tab is widget:
+                return label
+        return '回测'
+
     def _page_label(self, page=None) -> str:
         """当前页的人话名（浮窗标题旁那枚上下文胶囊）。
 
@@ -330,8 +367,7 @@ class JianMainWindow(QMainWindow):
         """
         page = page if page is not None else self.content_area.currentWidget()
         if page is self.page_backtest:
-            idx = self.page_backtest.tabs.currentIndex()
-            return self._BT_TAB_LABELS[idx] if 0 <= idx < len(self._BT_TAB_LABELS) else '回测'
+            return self._bt_tab_name(self.page_backtest.tabs.currentWidget())
         for attr, label in (('page_market', '市场行情'), ('page_hub', 'ƒ 函数库'),
                             ('page_overview', '资金与表现'), ('page_records', '交易流水'),
                             ('page_review', '深度复盘'), ('page_data', '数据管理'),
@@ -455,13 +491,16 @@ class JianMainWindow(QMainWindow):
             pairs = segments_as_tuples({"segments": asset.get("segments")})
             n = self.page_market.receive_formula(pairs, params, source_label="函数总库")
         elif cur is self.page_backtest:
-            idx = self.page_backtest.tabs.currentIndex()
-            if idx == 0:
-                n = self.page_backtest.backtest_single.load_formula_from_external(texts, params)
-            elif idx == 1:
-                n = self.page_backtest.page_scan.load_formula_from_hub(texts, params)
-            elif idx == 2:
-                n = self.page_backtest.page_breadth.load_formula_from_hub(texts, params)
+            # ★1.71 / §11.5-130：**按身份**分派 —— 旧版按下标 ⇒ 在参数研究里点「载入到本页」
+            #   会**悄悄载进看不见的 M2**（idx 1 实际是参数研究），用户完全察觉不到。
+            view = self.page_backtest
+            tab = view.tabs.currentWidget()
+            if tab is getattr(view, 'backtest_single', None):
+                n = view.backtest_single.load_formula_from_external(texts, params)
+            elif tab is getattr(view, 'page_scan', None):
+                n = view.page_scan.load_formula_from_hub(texts, params)
+            elif tab is getattr(view, 'page_breadth', None):
+                n = view.page_breadth.load_formula_from_hub(texts, params)
         if n:
             get_formula_store().touch(asset.get('id'))   # 载入即 used_at（列表的"最近使用"据此排）
             self._hub_say(f'⤓ 已载入「{asset.get("name")}」到本页（{n} 段）—— '
@@ -497,14 +536,16 @@ class JianMainWindow(QMainWindow):
         if cur is self.page_market:
             return self.page_market._formula.current_formula_draft() or None
         if cur is self.page_backtest:
+            # ★1.71 / §11.5-130：**按页签控件身份**分派（旧版按下标 ⇒ 错位一位，见 `_bt_tab_name`）。
             view = self.page_backtest
-            idx = view.tabs.currentIndex()
-            if idx == 0:
+            tab = view.tabs.currentWidget()
+            if tab is getattr(view, 'backtest_single', None):
                 return view.backtest_single.current_formula_draft()
-            if idx == 1:
+            if tab is getattr(view, 'page_scan', None):
                 return view.page_scan.current_formula_draft()
-            if idx == 2:
+            if tab is getattr(view, 'page_breadth', None):
                 return view.page_breadth.current_formula_draft()
+            # 参数研究 / 运行历史：没有自己的函数编辑区 ⇒ 如实给 None（浮窗会说"本页没有函数"）
         return None
 
     def current_plan_api(self) -> dict | None:
@@ -517,21 +558,31 @@ class JianMainWindow(QMainWindow):
         if cur is not self.page_backtest:
             return None
         view = self.page_backtest
-        idx = view.tabs.currentIndex()
-        if idx == 0:
+        tab = view.tabs.currentWidget()          # ★1.71 / §11.5-130：按**身份**分派，不按下标
+        if tab is getattr(view, 'backtest_single', None):
             br = view.backtest_single.strategy
             return {'kind': 'M1', 'noun': '策略',
                     'hint': '策略 = 函数 + 买卖条件 + 风控 + 区间；每条的结果在「🗂 运行历史」里',
                     'plans': br.plans, 'plan_label': br.plan_label,
                     'load': br.load_plan, 'save': br.save, 'delete': br.delete_plan}
-        if idx in (1, 2):
-            page = view.page_scan if idx == 1 else view.page_breadth
+        if tab is getattr(view, 'page_scan', None) or tab is getattr(view, 'page_breadth', None):
+            # M2 / M3 **共用一份方案池**（同一份 `scan_strategies`）⇒ 在哪页存都看得见
+            page = view.page_scan if tab is view.page_scan else view.page_breadth
             br = page._strategy
             return {'kind': 'M2M3', 'noun': '筛选方案',
                     'hint': '筛选方案 = 函数 + 粗筛阈值 + 统计范围 + 复权口径（M2 / M3 共用一份池）',
                     'plans': br.plans, 'plan_label': br.plan_label,
                     'load': br.load_plan, 'save': br.save, 'delete': br.delete_plan}
-        return None
+        if tab is getattr(view, 'page_sweep', None):
+            # ★1.71：参数研究此前**没有**这套取口（主窗口错位 + 页面未提供）⇒ 用户"在参数研究里
+            #   存不了方案"。本页的方案 = **研究快照**（已存在的 §R5b 能力），这里只是把同一个
+            #   存/载/删**暴露给浮窗**（存删实现仍是页面那一份，不另写）。
+            page = view.page_sweep
+            return {'kind': 'SWEEP', 'noun': '研究快照',
+                    'hint': '研究快照 = 策略 + 参数网格 + 样本内/样本外区间（回看只读，不会重跑）',
+                    'plans': page.plans, 'plan_label': page.plan_label,
+                    'load': page.load_plan, 'save': page.save, 'delete': page.delete_plan}
+        return None                              # 运行历史：没有可存的"方案"概念
 
     def send_asset_to_page(self, asset: dict, target: str) -> int:
         """总库「送 ↗」：切到目标页并载入（**只回填，绝不运行** —— 红线①）。"""
@@ -544,11 +595,13 @@ class JianMainWindow(QMainWindow):
             n = self.page_market.receive_formula(pairs, params, source_label="函数总库")
         elif target == 'backtest':
             self.switch_to('backtest')
-            self.page_backtest.tabs.setCurrentIndex(0)
+            # ★1.71 / §11.5-130：**按控件切页签**（旧版 `setCurrentIndex(1)` 指 M2 —— 现在 index 1
+            #   是参数研究 ⇒ 「送 ↗ 到全市场筛选」会切错页、把函数塞进看不见的那一页）
+            self.page_backtest.tabs.setCurrentWidget(self.page_backtest.backtest_single)
             n = self.page_backtest.backtest_single.load_formula_from_external(texts, params)
         elif target == 'scan':
             self.switch_to('backtest')
-            self.page_backtest.tabs.setCurrentIndex(1)
+            self.page_backtest.tabs.setCurrentWidget(self.page_backtest.page_scan)
             n = self.page_backtest.page_scan.load_formula_from_hub(texts, params)
         if n:
             get_formula_store().touch(asset.get('id'))
