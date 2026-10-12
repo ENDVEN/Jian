@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>C · 事件对齐图（命中 ±20 日） · Jian 设计稿</title>
+<link rel="stylesheet" href="_style.css"></head><body>
+<div class="mock-head"><h1>C · 事件对齐图（命中 ±20 日）</h1>
+  <span class="ver">design/1.72-m3-multi-plan-ui</span>
+  <span class="badge-draft">设计稿 · 未实现</span></div>
+<div class="row" style="margin:2px 0 14px"><a class="btn ghost" href="b-多行小图.html">B 多行小图</a><a class="btn ghost" href="e-选图规则.html">E 选图规则</a><a class="btn" href="c-事件对齐图.html">C 事件对齐图</a><a class="btn ghost" href="d-K线色带与关系卡.html">D K线色带+关系卡</a><a class="btn ghost" href="a-多方案叠加.html">A 多方案叠加</a><a class="btn ghost" href="index.html">总览</a></div>
+
+<div class="lead">把每一次"命中"当成一个<b>事件</b>，把指数<b>按事件对齐</b>后取平均 —— 这就是回答
+  「80 和 20 跟进指数到底什么关系」最直观的一张图：<b>一条在命中前就涨完了、一条在命中后才起来</b>。</div>
+
+<div class="card">
+  <div class="row spread">
+    <div class="row">
+      <span class="chip"><i class="dot" style="background:#E53935"></i>量价情绪 ≥80</span>
+      <span class="chip"><i class="dot" style="background:#1E88E5"></i>量价情绪 &lt;20</span>
+      <span class="chip">＋ 添加条件</span>
+    </div>
+    <div class="row">
+      <span class="select">对齐基准：上证指数（sh000001） ▾</span>
+      <span class="toggle"><span class="on">20 日</span><span>10 日</span><span>5 日</span></span>
+    </div>
+  </div>
+  <div class="sep"></div>
+  <h2>事件对齐：命中 ±20 个交易日的指数平均路径</h2>
+  <div class="hint">粗线 = 均值路径 · 阴影 = ±1 倍标准误（越靠两端样本越少、带越宽）·
+    中位数与均值同时算，差距大时在结论条里说明</div>
+  <div class="chart-wrap"><svg viewBox="0 0 980 300" preserveAspectRatio="none" height="300"><line x1="52" y1="16.0" x2="964" y2="16.0" stroke="#EDF0F5" stroke-width="1"/><line x1="52" y1="78.5" x2="964" y2="78.5" stroke="#EDF0F5" stroke-width="1"/><line x1="52" y1="141.0" x2="964" y2="141.0" stroke="#EDF0F5" stroke-width="1"/><line x1="52" y1="203.5" x2="964" y2="203.5" stroke="#EDF0F5" stroke-width="1"/><line x1="52" y1="266.0" x2="964" y2="266.0" stroke="#EDF0F5" stroke-width="1"/><line x1="52.0" y1="16" x2="52.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><line x1="166.0" y1="16" x2="166.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><line x1="280.0" y1="16" x2="280.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><line x1="394.0" y1="16" x2="394.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><line x1="508.0" y1="16" x2="508.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><line x1="622.0" y1="16" x2="622.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><line x1="736.0" y1="16" x2="736.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><line x1="850.0" y1="16" x2="850.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><line x1="964.0" y1="16" x2="964.0" y2="266" stroke="#EDF0F5" stroke-width="1"/><polygon points="52.0,199.9 74.8,197.1 97.6,194.2 120.4,191.4 143.2,188.6 166.0,185.8 188.8,183.1 211.6,180.3 234.4,177.6 257.2,174.9 280.0,172.2 302.8,169.5 325.6,166.9 348.4,164.4 371.2,161.9 394.0,159.6 416.8,157.3 439.6,155.3 462.4,153.5 485.2,152.4 508.0,154.9 530.8,150.1 553.6,149.0 576.4,148.4 599.2,148.2 622.0,148.2 644.8,148.3 667.6,148.5 690.4,148.7 713.2,149.1 736.0,149.4 758.8,149.9 781.6,150.3 804.4,150.8 827.2,151.2 850.0,151.7 872.8,152.3 895.6,152.8 918.4,153.3 941.2,153.9 964.0,154.4 964.0,210.9 941.2,208.9 918.4,206.9 895.6,204.9 872.8,202.8 850.0,200.6 827.2,198.5 804.4,196.3 781.6,194.0 758.8,191.7 736.0,189.4 713.2,187.0 690.4,184.5 667.6,181.9 644.8,179.2 622.0,176.4 599.2,173.5 576.4,170.3 553.6,166.8 530.8,162.7 508.0,154.9 485.2,165.0 462.4,171.4 439.6,177.1 416.8,182.6 394.0,187.8 371.2,192.9 348.4,197.8 325.6,202.6 302.8,207.4 280.0,212.1 257.2,216.7 234.4,221.3 211.6,225.8 188.8,230.3 166.0,234.7 143.2,239.1 120.4,243.5 97.6,247.8 74.8,252.1 52.0,256.4" fill="#E53935" fill-opacity="0.10"/><polygon points="52.0,25.6 74.8,31.5 97.6,37.4 120.4,43.3 143.2,49.2 166.0,55.2 188.8,61.1 211.6,67.0 234.4,73.0 257.2,79.0 280.0,85.1 302.8,91.1 325.6,97.2 348.4,103.4 371.2,109.7 394.0,116.0 416.8,122.5 439.6,129.1 462.4,136.1 485.2,143.6 508.0,154.9 530.8,145.9 553.6,140.6 576.4,135.9 599.2,131.6 622.0,127.4 644.8,123.3 667.6,119.3 690.4,115.4 713.2,111.6 736.0,107.8 758.8,104.0 781.6,100.3 804.4,96.6 827.2,92.9 850.0,89.2 872.8,85.6 895.6,82.0 918.4,78.3 941.2,74.7 964.0,71.1 964.0,127.6 941.2,129.7 918.4,131.9 895.6,134.0 872.8,136.1 850.0,138.1 827.2,140.2 804.4,142.1 781.6,144.0 758.8,145.9 736.0,147.7 713.2,149.5 690.4,151.1 667.6,152.7 644.8,154.2 622.0,155.6 599.2,156.8 576.4,157.8 553.6,158.5 530.8,158.5 508.0,154.9 485.2,156.3 462.4,153.9 439.6,151.0 416.8,147.7 394.0,144.2 371.2,140.6 348.4,136.8 325.6,132.9 302.8,129.0 280.0,125.0 257.2,120.9 234.4,116.8 211.6,112.6 188.8,108.3 166.0,104.1 143.2,99.7 120.4,95.4 97.6,91.0 74.8,86.6 52.0,82.1" fill="#1E88E5" fill-opacity="0.10"/><polyline points="52.0,228.1 74.8,224.6 97.6,221.0 120.4,217.5 143.2,213.9 166.0,210.3 188.8,206.7 211.6,203.1 234.4,199.4 257.2,195.8 280.0,192.1 302.8,188.5 325.6,184.8 348.4,181.1 371.2,177.4 394.0,173.7 416.8,169.9 439.6,166.2 462.4,162.4 485.2,158.7 508.0,154.9 530.8,156.4 553.6,157.9 576.4,159.4 599.2,160.8 622.0,162.3 644.8,163.8 667.6,165.2 690.4,166.6 713.2,168.0 736.0,169.4 758.8,170.8 781.6,172.2 804.4,173.5 827.2,174.9 850.0,176.2 872.8,177.5 895.6,178.8 918.4,180.1 941.2,181.4 964.0,182.7" fill="none" stroke="#E53935" stroke-width="2.2"/><polyline points="52.0,53.9 74.8,59.0 97.6,64.2 120.4,69.4 143.2,74.5 166.0,79.6 188.8,84.7 211.6,89.8 234.4,94.9 257.2,100.0 280.0,105.0 302.8,110.1 325.6,115.1 348.4,120.1 371.2,125.1 394.0,130.1 416.8,135.1 439.6,140.1 462.4,145.0 485.2,150.0 508.0,154.9 530.8,152.2 553.6,149.6 576.4,146.9 599.2,144.2 622.0,141.5 644.8,138.8 667.6,136.0 690.4,133.3 713.2,130.5 736.0,127.7 758.8,125.0 781.6,122.2 804.4,119.4 827.2,116.5 850.0,113.7 872.8,110.8 895.6,108.0 918.4,105.1 941.2,102.2 964.0,99.3" fill="none" stroke="#1E88E5" stroke-width="2.2"/><line x1="508.0" y1="16" x2="508.0" y2="266" stroke="#90A4AE" stroke-width="1.4" stroke-dasharray="4 3"/><text x="514.0" y="28.0" font-size="11" fill="#546E7A" text-anchor="start" font-weight="600">命中当天（第 0 日）</text><line x1="52" y1="154.9" x2="964" y2="154.9" stroke="#CFD8DC" stroke-width="1"/><text x="46.0" y="269.0" font-size="10.5" fill="#8A94A6" text-anchor="end" font-weight="400">-8.8%</text><text x="46.0" y="206.5" font-size="10.5" fill="#8A94A6" text-anchor="end" font-weight="400">-3.9%</text><text x="46.0" y="144.0" font-size="10.5" fill="#8A94A6" text-anchor="end" font-weight="400">+1.1%</text><text x="46.0" y="81.5" font-size="10.5" fill="#8A94A6" text-anchor="end" font-weight="400">+6.1%</text><text x="46.0" y="19.0" font-size="10.5" fill="#8A94A6" text-anchor="end" font-weight="400">+11.0%</text><text x="52.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">-20</text><text x="166.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">-15</text><text x="280.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">-10</text><text x="394.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">-5</text><text x="508.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">0</text><text x="622.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">+5</text><text x="736.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">+10</text><text x="850.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">+15</text><text x="964.0" y="288.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">+20</text><text x="508.0" y="299.0" font-size="11" fill="#8A94A6" text-anchor="middle" font-weight="400">相对命中日的交易日（负 = 命中之前）</text><text x="74.8" y="243.1" font-size="11" fill="#E53935" text-anchor="start" font-weight="400">情绪≥80 命中前 20 日：指数平均已涨 6.0%（追高位置）</text><text x="74.8" y="45.9" font-size="11" fill="#1E88E5" text-anchor="start" font-weight="400">情绪&lt;20 命中前 20 日：指数平均已跌 7.8%（恐慌位置）</text><text x="576.4" y="89.3" font-size="11" fill="#1E88E5" text-anchor="start" font-weight="400">命中后 20 日：回升 +4.2%</text><text x="576.4" y="198.7" font-size="11" fill="#E53935" text-anchor="start" font-weight="400">命中后 20 日：转跌 −2.4%</text></svg></div>
+  <div class="legend">
+    <span><i style="background:#E53935"></i>情绪≥80 命中（n = 631 次）</span>
+    <span><i style="background:#1E88E5"></i>情绪&lt;20 命中（n = 1 247 次）</span>
+    <span><i class="band" style="background:#607D8B"></i>±1 标准误</span>
+  </div>
+  <div class="meta">口径：命中日 = 该条件成立的交易日（连续命中算多个事件，另给"间隔 ≥5 日的独立事件"口径）·
+    指数用前复权 · <b>示意数据</b>（设计稿）</div>
+</div>
+
+<div class="card" style="border-color:#F5D5A8;background:#FFFDF7">
+  <div class="row spread">
+    <h2>⚠ 若把条件换成"天天都命中"的那种（如 QSD&gt;0 且 GLX&gt;0 ≈ 34%），本页会这样显示</h2>
+    <div class="row"><span class="btn">调整阈值</span><span class="btn ghost">为什么？</span></div>
+  </div>
+  <div class="verdict warn">⛔ <b>事件对齐图不适用</b>：命中天数占比 <b>34%</b> ≥ 频密阈值 <b>30%</b> ——
+    命中日几乎连成片，"事件"这个前提不成立。<br>
+    → 已自动切到可用方案：<b>占比分 5 档 × 前向 20 日收益</b>（n = 交易日数）+
+    Rank IC（n = 交易日数）</div>
+  <div class="meta">这就是"三道闸"里的①稀疏度闸。阈值可在设置页或本页「调整阈值」处改（默认 5% / 30%）。</div>
+</div>
+
+<div class="verdict"><b>读出来的话：</b>情绪 ≥80 的命中，<b>前 20 日指数平均已涨 6.0%</b>、命中后 20 日转为
+  <b>−2.4%</b>（典型"追高"位置）；情绪 &lt;20 的命中，前 20 日已跌 <b>−7.8%</b>、命中后 20 日回升
+  <b>+4.2%</b>。两条线近乎镜像 —— 说明这两个极端确实在描述<b>指数的位置</b>，而不是随机噪声。</div>
+<div class="verdict warn"><b>必须同时显示的三件事</b>（否则这张图会骗人）：① 样本数 n；
+  ② 阴影带（不确定度）；③ 事件重叠度（一段行情会连续命中 ⇒ 有效样本远小于 n）。</div>
+
+</body></html>

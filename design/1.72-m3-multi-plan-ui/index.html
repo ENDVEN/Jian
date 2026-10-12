@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>M3 升级设计稿 · 总览 · Jian 设计稿</title>
+<link rel="stylesheet" href="_style.css"></head><body>
+<div class="mock-head"><h1>M3 升级设计稿 · 总览</h1>
+  <span class="ver">design/1.72-m3-multi-plan-ui</span>
+  <span class="badge-draft">设计稿 · 未实现</span></div>
+<div class="row" style="margin:2px 0 14px"><a class="btn ghost" href="b-多行小图.html">B 多行小图</a><a class="btn ghost" href="e-选图规则.html">E 选图规则</a><a class="btn ghost" href="c-事件对齐图.html">C 事件对齐图</a><a class="btn ghost" href="d-K线色带与关系卡.html">D K线色带+关系卡</a><a class="btn ghost" href="a-多方案叠加.html">A 多方案叠加</a><a class="btn" href="index.html">总览</a></div>
+
+<div class="lead">M3（广度统计）升级的<b>四张样式稿</b>。现状是"一个方案一条曲线"；
+  目标是让你这类需求（<b>情绪 ≥80 与 &lt;20 到底和上证什么关系</b>）<b>一眼看得出、并且说得清</b>。</div>
+
+<div class="cards">
+  <a class="card" href="b-多行小图.html">
+    <div><span class="tag">期 1 · 你选的</span><b>B · 多行小图（柱 + 线）</b></div>
+    <div class="hint">每项一行、各自 y 轴刻度：<b>柱 = 每日占比</b> + <b>5 周均线</b>；
+      含「行数变多怎么办」的布局统筹规则（焦点行 / 迷你条 / 两列 / 折叠）。</div>
+  </a>
+  <a class="card" href="e-选图规则.html">
+    <div><span class="tag">必读</span><b>E · 选图规则</b></div>
+    <div class="hint"><b>什么样的条件配什么样的图</b>：命中天数占比 &lt;5% 才能做事件对齐；
+      &gt;30% 只能看占比/IC/回归；以及"n 该按天算还是按家数算"这个最容易错的地方。</div>
+  </a>
+  <a class="card" href="a-多方案叠加.html">
+    <div><span class="tag">期 1</span><b>A · 多方案叠加</b></div>
+    <div class="hint">一叠统计项同图：多折线 + 图例 + 悬停各报各的；共享 x 轴接指数副图。
+      同一段公式的多个判定变量<b>一次扫描</b>拿到（成本最低的一步）。</div>
+  </a>
+  <a class="card" href="c-事件对齐图.html">
+    <div><span class="tag">期 2</span><b>C · 事件对齐图</b></div>
+    <div class="hint">把命中日对齐成事件时间（−20…0…+20），画指数平均路径 + ±1σ。
+      <b>直接回答"命中前涨完了还是命中后才起来"</b> —— 我认为这是最该先做的一张。</div>
+  </a>
+  <a class="card" href="d-K线色带与关系卡.html">
+    <div><span class="tag">期 3</span><b>D · K 线色带 + 关系量化卡</b></div>
+    <div class="hint">命中日直接标在指数 K 线上（看位置）；旁边一张卡把关系写成数字：
+      条件前向收益 / 领先滞后 / Rank IC / 置换检验 p 值，全部带样本量。</div>
+  </a>
+</div>
+
+<div class="card">
+  <h2>建议的落地顺序（每期都能独立交付）</h2>
+  <table class="kv">
+    <thead><tr><th>期</th><th>内容</th><th>回答什么</th><th>成本</th></tr></thead>
+    <tbody>
+      <tr><td>期 1</td><td>多统计项（多判定变量同扫）+ A/B 两种表现形式切换</td>
+        <td>"两个极端同时看，谁先动"</td><td>低（读盘共享，第 2 项起命中缓存）</td></tr>
+      <tr><td>期 2<br>（前置）</td><td><b>E 三道闸</b>：稀疏度闸（&gt;30% 禁用事件图）+
+        独立性闸（两种 n 并列）+ 多重检验闸（置换检验 + Bonferroni 提醒）</td>
+        <td>"这个条件到底能不能用事件图看"</td><td>低（判定是纯函数，界面上只是文案与禁用）</td></tr>
+      <tr><td>期 2</td><td>C 事件对齐图（含样本数 / ±1σ / 独立事件口径）+ 对高频条件自动改走"分档 + IC"</td>
+        <td>"命中之后指数怎么走"</td><td>中（纯计算，可缓存）</td></tr>
+      <tr><td>期 3</td><td>D 关系量化卡（IC / 领先滞后 / 置换检验）+ K 线色带</td>
+        <td>"这关系是真的还是巧合"</td><td>中（复用参数研究的 IC 口径）</td></tr>
+      <tr><td>期 4</td><td>多方案（不同公式/参数/范围）各自缓存 + 统一"统计项"面板</td>
+        <td>"把几个版本的方案横向比"</td><td>中高（N 次扫描，缓存兜住）</td></tr>
+    </tbody>
+  </table>
+  <div class="meta">注意：四张稿里的曲线与数字<b>全部是示意数据</b>（为了讨论表现形式），不是真实统计结果。</div>
+</div>
+
+<div class="verdict"><b>请你挑：</b>① 先做哪一期？② 表现形式默认用 A（叠加）还是 B（多行）？
+  ③ 关系量化卡里你最想要哪几项（我建议：条件前向收益 + 置换检验 p 值 + 领先滞后，
+  Rank IC 可后置）？</div>
+
+</body></html>

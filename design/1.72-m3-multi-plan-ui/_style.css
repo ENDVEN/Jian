@@ -1,0 +1,137 @@
+/* ============================================================
+   Jian · design/1.72-m3-multi-plan-ui —— **M3 升级设计稿**共用样式
+   ⚠ 这些是**样式稿**（静态 HTML），用于讨论"长什么样"，不是实现；
+     配色/字号/圆角一律照应用现状（浅色、#1976D2 主色、卡片 12px 圆角）。
+   ============================================================ */
+:root {
+  --bg: #FAFAFA;
+  --card: #FFFFFF;
+  --line: #E7EAF0;
+  --line-soft: #F1F4F8;
+  --ink: #1F2430;
+  --ink-2: #424B5A;
+  --muted: #8A94A6;
+  --accent: #1976D2;
+  --accent-soft: #E3F2FD;
+  --up: #D64B4B;          /* A股约定：红涨 */
+  --down: #2E9E6B;        /* 绿跌 */
+  --greed: #E53935;       /* 情绪≥80（贪婪） */
+  --fear: #1E88E5;        /* 情绪<20（恐慌） */
+  --third: #6A1B9A;
+  --warn: #C62828;
+  --ok: #2E7D32;
+  --grid: #EDF0F5;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 22px 26px 40px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ---------- 顶部：设计稿标识（**必须显眼**：别把稿子当成已实现功能） ---------- */
+.mock-head {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 4px;
+}
+.mock-head h1 { font-size: 17px; margin: 0; }
+.mock-head .ver { font-size: 12px; color: var(--muted); }
+.badge-draft {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  background: #FFF4E5; color: #B26A00; border: 1px solid #FFE0B2;
+  font-size: 11px; font-weight: 700;
+}
+.lead { color: var(--ink-2); font-size: 12.5px; margin: 6px 0 16px; max-width: 1100px; }
+.lead b { color: var(--ink); }
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 12px 14px; margin-bottom: 14px;
+}
+.card > h2 {
+  font-size: 14px; margin: 0 0 2px; font-weight: 700;
+}
+.card > .hint { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.spread { justify-content: space-between; }
+.sep { height: 1px; background: var(--line-soft); margin: 10px 0; }
+
+/* ---------- 控件 ---------- */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 4px 9px; font-size: 12px; background: #fff;
+}
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+.chip.off { opacity: .45; }
+.chip .x { color: var(--muted); cursor: default; }
+.btn {
+  display: inline-block; padding: 5px 11px; border-radius: 8px;
+  border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+  font-size: 12px; font-weight: 600;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.ghost { background: transparent; }
+.select {
+  border: 1px solid var(--line); border-radius: 7px; padding: 3px 8px;
+  font-size: 12px; background: #fff; color: var(--ink-2);
+}
+.toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.toggle span { padding: 3px 10px; font-size: 12px; color: var(--muted); }
+.toggle span.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+/* 就地阈值输入框（E/C/D 页的"阈值不许写死"演示） */
+input.num {
+  width: 46px; text-align: right; font: inherit; font-size: 12px;
+  border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px;
+  background: #fff; color: var(--ink);
+}
+
+/* ---------- 口径条 / 结论条 / 回执 ---------- */
+.meta {
+  font-size: 11.5px; color: var(--muted);
+  border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 6px;
+}
+.verdict {
+  border-radius: 10px; padding: 8px 11px; font-size: 12.5px;
+  border: 1px solid #CFE3F7; background: #F3F9FF; color: #14548F;
+}
+.verdict.warn { border-color: #F5D5A8; background: #FFF8EE; color: #8A5200; }
+.verdict.ok { border-color: #C8E6C9; background: #F1F8F1; color: #1F6B36; }
+.note { font-size: 11.5px; color: var(--muted); }
+
+/* ---------- 图表外壳 ---------- */
+.chart-wrap { position: relative; }
+svg { display: block; width: 100%; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-2); margin-top: 4px; }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.legend .band { width: 14px; height: 8px; opacity: .3; }
+
+/* ---------- 关系量化卡 ---------- */
+.grid2 { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; align-items: start; }
+table.kv { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.kv th, table.kv td { padding: 5px 6px; border-bottom: 1px solid var(--line-soft); text-align: right; }
+table.kv th:first-child, table.kv td:first-child { text-align: left; }
+table.kv thead th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+.pos { color: var(--up); }
+.neg { color: var(--down); }
+.tiny { font-size: 11px; color: var(--muted); }
+
+/* ---------- 小图矩阵（small multiples） ---------- */
+.mini { border: 1px solid var(--line-soft); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+.mini h3 { margin: 0; font-size: 12.5px; }
+.mini .kpi { font-size: 11.5px; color: var(--muted); }
+.mini .kpi b { color: var(--ink); }
+
+/* ---------- 导航（index 页） ---------- */
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+a.card { text-decoration: none; color: inherit; display: block; }
+a.card:hover { border-color: #BBDEFB; box-shadow: 0 2px 10px rgba(25,118,210,.08); }
+.tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+       background: var(--accent-soft); color: var(--accent); font-weight: 700; margin-right: 6px; }

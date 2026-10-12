@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>E · 选图规则（什么样的条件配什么样的图） · Jian 设计稿</title>
+<link rel="stylesheet" href="_style.css"></head><body>
+<div class="mock-head"><h1>E · 选图规则（什么样的条件配什么样的图）</h1>
+  <span class="ver">design/1.72-m3-multi-plan-ui</span>
+  <span class="badge-draft">设计稿 · 未实现</span></div>
+<div class="row" style="margin:2px 0 14px"><a class="btn ghost" href="b-多行小图.html">B 多行小图</a><a class="btn" href="e-选图规则.html">E 选图规则</a><a class="btn ghost" href="c-事件对齐图.html">C 事件对齐图</a><a class="btn ghost" href="d-K线色带与关系卡.html">D K线色带+关系卡</a><a class="btn ghost" href="a-多方案叠加.html">A 多方案叠加</a><a class="btn ghost" href="index.html">总览</a></div>
+
+<div class="lead">你的困惑问到点子上了：<b>"每天几百上千只命中"的条件，不能当事件来统计。</b>
+  这一页就是把这句结论做成<b>软件里看得见、会拦你的规则</b>。</div>
+
+<div class="card">
+  <h2>用什么图，先看"命中天数占比"</h2>
+  <div class="hint">这不是审美偏好，是<b>统计前提</b>：事件研究（对齐图 / 色带）要求事件<b>稀疏</b>且<b>近似独立</b></div>
+  <div class="chart-wrap"><svg viewBox="0 0 980 108" preserveAspectRatio="none" height="108"><rect x="40.0" y="24" width="474.4" height="34" fill="#E8F5E9"/><text x="277.2" y="46.0" font-size="11.5" fill="#2E7D32" text-anchor="middle" font-weight="700">事件图适用（&lt; 5%）</text><rect x="514.4" y="24" width="264.1" height="34" fill="#FFF8E1"/><text x="646.5" y="46.0" font-size="11.5" fill="#B26A00" text-anchor="middle" font-weight="700">分箱 + 前向收益（5~30%）</text><rect x="778.5" y="24" width="177.5" height="34" fill="#FDECEA"/><text x="867.3" y="46.0" font-size="11.5" fill="#C62828" text-anchor="middle" font-weight="700">只看占比 / IC / 回归（&gt; 30%）</text><line x1="40.0" y1="58" x2="40.0" y2="64" stroke="#90A4AE"/><text x="40.0" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">0.2%</text><line x1="175.1" y1="58" x2="175.1" y2="64" stroke="#90A4AE"/><text x="175.1" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">0.5%</text><line x1="277.2" y1="58" x2="277.2" y2="64" stroke="#90A4AE"/><text x="277.2" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">1%</text><line x1="379.4" y1="58" x2="379.4" y2="64" stroke="#90A4AE"/><text x="379.4" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">2%</text><line x1="514.4" y1="58" x2="514.4" y2="64" stroke="#90A4AE"/><text x="514.4" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">5%</text><line x1="616.6" y1="58" x2="616.6" y2="64" stroke="#90A4AE"/><text x="616.6" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">10%</text><line x1="718.8" y1="58" x2="718.8" y2="64" stroke="#90A4AE"/><text x="718.8" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">20%</text><line x1="778.5" y1="58" x2="778.5" y2="64" stroke="#90A4AE"/><text x="778.5" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">30%</text><line x1="853.8" y1="58" x2="853.8" y2="64" stroke="#90A4AE"/><text x="853.8" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">50%</text><line x1="956.0" y1="58" x2="956.0" y2="64" stroke="#90A4AE"/><text x="956.0" y="76.0" font-size="10.5" fill="#8A94A6" text-anchor="middle" font-weight="400">100%</text><line x1="379.4" y1="18" x2="379.4" y2="58" stroke="#E53935" stroke-width="1.6" stroke-dasharray="3 2"/><circle cx="379.4" cy="16" r="3.4" fill="#E53935"/><text x="379.4" y="11.0" font-size="10.5" fill="#E53935" text-anchor="middle" font-weight="700">情绪≥80 ≈ 2%</text><line x1="439.2" y1="18" x2="439.2" y2="58" stroke="#1E88E5" stroke-width="1.6" stroke-dasharray="3 2"/><circle cx="439.2" cy="16" r="3.4" fill="#1E88E5"/><text x="439.2" y="11.0" font-size="10.5" fill="#1E88E5" text-anchor="middle" font-weight="700">情绪&lt;20 ≈ 3%</text><line x1="797.0" y1="18" x2="797.0" y2="58" stroke="#6A1B9A" stroke-width="1.6" stroke-dasharray="3 2"/><circle cx="797.0" cy="16" r="3.4" fill="#6A1B9A"/><text x="797.0" y="11.0" font-size="10.5" fill="#6A1B9A" text-anchor="middle" font-weight="700">QSD&gt;0 且 GLX&gt;0 ≈ 34%</text><text x="498.0" y="98" font-size="11" fill="#1F2430" text-anchor="middle">命中【天数】占比 = 有命中的交易日 / 全部交易日（<tspan font-weight="700">不是</tspan>命中家数占比）</text></svg></div>
+  <div class="meta">你的三个条件落点（<b>示意数据</b>：真实占比由扫描算出，本稿只是占位）：
+    情绪≥80 ≈ <b>2%</b> 的交易日（稀疏，适合事件图）· 情绪&lt;20 ≈ <b>3%</b>（稀疏，适合）·
+    <b>QSD&gt;0 且 GLX&gt;0 ≈ 34%</b>（频繁，<b>不适合</b>事件图 —— 命中日几乎连成片，
+    "事件"这个概念就不成立了）</div>
+</div>
+
+<div class="card">
+  <h2>三档分别该用什么</h2>
+  <table class="kv">
+    <thead><tr><th>命中天数占比</th><th>本质</th><th>该用的工具</th><th>不该做</th></tr></thead>
+    <tbody>
+      <tr><td>&lt; 5%（如情绪≥80 / &lt;20）</td><td>稀疏<b>事件</b></td>
+        <td>事件对齐图（C）· 色带（D）· 条件前向收益 + 置换检验</td>
+        <td>—（但必须给样本数与独立事件口径）</td></tr>
+      <tr><td>5% ~ 30%</td><td>半稀疏状态</td>
+        <td>把"占比"分 5 档 → 看每档的<b>前向收益</b>；或直接算 IC / 滚动相关</td>
+        <td>把每个命中日都当独立事件数 n</td></tr>
+      <tr><td>&gt; 30%（如 QSD&gt;0 且 GLX&gt;0）</td><td>连续<b>状态/信号</b></td>
+        <td><b>把"命中占比"当一条连续指标</b>：IC / Rank IC、稳健回归（Newey-West 校正）、分位对比、滚动相关</td>
+        <td>事件图 / 色带（整张图都会是色带，读不出任何东西）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>最容易错的地方：n 到底是什么</h2>
+  <div class="grid2">
+    <div>
+      <table class="kv">
+        <thead><tr><th>算法</th><th>你机器上的量级</th><th>对不对</th></tr></thead>
+        <tbody>
+          <tr><td>把"命中家数"当事件数</td><td>一天 1 500 只 ⇒ n ≈ <b>180 万</b></td>
+            <td class="neg">❌ 严重虚高（同一天全市场同涨同跌，等于把 1 个观测抄了 1500 遍）</td></tr>
+          <tr><td>把"命中交易日"当事件数</td><td>11 年 ≈ 560 周 ⇒ n ≈ <b>560</b></td>
+            <td class="pos">✅ 对"市场级"条件</td></tr>
+          <tr><td>只数"独立事件"（间隔 ≥ 5 日）</td><td>情绪≥80 ⇒ n ≈ <b>118</b></td>
+            <td class="pos">✅ 最稳（连续命中会自我重叠）</td></tr>
+          <tr><td>个股级事件（每只票各自命中）</td><td>601 只 × 交易日</td>
+            <td>⚠ 要按<b>交易日聚类</b>算标准误，否则 p 值照样虚</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="verdict" style="margin-bottom:10px"><b>一句话：</b>
+        当条件命中的是"一大片股票"，它衡量的是<b>市场的状态</b>，不是 1500 个独立事件。
+        n 必须按<b>天</b>（或独立事件段）算。</div>
+      <div class="verdict warn"><b>那"几百上千只命中"还能不能研究？能 —— 但要换问法：</b><br>
+        ① 不问"命中之后指数怎么走"，改问"<b>命中占比每升高 10 个百分点，未来 20 日指数收益平均差多少</b>"
+        （回归 / 分档，n = 交易日数）；<br>
+        ② 或用 <b>Rank IC</b>：占比排名 vs 未来收益排名（自带"占比高=排名高"的连续含义）；<br>
+        ③ 或做<b>横截面</b>：在某一天里，命中的股票 vs 没命中的股票，之后 5/10/20 日谁的收益高
+        （这是 M2 的强项，不是 M3 的）。</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>软件替你挡的三道闸（这才是"量化关系"该有的样子）</h2>
+  <table class="kv">
+    <thead><tr><th>闸</th><th>规则</th><th>界面表现</th></tr></thead>
+    <tbody>
+      <tr><td>① 稀疏度闸</td><td>命中天数占比 &gt; 30% ⇒ <b>禁用</b>事件对齐图与 K 线色带</td>
+        <td>C/D 两页显示"该条件太频繁，事件图不适用（34% 的交易日都命中）"，
+        并直接给出替代：占比-收益分档 + IC</td></tr>
+      <tr><td>② 独立性闸</td><td>同时给"全部命中日"与"独立事件（间隔 ≥5 日）"两个 n</td>
+        <td>两张卡的样本数并列显示；结论只在两个 n 方向一致时才敢写"稳健"</td></tr>
+      <tr><td>③ 多重检验闸</td><td>一次比较了几组（条件 × 窗口）就如实说，并给置换检验 p</td>
+        <td>结论条："本次比较 3 条件 × 3 窗口 = 9 次检验；按 Bonferroni 需 p &lt; 0.0056"</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>阈值<b>不许写死</b>：就地可调 + 必须给引导</h2>
+  <div class="hint">用户 2026-10-12 拍板：阈值按下面这套默认，但必须在相关页面给调整入口；
+    "没有引导根本不知道这个阈值到底是啥"</div>
+  <div class="sep"></div>
+  <div class="row spread">
+    <div class="row">
+      <span class="kpi">命中天数占比 &lt; <input class="num" value="5">% ⇒ 事件图可用</span>
+      <span class="kpi">&gt; <input class="num" value="30">% ⇒ 禁用（只看占比 / IC）</span>
+      <span class="kpi">独立事件间隔 ≥ <input class="num" value="5"> 个交易日</span>
+      <span class="btn">↺ 恢复默认</span>
+      <span class="btn ghost">这是什么？ ⓘ</span>
+    </div>
+    <span class="kpi">改完<b>立即对当前条件生效</b> · <b>不会重跑扫描</b></span>
+  </div>
+  <div class="sep"></div>
+  <div class="grid2">
+    <div class="verdict"><b>【点「这是什么？」弹出的说明】</b><br>
+      · <b>命中天数占比 &lt; 5%</b>：每天只有很少的票命中 ⇒ 像"<b>事件</b>"，可以做事件对齐图；<br>
+      · <b>5% ~ 30%</b>：半稀疏 ⇒ 用"占比分 5 档 + 前向收益"；<br>
+      · <b>&gt; 30%</b>：几乎天天命中 ⇒ 它是"<b>状态</b>"不是"事件" ⇒ 只看占比 / IC / 回归。<br>
+      这三个数是<b>经验起点，不是定律</b> —— 不同条件差别很大，可随时改。</div>
+    <div class="verdict warn"><b>禁用态长这样（C / D 页会真的这么显示）</b><br>
+      ⛔ 事件对齐图不适用：该条件 <b>34%</b> 的交易日都命中（频密阈值 30%）<br>
+      → 已自动切到可用方案：<b>占比分 5 档 × 前向 20 日收益</b>（n = 交易日数）<br>
+      <span class="btn" style="margin-top:6px">调整阈值</span>
+      <span class="btn ghost" style="margin-top:6px">为什么？</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>首次进入的引导（一次性，可关闭，入口常驻）</h2>
+  <div class="verdict"><b>你可以这样看这张图：</b>柱 = 每天有多少只满足条件，线 = 5 周均（把每天的噪声抹掉看趋势）·
+    右上可切「<b>家数 / 占比</b>」· 点任意一行 = 放大那一行 ·
+    想知道"什么条件配什么图"点右边 <b>「三道闸是什么？」</b>（1 分钟看完）</div>
+  <div class="meta">引导只弹一次（记住已读）；之后仍可从右上「？」随时打开 —— 说明不许只存在首次弹窗里。</div>
+</div>
+
+<div class="verdict warn"><b>诚实边界（必须写在界面上）：</b>这些数字都只是"历史上同期/领先的经验关系"，
+  不是预测能力；样本外和不同统计范围下可能完全失效。软件要做的是<b>把不确定度一起端上来</b>，
+  而不是给一个看起来很确定的数字。</div>
+
+</body></html>
