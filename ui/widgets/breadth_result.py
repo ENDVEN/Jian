@@ -25,7 +25,8 @@ class BreadthResult:
         ⚠ 行区上了 `QScrollArea`（行数多时自己滚动）⇒ 只藏图会留一个**空框**在结果区里
           （看着像"坏了"）。所有显隐都必须走这一处。
         """
-        for name in ('chart', 'chart_scroll'):
+        # ★1.75 期 3：`view_stack`（三视图堆叠）也必须成对显隐 —— 只藏图会留一个空框
+        for name in ('chart', 'chart_scroll', 'view_stack'):
             w = getattr(p, name, None)
             if w is not None:
                 w.setVisible(bool(on))

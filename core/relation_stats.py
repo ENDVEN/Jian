@@ -25,8 +25,11 @@ __all__ = [
     'MODE_EVENT', 'MODE_BINNED', 'MODE_CONTINUOUS', 'MODE_UNKNOWN',
     'DEFAULT_SPARSE_MAX', 'DEFAULT_FREQ_MIN', 'DEFAULT_INDEP_GAP',
     'SPARSE_MAX_RANGE', 'FREQ_MIN_RANGE', 'INDEP_GAP_RANGE', 'PREF_KEY',
+    'MIN_SAMPLE', 'EVENT_MIN', 'PERM_SEED',
     'GateDecision', 'hit_day_stats', 'independent_event_positions',
     'gate_decision', 'clamp_thresholds', 'thresholds_from_prefs',
+    'forward_returns', 'conditional_forward_returns', 'event_study',
+    'lead_lag_corr', 'rank_ic_of', 'permutation_p',
 ]
 
 # ==========================================
@@ -234,3 +237,204 @@ def thresholds_from_prefs() -> dict:
     return clamp_thresholds(raw.get('sparse_max', DEFAULT_SPARSE_MAX),
                             raw.get('freq_min', DEFAULT_FREQ_MIN),
                             raw.get('indep_gap', DEFAULT_INDEP_GAP))
+
+
+# ==========================================
+# 6) ★1.75 / §7-B16 期 3：**与指数的关系**（前向收益 / 事件对齐 / 领先滞后 / IC / 置换检验）
+#   【为什么不另起模块】它们与前五节同属"用命中序列回答关系问题"这一件事，且都用同一份阈值与
+#     同一个 `independent_event_positions`；另起模块只会多出一个口径入口（§11.5-112）。
+#   【输入约定】一律吃 **pandas**：`flags`（逐日命中：家数或布尔，index = 交易日）与
+#     `closes`（指数收盘，index = 交易日）。本层**不做时间对齐、不插值、不前向填充** ——
+#     两边 index 取交集，交不上的地方如实留 NaN（造数据比缺数据更坏）。
+#   【单位】所有收益/涨跌都是**小数**（0.012 = +1.2%），只有 `event_study` 的路径是 **%**（画图用）。
+#   【纪律】`MIN_SAMPLE` 之下的结论**必须**标注"样本不足，仅参考"（界面据此显示，别自己判）。
+# ==========================================
+MIN_SAMPLE = 30          # 条件前向收益的最小样本（低于它 ⇒ `enough=False`）
+EVENT_MIN = 10           # 事件对齐路径的最少事件数（不够 ⇒ 整段 `enough=False`）
+PERM_SEED = 20261015     # 置换检验默认种子（固定 ⇒ 结论可复现、可被复述）
+
+
+def _as_float_series(values):
+    """把 `None` / 空 / 数组 / Series 统一成 float `Series`（**不抛**；NaN 原样保留）。"""
+    import pandas as _pd
+
+    if values is None:
+        return _pd.Series(dtype=float)
+    if isinstance(values, _pd.Series):
+        return values.astype(float)
+    return _pd.Series(list(values), dtype=float)
+
+
+def forward_returns(closes, windows=(5, 10, 20)) -> dict:
+    """**无条件**前向收益（基线）：`{window: Series}`，`r_t = C_{t+w} / C_t − 1`。
+
+    窗口单位 = **数据点**（日线数据 ⇒ 交易日）。末尾 w 个点必然是 NaN（未来还不知道）✓。
+    """
+    c = _as_float_series(closes)
+    out = {}
+    for w in windows:
+        step = max(1, int(w))
+        out[step] = (c.shift(-step) / c - 1.0)
+    return out
+
+
+def conditional_forward_returns(flags, closes, windows=(5, 10, 20)) -> dict:
+    """**条件 vs 基线**前向收益 —— 回答"命中之后指数怎么走"。
+
+    `{window: {'n','mean','median','baseline_mean','baseline_median','diff','enough'}}`
+    （`diff` = 条件均值 − 基线均值；单位 = 小数）。`enough=False` ⇒ 界面必须写"样本不足，仅参考"。
+    """
+    f = _as_float_series(flags).fillna(0.0)
+    base = forward_returns(closes, windows)
+    hit = f > 0
+    out = {}
+    for w, fwd in base.items():
+        aligned_hit = hit.reindex(fwd.index, fill_value=False)
+        vals = fwd[aligned_hit].dropna()
+        allv = fwd.dropna()
+        n = int(vals.shape[0])
+        out[w] = {
+            'n': n,
+            'mean': float(vals.mean()) if n else float('nan'),
+            'median': float(vals.median()) if n else float('nan'),
+            'baseline_mean': float(allv.mean()) if allv.shape[0] else float('nan'),
+            'baseline_median': float(allv.median()) if allv.shape[0] else float('nan'),
+            'enough': n >= MIN_SAMPLE,
+        }
+        out[w]['diff'] = out[w]['mean'] - out[w]['baseline_mean']
+    return out
+
+
+def event_study(flags, closes, *, window: int = 20, gap: int = DEFAULT_INDEP_GAP) -> dict:
+    """事件对齐路径（期 3 的"图 C"数据源）：横轴 = 相对命中日 −window…+window 的**累计涨跌 %**。
+
+    :return: `{'offsets','mean','median','se','n_hit_days','n_independent','enough'}`
+      · `mean` / `median`：每个偏移上、所有事件日"相对命中日指数"的累计涨跌（%）的均值/中位数；
+      · `se`：均值的标准误（画 ±1σ 带用；样本 <2 ⇒ NaN）；
+      · `n_hit_days` = 命中**交易日**数（按天算的那个 n）；`n_independent` = 独立事件数
+        （连续命中塌成一个 ⇒ **两个 n 并列**，这是"n 会虚高"的正解）；
+      · 每个偏移上样本不足 ⇒ 该点 NaN（图上**断开**，不插值）。
+    """
+    import numpy as _np
+    import pandas as _pd
+
+    f = _as_float_series(flags).fillna(0.0)
+    c = _as_float_series(closes)
+    idx = f.index.intersection(c.index)
+    f = f.reindex(idx)
+    c = c.reindex(idx)
+    n = len(idx)
+    W = max(1, int(window))
+    offsets = list(range(-W, W + 1))
+    vals = {o: [] for o in offsets}
+    hit_pos = [i for i in range(n) if float(f.iloc[i]) > 0]
+    flags_np = (f > 0).to_numpy()
+    indep = set(independent_event_positions(flags_np, gap=gap))
+    for pos in hit_pos:
+        p0 = float(c.iloc[pos])
+        if not _np.isfinite(p0) or p0 <= 0:
+            continue
+        for o in offsets:
+            j = pos + o
+            if 0 <= j < n:
+                cj = float(c.iloc[j])
+                if _np.isfinite(cj) and cj > 0:
+                    vals[o].append((cj / p0 - 1.0) * 100.0)
+    mean, median, se = {}, {}, {}
+    for o in offsets:
+        arr = _np.asarray(vals[o], dtype=float)
+        if arr.size:
+            mean[o] = float(arr.mean())
+            median[o] = float(_np.median(arr))
+            se[o] = (float(arr.std(ddof=1) / _np.sqrt(arr.size))
+                     if arr.size > 1 else float('nan'))
+        else:
+            mean[o] = median[o] = se[o] = float('nan')
+    n_hit = len(hit_pos)
+    return {'offsets': offsets, 'mean': mean, 'median': median, 'se': se,
+            'n_hit_days': n_hit,
+            'n_independent': len(indep & set(hit_pos)),
+            'enough': n_hit >= EVENT_MIN}
+
+
+def lead_lag_corr(ratio, closes, *, lags=range(-20, 21)) -> dict:
+    """领先滞后相关：`{lag: r}` —— 占比序列与指数**日收益**在第 `lag` 期的 Pearson 相关。
+
+    **符号口径（写死，有断言钉住）**：`lag < 0` ⇒ **指标领先指数**
+    （例：`lag=−5` = "今天的占比"与"5 个交易日**之后**的指数收益"相关；峰值落在负侧 = 领先）。
+    ⚠ 相关 ≠ 因果：界面措辞一律写"同期 / 领先 N 期相关"，不许写"预测"。
+    """
+    import pandas as _pd
+
+    r = _as_float_series(ratio).astype(float)
+    c = _as_float_series(closes).astype(float)
+    idx = r.index.intersection(c.index)
+    r = r.reindex(idx)
+    ret = c.reindex(idx).pct_change()
+    out = {}
+    for lag in lags:
+        # ⚠ 符号口径（本轮实测踩过，靠"人工构造领先 5 期"的断言逮住）：
+        #   `Series.shift(k)` 是**把数据往后挪 k 期** ⇒ 行 t 拿到 t−k 的值。
+        #   要"行 t 拿**未来** t+k 的收益"必须 `shift(-k)`。所以 lag<0（指标领先）时
+        #   要取未来 ⇒ **`shift(lag)`**（lag 是负数，正好取到未来）。
+        #   我第一版写成 `shift(-lag)` ⇒ 整个轴**左右翻转**（峰值跑到 +5，与设计稿的
+        #   "负 = 指标领先"完全相反），是断言把它抓出来的。
+        other = ret.shift(int(lag))
+        pair = _pd.concat([r, other], axis=1).dropna()
+        if pair.shape[0] < 3 or pair.iloc[:, 0].nunique() < 2 or pair.iloc[:, 1].nunique() < 2:
+            out[int(lag)] = float('nan')
+            continue
+        out[int(lag)] = float(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
+    return out
+
+
+def rank_ic_of(ratio, closes, *, window: int = 20):
+    """占比 vs 未来 `window` 期收益的 **Rank IC** —— **复用 `core.sweep_stats.rank_ic`**。
+
+    ⚠ 不许另写一套 IC（§11.5-112）：仓库的 IC 口径已在参数研究里定稿（样本 <2 / 任一侧常数 ⇒ NaN）。
+    """
+    import pandas as _pd
+
+    from core.sweep_stats import rank_ic
+
+    r = _as_float_series(ratio)
+    fwd = forward_returns(closes, (window,))[int(window)]
+    pair = _pd.concat([r, fwd], axis=1).dropna()
+    if pair.shape[0] < 2:
+        return float('nan')
+    return float(rank_ic(pair.iloc[:, 0].to_numpy(), pair.iloc[:, 1].to_numpy()))
+
+
+def permutation_p(flags, closes, *, window: int = 20, draws: int = 1000,
+                  seed: int = PERM_SEED) -> dict:
+    """置换检验：把"命中日"随机打乱 `draws` 次，看"条件前向收益 − 基线"这个差**有多大比例能被随机凑出来**。
+
+    :return: `{'observed','p','draws','seed','reason'}`；
+      `p = (#{ |随机差| ≥ |实测差| } + 1) / (draws + 1)`（**加一**：draws 次全不超也有下界）。
+    【为什么必须有它】多方案 × 多窗口比较极易"刷"出假关系；p 把"巧合"挡在软件里，
+      而且**固定 seed ⇒ 可复现**（结论能被复述，这才是这一卡的价值）。
+    命中太少（<2）/ 全命中 / 有效点 <10 ⇒ `p = NaN` 并给 `reason`（**不做检验，也不冒充结果**）。
+    """
+    import numpy as _np
+
+    f = _as_float_series(flags).fillna(0.0)
+    fwd = forward_returns(closes, (window,))[int(window)]
+    idx = f.index.intersection(fwd.index)
+    flags_np = (f.reindex(idx) > 0).to_numpy()
+    vals = fwd.reindex(idx).to_numpy(dtype=float)
+    ok = _np.isfinite(vals)
+    flags_np, vals = flags_np[ok], vals[ok]
+    n = int(flags_np.shape[0])
+    n_hit = int(flags_np.sum())
+    if n < 10 or n_hit < 2 or n_hit >= n:
+        return {'observed': float('nan'), 'p': float('nan'), 'draws': 0, 'seed': int(seed),
+                'reason': '样本不足（命中太少 / 全命中 / 有效点不足）⇒ 不做置换检验'}
+    obs = float(vals[flags_np].mean() - vals.mean())
+    rng = _np.random.default_rng(int(seed))
+    ge = 0
+    for _ in range(int(draws)):
+        pick = rng.choice(n, size=n_hit, replace=False)
+        if abs(float(vals[pick].mean() - vals.mean())) >= abs(obs):
+            ge += 1
+    return {'observed': obs, 'p': (ge + 1.0) / (int(draws) + 1.0),
+            'draws': int(draws), 'seed': int(seed), 'reason': ''}

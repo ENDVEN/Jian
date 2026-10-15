@@ -267,8 +267,22 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #             + 量程留白收成 `RANGE_PAD`；护栏 = 冒烟断言"本模块不许再定义任何类"。
 #          ③ 本轮踩到并记进 `§11.5-133`：rich text 与纯文本**不能混用同一套记号**（`**` vs `<b>`）；
 #             `QSpinBox` 只吃 int（float 直接抛）；抽屉里的 SpinBox 必须用 `NoWheel*`。
+#   1.76 = M3 升级「期 3（三视图 + 关系量化卡 + 导出）」+ 用户实测 bug 修复（2026-10-16）：
+#          ① **期 3 内核**（`core/relation_stats.py` 第 6 节）：`forward_returns` / `conditional_forward_returns`
+#             （条件 vs 基线 + `enough` 门槛）/ `event_study`（±window 累计涨跌 % + 均值·中位数·标准误 +
+#             **两个 n**）/ `lead_lag_corr`（**符号写死：负 = 指标领先**）/ `rank_ic_of`
+#             （**复用 `core.sweep_stats.rank_ic`**）/ `permutation_p`（固定种子 ⇒ 可复现）；
+#          ② **期 3 UI**：新件 `ui/widgets/relation_chart.py`（事件对齐图 ±1σ 漏斗带 + 领先滞后柱）与
+#             `ui/widgets/relation_card.py`（量化卡四块 + 样本量 + 幸存者偏差提醒 + **导出 PNG/CSV**）；
+#             **L1 分段控件切三视图**（📊 多行小图 / 🧪 事件对齐 / 🧮 关系卡）+ **L0 三视图堆叠**；
+#             **K 线色带 = 指数副图叠加选项**；被闸拦下的项在事件图里「已跳过 + 为什么」；
+#          ③ **bug 修（用户 2026-10-16 实测）**：`CrossSectionResult._counters_for/_matrix_for` 对
+#             "**点名了却不在本次结果里**"的判定变量**回落成主变量** ⇒ 扫描后新加的统计项画出
+#             **与主变量一模一样**的曲线、徽标照抄其占比 ⇒ 改为**返回 `None`**（空表 / 空状态）⇒
+#             不画那一行、徽标「未扫描」、不进关系报告、回执提示重扫；
+#          ④ 同族：底部「近5日」**写明属于哪一项**（数字必须能追到它属于谁 —— §11.5-134）。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.75"
+APP_VERSION = "1.76"
 
 # ==========================================
 # 界面配置 (UI Settings)

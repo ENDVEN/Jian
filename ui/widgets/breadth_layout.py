@@ -17,7 +17,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
                              QPushButton, QProgressBar, QScrollArea, QSizePolicy,
-                             QVBoxLayout, QWidget)
+                             QStackedWidget, QVBoxLayout, QWidget)
 
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import CARD_QSS, ClickCatcher, EditDrawer, EditPane
@@ -28,11 +28,13 @@ from ui.widgets.breadth_items import BreadthItemsPanel
 from ui.widgets.breadth_rows import (INDEX_HEIGHT_RANGE, INDEX_PANE_HEIGHT,
                                      MA_WINDOW_DEFAULT, BreadthRowsChart)
 from ui.widgets.gate_hint import GateHintBar, GateThresholdRow   # ★1.74 期 2：闸的"看得见"部件
+from ui.widgets.relation_card import RelationCard                 # ★1.75 期 3：关系量化卡（含导出）
+from ui.widgets.relation_chart import EventStudyChart             # ★1.75 期 3：事件对齐图
 from ui.widgets.summary_chip import build_chip, chip_qss   # ★1.64：chip 的**三页唯一来源**
 from ui.widgets.styles import SUMMARY_GHOST_QSS, SUMMARY_RUN_QSS   # ★1.64：三页同一张脸
 from ui.widgets.custom_widgets import (COMBO_QSS, FLAT_QSS,
                                         SYNC_ACTION_LABEL, NoWheelComboBox,
-                                        NoWheelSpinBox,
+                                        NoWheelSpinBox, SegmentedControl,
                                         hint_icon, mini_label)
 from ui.widgets.scan_layout import (ScanFilterPane, ScanFormulaPane,  # noqa: F401
                                     ScanScopePane)
@@ -44,6 +46,13 @@ RANGE_PRESETS = (('3m', '近3个月'), ('6m', '近6个月'), ('1y', '近1年'),
                  ('3y', '近3年'), ('5y', '近5年'), ('all', '全部历史'))
 DEFAULT_RANGE = '1y'
 DEFAULT_INDEX_CODE = 'sh000001'          # 副图默认上证指数（INDEX_PRESETS 首项）
+
+# ★1.75 / §7-B16 期 3：**三视图**（用户 2026-10-15 确认：L1 分段控件切换，**不新开页面**）。
+#   三视图**共用同一份扫描结果** ⇒ 切换 = 纯渲染（不进线程、不读盘、**不重扫**）。
+#   key 进偏好（`breadth_ui.view`）；顺序即分段控件顺序。
+VIEW_ROWS, VIEW_EVENT, VIEW_CARD = 'rows', 'event', 'card'
+VIEWS = ((VIEW_ROWS, '📊 多行小图'), (VIEW_EVENT, '🧪 事件对齐'), (VIEW_CARD, '🧮 关系卡'))
+VIEW_INDEX = {VIEW_ROWS: 0, VIEW_EVENT: 1, VIEW_CARD: 2}
 
 # ★1.73 / §7-B16 期 1 收尾：**引导文案**（用户 2026-10-12 原话："这种功能没有引导根本不知道
 #   这个阈值到底是啥"）—— 文案写成模块级常量：冒烟能直接断言"该说的都说了"，
@@ -214,6 +223,15 @@ class BreadthDisplayPane(EditPane):
         self.chk_smooth.toggled.connect(self.spin_ma.setEnabled)
         self.spin_ma.setEnabled(self.chk_smooth.isChecked())
 
+        # —— ★1.75 期 3：**命中色带叠加**（用户拍板：色带做成"指数副图的叠加选项"，不新增视图）——
+        self.chk_bands = QCheckBox('指数副图上叠加**命中色带**（每个统计项一条）')
+        self.chk_bands.setToolTip(
+            '把每个统计项的**命中日**画成指数副图底部的一条色带（按项配色）。\n'
+            '判断"命中日是不是聚在拐点附近"用它可以一眼看出来。\n'
+            '⚠ 被三道闸判为"太频繁"的条件，色带会连成一片 —— 那种条件请看「🧮 关系卡」，'
+            '别靠色带读。改完立即重画，**不会重跑扫描**。')
+        self.body_lay.addWidget(self.chk_bands)
+
 
 # ==========================================
 # ④ 📋 统计项（★1.73 / §7-B16 期 1；抽屉最后一张卡 —— 前四张下标不动）
@@ -269,6 +287,15 @@ class BreadthLayout:
         p.lbl_adjust.setToolTip('本轮只用前复权一种口径（与 M1 单股回测 / M2 筛选同口径，D8）。\n'
                                 '不复权分区尚未备齐 —— 备齐前不在界面上假装支持。')
         lay.addWidget(p.lbl_adjust)
+
+        # —— ★1.75 期 3：**视图切换**（用户拍板：L1 分段控件切三视图，不新开页面）——
+        #   三视图共用同一份结果 ⇒ 切换是**纯渲染**；「关系卡」里有导出 PNG/CSV。
+        p.seg_view = SegmentedControl(VIEWS, current=VIEW_ROWS)
+        p.seg_view.setToolTip('同一份扫描结果，换一种看法（切换**不会重扫**）：\n'
+                              '· 📊 多行小图 = 每个统计项一行（柱 + 均线），看"每天多少"\n'
+                              '· 🧪 事件对齐 = 把命中日对齐，看"命中前后指数怎么走"\n'
+                              '· 🧮 关系卡 = 把"有没有关系、多强、是不是巧合"写成数字（可导出）')
+        lay.addWidget(p.seg_view)
 
         lay.addStretch()
         p.btn_config = _flat_btn('⚙ 配置',
@@ -441,7 +468,22 @@ class BreadthLayout:
         p.chart_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         p.chart_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         p.chart_scroll.setWidget(p.chart)
-        lay.addWidget(p.chart_scroll, 1)
+
+        # —— ★1.75 期 3：三视图**堆叠**（0 = 多行小图 / 1 = 事件对齐 / 2 = 关系卡）——
+        #   为什么用 `QStackedWidget` 而不是各建一块：三视图**共用**同一份结果与同一条区间切片，
+        #   堆叠只换"看哪一张脸"，切换零成本；关系卡自己带滚动（它比一屏高）。
+        p.event_chart = EventStudyChart()
+        p.relation_card = RelationCard()
+        p.card_scroll = QScrollArea()
+        p.card_scroll.setWidgetResizable(True)
+        p.card_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        p.card_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        p.card_scroll.setWidget(p.relation_card)
+        p.view_stack = QStackedWidget()
+        for _view_widget in (p.chart_scroll, p.event_chart, p.card_scroll):
+            p.view_stack.addWidget(_view_widget)
+        p.view_stack.setCurrentIndex(VIEW_INDEX[VIEW_ROWS])
+        lay.addWidget(p.view_stack, 1)
 
         # —— 近 5 日迷你读数（原型 foot）——
         p.lbl_mini = QLabel('')
@@ -471,7 +513,8 @@ class BreadthLayout:
         empty_lay.addLayout(p.row_empty_action)
         p.empty_box = empty
         lay.addWidget(empty, 1)
-        p.chart_scroll.hide()          # ★1.73：图与滚动容器成对显隐（见 `BreadthResult._show_chart`）
+        # ★1.73/1.75：图 · 行区滚动容器 · **三视图堆叠** 一起显隐（见 `BreadthResult._show_chart`）
+        p.view_stack.hide()
 
         # —— 口径脚注 ——
         p.lbl_foot = QLabel('口径：前复权 · 粗筛后精算 · 数据不足不计入命中 · '

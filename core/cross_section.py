@@ -524,17 +524,24 @@ class CrossSectionResult:
     status_matrix_by_signal: dict = field(default_factory=dict)  # 变量名 → (标的, 交易日) uint8
 
     # ---------- 多判定变量的取数口（`signal=None` ⇒ 主判定变量，老调用零变化） ----------
+    # ⚠ **点名了却不在本次结果里 ⇒ 返回 `None`，绝不回落成主变量**。
+    #   用户 2026-10-16 实测报的 bug 就是这里：扫描完成后在配置里**新加**一个统计项
+    #   （它还没被这次扫描算过），旧版回落成主变量 ⇒ 那一行画出**与主变量一模一样**的曲线、
+    #   徽标也照抄主变量的占比（截图里 `BIAS 94.6%` 与 `NORM_BIAS 94.6%` 完全相同）。
+    #   **静默拿别人的数冒充自己，比缺数据坏得多**（§10-4 禁止静默）：返回 `None` 之后，
+    #   调用方（`breadth_frame` ⇒ 空表 / `status_on` ⇒ `{}`）会如实表现"这一项还没算过"，
+    #   界面据此**不画那一行**、徽标显示"未扫描"，并回执提醒"点开始扫描把它一起算进来"。
     def _counters_for(self, signal: str = None):
         name = str(signal or '').strip().upper()
-        if name and name in self.counters_by_signal:
-            return self.counters_by_signal[name]
-        return self.counters
+        if not name:                          # 没点名 / 空串 ⇒ 主变量（老调用行为不变）
+            return self.counters
+        return self.counters_by_signal.get(name)          # 点名的：**在就给，不在就 None**
 
     def _matrix_for(self, signal: str = None):
         name = str(signal or '').strip().upper()
-        if name and name in self.status_matrix_by_signal:
-            return self.status_matrix_by_signal[name]
-        return self.status_matrix
+        if not name:
+            return self.status_matrix
+        return self.status_matrix_by_signal.get(name)
 
     def signals(self) -> list[str]:
         """本结果里**可选的判定变量**（含主变量；老结果 = `[signal_name]`）。"""

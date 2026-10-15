@@ -51,6 +51,7 @@ INDEX_PANE_HEIGHT = 170           # 指数副图**默认高度**（设计稿硬�
 #   改为**数值框精确设**（比拖更准、也能记住）。合法域见 `INDEX_HEIGHT_RANGE`。
 INDEX_HEIGHT_RANGE = (120, 400)
 MINI_ROW_MIN_H = 56               # 迷你行**高度下限**（行数多时不让行被压成一条线）
+BAND_MAX_ROWS = 6                 # 命中色带最多画几条（再多糊成一片，不如去「🧮 关系卡」）
 
 # 纵轴量程留白：可见最大值 × 它（再 +1，线不贴边）。
 # ★1.74 复核：这个数值原本只在旧的 `breadth_chart.RATIO_MAX_PAD`（已删）里，
@@ -105,7 +106,7 @@ class BreadthRowsChart(QWidget):
                bar_mode: str = BAR_MODE_RATIO, ma_window: int = MA_WINDOW_DEFAULT,
                focus: str = '', index_label: str = '', with_index: bool = True,
                chart_type: str = 'bars', index_style: str = DEFAULT_INDEX_STYLE,
-               index_height: int = INDEX_PANE_HEIGHT) -> int:
+               index_height: int = INDEX_PANE_HEIGHT, show_bands: bool = False) -> int:
         """把多个统计项各画一行。
 
         :param items:  `[{'key','label','color'}]` —— **顺序即行序**（第 0 项是主行）
@@ -123,6 +124,7 @@ class BreadthRowsChart(QWidget):
         self.last_ma_window = self._ma_window    # 公开只读别名（断言/回执要引用"这一帧用了什么窗口"）
         self._index_height = self._clamp_index_h(index_height)
         self._focus_on = bool(focus)
+        self._show_bands = bool(show_bands)      # ★1.75 期 3：命中色带（副图叠加选项）
         self._items = [dict(it) for it in (items or [])]
         self._clean_lines()
         self._rows = []
@@ -185,6 +187,7 @@ class BreadthRowsChart(QWidget):
             self._draw_row(i, row)
         if self._with_index:
             self._render_index(index_df, index_style)
+            self._render_bands()
         self._attach_axes()
         self._host.align_axis_widths()
         try:
@@ -375,6 +378,29 @@ class BreadthRowsChart(QWidget):
         else:
             pane.plot_item.addItem(pg.PlotDataItem(
                 xs, self._idx_close, pen=pg.mkPen(_INDEX_COLOR, width=1.3), connect='finite'))
+
+    def _render_bands(self) -> None:
+        """**命中色带**（★1.75 期 3 · 用户拍板"做成副图叠加选项"）：每项一条，贴副图底部逐条上叠。
+
+        ⚠ 本件**不判**该不该画 —— "这个条件太频繁、色带读不出东西"是**三道闸**的判断
+          （闸说是，页面就引导去「🧮 关系卡」）；图表件只按开关画，不越权替用户决定。
+        """
+        pane = self._host.pane('index')
+        if pane is None or not self._show_bands or not self._rows:
+            return
+        lo = float(np.nanmin(self._idx_lo)) if np.isfinite(self._idx_lo).any() else 0.0
+        hi = float(np.nanmax(self._idx_hi)) if np.isfinite(self._idx_hi).any() else 1.0
+        span = max(1e-9, hi - lo)
+        for bi, row in enumerate(self._rows[:BAND_MAX_ROWS]):
+            flags = np.nan_to_num(np.asarray(row['values'], dtype=float), nan=0.0) > 0
+            xs = np.flatnonzero(flags).astype(float)
+            if not xs.size:
+                continue
+            brush = pg.mkColor(row['color'])
+            brush.setAlpha(0xD0)              # ⚠ Qt 的 8 位 hex 是 #AARRGGBB，别拼字符串
+            pane.plot_item.addItem(pg.BarGraphItem(
+                x=xs, height=span * 0.022, y0=lo + span * (0.040 + 0.028 * bi),
+                width=0.85, brush=pg.mkBrush(brush), pen=pg.mkPen(width=0)))
 
     def _attach_axes(self) -> None:
         """刻度挂最下窗格；**逐行**纵轴跟随可视 bar 区间（各自量纲、互不干扰）。"""

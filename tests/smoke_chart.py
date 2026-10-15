@@ -5789,8 +5789,119 @@ try:
           isinstance(_multi11.status_on(_multi11.asof, signal="A1"), dict)
           and not _multi11.breadth_frame(signal="A1").empty
           and not _multi11.breadth_frame(signal="B2").empty)
+
+    # ★1.75 修（用户 2026-10-16 实测报的 bug）：扫描后**新加**的统计项还没算过 ——
+    #   "点名了但不在本次结果里"的判定变量**绝不许回落成主变量**（旧版会回落 ⇒ 那一行画出
+    #   与主变量一模一样的曲线、徽标照抄主变量的占比）。静默冒充比缺数据坏得多（§10-4）。
+    _ghost11 = _multi11.breadth_frame(signal="NOT_IN_SCAN")
+    check("★ 1.75 修：**点名了却不在本次结果里** ⇒ 空表 + 空状态（**不回落成主变量**）"
+          "—— 界面据此不画那一行、徽标显示「未扫描」",
+          _ghost11.empty
+          and _multi11.status_on(_multi11.asof, signal="NOT_IN_SCAN") == {}
+          and not _ghost11.equals(_multi11.breadth_frame()))     # 与主变量**不是**同一份数据
+    check("★ 1.75 修：`signal=None` / 空串**仍返回主变量**（老调用零变化，不许修坏）",
+          _multi11.breadth_frame().equals(_solo_b11.breadth_frame())
+          and _multi11.breadth_frame(signal="").equals(_solo_b11.breadth_frame())
+          and _multi11.status_on(_multi11.asof) == _solo_b11.status_on(_solo_b11.asof))
 except Exception as _e11:  # noqa: BLE001
     check(f"§7-B16 期 1 多判定变量断言整段抛异常: {type(_e11).__name__}: {_e11}", False)
+
+# ==========================================
+# §7-B16 期 3 · 「与指数的关系」内核（★1.75 · 用户 2026-10-15 确认口径）
+#   五个纯函数：前向收益（条件 vs 基线）/ 事件对齐路径 / 领先滞后 / Rank IC / 置换检验。
+#   ⚠ 本段的重点是**能被手算核对**与**能被人工构造的关系验证**（不是"跑起来不报错"）：
+#     · 前向收益：拿 100→110→121… 这种"每期 +10%"的序列手算；
+#     · 事件对齐：造"命中日之后指数恰好跳 +10%"⇒ 路径 +1 偏移必须是 +10%；
+#     · 领先滞后：把占比造成"未来第 5 期的收益"⇒ 峰值**必须**落在 lag = −5（人工构造领先）；
+#     · 置换检验：固定种子 ⇒ 两次调用必须一模一样（结论可复述的前提）。
+# ==========================================
+print("\n== §7-B16 期 3 · 与指数的关系（内核纯函数）==")
+try:
+    from core import relation_stats as _rs3  # noqa: E402
+
+    # ---- ① 前向收益：手算核对（每期 +10%）----
+    _c3 = pd.Series([100.0, 110.0, 121.0, 133.1, 146.41, 161.051])
+    _f3 = _rs3.forward_returns(_c3, (2,))[2]
+    check("★ 1.75 期 3：前向收益 == 手算值（每期 +10% ⇒ t=0 的两期前向 = 21%）",
+          abs(float(_f3.iloc[0]) - 0.21) < 1e-9 and bool(np.isnan(_f3.iloc[-1]))
+          and bool(np.isnan(_f3.iloc[-2])))
+
+    _d3 = pd.date_range("2024-01-01", periods=120, freq="B")
+    _ret3 = pd.Series(np.random.default_rng(3).normal(0, 0.01, len(_d3)), index=_d3)
+    _close3 = 3000.0 * (1.0 + _ret3).cumprod()
+    _flags3 = pd.Series(0.0, index=_d3)
+    _flags3.iloc[[10, 11, 12, 40, 70, 71, 100]] = 1.0        # 含连续命中（验两个 n）
+    _cnd3 = _rs3.conditional_forward_returns(_flags3, _close3, (5,))
+    _bl3 = _rs3.forward_returns(_close3, (5,))[5].dropna().mean()
+    check("★ 1.75 期 3：条件前向收益的**基线 == 全样本均值**（手算对照；n = 命中日数）",
+          abs(_cnd3[5]['baseline_mean'] - float(_bl3)) < 1e-12 and _cnd3[5]['n'] == 7
+          and abs(_cnd3[5]['diff'] - (_cnd3[5]['mean'] - _cnd3[5]['baseline_mean'])) < 1e-12)
+    check("★ 1.75 期 3：样本 < 30 ⇒ `enough=False`（界面据此写「样本不足，仅参考」，不冒充结论）",
+          _cnd3[5]['enough'] is False and _cnd3[5]['n'] < _rs3.MIN_SAMPLE)
+
+    # ---- ② 事件对齐：造"命中日之后恰好跳 +10%"----
+    #   ⚠ 第一版把命中日放在**跳涨之后**（35~37/50）⇒ 路径处处为 0，断言假红。
+    #     手算核对要求：**命中日恰好在跳涨前那一天**（第 30 个点，第 31 个点起 +10%）。
+    _d3b = pd.date_range("2024-01-01", periods=60, freq="B")
+    _c3b = pd.Series(np.linspace(100.0, 100.0, 60), index=_d3b)     # 先全平
+    _c3b.iloc[31:] = 110.0                                          # 第 31 个点起 +10%
+    _fl3a = pd.Series(0.0, index=_d3b)
+    _fl3a.iloc[[30]] = 1.0                                          # **只**命中跳涨前一天
+    _ev3a = _rs3.event_study(_fl3a, _c3b, window=3)
+    check("★ 1.75 期 3：事件对齐**手算核对** —— 命中日（恰在跳涨前）⇒ 偏移 0 = 0%、"
+          "偏移 +1 = **+10%**、偏移 −1 = 0%",
+          abs(_ev3a['mean'][0]) < 1e-9 and abs(_ev3a['mean'][1] - 10.0) < 1e-9
+          and abs(_ev3a['mean'][-1]) < 1e-9)
+    _fl3b = pd.Series(0.0, index=_d3b)
+    _fl3b.iloc[[20, 35, 36, 37, 50]] = 1.0                          # 含 35~37 连续命中
+    _ev3 = _rs3.event_study(_fl3b, _c3b, window=3)
+    check("★ 1.75 期 3：**两个 n 并列**（命中交易日 vs 独立事件）—— 连续命中必须塌成一个",
+          _ev3['n_hit_days'] == 5 and _ev3['n_independent'] == 3)
+    check("★ 1.75 期 3：事件数 < 10 ⇒ `enough=False`（界面据实说「样本不足」，不画结论线）",
+          _ev3['enough'] is False)
+
+    # ---- ③ 领先滞后：人工构造"指标领先 5 期" ⇒ 峰值必须落在 lag = −5 ----
+    _d3c = pd.date_range("2024-01-01", periods=400, freq="B")
+    _r3c = pd.Series(np.random.default_rng(11).normal(0, 0.01, 400), index=_d3c)
+    _close3c = 3000.0 * (1.0 + _r3c).cumprod()
+    _ratio3c = _r3c.shift(-5)                                    # 占比 = **未来第 5 期**的收益
+    _ll3 = _rs3.lead_lag_corr(_ratio3c, _close3c, lags=range(-12, 13))
+    _arr3 = np.array([abs(_ll3[k]) if np.isfinite(_ll3[k]) else -1.0 for k in range(-12, 13)])
+    _peak3 = list(range(-12, 13))[int(np.argmax(_arr3))]
+    check(f"★ 1.75 期 3：人工构造「指标领先 5 期」⇒ 峰值**必须**落在 lag = −5（实测 {_peak3}）"
+          f"—— 符号口径写死：负 = 指标领先（与设计稿轴一致）",
+          _peak3 == -5 and abs(float(_ll3[-5]) - 1.0) < 1e-6)
+    check("★ 1.75 期 3：`lag = 0`（同期）与正 lag 都远弱于峰值（不是「到处都相关」）",
+          abs(float(_ll3[0])) < 0.5 and abs(float(_ll3[5])) < 0.5)
+
+    # ---- ④ Rank IC：复用仓库口径（单调 ⇒ |IC| = 1；常数 ⇒ NaN）----
+    #   ⚠ 必须用 **window=1** 才"完全单调"：占比 = 下一期收益 ⇒ 与前向 1 期收益是**同一个数**。
+    _ic3 = _rs3.rank_ic_of(_r3c.shift(-1), _close3c, window=1)
+    check("★ 1.75 期 3：Rank IC 走 `core.sweep_stats.rank_ic`（人工构造的完全单调关系 ⇒ ρ ≈ 1）",
+          abs(abs(float(_ic3)) - 1.0) < 1e-6)
+    check("★ 1.75 期 3：占比为常数 ⇒ IC = NaN（界面显示 —，**绝不冒充 0**）",
+          bool(np.isnan(_rs3.rank_ic_of(pd.Series(1.0, index=_d3c), _close3c, window=5))))
+
+    # ---- ⑤ 置换检验：可复现 + 真关系给低 p + 样本不足不做检验 ----
+    _p_a3 = _rs3.permutation_p(_ratio3c, _close3c, window=5, draws=200, seed=7)
+    _p_b3 = _rs3.permutation_p(_ratio3c, _close3c, window=5, draws=200, seed=7)
+    check("★ 1.75 期 3：置换检验**固定种子 ⇒ 两次调用完全一致**（结论能被复述的前提）",
+          _p_a3['p'] == _p_b3['p'] and _p_a3['seed'] == 7 and _p_a3['draws'] == 200)
+    check(f"★ 1.75 期 3：真关系 ⇒ p 很低（实测 p = {_p_a3['p']:.4f}）"
+          f"，且 0 < p ≤ 1（加一处理 ⇒ 不会出现 0）",
+          _p_a3['p'] <= 0.05 and 0.0 < _p_a3['p'] <= 1.0)
+    _null_ps3 = [_rs3.permutation_p(_flags3, _close3, window=5, draws=200, seed=_s)['p']
+                 for _s in range(12)]
+    check(f"★ 1.75 期 3：**无关系**的合成序列 ⇒ p 不会系统性偏小"
+          f"（12 个固定种子中 p<0.05 的有 {sum(1 for _p in _null_ps3 if _p < 0.05)} 个）"
+          "—— 这条挡的是『置换写错成永远显著』",
+          all(0.0 < float(_p) <= 1.0 for _p in _null_ps3)
+          and sum(1 for _p in _null_ps3 if _p < 0.05) <= 6)
+    _p_na3 = _rs3.permutation_p(pd.Series(0.0, index=_d3), _close3, window=5, draws=50)
+    check("★ 1.75 期 3：**一次都没命中** ⇒ 不做检验（p = NaN + 人话 reason，不冒充结果）",
+          bool(np.isnan(_p_na3['p'])) and bool(_p_na3['reason']))
+except Exception as _e3:  # noqa: BLE001
+    check(f"§7-B16 期 3 关系内核断言整段抛异常: {type(_e3).__name__}: {_e3}", False)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:

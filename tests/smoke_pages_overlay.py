@@ -176,7 +176,7 @@ for _vk in ("scan_ui", "breadth_ui"):
         #   本轮真实踩到：app 跑过一次之后，M3 段 5 条断言变红（行数/窗格名/引导可见性全被带偏）。
         _drop_vk = {"col_order"}
         if _vk == "breadth_ui":
-            _drop_vk |= {"items", "hint_done", "index_h", "ma_window"}
+            _drop_vk |= {"items", "hint_done", "index_h", "ma_window", "view", "bands"}
         _pref_module.preferences.set(
             _vk, {a: b for a, b in _cur_vk.items() if a not in _drop_vk})
 
@@ -3329,13 +3329,13 @@ try:
     _brd_ui = preferences.get('breadth_ui')
     # ★1.73 / §7-B16 期 1：多一项 `items`（统计项列表）—— **逐项点名**，且**只存轻量配置**
     #   （统计项只存 key/label/color/visible/focus，绝不存家数/矩阵 ⇒ 结果仍只进会话缓存 D3）。
-    check("breadth_ui 偏好只含配置**十五项**（`items` 统计项 · `index_h` 副图高度 · "
-          "`hint_done` 引导已读 · `ma_window` 均线窗口；结果只进会话缓存，D3）",
+    check("breadth_ui 偏好只含配置**十七项**（`items` · `index_h` · `hint_done` · `ma_window` · "
+          "`view` 三视图 · `bands` 色带；结果只进会话缓存，D3）",
           isinstance(_brd_ui, dict)
           and set(_brd_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds',
                                'range', 'chart', 'index_style', 'smooth', 'ratio',
                                'overlay', 'overlay_code', 'items', 'index_h', 'hint_done',
-                               'ma_window'}
+                               'ma_window', 'view', 'bands'}
           and str(_brd_ui.get('formula') or '').strip() != ''
           and isinstance(_brd_ui.get('thresholds'), dict)
           and isinstance(_brd_ui.get('items'), list)
@@ -6086,6 +6086,178 @@ try:
               for k, v in _ver2.items() if k in _ver4))
 except Exception as _eP2:  # noqa: BLE001
     check(f"§7-B16 期 2 三道闸断言整段抛异常: {type(_eP2).__name__}: {_eP2}", False)
+
+# ==========================================
+# §7-B16 期 3 · 三视图 + 关系卡 + 导出 + 色带（★1.75 · 用户 2026-10-15 确认口径）
+#   用户确认的四条：① L1 分段控件切三视图（**不新开页面**）② 色带 = 指数副图的**叠加选项**
+#   ③ 关系卡**要导出**（PNG/CSV）④ 均线窗口可调（已在期 2 落地）。
+#   ⚠ 导出这段是**真写盘、真读回**（把文件对话框换成临时路径）—— 不是"看它没报错"。
+# ==========================================
+print("\n== §7-B16 期 3 · 三视图 / 关系卡 / 导出 / 色带 ==")
+try:
+    import tempfile as _tf3u  # noqa: E402
+
+    from PyQt6.QtWidgets import QFileDialog as _QFD3u  # noqa: E402
+
+    from ui.widgets.breadth_layout import (VIEW_CARD,  # noqa: E402
+                                           VIEW_EVENT, VIEW_INDEX, VIEW_ROWS)
+    from ui.widgets.relation_card import WINDOWS as _RW3u  # noqa: E402
+
+    _brd3u = next(win.page_backtest.tabs.widget(_i3u)
+                  for _i3u in range(win.page_backtest.tabs.count())
+                  if type(win.page_backtest.tabs.widget(_i3u)).__name__ == 'BreadthView')
+    # ⚠ M3 那一段收尾时**故意作废了 `_outcome`**（"换范围 ⇒ 旧结果作废"那条断言）⇒
+    #   本段必须**自带一份合成结果 + 指数序列**才自洽（否则报告为空、断言假红就是我自己造的）。
+    from core.cross_section import ScanThresholds as _ST3u  # noqa: E402
+    from core.cross_section import scan as _scan3u  # noqa: E402
+    from data.scan_store import ScanOutcome as _SO3u  # noqa: E402
+    from data.scan_store import scan_key as _sk3u  # noqa: E402
+
+    _ds3u = pd.bdate_range('2023-01-02', periods=260)
+    _G3u = {}
+    for _k3u in range(5):
+        _c3u = 20.0 + np.cumsum(np.random.default_rng(30 + _k3u).normal(0, 0.3, len(_ds3u)))
+        _v3u = np.random.default_rng(90 + _k3u).integers(10_000, 90_000, len(_ds3u)).astype(float)
+        _G3u[f'T{_k3u}'] = pd.DataFrame({'date': _ds3u, 'open': _c3u, 'high': _c3u * 1.01,
+                                         'low': _c3u * 0.99, 'close': _c3u, 'volume': _v3u,
+                                         'amount': _c3u * _v3u})
+    _F3u = 'COND := C > MA(C,5);\nSLOW := C > MA(C,20);\n'
+    _TH3u = _ST3u(min_amount=None, min_price=None, min_bars=10, exclude_suspended=False,
+                  exclude_st=False, exclude_limit=False)
+    _res3u = _scan3u(_G3u, _F3u, thresholds=_TH3u, signal_names=['COND'], keep_matrix=True)
+    _brd3u._outcome = _SO3u(
+        result=_res3u, key=_sk3u(_F3u, _TH3u, sorted(_G3u), signal_names=['SLOW', 'COND']),
+        cached=False, asof=_res3u.asof)
+    _brd3u._symbols, _brd3u._names = sorted(_G3u), {}
+    _brd3u._index_df = pd.DataFrame({
+        'date': _ds3u,
+        'close': 3000.0 + np.cumsum(np.random.default_rng(7).normal(0, 9, len(_ds3u)))})
+    _brd3u._index_code = str(_brd3u._display_pane.cb_overlay_code.currentData() or '')
+    _brd3u.refresh()                       # 让行/闸条/视图都按这份合成结果走一遍
+    app.processEvents()
+
+    _seg3u = _brd3u.seg_view
+    check("★ 1.75 期 3：L1 有**三视图分段控件**（多行小图 / 事件对齐 / 关系卡）"
+          "—— 用户拍板『不新开页面』，复用既有 `SegmentedControl`",
+          _seg3u.current_key() == VIEW_ROWS and len(VIEW_INDEX) == 3)
+    check("★ 1.75 期 3：三视图**堆叠**在同一处（页数 == 视图数，开局停在第 0 页）",
+          _brd3u.view_stack.count() == 3
+          and _brd3u.view_stack.currentIndex() == VIEW_INDEX[VIEW_ROWS])
+    _entries3u = get_scan_store().entries()
+    _seg3u.set_current(VIEW_EVENT, emit=True)
+    app.processEvents()
+    check("★ 1.75 期 3：切「事件对齐」⇒ 堆叠页跟着换 + **没有重扫**",
+          _brd3u.view_stack.currentIndex() == VIEW_INDEX[VIEW_EVENT]
+          and get_scan_store().entries() == _entries3u)
+    _seg3u.set_current(VIEW_CARD, emit=True)
+    app.processEvents()
+    check("★ 1.75 期 3：切「关系卡」⇒ 页换 + 仍未重扫（切换 = 纯渲染）",
+          _brd3u.view_stack.currentIndex() == VIEW_INDEX[VIEW_CARD]
+          and get_scan_store().entries() == _entries3u)
+
+    _rep3u = _brd3u._flow.relation_report(_brd3u)
+    _need3u = {'key', 'label', 'fwd', 'event', 'leadlag', 'ic', 'perm', 'lead_peak',
+               'n_hit_days', 'n_independent'}
+    check("★ 1.75 期 3：关系报告**逐项**给出前向收益 / 事件对齐 / 领先滞后 / IC / 置换检验"
+          "（含两个 n）",
+          bool(_rep3u.get('items')) and all(_need3u <= set(_it) for _it in _rep3u['items']))
+    check("★ 1.75 期 3：报告的置换检验**带种子与抽样次数**（结论可复述的前提）",
+          all(_it['perm'].get('seed') and _it['perm'].get('draws') for _it in _rep3u['items']))
+
+    # ★1.75 期 3（用户认可的口径）：事件图**只画闸允许的条件**；被拦下的项"已跳过 + 为什么"
+    _ok3u = [_it for _it in _rep3u['items'] if _it.get('event_ok')]
+    _skip3u = [_it for _it in _rep3u['items'] if not _it.get('event_ok')]
+    _seg3u.set_current(VIEW_EVENT, emit=True)
+    app.processEvents()
+    check(f"★ 1.75 期 3：事件图**只画闸允许的项**（实测 允许 {len(_ok3u)} / 跳过 {len(_skip3u)}）",
+          _brd3u.event_chart._host.main_pane.plot_item.items
+          or (not _ok3u and bool(_skip3u)))
+    check("★ 1.75 期 3：被闸拦下的项在事件图里**如实说「已跳过」**（不硬画一条读不出来的线）",
+          ('已跳过' in _brd3u.event_chart.lbl_note.text()) if _skip3u else True)
+    if _ok3u:
+        check("★ 1.75 期 3：事件图脚注写了**两个 n**（命中日 / 独立事件）——诚实边界在图上",
+              'n =' in _brd3u.event_chart.lbl_note.text())
+
+    # —— ★1.75 修（用户 2026-10-16 实测报的 bug）：扫描完成后在配置里**新加**统计项 ——
+    #   它还没被这次扫描算过。旧版 `_counters_for` 对"点名了但不在结果里"的变量**回落成主变量**
+    #   ⇒ 新增那一行画出**与主变量一模一样**的曲线、徽标也照抄主变量占比（截图里两项都是 94.6%）。
+    #   现在：**不画、不冒充、徽标「未扫描」+ 回执说要重扫**。
+    _brd3u._items = [{'key': 'SLOW', 'label': 'C>MA20', 'color': '#1E88E5', 'visible': True}]
+    _brd3u._flow.on_item_add('FAST')        # 本次合成扫描只算了 SLOW(主) + COND ⇒ FAST 未算过
+    app.processEvents()
+    _ver_f3u = _brd3u._flow.gate_verdicts(_brd3u)
+    _rep_f3u = _brd3u._flow.relation_report(_brd3u)
+    check("★ 1.75 修：**未算过的项**徽标 = 「未扫描」，**不照抄主变量的占比**"
+          "（旧版回落成主变量 ⇒ 两项显示同一个数，就是用户报的那个 bug）",
+          _ver_f3u.get('FAST', {}).get('mode') == _rsP2.MODE_UNKNOWN
+          and _ver_f3u.get('FAST', {}).get('ratio_pct') is None
+          and _ver_f3u.get('SLOW', {}).get('mode') != _rsP2.MODE_UNKNOWN)
+    check("★ 1.75 修：未算过的项**不画行**（不拿主变量的数据冒充自己）",
+          _brd3u.chart.row_keys() == ['SLOW'])
+    check("★ 1.75 修：未算过的项**不进关系报告**（卡上不会多出一行假数字）",
+          [it['key'] for it in _rep_f3u['items']] == ['SLOW'])
+    check("★ 1.75 修：加项后的回执**如实说「还没算过、点开始扫描」**（用户知道下一步做什么）",
+          '还没算过' in _brd3u.lbl_receipt.text() and 'FAST' in _brd3u.lbl_receipt.text())
+
+    # ★1.75 修（同族 · 更轻但一样会误导）：底部「近5日」只显示**一项**的家数 ⇒ 必须写明是哪一项；
+    #   第一项没算过时，它必须写**实际显示的那一项** —— 否则等于把别人的数字摆给你看。
+    _brd3u._items = [{'key': 'FAST', 'label': 'C>MA5', 'color': '#E53935', 'visible': True},
+                     {'key': 'SLOW', 'label': 'C>MA20', 'color': '#1E88E5', 'visible': True}]
+    _brd3u.refresh()
+    app.processEvents()
+    _mini3u = _brd3u.lbl_mini.text()
+    check("★ 1.75 修：底部「近5日」**写明属于哪一项**，且第一项没算过时写的是**实际显示的那一项**"
+          f"（实测：{_mini3u[:22]}…）",
+          _mini3u.startswith('近5日（') and 'C>MA20' in _mini3u and 'C>MA5' not in _mini3u)
+
+    _brd3u.relation_card.set_report(_rep3u)
+    _rows3u = _brd3u.relation_card.rows_for_csv()
+    check(f"★ 1.75 期 3：关系卡可导出（CSV 行数 {len(_rows3u)} == 项数 × "
+          f"{len(_RW3u)} 窗口，且列名带口径）",
+          len(_rows3u) == len(_rep3u['items']) * len(_RW3u)
+          and 'RankIC' in _rows3u[0] and '置换p(20日)' in _rows3u[0])
+    check("★ 1.75 期 3：关系卡**常驻诚实提醒**（相关 ≠ 因果 + 幸存者偏差）",
+          '幸存者偏差' in _brd3u.relation_card.lbl_honest.text()
+          and '相关 ≠ 因果' in _brd3u.relation_card.lbl_honest.text())
+
+    with _tf3u.TemporaryDirectory() as _d3u:
+        _csv3u, _png3u = os.path.join(_d3u, 'r.csv'), os.path.join(_d3u, 'r.png')
+        _orig3u = _QFD3u.getSaveFileName
+        try:
+            _QFD3u.getSaveFileName = staticmethod(lambda *a, **k: (_csv3u, 'CSV'))
+            _brd3u._flow.on_export_csv()
+            _QFD3u.getSaveFileName = staticmethod(lambda *a, **k: (_png3u, 'PNG'))
+            _brd3u._flow.on_export_png()
+        finally:
+            _QFD3u.getSaveFileName = _orig3u
+        check("★ 1.75 期 3：**导出 CSV 真落盘**并能读回（utf-8-sig ⇒ Excel 不乱码）",
+              os.path.exists(_csv3u) and os.path.getsize(_csv3u) > 0
+              and pd.read_csv(_csv3u).shape[0] == len(_rows3u))
+        check("★ 1.75 期 3：**导出 PNG 真落盘**（卡长什么样就存什么样）",
+              os.path.exists(_png3u) and os.path.getsize(_png3u) > 0)
+        check("★ 1.75 期 3：导出后回执**说清存到哪**（不静默）",
+              '已导出' in _brd3u.lbl_receipt.text())
+        try:
+            _QFD3u.getSaveFileName = staticmethod(lambda *a, **k: ('', ''))
+            _brd3u._flow.on_export_csv()
+        finally:
+            _QFD3u.getSaveFileName = _orig3u
+        check("★ 1.75 期 3：**取消导出** ⇒ 回执如实说「已取消」，不假装成功",
+              '已取消' in _brd3u.lbl_receipt.text())
+
+    _pane3u = _brd3u.chart._host.pane('index')
+    _n_before3u = len(_pane3u.plot_item.items)
+    _brd3u._display_pane.chk_bands.setChecked(True)
+    app.processEvents()
+    check("★ 1.75 期 3：**命中色带 = 副图的叠加选项**（开了以后副图图元变多，不新增视图）",
+          _brd3u.chart._show_bands is True
+          and len(_pane3u.plot_item.items) >= _n_before3u)
+    _brd3u._display_pane.chk_bands.setChecked(False)
+    app.processEvents()
+    _seg3u.set_current(VIEW_ROWS, emit=True)          # 收尾：回到主视图
+    app.processEvents()
+except Exception as _e3u:  # noqa: BLE001
+    check(f"§7-B16 期 3 三视图/关系卡断言整段抛异常: {type(_e3u).__name__}: {_e3u}", False)
 
 # ==========================================
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71

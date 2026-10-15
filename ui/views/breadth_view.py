@@ -300,6 +300,14 @@ class BreadthView(QWidget):
                 _h = INDEX_PANE_HEIGHT
             display.spin_index_h.setValue(
                 min(max(_h, int(INDEX_HEIGHT_RANGE[0])), int(INDEX_HEIGHT_RANGE[1])))
+            # ★1.75 期 3：三视图（记住上次看的那个；切换**不重扫**）
+            from ui.widgets.breadth_layout import VIEW_INDEX, VIEW_ROWS
+            _view = str(data.get('view') or VIEW_ROWS)
+            if _view not in VIEW_INDEX:
+                _view = VIEW_ROWS
+            self.seg_view.set_current(_view)                 # 幂等 + 不发信号
+            self.view_stack.setCurrentIndex(VIEW_INDEX[_view])
+            display.chk_bands.setChecked(bool(data.get('bands', False)))
             # ★1.74 期 2：**均线窗口**（用户拍板"要也给用户调"）—— 可调、记住
             try:
                 _ma = int(data.get('ma_window', MA_WINDOW_DEFAULT))
@@ -345,5 +353,8 @@ class BreadthView(QWidget):
             # ★1.73 收尾：副图高度（可调、记住）+ 引导条已读标记（**显式标志**，见 `_hint_done` 注释）
             'index_h': int(self._display_pane.spin_index_h.value()),
             'ma_window': int(self._display_pane.spin_ma.value()),   # ★1.74 期 2：均线窗口（可调）
+            # ★1.75 期 3：当前视图（切换不重扫）+ 命中色带开关（副图叠加选项）
+            'view': str(self.seg_view.current_key()),
+            'bands': bool(self._display_pane.chk_bands.isChecked()),
             'hint_done': bool(self._hint_done),
         })
