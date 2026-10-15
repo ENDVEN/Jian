@@ -28,6 +28,10 @@ from PyQt6.QtWidgets import QVBoxLayout, QWidget
 from ui.widgets.adaptive_axis import attach_all, slice_span
 from ui.widgets.chart_host import ChartHost
 from ui.widgets.chart_style import apply_pokorny_style
+# 指数副图的**图形目录 / 配色 / 列要求**与抽屉下拉同一份（§11.5-112：同一事实只存一处）——
+#   ★1.74 复核：旧版在本文件又抄了一份，现从 `breadth_chart` 取（本地沿用旧名，避免改名扩散）。
+from ui.widgets.breadth_chart import (DEFAULT_INDEX_STYLE, INDEX_COLOR as _INDEX_COLOR,
+                                      INDEX_OHLC_NEED as _INDEX_OHLC_NEED)
 from ui.widgets.custom_widgets import CandlestickItem, OhlcBarItem
 
 __all__ = ['BreadthRowsChart', 'ROW_COLORS', 'BAR_MODE_RATIO', 'BAR_MODE_HITS',
@@ -48,10 +52,10 @@ INDEX_PANE_HEIGHT = 170           # 指数副图**默认高度**（设计稿硬�
 INDEX_HEIGHT_RANGE = (120, 400)
 MINI_ROW_MIN_H = 56               # 迷你行**高度下限**（行数多时不让行被压成一条线）
 
-# 指数副图可选图形（★v6.43 用户拍板；升级到多行后**原样保留**，不许静默退化）
-DEFAULT_INDEX_STYLE = 'line'
-_INDEX_COLOR = '#5B6472'
-_INDEX_OHLC_NEED = ('open', 'high', 'low')     # kline/ohlc 的最低列要求（close 恒需）
+# 纵轴量程留白：可见最大值 × 它（再 +1，线不贴边）。
+# ★1.74 复核：这个数值原本只在旧的 `breadth_chart.RATIO_MAX_PAD`（已删）里，
+#   而本文件把它**硬编码**了一次 —— 现在收成一个常量，本文件是唯一使用者。
+RANGE_PAD = 1.08
 
 
 def _axis_tick_axis(integer: bool) -> pg.AxisItem:
@@ -90,7 +94,6 @@ class BreadthRowsChart(QWidget):
         self._focus_on = False                   # 是否有焦点行（决定内容最小高度的权重）
         # 窗格增删计数（"切口径 / 切区间不该重建窗格"要有**可断言的证据**，不靠"看着没闪"）
         self.rebuilds = 0
-        self.reuses = 0
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._host, 1)
@@ -117,6 +120,7 @@ class BreadthRowsChart(QWidget):
         self._with_index = bool(with_index)      # 关掉「叠加指数」⇒ 不建副图窗格（不占地方）
         self._chart_type = str(chart_type or 'bars')
         self._ma_window = int(ma_window or 0)    # 0 = 不画均线（「叠加均线」取消勾选时）
+        self.last_ma_window = self._ma_window    # 公开只读别名（断言/回执要引用"这一帧用了什么窗口"）
         self._index_height = self._clamp_index_h(index_height)
         self._focus_on = bool(focus)
         self._items = [dict(it) for it in (items or [])]
@@ -242,7 +246,6 @@ class BreadthRowsChart(QWidget):
         have = self._host.pane_names
         same_shape = bool(have) and have[1:] == want[1:]
         if same_shape:
-            self.reuses += 1
             for name in want:
                 self._host.clear_pane_content(name)
         else:
@@ -384,7 +387,7 @@ class BreadthRowsChart(QWidget):
                 seg = row['values'][i0:i1 + 1]
                 if seg.size == 0 or not np.isfinite(seg).any():
                     return None
-                top = float(np.nanmax(seg)) * 1.08 + 1.0
+                top = float(np.nanmax(seg)) * RANGE_PAD + 1.0
                 return (0.0, top)
             return _provider
 

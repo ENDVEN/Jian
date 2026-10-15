@@ -1,9 +1,9 @@
 # ui/widgets/breadth_result.py
-"""📊 M3「广度统计」—— 结果区状态（空态 / 忙碌态；L0 的图表本体在 `breadth_chart`）。
+"""📊 M3「广度统计」—— 结果区状态（空态 / 忙碌态；L0 的图表本体在 `breadth_rows.BreadthRowsChart`）。
 
 【与 M2 `scan_result` 同一套约定】三种空态都给下一步动作（未就绪 / 无数据 / 失败），
 **禁止静默**（E 节）；"忙碌"时把上一轮结果收起来，避免被误读成本轮的。
-M3 没有 KPI 行与结果表 —— 逐日四态家数全部画在 `breadth_chart` 的广度线上，
+M3 没有 KPI 行与结果表 —— 逐日四态家数全部画在 `breadth_rows` 的**每个统计项一行**上，
 口径摘要（有效 N/M · 范围 · 前复权）由 `breadth_flow` 写进标题行的 `lbl_cal`。
 """
 from __future__ import annotations

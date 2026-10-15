@@ -8,7 +8,8 @@
   · 状态字段都在这里（`_thresholds` / `_symbols` / `_names` / `_outcome` / `_guard` /
     `_worker` / `_store` / `_range_key` / `_index_df` …）；
   · 版式装配 → `ui/widgets/breadth_layout.py`，运行流程 → `breadth_flow.py`，
-    状态空态 → `breadth_result.py`，双窗格图表 → `breadth_chart.py`；
+    状态空态 → `breadth_result.py`，**多行小图** → `breadth_rows.py`、统计项面板 → `breadth_items.py`、
+    显示选项目录 → `breadth_chart.py`；
   · widgets 模块只读写 `p.X`，**不自己存副本**；
   · 成功判据 = 同一套断言零改动（迁移护栏会钉住本页的公共面）。
 """
@@ -291,13 +292,21 @@ class BreadthView(QWidget):
             if isinstance(items, list) and items:
                 self._items = [it for it in items if isinstance(it, dict) and it.get('key')]
             # ★1.73 收尾：副图高度（可调、记住）+ 首次引导条是否已读
-            from ui.widgets.breadth_rows import INDEX_HEIGHT_RANGE, INDEX_PANE_HEIGHT
+            from ui.widgets.breadth_rows import (INDEX_HEIGHT_RANGE, INDEX_PANE_HEIGHT,
+                                                 MA_WINDOW_DEFAULT)
             try:
                 _h = int(data.get('index_h', INDEX_PANE_HEIGHT))
             except (TypeError, ValueError):
                 _h = INDEX_PANE_HEIGHT
             display.spin_index_h.setValue(
                 min(max(_h, int(INDEX_HEIGHT_RANGE[0])), int(INDEX_HEIGHT_RANGE[1])))
+            # ★1.74 期 2：**均线窗口**（用户拍板"要也给用户调"）—— 可调、记住
+            try:
+                _ma = int(data.get('ma_window', MA_WINDOW_DEFAULT))
+            except (TypeError, ValueError):
+                _ma = MA_WINDOW_DEFAULT
+            display.spin_ma.setValue(min(max(_ma, int(display.spin_ma.minimum())),
+                                         int(display.spin_ma.maximum())))
             # ★1.73 修：接**显式标志**（不读可见性）；据此显隐引导条（常驻 ⓘ 始终在）
             self._hint_done = bool(data.get('hint_done', False))
             self.hint_bar.setVisible(not self._hint_done)
@@ -335,5 +344,6 @@ class BreadthView(QWidget):
                       for it in self._items],
             # ★1.73 收尾：副图高度（可调、记住）+ 引导条已读标记（**显式标志**，见 `_hint_done` 注释）
             'index_h': int(self._display_pane.spin_index_h.value()),
+            'ma_window': int(self._display_pane.spin_ma.value()),   # ★1.74 期 2：均线窗口（可调）
             'hint_done': bool(self._hint_done),
         })

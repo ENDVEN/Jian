@@ -38,6 +38,11 @@ from ui.download_jobs import SingleSyncGate   # ★1.59：真源直连（不再�
 from ui.widgets.breadth_chart import DEFAULT_CHART_TYPE, DEFAULT_INDEX_STYLE
 from ui.widgets.breadth_layout import DEFAULT_INDEX_CODE, DEFAULT_RANGE, RANGE_PRESETS
 # ★1.73 / §7-B16 期 1：多行小图（每统计项一行）—— 柱口径常量与配色取自控件件（同一真源）
+from ui import settings_registry                       # ★1.74 期 2：阈值写入走**注册表**（唯一写入点）
+from dataclasses import asdict                             # ★1.74 期 2：判据 dataclass → 可渲染 dict
+from core.relation_stats import (MODE_UNKNOWN, PREF_KEY,   # ★1.74 期 2：三道闸判据（唯一真源）
+                                 clamp_thresholds, gate_decision,
+                                 hit_day_stats, thresholds_from_prefs)
 from ui.widgets.breadth_rows import BAR_MODE_HITS, BAR_MODE_RATIO, ROW_COLORS
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.widgets.summary_chip import set_chip_state   # ★1.64：胶囊高亮（三页同一份 chip）
@@ -104,6 +109,12 @@ class BreadthFlow:
         p.btn_hint_ok.clicked.connect(self.on_hint_dismissed)
         p.btn_gates_help.clicked.connect(self.show_gates_help)
         p._display_pane.spin_index_h.valueChanged.connect(self.on_display_changed)
+        # ★1.74 期 2：均线窗口（改完重画、不重扫）+ 三道闸阈值（就地可调，与设置页同一份偏好）
+        p._display_pane.spin_ma.valueChanged.connect(self.on_display_changed)
+        p._display_pane.gate_row.changed.connect(self.on_thresholds_changed)
+        p._display_pane.gate_row.set_values(thresholds_from_prefs(), silent=True)  # 开局回灌真值
+        p.gate_bar.fix_requested.connect(self.on_gate_fix_clicked)
+        p.gate_bar.why_requested.connect(self.show_gates_help)
         self.sync_items_panel(p)                 # 装配完成先喂一次（面板不该是空白下拉）
 
     # ==========================================
@@ -501,6 +512,7 @@ class BreadthFlow:
         （切片是纯内存操作，多做几次仍是"零成本"级）。
         """
         p = self.page
+        self._sync_gate_bar(p)          # ★1.74 期 2：闸条跟"上屏项 + 当前区间"走（纯函数，零成本）
         outcome = p._outcome
         if outcome is None:
             return
@@ -542,7 +554,9 @@ class BreadthFlow:
         painted = p.chart.render(
             items, frames, index_df,
             bar_mode=(BAR_MODE_RATIO if pane.chk_ratio.isChecked() else BAR_MODE_HITS),
-            ma_window=5 if pane.chk_smooth.isChecked() else 0,
+            # ★1.74 期 2：均线窗口由用户定（0 = 只画柱）；「叠加均线」关掉 ⇒ 一律不画线
+            #   （两个控件不打架：关掉时窗口输入框禁用，见 `BreadthDisplayPane`）
+            ma_window=(pane.spin_ma.value() if pane.chk_smooth.isChecked() else 0),
             chart_type=str(pane.cb_chart.currentData() or DEFAULT_CHART_TYPE),
             index_style=str(pane.cb_index_style.currentData() or DEFAULT_INDEX_STYLE),
             with_index=overlay_wanted,
@@ -647,11 +661,82 @@ class BreadthFlow:
         return ''
 
     def sync_items_panel(self, p=None) -> None:
-        """回灌面板（可选变量 + 列表）—— 面板只渲染，真源永远在 `p._items`。"""
+        """回灌面板（可选变量 + 列表 + **三道闸徽标**）—— 面板只渲染，真源永远在 `p._items`。"""
         p = p or self.page
         panel = p._items_pane.panel
         panel.set_available(self.formula_signals(p))
-        panel.set_items(p._items)
+        verdicts = self.gate_verdicts(p)
+        panel.set_items([{**dict(it), 'verdict': verdicts.get(str(it.get('key') or ''))}
+                         for it in (p._items or [])])
+        self._sync_gate_bar(p, verdicts)
+
+    # ==========================================
+    # ★1.74 / §7-B16 期 2：三道闸（判据在 `core.relation_stats`，本件只负责"摆给人看"）
+    # ==========================================
+    def gate_verdicts(self, p=None) -> dict:
+        """每个**上屏统计项**的三道闸结论：`{key: {mode,event_ok,ratio_pct,reason,suggest,…}}`。
+
+        · 判据一律调 `gate_decision`（纯函数，唯一真源）—— 本件**不自己判边界**；
+        · 阈值经 `thresholds_from_prefs()`（界面取阈值的唯一入口 ⇒ 与设置页/展示卡同源）；
+        · 还没扫描 / 该项没帧 ⇒ `unknown`（**如实说"未扫描"**，不猜档位）。
+        """
+        p = p or self.page
+        th = thresholds_from_prefs()
+        out: dict[str, dict] = {}
+        for it in self.active_items(p):
+            key = str(it.get('key') or '')
+            frame = p._outcome.breadth_frame(signal=key) if p._outcome is not None else None
+            if frame is None or getattr(frame, 'empty', True) or 'hits' not in getattr(
+                    frame, 'columns', []):
+                dec = asdict(gate_decision(None, th['sparse_max'], th['freq_min']))
+            else:
+                st = hit_day_stats(frame['hits'])
+                dec = asdict(gate_decision(st['ratio_pct'], th['sparse_max'], th['freq_min']))
+                dec.update(hit_days=st['hit_days'], days=st['days'])
+            out[key] = dec
+        return out
+
+    def _sync_gate_bar(self, p, verdicts: dict = None) -> None:
+        """闸条：**只在有项被拦下时**出现（原因/替代/动作三要素由 `GateHintBar` 保证）。"""
+        bar = getattr(p, 'gate_bar', None)
+        if bar is None:
+            return
+        verdicts = self.gate_verdicts(p) if verdicts is None else verdicts
+        labels = {str(it.get('key') or ''): str(it.get('label') or it.get('key') or '')
+                  for it in self.active_items(p)}
+        blocked = [(labels.get(k, k), v) for k, v in verdicts.items()
+                   if v and not v.get('event_ok', False)
+                   and str(v.get('mode')) != MODE_UNKNOWN]
+        bar.set_blocked(blocked)
+
+    def on_thresholds_changed(self, values: dict) -> None:
+        """展示卡**就地**改阈值 ⇒ 写进同一份偏好（经设置注册表）⇒ 重算徽标与闸条。
+
+        ⚠ 只重算判据（纯函数）+ 重画，**绝不重扫** —— 否则用户"试着调阈值"要等几十秒。
+        """
+        p = self.page
+        fixed = clamp_thresholds(values.get('sparse_max'), values.get('freq_min'),
+                                 values.get('indep_gap'))
+        for suffix, val in (('sparse_max', fixed['sparse_max']),
+                            ('freq_min', fixed['freq_min']),
+                            ('indep_gap', fixed['indep_gap'])):
+            item = settings_registry.find(f'{PREF_KEY}.{suffix}')
+            if item is not None:
+                settings_registry.set_value(item, val)
+        p._display_pane.gate_row.set_values(fixed, silent=True)   # 显示**实际生效值**
+        notes = '；'.join(fixed.get('notes') or [])
+        p.lbl_receipt.setText(
+            '三道闸阈值已更新（与「设置 → 回测与扫描默认」是同一份，两边同步）'
+            + (f' · 修正：{notes}' if notes else '')
+            + ' —— 徽标与闸条已按新阈值重算，**没有重扫**。')
+        self.sync_items_panel(p)
+        p.save_breadth_ui()
+
+    def on_gate_fix_clicked(self) -> None:
+        """闸条上的「调整阈值」⇒ 打开「📈 展示」卡（阈值就在那）—— 真入口，不是假按钮。"""
+        p = self.page
+        p.lbl_receipt.setText('在「📈 展示」卡里改「三道闸阈值」—— 与设置页同一份，改完立即生效。')
+        p.open_pane('display')
 
     def _after_items_changed(self, msg: str) -> None:
         """统计项改动后：回灌面板 → 重画（**不重扫**）→ 回执说清"哪些需要重扫才生效"。"""

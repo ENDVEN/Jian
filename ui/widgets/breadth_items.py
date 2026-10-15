@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton
                              QVBoxLayout, QWidget)
 
 from ui.widgets.breadth_rows import ROW_COLORS
+from ui.widgets.gate_hint import verdict_badge
 from ui.widgets.styles import FLAT_QSS
 
 __all__ = ['BreadthItemsPanel', 'MAX_ITEMS']
@@ -143,6 +144,15 @@ class BreadthItemsPanel(QWidget):
         name.setToolTip(f'判定变量 `{key}`（公式里的一条输出；扫描时取的信号就是它）')
         name.setStyleSheet('font-size: 12px;' + ('' if visible else ' color: #B4BECB;'))
         lay.addWidget(name, 1)
+        # ★1.74 期 2：**三道闸徽标**（"这个条件能不能用事件对齐图看"一眼可见）——
+        #   文案/颜色/判据全部来自 `gate_hint.verdict_badge`（判据在 `core.relation_stats`），
+        #   本面板只贴一个标签，绝不自己判阈值。
+        _text, _tip, _color = verdict_badge(it.get('verdict'))
+        badge = QLabel(_text)
+        badge.setToolTip(_tip)
+        badge.setStyleSheet(f'font-size: 10.5px; color: {_color}; border: 1px solid {_color};'
+                            ' border-radius: 7px; padding: 0px 5px;')
+        lay.addWidget(badge)
         btn_vis = _small_btn('👁' if visible else '🚫',
                              '显示 / 隐藏这一行（隐藏 = 不上屏，**不重扫**）')
         btn_vis.clicked.connect(lambda _c=False, k=key: self.toggle_visible_requested.emit(k))
@@ -161,9 +171,6 @@ class BreadthItemsPanel(QWidget):
         if key:
             self.add_requested.emit(key)
 
-    # ---------- 供断言 ----------
-    def item_keys(self) -> list[str]:
-        return [str(it.get('key') or '') for it in self._items]
-
-    def available_options(self) -> list[str]:
-        return [self.cb_add.itemData(i) for i in range(self.cb_add.count())]
+    # ---------- 面板自己的状态（只读给断言用；**业务状态的真源永远在页面** `p._items`）----------
+    #   ⚠ ★1.74 复核删掉了 `item_keys()` / `available_options()` 两个零引用的方法：
+    #     面板不持业务状态，需要"现在上屏了哪几项"请问页面（`p._items`）或图（`chart.row_keys()`）。

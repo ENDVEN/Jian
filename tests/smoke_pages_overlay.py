@@ -176,9 +176,13 @@ for _vk in ("scan_ui", "breadth_ui"):
         #   本轮真实踩到：app 跑过一次之后，M3 段 5 条断言变红（行数/窗格名/引导可见性全被带偏）。
         _drop_vk = {"col_order"}
         if _vk == "breadth_ui":
-            _drop_vk |= {"items", "hint_done", "index_h"}
+            _drop_vk |= {"items", "hint_done", "index_h", "ma_window"}
         _pref_module.preferences.set(
             _vk, {a: b for a, b in _cur_vk.items() if a not in _drop_vk})
+
+# ★1.74 期 2：M3 三道闸阈值（`sweep3dense`）同样带**用户态** —— 同族纪律（§11.5-132）：
+#   不抹掉，用户在设置/展示卡里改过阈值后，冒烟的闸判据断言会跟着变（"用户用得越久越红"）。
+_pref_module.preferences.set('sweep3dense', None)
 
 # ★1.61 / §7-B16 护栏6/8：`hub_ui`（总库浮窗的位置偏移 / 上次选中）同样**必须在构造窗口前抹平**：
 #   与 §11.5-70/90 同族 —— 测试不许依赖用户真实偏好（用户用得越久，断言越取决于他的历史）。
@@ -3325,12 +3329,13 @@ try:
     _brd_ui = preferences.get('breadth_ui')
     # ★1.73 / §7-B16 期 1：多一项 `items`（统计项列表）—— **逐项点名**，且**只存轻量配置**
     #   （统计项只存 key/label/color/visible/focus，绝不存家数/矩阵 ⇒ 结果仍只进会话缓存 D3）。
-    check("breadth_ui 偏好只含配置**十四项**（含 `items` 统计项 + `index_h` 副图高度"
-          "+ `hint_done` 引导已读；结果只进会话缓存，D3）",
+    check("breadth_ui 偏好只含配置**十五项**（`items` 统计项 · `index_h` 副图高度 · "
+          "`hint_done` 引导已读 · `ma_window` 均线窗口；结果只进会话缓存，D3）",
           isinstance(_brd_ui, dict)
           and set(_brd_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds',
                                'range', 'chart', 'index_style', 'smooth', 'ratio',
-                               'overlay', 'overlay_code', 'items', 'index_h', 'hint_done'}
+                               'overlay', 'overlay_code', 'items', 'index_h', 'hint_done',
+                               'ma_window'}
           and str(_brd_ui.get('formula') or '').strip() != ''
           and isinstance(_brd_ui.get('thresholds'), dict)
           and isinstance(_brd_ui.get('items'), list)
@@ -5949,8 +5954,138 @@ try:
           and _brd12.chart_scroll.widgetResizable()
           and _brd12.chart_scroll.horizontalScrollBarPolicy()
           == Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    # —— 死代码护栏（★1.74 复核清理后的守门人）——
+    import pathlib as _pl12b  # noqa: E402
+
+    from ui.widgets import breadth_chart as _bcm12  # noqa: E402
+    from ui.widgets import breadth_rows as _brm12  # noqa: E402
+
+    _bc12 = _pl12b.Path('ui/widgets/breadth_chart.py').read_text(encoding='utf-8')
+    # ⚠ 源码级扫描**必须先剥注释与文档串**（§11.5-101 老坑，本次又踩：本文件头正是"讲这条清理"
+    #   的说明文字，里面有 `RATIO_MAX_PAD` / `BreadthChart` ⇒ 不剥就会被自家说明引爆）
+    import re as _re12b  # noqa: E402
+
+    _bc12_code = _re12b.sub(r'"""[\s\S]*?"""', '', _bc12)
+    _bc12_code = '\n'.join(_l12b.split('#', 1)[0] for _l12b in _bc12_code.splitlines())
+    check("★ 1.74：`breadth_chart.py` 只剩**显示选项目录**（**不再定义任何类**）"
+          "—— 旧 `BreadthChart` 死代码不许复活；图本体在 `breadth_rows.py`",
+          'class ' not in _bc12_code and 'BreadthChart' not in _bc12_code
+          and 'CHART_TYPES' in _bc12 and 'INDEX_STYLES' in _bc12)
+    check("★ 1.74：指数图形目录与列要求**只有一份**（`breadth_rows` 从 `breadth_chart` 取，"
+          "不是各写一份值 ⇒ 不会漂）",
+          _brm12.DEFAULT_INDEX_STYLE is _bcm12.DEFAULT_INDEX_STYLE
+          and _brm12._INDEX_OHLC_NEED is _bcm12.INDEX_OHLC_NEED)
+    check("★ 1.74：量程留白收成一个常量 `RANGE_PAD`（不再硬编码 1.08；旧 `RATIO_MAX_PAD` 已随死类删除）",
+          abs(float(_brm12.RANGE_PAD) - 1.08) < 1e-9
+          and 'RATIO_MAX_PAD' not in _bc12_code)
 except Exception as _e12b:  # noqa: BLE001
     check(f"§7-B16 期 1 收尾断言整段抛异常: {type(_e12b).__name__}: {_e12b}", False)
+
+# ==========================================
+# §7-B16 期 2 · 三道闸"看得见"：徽标 + 闸条 + 就地阈值（★1.74 · 用户 2026-10-15 认可落点）
+#   用户认可的三条：① 闸结论落 = **统计项每行徽标** + **仅在有被禁项时出现**的闸条；
+#   ② 阈值**就地可调**（与设置页**同一份偏好**，改完立即生效、**不重扫**）；
+#   ③ 禁用态必须**三要素齐全**：原因（带数字）· 替代方案 · 动作（真按钮）。
+# ==========================================
+print("\n== §7-B16 期 2 · 三道闸：徽标 / 闸条 / 就地阈值 ==")
+try:
+    from core import relation_stats as _rsP2  # noqa: E402
+    from ui.widgets.gate_hint import (BADGE_COLORS,  # noqa: E402
+                                      GateHintBar, GateThresholdRow, verdict_badge)
+
+    _b_ev = verdict_badge({'mode': 'event', 'event_ok': True, 'ratio_pct': 2.0,
+                           'hit_days': 12, 'days': 600})
+    _b_bi = verdict_badge({'mode': 'binned', 'event_ok': False, 'ratio_pct': 12.0,
+                           'reason': '半稀疏', 'suggest': '占比分档'})
+    _b_co = verdict_badge({'mode': 'continuous', 'event_ok': False, 'ratio_pct': 34.0,
+                           'reason': '命中天数占比 34.0% ≥ 频密闸 30%',
+                           'suggest': '占比分档 / Rank IC'})
+    _b_un = verdict_badge(None)
+    check("★ 1.74 期 2：徽标**带数字**、三档颜色不同（event 绿 / binned 琥珀 / continuous 红）",
+          '2.0%' in _b_ev[0] and '12.0%' in _b_bi[0] and '34.0%' in _b_co[0]
+          and len({_b_ev[2], _b_bi[2], _b_co[2]}) == 3
+          and _b_ev[2] == BADGE_COLORS['event'])
+    check("★ 1.74 期 2：被禁用徽标的 tooltip **同时**给出原因（带数字）与替代方案",
+          '34.0%' in _b_co[1] and 'Rank IC' in _b_co[1] and '不适用' in _b_co[1])
+    check("★ 1.74 期 2：还没扫描 ⇒ 徽标「未扫描」（**不猜档位**，§10-4）",
+          _b_un[0] == '未扫描' and _b_un[2] == BADGE_COLORS['unknown'])
+
+    _bar2 = GateHintBar(win)
+    _bar2.set_blocked([])
+    check("★ 1.74 期 2：**没有**被禁用项 ⇒ 闸条收起（不做常驻噪音）",
+          _bar2.isHidden() and _bar2.lbl.text() == '')
+    _bar2.set_blocked([('QSD>0且GLX>0', {'mode': 'continuous', 'event_ok': False,
+                                         'ratio_pct': 34.0,
+                                         'reason': '命中天数占比 34.0% ≥ 频密闸 30%',
+                                         'suggest': '占比分档 / Rank IC'})])
+    check("★ 1.74 期 2：有被禁用项 ⇒ 闸条出现，文案含**原因（带数字）+ 替代方案**",
+          not _bar2.isHidden() and '34.0%' in _bar2.lbl.text()
+          and 'Rank IC' in _bar2.lbl.text())
+    check("★ 1.74 期 2：闸条的**动作**是真按钮（调整阈值 / 为什么）—— 不做假入口",
+          _bar2.btn_fix.isVisibleTo(_bar2) and _bar2.btn_why.isVisibleTo(_bar2))
+
+    _row2 = GateThresholdRow(win)
+    _row2.set_values({'sparse_max': 40.0, 'freq_min': 10.0, 'indep_gap': 0}, silent=True)
+    _shown2 = _row2.values()
+    check(f"★ 1.74 期 2：就地阈值**夹域 + 交叉修正**并把**实际生效值**显示出来"
+          f"（实测 {_shown2}）—— 界面显示的必须 == 实际生效的",
+          _shown2['freq_min'] > _shown2['sparse_max'] and _shown2['indep_gap'] >= 1
+          and bool(_row2.lbl_note.text()))
+    _row2.reset_defaults()
+    check("★ 1.74 期 2：`↺ 恢复默认` 回到出厂值（== 判据模块的常量，三处同源）",
+          abs(_row2.values()['sparse_max'] - _rsP2.DEFAULT_SPARSE_MAX) < 1e-9
+          and abs(_row2.values()['freq_min'] - _rsP2.DEFAULT_FREQ_MIN) < 1e-9)
+
+    _brdP2 = next(win.page_backtest.tabs.widget(_i2)
+                  for _i2 in range(win.page_backtest.tabs.count())
+                  if type(win.page_backtest.tabs.widget(_i2)).__name__ == 'BreadthView')
+    _ver2 = _brdP2._flow.gate_verdicts(_brdP2)
+    check("★ 1.74 期 2：页面上每个上屏项都有闸结论（含 mode/reason/suggest ⇒ 可直接渲染）",
+          bool(_ver2) and all({'mode', 'reason', 'suggest'} <= set(v) for v in _ver2.values()))
+    _entries2 = get_scan_store().entries()          # ⚠ 这是**计数/摘要**，不是 list（`len()` 会抛）
+    _gr2 = _brdP2._display_pane.gate_row
+    _back2 = dict(_rsP2.thresholds_from_prefs())
+    _rank2 = {'unknown': -1, 'event': 0, 'binned': 1, 'continuous': 2}
+    try:
+        _gr2.set_values({'sparse_max': 0.5, 'freq_min': 5.0, 'indep_gap': 5})   # 极严
+        app.processEvents()
+        _ver3 = _brdP2._flow.gate_verdicts(_brdP2)
+        check("★ 1.74 期 2：阈值调严 ⇒ 档位只会**更密**（event→binned→continuous，绝不反向）"
+              "—— 判据的单调性是它可信的前提",
+              all(_rank2[str(_ver3[k].get('mode'))] >= _rank2[str(v.get('mode'))]
+                  for k, v in _ver2.items() if k in _ver3))
+        _blocked2 = [v for v in _ver3.values()
+                     if not v.get('event_ok') and str(v.get('mode')) != _rsP2.MODE_UNKNOWN]
+        check(f"★ 1.74 期 2：**闸条显隐 == 有没有被禁项**（实测被禁 {len(_blocked2)} 项"
+              f" ⇒ 闸条{'显示' if _blocked2 else '收起'}）—— 判据与显示不许各说各话",
+              (not _brdP2.gate_bar.isHidden()) == bool(_blocked2))
+        check("★ 1.74 期 2：翻阈值**没有触发重扫**（会话缓存条目数不变）"
+              "—— 改了显示口径不许偷偷重算",
+              get_scan_store().entries() == _entries2)
+    finally:
+        _gr2.set_values(_back2, silent=False)        # 收尾：还原阈值（不留脏状态给后续断言）
+
+    # ⚠ 合成数据天然稀疏（命中天数占比很小）⇒ 上面那条"闸条显示"的**真路径**走不到。
+    #   用**注入判据**把这条路径本身验掉（否则"闸条会出现"只有控件级证据、没有接线证据）。
+    _orig_verdicts2 = _brdP2._flow.gate_verdicts
+    try:
+        _brdP2._flow.gate_verdicts = lambda p=None: {
+            'X2': {'mode': 'continuous', 'event_ok': False, 'ratio_pct': 34.0,
+                   'reason': '命中天数占比 34.0% ≥ 频密闸 30%', 'suggest': '占比分档 / Rank IC'}}
+        _brdP2._flow._sync_gate_bar(_brdP2)
+        check("★ 1.74 期 2：**有被禁项时页面闸条真的出现**（接线级证据；注入判据走这条路径）"
+              "—— 控件级已验过，这条验的是『页面真的接上了』",
+              not _brdP2.gate_bar.isHidden() and 'Rank IC' in _brdP2.gate_bar.lbl.text())
+    finally:
+        _brdP2._flow.gate_verdicts = _orig_verdicts2
+        _brdP2._flow._sync_gate_bar(_brdP2)
+    app.processEvents()
+    _ver4 = _brdP2._flow.gate_verdicts(_brdP2)
+    check("★ 1.74 期 2：阈值还原 ⇒ 判据回到原档（**双向可复现**，不是一次性动作）",
+          all(str(_ver4[k].get('mode')) == str(v.get('mode'))
+              for k, v in _ver2.items() if k in _ver4))
+except Exception as _eP2:  # noqa: BLE001
+    check(f"§7-B16 期 2 三道闸断言整段抛异常: {type(_eP2).__name__}: {_eP2}", False)
 
 # ==========================================
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71

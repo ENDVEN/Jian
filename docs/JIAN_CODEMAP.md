@@ -338,9 +338,16 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #         底部指数副图**固定高度**（四图形：折线/面积/K线/美国线）；全行 x 联动 +
     │                    #         竖线贯穿 + 读数**统一一处**；`min_content_height()` 供行区滚动
     │                    #     · ★1.73 **breadth_items.py**：统计项面板（chip 列表 + 「＋ 添加」下拉 =
-    │                    #         公式的可判定变量 + 👁/★/✕；**不持状态**，真源在页面 `p._items`）
+    │                    #         公式的可判定变量 + 👁/★/✕ + ★1.75 **三道闸徽标**；**不持状态**，
+    │                    #         真源在页面 `p._items`）
+    │                    #     · ★1.75 **gate_hint.py**：三道闸"看得见"的三件 —— ① `verdict_badge`
+    │                    #         （徽标：文案/颜色由判据给）② `GateHintBar`（结果区**闸条**：只在该页有
+    │                    #         被禁项时出现；原因带数字 · 替代 · **真按钮**）③ `GateThresholdRow`
+    │                    #         （`📈 展示` 卡里**就地可调**的三项阈值，写入走设置注册表 = 与设置页同源）
     │                    #     · breadth_chart.py：**只剩"显示选项目录"常量**（`CHART_TYPES`/`INDEX_STYLES`/
-    │                    #         `DEFAULT_*`）——★1.73 起图已搬到 `breadth_rows.py`（旧 `BreadthChart` 类待清理）
+    │                    #         `DEFAULT_*`/`INDEX_COLOR`/`INDEX_OHLC_NEED`）——★1.73 图搬到 `breadth_rows.py`，
+    │                    #         ★1.74 复核**已删掉旧 `BreadthChart` 整类**（含 `_BreadthTickAxis`/`RATIO_MAX_PAD`/
+    │                    #         私有配色与重复的 `_INDEX_*`）；护栏 = 冒烟断言"本模块不许再定义任何类"
     │                    #     · breadth_result.py：空态/忙碌态（**图与滚动容器成对显隐**：`_show_chart`）)
     │                    #   / **readiness_flow.py(★v6.39 **就绪度体检 + 「⬆ 更新到最新交易日」的两页共用控制器**（D6：
     │                    #     「就绪度模型只有一份」）—— `start()` 后台体检 → 回执一行 + 缺口可见 →

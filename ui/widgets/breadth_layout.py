@@ -6,7 +6,7 @@
 → **L0 结果区**（双窗格折线，吃满）→ **L3 配置抽屉**（覆盖层，不动主区高度）—— **常驻 ≤3 行**。
 
 【职责边界】只造控件、只排布局；**不存状态、不做取数**（状态全在页面，行为在
-`breadth_flow`，图表在 `breadth_chart`）。widgets 模块构造只收 `page`，方法内一律 `p = self.page`。
+`breadth_flow`，**多行小图**在 `breadth_rows`）。widgets 模块构造只收 `page`，方法内一律 `p = self.page`。
 
 【复用】ƒ 函数卡与 🎚 粗筛卡**直接 import `scan_layout` 的同款 EditPane** —— M2/M3 共用同一份
 编辑器（原型："与单股回测 / 全市场筛选共用同一份函数段与配方库"），阈值⇄控件的换算
@@ -26,7 +26,8 @@ from ui.widgets.breadth_chart import (CHART_TYPES, DEFAULT_CHART_TYPE,
 # ★1.73 / §7-B16 期 1：L0 换成**多行小图**（每项一行：柱 + 5 周均线；底部指数副图固定高度）
 from ui.widgets.breadth_items import BreadthItemsPanel
 from ui.widgets.breadth_rows import (INDEX_HEIGHT_RANGE, INDEX_PANE_HEIGHT,
-                                     BreadthRowsChart)
+                                     MA_WINDOW_DEFAULT, BreadthRowsChart)
+from ui.widgets.gate_hint import GateHintBar, GateThresholdRow   # ★1.74 期 2：闸的"看得见"部件
 from ui.widgets.summary_chip import build_chip, chip_qss   # ★1.64：chip 的**三页唯一来源**
 from ui.widgets.styles import SUMMARY_GHOST_QSS, SUMMARY_RUN_QSS   # ★1.64：三页同一张脸
 from ui.widgets.custom_widgets import (COMBO_QSS, FLAT_QSS,
@@ -185,6 +186,34 @@ class BreadthDisplayPane(EditPane):
         h_row.addStretch()
         self.body_lay.addLayout(h_row)
 
+        # —— ★1.74 期 2：**均线窗口可调**（用户 2026-10-15 拍板「要也给用户调」）——
+        ma_row = QHBoxLayout()
+        ma_row.setSpacing(6)
+        ma_row.addWidget(mini_label('均线窗口'))
+        self.spin_ma = NoWheelSpinBox()
+        self.spin_ma.setRange(0, 60)
+        self.spin_ma.setValue(int(MA_WINDOW_DEFAULT))
+        self.spin_ma.setSuffix(' 日')
+        self.spin_ma.setMinimumWidth(96)
+        self.spin_ma.setToolTip(
+            '柱上方那条线 = **N 日均线**（把每天的噪声抹掉看趋势）。\n'
+            '0 = 只画柱不画线（想看"每天实际有多少"的原始量感时用）。\n'
+            '改完立即重画，**不会重跑扫描**。')
+        ma_row.addWidget(self.spin_ma)
+        ma_row.addWidget(hint_icon('为什么默认 5：一周 5 个交易日 —— 比"每天"平滑、又不至于钝到看不出拐点。\n'
+                                   '换窗口只影响**画法**，不影响命中判定与任何数字。'))
+        ma_row.addStretch()
+        self.body_lay.addLayout(ma_row)
+
+        # —— ★1.74 期 2：**三道闸阈值（就地可调）** —— 与「设置 → 回测与扫描默认」**同一份偏好**。
+        #   放这里而不是新开页面：用户拍板"必须在相关页面给调整按钮"；改完立即重算徽标与闸条、**不重扫**。
+        self.gate_row = GateThresholdRow()
+        self.body_lay.addWidget(self.gate_row)
+
+        # 两个控件不许打架：「叠加均线」关掉 ⇒ 窗口输入框禁用（值仍记住，下次勾上还是它）
+        self.chk_smooth.toggled.connect(self.spin_ma.setEnabled)
+        self.spin_ma.setEnabled(self.chk_smooth.isChecked())
+
 
 # ==========================================
 # ④ 📋 统计项（★1.73 / §7-B16 期 1；抽屉最后一张卡 —— 前四张下标不动）
@@ -211,7 +240,7 @@ class BreadthItemsPane(EditPane):
 # 装配器
 # ==========================================
 class BreadthLayout:
-    """M3 页的版式装配（只造控件 / 排布局；行为在 `breadth_flow`，图表在 `breadth_chart`）。"""
+    """M3 页的版式装配（只造控件 / 排布局；行为在 `breadth_flow`，**多行小图**在 `breadth_rows`）。"""
 
     def __init__(self, page):
         self.page = page
@@ -394,6 +423,11 @@ class BreadthLayout:
         p.btn_hint_ok.setToolTip('收起这条引导（只提示这一次；之后随时点右上 ⓘ 再看）')
         _hb.addWidget(p.btn_hint_ok)
         lay.addWidget(p.hint_bar)
+
+        # —— 闸条（★1.74 期 2：**只在有统计项被三道闸拦下时**出现；与引导条同一张脸）——
+        #   三要素由 `GateHintBar.set_blocked` 保证：原因（带数字）· 替代 · 动作。
+        p.gate_bar = GateHintBar()
+        lay.addWidget(p.gate_bar)
 
         # —— L0 主角：**多行小图**（吃满剩余高度；★1.73 收尾：**行区自己滚动**）——
         #   ★1.73 / §7-B16 期 1：从"一主一副双窗格"升级为"**每统计项一行 + 底部指数副图**"。
