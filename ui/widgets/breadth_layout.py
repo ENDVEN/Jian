@@ -16,17 +16,22 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
-                             QPushButton, QProgressBar, QSizePolicy, QVBoxLayout, QWidget)
+                             QPushButton, QProgressBar, QScrollArea, QSizePolicy,
+                             QVBoxLayout, QWidget)
 
 from data.akshare_feed import INDEX_PRESETS
 from ui.widgets.backtest_panes import CARD_QSS, ClickCatcher, EditDrawer, EditPane
 from ui.widgets.breadth_chart import (CHART_TYPES, DEFAULT_CHART_TYPE,
-                                      DEFAULT_INDEX_STYLE, INDEX_STYLES,
-                                      BreadthChart)
+                                      DEFAULT_INDEX_STYLE, INDEX_STYLES)
+# ★1.73 / §7-B16 期 1：L0 换成**多行小图**（每项一行：柱 + 5 周均线；底部指数副图固定高度）
+from ui.widgets.breadth_items import BreadthItemsPanel
+from ui.widgets.breadth_rows import (INDEX_HEIGHT_RANGE, INDEX_PANE_HEIGHT,
+                                     BreadthRowsChart)
 from ui.widgets.summary_chip import build_chip, chip_qss   # ★1.64：chip 的**三页唯一来源**
 from ui.widgets.styles import SUMMARY_GHOST_QSS, SUMMARY_RUN_QSS   # ★1.64：三页同一张脸
 from ui.widgets.custom_widgets import (COMBO_QSS, FLAT_QSS,
                                         SYNC_ACTION_LABEL, NoWheelComboBox,
+                                        NoWheelSpinBox,
                                         hint_icon, mini_label)
 from ui.widgets.scan_layout import (ScanFilterPane, ScanFormulaPane,  # noqa: F401
                                     ScanScopePane)
@@ -38,6 +43,28 @@ RANGE_PRESETS = (('3m', '近3个月'), ('6m', '近6个月'), ('1y', '近1年'),
                  ('3y', '近3年'), ('5y', '近5年'), ('all', '全部历史'))
 DEFAULT_RANGE = '1y'
 DEFAULT_INDEX_CODE = 'sh000001'          # 副图默认上证指数（INDEX_PRESETS 首项）
+
+# ★1.73 / §7-B16 期 1 收尾：**引导文案**（用户 2026-10-12 原话："这种功能没有引导根本不知道
+#   这个阈值到底是啥"）—— 文案写成模块级常量：冒烟能直接断言"该说的都说了"，
+#   且只有一份（首次引导条 + 常驻 ⓘ 入口共用，不会两处漂）。
+HINT_TEXT = ('你可以这样看这张图：<b>柱</b> = 每天有多少只满足条件，<b>线</b> = 5 周均'
+             '（把每天的噪声抹掉看趋势）· 右上「展示」里可切 <b>家数 / 占比</b> · '
+             '点任一项的 ★ = 放大那一行。想知道「什么条件配什么图」（三道闸）点右边按钮。')
+GATES_HELP_TEXT = (
+    '三道闸（决定"这个条件能不能用事件图看"）\n\n'
+    '① 稀疏度闸：命中【天数】占比 = 有命中的交易日 / 全部交易日（不是命中家数占比）\n'
+    '   · < 5%  ⇒ 像"事件" ⇒ 可以做事件对齐图 / K 线色带\n'
+    '   · 5%~30% ⇒ 半稀疏 ⇒ 用"占比分 5 档 + 前向收益"\n'
+    '   · > 30% ⇒ 几乎天天命中 = 市场的"状态"，不是"事件" ⇒ 只看占比 / IC / 回归\n'
+    '   （例：你的"情绪≥80"≈2%、"情绪<20"≈3% ⇒ 适合事件图；"QSD>0 且 GLX>0"≈34% ⇒ 不适用）\n\n'
+    '② 独立性闸：一段行情会连续命中几十天 ⇒ n 会虚高。所以同时给两个 n：\n'
+    '   "全部命中日"与"独立事件"（与上一个被接受事件相隔 ≥ 5 个交易日才算新事件）。\n\n'
+    '③ 多重检验闸：一次比较了几组（条件 × 窗口）就如实说，并给置换检验 p 值\n'
+    '   （把命中日期随机打乱反复重算 ⇒ 回答"随机情况下能不能也凑出这个差"）。\n\n'
+    '关键坑：把"命中家数"当事件数会严重虚高（同一天全市场同向 ⇒ 1500 只其实只有 1 个观测，\n'
+    'n 会被放大上千倍、p 值失去意义）。n 要按【天】或【独立事件】算。\n\n'
+    '这三个阈值都可以在 设置 → 回测与扫描默认（M3 稀疏闸 / 频密闸 / 独立事件间隔）里调，\n'
+    '也可以在相关页面就地调；改完立即生效、【不会重跑扫描】。')
 
 # 抽屉几何（与 scan_layout / backtest.py 同款口径，§11.5-26）
 DRAWER_MIN_WIDTH = 420
@@ -87,11 +114,16 @@ class BreadthDisplayPane(EditPane):
         style_row.addStretch()
         self.body_lay.addLayout(style_row)
 
-        self.chk_smooth = QCheckBox('叠加 MA5 平滑（柱状态为主线 / 折线态为橙虚线）')
-        self.chk_smooth.setToolTip('对广度序列做 5 日滚动平均，看趋势不看单日抖动')
-        self.chk_ratio = QCheckBox('改用「占比 %」（家数 ÷ 有效样本）')
+        self.chk_smooth = QCheckBox('叠加均线（柱是量感 / 线是趋势）')
+        self.chk_smooth.setToolTip('对广度序列做 5 周滚动平均，看趋势不看单日抖动')
+        # ★1.73 / §7-B16 期 1：**柱口径默认「占比 %」**（用户 2026-10-12 拍板）——
+        #   多行小图里各行量级差很多（情绪≥80 约 2% vs QSD&GLX 约 34%），
+        #   占比才是**跨行可比**的口径；家数仍可一键切回（取消勾选），切换**不重扫**。
+        self.chk_ratio = QCheckBox('柱口径用「占比 %」（默认；取消勾选 = 家数）')
+        self.chk_ratio.setChecked(True)
         self.chk_ratio.setToolTip('占比的分母 = **有效样本**（命中 + 未命中），不是全市场只数'
-                                  ' —— 新上市 / 数据不足的票不进分母（三态铁律，E 节）')
+                                  ' —— 新上市 / 数据不足的票不进分母（三态铁律，E 节）。\n'
+                                  '切换它只是换个画法，**不会重扫**。')
         self.chk_overlay = QCheckBox('叠加指数（下方副图，同 x 轴联动）')
         self.chk_overlay.setToolTip('副图画指数收盘线，与广度共用同一根日期轴 —— 对照着看'
                                     '"条件命中变多/变少"与大盘的关系')
@@ -126,10 +158,53 @@ class BreadthDisplayPane(EditPane):
         self.cb_index_style.setStyleSheet(COMBO_QSS)
         self.cb_index_style.setToolTip('只换副图的画法，数据不动。\n'
                                        'K 线 / 美国线需要本地指数有开高低列；缺列自动退回折线（不画假四价）。\n'
-                                       '想看大一点的指数图：按住两图之间的分界线往下拖，双击分界线恢复默认。')
+                                       '想看大一点的指数图：改下面的「副图高度」（120~400px）。')
         istyle_row.addWidget(self.cb_index_style, 1)
         istyle_row.addStretch()
         self.body_lay.addLayout(istyle_row)
+
+        # —— ★1.73 / §7-B16 期 1 收尾：**副图高度可调**（用户拍板"必须有调整入口、不许写死"）——
+        #   与 v6.43 的"拖分界线调高"的取舍：拖动只改 `_stretch`，而固定高度把 min==max 钉死
+        #   ⇒ 二者互斥。本版选**数值框**：精确、能记住，且与"副图不被行数压扁"这条硬规则并存。
+        h_row = QHBoxLayout()
+        h_row.setSpacing(6)
+        h_row.addWidget(mini_label('副图高度'))
+        self.spin_index_h = NoWheelSpinBox()
+        self.spin_index_h.setRange(int(INDEX_HEIGHT_RANGE[0]), int(INDEX_HEIGHT_RANGE[1]))
+        self.spin_index_h.setSingleStep(10)
+        self.spin_index_h.setValue(int(INDEX_PANE_HEIGHT))
+        self.spin_index_h.setSuffix(' px')
+        self.spin_index_h.setMinimumWidth(96)
+        self.spin_index_h.setToolTip(
+            '指数副图的固定高度 —— **不随统计项行数变化**（行数多时行区自己滚动，副图不被压扁）。\n'
+            f'范围 {INDEX_HEIGHT_RANGE[0]}~{INDEX_HEIGHT_RANGE[1]}px；想看大一点的指数图就把它调大。\n'
+            '改完立即重画，**不会重跑扫描**。')
+        h_row.addWidget(self.spin_index_h)
+        h_row.addWidget(hint_icon('为什么是固定高度：行数一多，若副图按比例分空间就会被压成一条线\n'
+                                 '（"指数图看不见了"）。固定高度 + 行区滚动，两边都保住。'))
+        h_row.addStretch()
+        self.body_lay.addLayout(h_row)
+
+
+# ==========================================
+# ④ 📋 统计项（★1.73 / §7-B16 期 1；抽屉最后一张卡 —— 前四张下标不动）
+# ==========================================
+class BreadthItemsPane(EditPane):
+    """上屏**哪几个判定变量**（每项一行）。只管控件，不碰数据。
+
+    ⚠ 与「📈 平滑与展示」的分工：本卡管"**看哪几条**"（选择），展示卡管"**每条怎么画**"（画法）。
+    """
+    def __init__(self, parent=None):
+        super().__init__('items', '📋 统计项（每项一行 · 柱 + 均线）', '#1976D2', '📋 统计项', parent,
+                         )
+        self.panel = BreadthItemsPanel()
+        self.body_lay.addWidget(self.panel)
+        tip = QLabel('同一段公式里可以有**多个判定变量**（每条 `名字 := 表达式` 都是一个）。'
+                     '选中的变量会在**同一次扫描**里全部算出来（读盘只发生一次），'
+                     '各占一行、各自统计家数/占比 —— 这样"两个极端"才能同屏对比。')
+        tip.setWordWrap(True)
+        tip.setStyleSheet('font-size: 11px; color: #8A94A6;')
+        self.body_lay.addWidget(tip)
 
 
 # ==========================================
@@ -182,10 +257,14 @@ class BreadthLayout:
         p.chip_formula = _chip('ƒ 条件 —', '筛选条件（与 M2/M1 同一套引擎）')
         p.chip_filter = _chip('🎚 粗筛 —', '粗筛阈值')
         p.chip_scope = _chip('🌐 范围 —', '统计范围（标的域与只数）')
-        p.chip_display = _chip('📈 展示 —', '平滑 / 占比 / 指数副图')
+        p.chip_display = _chip('📈 展示 —', '柱口径（占比/家数）/ 均线 / 指数副图')
+        # ★1.73 / §7-B16 期 1：**统计项**（上屏哪几个判定变量）—— 与"展示"分开：
+        #   前者管"看哪几条"，后者管"每条怎么画"。
+        p.chip_items = _chip('📋 统计项 —', '上屏的判定变量（同一段公式可多选，一次扫描全部拿到）')
         # ★1.64：胶囊**可点开对应配置**（与 M1/M2 同一手感：点开、再点收起、开着的那张高亮）
         for chip, key in ((p.chip_formula, 'fn'), (p.chip_filter, 'filter'),
-                          (p.chip_scope, 'scope'), (p.chip_display, 'display')):
+                          (p.chip_scope, 'scope'), (p.chip_display, 'display'),
+                          (p.chip_items, 'items')):
             chip.setToolTip(chip.toolTip() + ' —— 点击打开这张配置卡（再点收起）')
             chip.clicked.connect(lambda _=False, k=key: p.open_pane(k))
             lay.addWidget(chip)
@@ -288,11 +367,47 @@ class BreadthLayout:
         p.lbl_cached = QLabel('')
         p.lbl_cached.setStyleSheet('font-size: 11px; color: #8A94A6;')
         head.addWidget(p.lbl_cached)
+        # ★1.73 收尾：**常驻说明入口**（ⓘ 三道闸 + 怎么看图）—— 说明**不许只存在首次弹窗里**
+        p.hint_icon = hint_icon(GATES_HELP_TEXT)
+        head.addWidget(p.hint_icon)
         lay.addLayout(head)
 
-        # —— L0 主角：双窗格折线（吃满剩余高度）——
-        p.chart = BreadthChart()
-        lay.addWidget(p.chart, 1)
+        # —— 首次引导条（一次性、可关闭；用户原话"没有引导根本不知道这个阈值到底是啥"）——
+        p.hint_bar = QFrame()
+        p.hint_bar.setStyleSheet('QFrame { background: #F1F7FF; border: 1px solid #CFE3FF;'
+                                 ' border-radius: 8px; }')
+        _hb = QHBoxLayout(p.hint_bar)
+        _hb.setContentsMargins(10, 6, 8, 6)
+        _hb.setSpacing(8)
+        p.lbl_hint = QLabel(HINT_TEXT)
+        p.lbl_hint.setWordWrap(True)
+        p.lbl_hint.setStyleSheet('font-size: 11.5px; color: #33475B; border: none;')
+        _hb.addWidget(p.lbl_hint, 1)
+        p.btn_gates_help = QPushButton('三道闸是什么？')
+        p.btn_gates_help.setStyleSheet(FLAT_QSS)
+        p.btn_gates_help.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_gates_help.setToolTip('1 分钟看完：什么样的条件配什么样的图（以及 n 该怎么算）')
+        _hb.addWidget(p.btn_gates_help)
+        p.btn_hint_ok = QPushButton('知道了')
+        p.btn_hint_ok.setStyleSheet(FLAT_QSS)
+        p.btn_hint_ok.setCursor(Qt.CursorShape.PointingHandCursor)
+        p.btn_hint_ok.setToolTip('收起这条引导（只提示这一次；之后随时点右上 ⓘ 再看）')
+        _hb.addWidget(p.btn_hint_ok)
+        lay.addWidget(p.hint_bar)
+
+        # —— L0 主角：**多行小图**（吃满剩余高度；★1.73 收尾：**行区自己滚动**）——
+        #   ★1.73 / §7-B16 期 1：从"一主一副双窗格"升级为"**每统计项一行 + 底部指数副图**"。
+        #   ⚠ 属性名仍是 `p.chart`（页面/流程/断言都按它引），只换实现类。
+        #   行数多时：`p.chart` 的最小高 = 行数×行高下限 + 副图高 ⇒ 滚动条出现，
+        #   副图**不被压扁**、整页**也不跟着滚**（设计稿硬规则②）。
+        p.chart = BreadthRowsChart()
+        p.chart_scroll = QScrollArea()
+        p.chart_scroll.setWidgetResizable(True)
+        p.chart_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        p.chart_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        p.chart_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        p.chart_scroll.setWidget(p.chart)
+        lay.addWidget(p.chart_scroll, 1)
 
         # —— 近 5 日迷你读数（原型 foot）——
         p.lbl_mini = QLabel('')
@@ -322,7 +437,7 @@ class BreadthLayout:
         empty_lay.addLayout(p.row_empty_action)
         p.empty_box = empty
         lay.addWidget(empty, 1)
-        p.chart.hide()
+        p.chart_scroll.hide()          # ★1.73：图与滚动容器成对显隐（见 `BreadthResult._show_chart`）
 
         # —— 口径脚注 ——
         p.lbl_foot = QLabel('口径：前复权 · 粗筛后精算 · 数据不足不计入命中 · '
@@ -336,10 +451,12 @@ class BreadthLayout:
         p = self.page
         # ★1.64：多一张「🌐 统计范围」卡（从 L1 搬进来；**与 M2 同一张卡类**）——
         #   前三张的下标不动（`_formula_pane` / `_filter_pane` / `_display_pane` 引用照旧）。
-        p._panes = [ScanFormulaPane(), ScanFilterPane(), BreadthDisplayPane(), ScanScopePane(p)]
+        p._panes = [ScanFormulaPane(), ScanFilterPane(), BreadthDisplayPane(), ScanScopePane(p),
+                    BreadthItemsPane()]          # ★1.73：统计项卡**追加在最后**（前四张下标不动）
         p._formula_pane = p._panes[0]
         p._filter_pane = p._panes[1]
         p._display_pane = p._panes[2]
+        p._items_pane = p._panes[4]          # ★1.73：统计项卡（第 5 张）
         p._scrim = ClickCatcher(p)
         p._scrim.setStyleSheet('QFrame { background: rgba(15, 22, 34, 0.28); }')
         p._scrim.hide()

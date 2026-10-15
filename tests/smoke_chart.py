@@ -5610,6 +5610,188 @@ try:
 except Exception as _eSW4:  # noqa: BLE001
     check(f"SW-4 快照存档断言整段抛异常: {type(_eSW4).__name__}: {_eSW4}", False)
 
+# ==========================================
+# §7-B16 期 0 · M3「三道闸」判据 + 独立事件切分（用户 2026-10-12 提问驱动）—— ★1.73
+#   用户原话：『每天都能筛出几十个上百个甚至极端情况有几千个的，真的能用色带或者对齐图
+#              然后看前向窗口去统计相关性这种表示吗？』
+#   答案取决于**命中天数占比**（不是命中家数）：<5% 像"事件"、>30% 是"状态"。
+#   本段把这条判据与"独立事件"切分的**边界**逐条钉死（改口径必须先改断言）。
+# ==========================================
+print("\n== §7-B16 期 0 · 三道闸判据（纯函数）==")
+try:
+    import pandas as _pdRS  # noqa: E402
+
+    from core.relation_stats import (DEFAULT_FREQ_MIN, DEFAULT_SPARSE_MAX,  # noqa: E402
+                                     MODE_BINNED, MODE_CONTINUOUS, MODE_EVENT, MODE_UNKNOWN,
+                                     clamp_thresholds, gate_decision, hit_day_stats,
+                                     independent_event_positions)
+
+    _st = hit_day_stats([0, 1500, 0, 3, 0])
+    check("★ 1.73：命中天数占比 = 有命中的**交易日** / 全部交易日（家数不参与分母）",
+          _st['days'] == 5 and _st['hit_days'] == 2 and abs(_st['ratio_pct'] - 40.0) < 1e-9)
+    check("★ 1.73：`hit_day_stats` 对 None / 空 / NaN / pandas Series 全容错"
+          "（不抛；NaN 不算命中 —— 这一层要扛得住界面每帧调用）",
+          hit_day_stats(None)['days'] == 0 and hit_day_stats([])['ratio_pct'] == 0.0
+          and hit_day_stats([float('nan'), 1])['hit_days'] == 1
+          and hit_day_stats(_pdRS.Series([0, 2, 0]))['hit_days'] == 1)
+
+    check("★ 1.73：占比 2% < 稀疏闸 5% ⇒ event（事件对齐图 / 色带可用）",
+          gate_decision(2.0).mode == MODE_EVENT and gate_decision(2.0).event_ok is True)
+    check("★ 1.73 边界：占比**恰好 = 稀疏闸**（5.0%）⇒ 不算稀疏（binned）"
+          "（左闭右开，不许两头占）",
+          gate_decision(DEFAULT_SPARSE_MAX).mode == MODE_BINNED
+          and gate_decision(DEFAULT_SPARSE_MAX - 0.01).mode == MODE_EVENT)
+    check("★ 1.73：占比 34%（『QSD>0 且 GLX>0』那类）⇒ continuous + **事件图被禁用**"
+          " + 给出替代（占比分档 / IC）",
+          gate_decision(34.0).mode == MODE_CONTINUOUS
+          and gate_decision(34.0).event_ok is False
+          and 'IC' in gate_decision(34.0).suggest)
+    check("★ 1.73 边界：占比**恰好 = 频密闸**（30.0%）⇒ continuous（右闭）",
+          gate_decision(DEFAULT_FREQ_MIN).mode == MODE_CONTINUOUS
+          and gate_decision(DEFAULT_FREQ_MIN - 0.01).mode == MODE_BINNED)
+    check("★ 1.73：还没有结果（None / NaN / 负）⇒ unknown（如实说，**不猜档位**）",
+          all(gate_decision(_v).mode == MODE_UNKNOWN and not gate_decision(_v).event_ok
+              for _v in (None, float('nan'), -1)))
+
+    _flags = [0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1]
+    _pos = independent_event_positions(_flags, gap=5)
+    check(f"★ 1.73：连续命中（第 1~3 天）**塌成一个**独立事件（实测位置 = {_pos}）",
+          _pos[0] == 1 and 2 not in _pos and 3 not in _pos)
+    check("★ 1.73 边界：与上一个被接受事件相隔**恰好 5** 个交易日 ⇒ 算独立（`>=`）",
+          independent_event_positions([1, 0, 0, 0, 0, 1], gap=5) == [0, 5]
+          and independent_event_positions([1, 0, 0, 0, 1], gap=5) == [0])
+    check("★ 1.73：gap 量的是『与上一个**被接受**事件』的距离（不是『上次命中』）"
+          "—— 否则连续段里每隔 gap 天就冒一个新事件、n 又虚高",
+          independent_event_positions([1] * 10, gap=3) == [0, 3, 6, 9])
+    check("★ 1.73：NaN / None 一律不算命中（算不出来就不算，不拿 0/1 顶替）",
+          independent_event_positions([float('nan'), 1, None, 1], gap=1) == [1, 3])
+
+    _cl = clamp_thresholds('abc', 999, 0)
+    check(f"★ 1.73：脏偏好**一律修进合法域且逐条说明**（实测 {len(_cl['notes'])} 条）",
+          _cl['sparse_max'] == DEFAULT_SPARSE_MAX and _cl['freq_min'] == 99.0
+          and _cl['indep_gap'] == 1 and len(_cl['notes']) == 3)
+    _cx = clamp_thresholds(40.0, 10.0, 5)
+    check("★ 1.73：**交叉约束**（频密闸必须 > 稀疏闸）⇒ 自动抬高并明说"
+          "（否则中间那一档会消失）",
+          _cx['freq_min'] > _cx['sparse_max'] and any('抬' in _n for _n in _cx['notes']))
+    check("★ 1.73：合法值**原样通过、零 notes**（不许无端改用户的值）",
+          clamp_thresholds(5.0, 30.0, 5)['notes'] == []
+          and clamp_thresholds(5.0, 30.0, 5)['sparse_max'] == 5.0)
+
+    _rsrc = open(os.path.join(ROOT, 'core', 'relation_stats.py'), encoding='utf-8').read()
+    _rimps = [ln.strip() for ln in _rsrc.splitlines()
+              if ln.strip().startswith(('from ', 'import '))]
+    check("★ 1.73：`core/relation_stats` 零 Qt / 零网络（纯函数层 ⇒ 口径能离线单测）",
+          _rimps != [] and all(('PyQt6' not in ln and 'requests' not in ln
+                                and 'akshare' not in ln) for ln in _rimps))
+except Exception as _eRS:  # noqa: BLE001
+    check(f"§7-B16 期 0 判据断言整段抛异常: {type(_eRS).__name__}: {_eRS}", False)
+
+# ==========================================
+# §7-B16 期 1 · 多判定变量：内核 + 缓存键（★1.73 · 用户 2026-10-12「多统计项同屏」驱动）
+#   过去一段公式只能扫一个判定变量（"情绪≥80"与"情绪<20"要各扫一次）；现在**一次读盘 +
+#   一次求值**全拿到（`execute_programs` 本就返回该 program 的所有输出 ⇒ 边际成本 ≈ 0）。
+#   ⚠ 本段第一件事是**先证明真的出了命中** —— 我第一版探针用默认 `ScanThresholds()`
+#     （`min_bars=250`）配 40 天合成帧 ⇒ 矩阵全是「数据不足」，
+#     于是"多变量 == 单变量"这个断言**在全零上通过了**（**空验证**，最危险的那种绿）。
+#     加 `_hits>0` 前置断言后，这类"环境把样本全滤掉"的情况会立刻红。
+# ==========================================
+print("\n== §7-B16 期 1 · 多判定变量（内核 + 缓存键）==")
+try:
+    from core.cross_section import (  # noqa: E402
+        ScanThresholds as _ST11, _C_HIT as _CH11, _C_MISS as _CM11, scan as _scan11)
+    from data.scan_store import (  # noqa: E402
+        ScanStore as _SS11, merge_tail as _mt11, scan_key as _sk11,
+        signals_fingerprint as _sf11)
+
+    _F11 = "A1 := C > MA(C,3);\nB2 := C < MA(C,3);\n"
+    # ⚠ 放宽阈值：合成帧不是真实上市股票（不设成交额/上市天数门槛），否则全是「数据不足」
+    _TH11 = _ST11(min_amount=None, min_price=None, min_bars=10,
+                  exclude_suspended=False, exclude_st=False, exclude_limit=False)
+
+    def _mk11(n_day=60, n_sym=6):
+        _rng = np.random.default_rng(7)
+        out = {}
+        for _k in range(n_sym):
+            _c = 10.0 + np.cumsum(_rng.normal(0, 0.25, n_day))
+            _d = pd.date_range("2024-01-01", periods=n_day, freq="B")
+            _v = _rng.integers(10_000, 90_000, n_day).astype(float)
+            out[f"T{_k:02d}"] = pd.DataFrame({
+                "date": _d, "open": _c * 0.995, "high": _c * 1.01, "low": _c * 0.99,
+                "close": _c, "volume": _v, "amount": _c * _v})
+        return out
+
+    _G11 = _mk11()
+    _multi11 = _scan11(_G11, _F11, thresholds=_TH11, signal_names=["A1"], keep_matrix=True)
+    _solo_a11 = _scan11(_G11, _F11, thresholds=_TH11, signal_name="A1", keep_matrix=True)
+    _solo_b11 = _scan11(_G11, _F11, thresholds=_TH11, signal_name="B2", keep_matrix=True)
+    _hits_a11 = int(_multi11.counters_by_signal["A1"][:, _CH11].sum())
+    _valid11 = int((_multi11.counters[:, _CH11] + _multi11.counters[:, _CM11]).sum())
+    check("★ 1.73 前置：本段样本**真的出了命中与有效样本**"
+          f"（命中 {_hits_a11} · 有效 {_valid11}）—— 否则下面的『多变量 == 单变量』"
+          "只是在全零上通过（空验证，第一版探针就栽在这）",
+          _hits_a11 > 0 and _valid11 > 0)
+
+    check("★ 1.73：**多判定变量一次扫描 == 逐个单独扫描**（家数逐位一致）"
+          "—— 这是『共享读盘没改变语义』的唯一证据",
+          all(np.array_equal(_multi11.counters_by_signal[_n], _s.counters)
+              for _n, _s in (("A1", _solo_a11), ("B2", _solo_b11))))
+    check("★ 1.73：状态矩阵也**逐位一致**（M2 的『某日横截面』口径不被多变量改写）",
+          all(np.array_equal(_multi11.status_matrix_by_signal[_n], _s.status_matrix)
+              for _n, _s in (("A1", _solo_a11), ("B2", _solo_b11))))
+    check("★ 1.73：广度表逐帧相等（M3 的每一项都拿得到自己的 hits/valid/ratio）",
+          all(_multi11.breadth_frame(signal=_n).equals(_s.breadth_frame())
+              for _n, _s in (("A1", _solo_a11), ("B2", _solo_b11))))
+    check("★ 1.73：主变量的矩阵**是同一对象**（老字段与新 dict 不重复占内存）",
+          _multi11.status_matrix is _multi11.status_matrix_by_signal["B2"]
+          and _multi11.counters is _multi11.counters_by_signal["B2"]
+          and _multi11.signal_name == "B2" and _multi11.signal_names == ["B2", "A1"])
+    check("★ 1.73：老调用（不传 signal_names）**零变化**"
+          "（= 显式指定公式最后一条为判定变量，逐位一致）",
+          np.array_equal(_multi11.status_matrix_by_signal["B2"], _solo_b11.status_matrix)
+          and list(_scan11(_G11, _F11, thresholds=_TH11).counters_by_signal) == ["B2"])
+
+    _ka11 = _sk11(_F11, _TH11, ["T00"], signal_names=["A1"])
+    _kb11 = _sk11(_F11, _TH11, ["T00"], signal_names=["B2"])
+    _kab11 = _sk11(_F11, _TH11, ["T00"], signal_names=["A1", "B2"])
+    _kba11 = _sk11(_F11, _TH11, ["T00"], signal_names=["B2", "A1"])
+    check("★ 1.73 / §11.5-19：**判定变量集合进了缓存键**"
+          "（公式文本一字不动时也要能区分 —— 否则静默拿旧口径的数）",
+          _ka11 != _kb11 and _kab11 != _ka11 and _ka11.formula == _kb11.formula)
+    check("★ 1.73：键按**集合**语义（顺序无关、大小写归一、空 = `-`）",
+          _kab11 == _kba11 and _sf11(["b2", "A1"]) == _sf11(["A1", "B2"])
+          and _sf11(None) == "-")
+
+    _s11 = _SS11()
+    _s11.put(_ka11, _solo_a11)
+    _b_solo11 = _s11.bytes_used()
+    _s11.clear()
+    _s11.put(_kab11, _multi11)
+    _b_multi11 = _s11.bytes_used()
+    check(f"★ 1.73：体积估算**按对象去重**（单 {_b_solo11} B → 双 {_b_multi11} B，"
+          f"增量 {_b_multi11 - _b_solo11} B ≈ 一份矩阵+家数，不是两倍）"
+          "—— 否则体积闸会提前误触发（§10-10 占用要看得见，假的比没有更坏）",
+          _b_multi11 < _b_solo11 * 2)
+
+    _base11 = _scan11({s: f.iloc[:-6].reset_index(drop=True) for s, f in _G11.items()},
+                      _F11, thresholds=_TH11, signal_names=["A1"], keep_matrix=True)
+    _fresh11 = _scan11(_G11, _F11, thresholds=_TH11, signal_names=["A1"], keep_matrix=True)
+    _merged11 = _mt11(_base11, _fresh11)
+    _full11 = _scan11(_G11, _F11, thresholds=_TH11, signal_names=["A1"], keep_matrix=True)
+    check("★ 1.73：「⚡ 增量续接」**逐判定变量一起续**，且续接结果 == 全量重扫（逐位）",
+          _merged11 is not None
+          and all(np.array_equal(_merged11.counters_by_signal[_n], _full11.counters_by_signal[_n])
+                  for _n in ("A1", "B2"))
+          and all(np.array_equal(_merged11.status_matrix_by_signal[_n],
+                                 _full11.status_matrix_by_signal[_n]) for _n in ("A1", "B2")))
+    check("★ 1.73：按名取数（`status_on(date, signal=…)` / `breadth_frame(signal=…)`）"
+          "—— 主变量与副变量各答各的，不混口径",
+          isinstance(_multi11.status_on(_multi11.asof, signal="A1"), dict)
+          and not _multi11.breadth_frame(signal="A1").empty
+          and not _multi11.breadth_frame(signal="B2").empty)
+except Exception as _e11:  # noqa: BLE001
+    check(f"§7-B16 期 1 多判定变量断言整段抛异常: {type(_e11).__name__}: {_e11}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

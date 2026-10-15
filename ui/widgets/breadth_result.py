@@ -18,11 +18,23 @@ class BreadthResult:
         self.page = page
 
     # ---------- 空态（三种空态都给下一步动作，E 节） ----------
+    @staticmethod
+    def _show_chart(p, on: bool) -> None:
+        """图**与它的滚动容器**成对显隐（★1.73 收尾）。
+
+        ⚠ 行区上了 `QScrollArea`（行数多时自己滚动）⇒ 只藏图会留一个**空框**在结果区里
+          （看着像"坏了"）。所有显隐都必须走这一处。
+        """
+        for name in ('chart', 'chart_scroll'):
+            w = getattr(p, name, None)
+            if w is not None:
+                w.setVisible(bool(on))
+
     def set_empty(self, text: str, action_text: str = '', on_action=None) -> None:
         p = self.page
         p.lbl_empty.setText(text)
         p.empty_box.show()
-        p.chart.hide()
+        self._show_chart(p, False)
         if action_text:
             p.btn_empty_action.setText(action_text)
             p.btn_empty_action.show()
@@ -39,7 +51,7 @@ class BreadthResult:
         """扫描中：结果区收起（避免上一轮结果被误读成本轮的）。"""
         self.page.lbl_empty.setText(text)
         self.page.empty_box.show()
-        self.page.chart.hide()
+        self._show_chart(self.page, False)
 
     def clear(self) -> None:
         """丢掉上一范围的展示痕迹（★v1.41 / §11.5-80：切换统计范围时调用）。

@@ -325,16 +325,23 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #        ⇒ 其他页面可直接复用（§9-U）；**§7-B6 STEP 1 会把
     │                    #        mini_label/hint_icon + 页签 QSS 上收到 `custom_widgets.py`**
     │                    #        ✅ 已回到 400 线内（395，按 v6.16 口径不再标数字）)
-    │                    #   / **breadth_*.py —— ★v6.38/§7-B1/B2 STEP 5 **M3 广度页拆出来的 4 个模块**
+    │                    #   / **breadth_*.py —— ★v6.38/§7-B1/B2 STEP 5 **M3 广度页拆出来的模块**
     │                    #     （同款约定：状态留页面、行为搬模块 + 页面保留同名薄壳）：
-    │                    #     · breadth_layout.py(238：L1 操作轴 + L2 摘要条（⚡/⟳/▶ 三按钮）+
-    │                    #         L0 结果区 + L3 抽屉三卡；**ƒ/🎚 直接复用 `scan_layout` 同款**)
-    │                    #     · breadth_flow.py(390：范围解析 / 扫描 / **⚡增量** / **⟳全量重算**
-    │                    #         （二次确认闸门）/ 区间切片 / 指数补拉链（`_ensure_index`）)
-    │                    #     · breadth_chart.py(165：**双窗格图表**（BreadthChart）= 广度折线
-    │                    #         （家数/占比% + MA5 平滑 + 末点标记）+ 指数副图；ChartHost
-    │                    #         x 联动 + `adaptive_axis` + 读数条 provider（§7-B6 同款）)
-    │                    #     · breadth_result.py(35：空态/忙碌态；与 `scan_result` 同一套 API))
+    │                    #     · breadth_layout.py：L1 操作轴 + L2 摘要条（**📋 统计项** 胶囊 + ⚡/⟳/▶）+
+    │                    #         L0 结果区（**首次引导条 + 常驻 ⓘ** + 行区 `QScrollArea`）+ L3 抽屉**五张卡**
+    │                    #         （ƒ/🎚/🌐 直接复用 `scan_layout` 同款；📈 展示 含**副图高度**；📋 统计项 为 ★1.73 新卡）
+    │                    #     · breadth_flow.py：范围解析 / 扫描 / **⚡增量** / **⟳全量重算**（二次确认闸门）/
+    │                    #         区间切片 / 指数补拉链（`_ensure_index`）/ ★1.73 **逐统计项取帧与切片** +
+    │                    #         统计项增删改（add/remove/toggle/focus）+ 引导（`on_hint_dismissed`/`show_gates_help`）
+    │                    #     · ★1.73 **breadth_rows.py**：**多行小图**（`BreadthRowsChart`）——
+    │                    #         每统计项一行 = **柱（占比/家数）+ 5 周均线**；焦点行置顶 3 倍高；
+    │                    #         底部指数副图**固定高度**（四图形：折线/面积/K线/美国线）；全行 x 联动 +
+    │                    #         竖线贯穿 + 读数**统一一处**；`min_content_height()` 供行区滚动
+    │                    #     · ★1.73 **breadth_items.py**：统计项面板（chip 列表 + 「＋ 添加」下拉 =
+    │                    #         公式的可判定变量 + 👁/★/✕；**不持状态**，真源在页面 `p._items`）
+    │                    #     · breadth_chart.py：**只剩"显示选项目录"常量**（`CHART_TYPES`/`INDEX_STYLES`/
+    │                    #         `DEFAULT_*`）——★1.73 起图已搬到 `breadth_rows.py`（旧 `BreadthChart` 类待清理）
+    │                    #     · breadth_result.py：空态/忙碌态（**图与滚动容器成对显隐**：`_show_chart`）)
     │                    #   / **readiness_flow.py(★v6.39 **就绪度体检 + 「⬆ 更新到最新交易日」的两页共用控制器**（D6：
     │                    #     「就绪度模型只有一份」）—— `start()` 后台体检 → 回执一行 + 缺口可见 →
     │                    #     `update_latest()` / `fill_missing()`（★v1.43：**提交给主窗口的下载队列**，

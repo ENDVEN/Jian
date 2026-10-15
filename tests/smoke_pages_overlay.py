@@ -169,9 +169,16 @@ if isinstance(_du, dict):
 #   与 §11.5-90 同族：**测试不许依赖用户真实偏好**（用户用得越久，冒烟越红）。
 for _vk in ("scan_ui", "breadth_ui"):
     _cur_vk = _pref_module.preferences.get(_vk)
-    if isinstance(_cur_vk, dict) and "col_order" in _cur_vk:
+    if isinstance(_cur_vk, dict):
+        # ★1.73 修（复核抓到）：M3 又多了三个**带用户态**的键 —— `items`（用户加过哪些统计项）/
+        #   `hint_done`（引导条关过没有）/ `index_h`（副图高度拖过多少）—— 与 `col_order` 同族：
+        #   **不抹掉就"用户用得越久、冒烟越红"**（§11.5-70/90：测试不许依赖用户真实偏好）。
+        #   本轮真实踩到：app 跑过一次之后，M3 段 5 条断言变红（行数/窗格名/引导可见性全被带偏）。
+        _drop_vk = {"col_order"}
+        if _vk == "breadth_ui":
+            _drop_vk |= {"items", "hint_done", "index_h"}
         _pref_module.preferences.set(
-            _vk, {a: b for a, b in _cur_vk.items() if a != "col_order"})
+            _vk, {a: b for a, b in _cur_vk.items() if a not in _drop_vk})
 
 # ★1.61 / §7-B16 护栏6/8：`hub_ui`（总库浮窗的位置偏移 / 上次选中）同样**必须在构造窗口前抹平**：
 #   与 §11.5-70/90 同族 —— 测试不许依赖用户真实偏好（用户用得越久，断言越取决于他的历史）。
@@ -3009,10 +3016,14 @@ try:
     # ---- ② 版式与口径不变量 ----
     check("★ 常驻行 ≤3（§10-14：L1 操作轴 + L2 摘要条 + L0 结果区；抽屉是**覆盖层**不占布局）",
           _brd.layout().count() == 3)
-    check("抽屉四张卡：ƒ 筛选条件 + 🎚 粗筛 + 📈 展示 + 🌐 统计范围"
+    # ★1.73 / §7-B16 期 1：抽屉**多第五张卡**「📋 统计项」（上屏哪几个判定变量）。
+    #   按纪律**逐项点名**（前四张的 key 与顺序不动 ⇒ `_formula_pane` / `_filter_pane` /
+    #   `_display_pane` 的老引用照旧成立）。
+    check("抽屉五张卡：ƒ 筛选条件 + 🎚 粗筛 + 📈 展示 + 🌐 统计范围 + 📋 统计项"
           "（ƒ/🎚/🌐 **直接复用 M2 的同款 EditPane**）",
-          [pane.key for pane in _brd._panes] == ['fn', 'filter', 'display', 'scope']
+          [pane.key for pane in _brd._panes] == ['fn', 'filter', 'display', 'scope', 'items']
           and hasattr(_brd._filter_pane, 'btn_reset')
+          and hasattr(_brd._items_pane.panel, 'set_items')
           and bool(_brd._formula_pane.txt_formula.toPlainText().strip()))
     # ★1.64：胶囊可点开对应配置（含新搬进抽屉的 🌐 范围）+「更新到最新」为 chip 样式
     _brd.open_pane('scope')
@@ -3082,29 +3093,44 @@ try:
         check(f"端到端：{len(_probe3)} 只广度扫完并回包（{_now4() - _t05:.2f}s，含线程来回）",
               _outcome5 is not None and _outcome5.cached is False
               and _outcome5.result.counts['total'] == len(_probe3))
-        check("★ 双窗格结构 = 广度（主）+ 指数（副），**x 轴联动**（B2：不做真·双 y 轴）",
-              _brd.chart._host.pane_names == ['breadth', 'index']
-              and _brd.chart._host.x_linked('index'))
-        check("广度线真的画出来了（主窗格有曲线图元）",
-              _brd.chart._host.pane('breadth').plot_item.items and not _brd.chart.isHidden()
+        # ★1.73 / §7-B16 期 1：结构从"主+副两窗格"升级为「**每个统计项一行 + 底部指数副图**」——
+        #   单一统计项（默认 = 公式最后一条）时 = ['row0', 'index']，与老版等价（迁移不断档）。
+        check("★ 多行结构 = 每统计项一行 + **底部指数副图**，全部窗格 **x 轴联动**"
+              "（B2：不做真·双 y 轴；单统计项时即 ['row0','index']）",
+              _brd.chart._host.pane_names == ['row0', 'index']
+              and all(_brd.chart._host.x_linked(_p) for _p in _brd.chart._host.pane_names[1:]))
+        check("广度行真的画出来了（行窗格有图元）",
+              _brd.chart._host.pane('row0').plot_item.items and not _brd.chart.isHidden()
               and _brd.empty_box.isHidden())
         check("指数副图也画出来了（喂了合成指数 ⇒ 副窗格有曲线）",
               any(getattr(item, 'curve', None) is not None
                   for item in _brd.chart._host.pane('index').plot_item.items))
-        check("读数条常显且是**业务文案**（日期 + 命中家数，不是内置的 X/Y）",
-              '命中' in _brd.chart._host.readout_text and '只' in _brd.chart._host.readout_text)
+        check("读数条常显且是**业务文案**（日期 + 该项当天占比，不是内置的 X/Y）"
+              "—— 口径默认「占比」（★1.73 用户拍板），含统计项标签",
+              'COND' in _brd.chart._host.readout_text
+              and '%' in _brd.chart._host.readout_text
+              and '-' in _brd.chart._host.readout_text)
 
         # ---- ③b v6.42 图表可读性护栏：bar 序号轴 + y 真跟随 + 刻度可见 + 双视觉 ----
         from ui.widgets.adaptive_axis import handle_for as _handle_for  # noqa: E402
-        from ui.widgets.breadth_chart import _BreadthTickAxis  # noqa: E402
-        _pane_b = _brd.chart._host.pane('breadth').plot_item
+        _pane_b = _brd.chart._host.pane('row0').plot_item
         _pane_i = _brd.chart._host.pane('index').plot_item
-        check("★ 默认视觉 = 柱状 + MA5 趋势线（整数家数用柱子读；下拉可切折线）",
+        check("★ 每行 = **柱 + 均线**（用户拍板『折线太单一，要柱状叠加』；下拉可切纯折线）",
               _brd._display_pane.cb_chart.currentData() == 'bars'
               and any(isinstance(it, pg.BarGraphItem) for it in _pane_b.items))
-        check("家数纵轴刻度取整（「3.5 只」是谎话；占比模式才留小数）",
-              isinstance(_pane_b.getAxis('left'), _BreadthTickAxis)
-              and _pane_b.getAxis('left').integer)
+        _axis_int = getattr(_pane_b.getAxis('left'), 'integer', None)
+        # ⚠ 本段前面**主动把口径切成"家数"**（那两条读数/刻度断言需要家数），所以"默认值"
+        #   不能在活控件上验 —— 用一个**新建的**展示卡实例验声明默认（状态无关，永不误报）。
+        from ui.widgets.breadth_layout import BreadthDisplayPane as _BDP11  # noqa: E402
+        # ⚠ 必须**存进变量并挂父件**：`_BDP11().chk_ratio` 这种写法里，临时对象没有被引用 ⇒
+        #   Python 立刻回收 ⇒ 连带删掉其子控件 ⇒ 下一次访问就是
+        #   `RuntimeError: wrapped C/C++ object of type QCheckBox has been deleted`
+        #   （PyQt 经典陷阱；本仓 §11.5-19 同族"引用必须先落地"）。
+        _fresh11 = _BDP11(_brd)
+        check("★ 柱口径**默认占比**（用户 2026-10-12 拍板：多行量级差大，占比才跨行可比）；"
+              "纵轴刻度取整**只在家数模式**生效（「3.5 只」是谎话）",
+              _fresh11.chk_ratio.isChecked() is True
+              and _axis_int == (not _brd._display_pane.chk_ratio.isChecked()))
         _h_b = _handle_for(_pane_b)
         _h_i = _handle_for(_pane_i)
         check("★ 两窗格都挂上 y 跟随器（adaptive_axis 的 **bar 序号**口径 —— 旧版喂 epoch 秒，跟随器 100% 失效）",
@@ -3114,7 +3140,7 @@ try:
         app.processEvents()
         _h_b.refresh()
         _h_i.refresh()
-        _seg = _brd.chart._ys[-40:-19]
+        _seg = _brd.chart._rows[0]['values'][-40:-19]
         _exp_top = float(np.nanmax(_seg)) * 1.08 + 1.0
         _y_lo, _y_hi = _h_b.y_range
         check("★ 缩放后家数纵轴**真的跟随可视区**（旧 bug：provider 收到 1.7e9 当序号，切片恒空 ⇒ 永不更新）",
@@ -3166,48 +3192,16 @@ try:
         _w_i = _pane_i.getAxis('left').style.get('tickTextWidth')
         check("★ 两窗格纵轴共用同一个固定左槽（R8 第二版口径：对齐且**不留大片空白**）",
               bool(_w_b) and _w_b == _w_i and _w_b <= 60)
-        check("★ 两图分界把手已启用且**看得见**（浅灰胶囊浮在交界上；没把手的功能等于没有）",
-              _brd.chart._host._drag_pairs == ('breadth', 'index')
-              and _brd.chart._host._divider is not None
-              and not _brd.chart._host._divider.isHidden())   # 离屏非当前页：isVisible 恒假，用自身 show 态
-        # 真实鼠标事件模拟：按下交界 → 往上拖 → 松手；再往下拖；再双击复位。
-        # ⚠ 拖动模型 = 按下瞬间锁定参考系 —— 上下双向都必须跟手（v6.42 用户实测：
-        #   旧版拿实时几何反推 ⇒ 布局回流振荡，"拖一点就失控/往上拖没反应"）。
-        from PyQt6.QtCore import QPointF as _QP4, QEvent as _QE4  # noqa: E402
-        from PyQt6.QtGui import QMouseEvent as _QME4  # noqa: E402
-        _vp4 = _brd.chart._host._glw.viewport()
-        _geo4 = _brd.chart._host._divider_geometry()
-
-        def _me4(kind, y, down=True):
-            btn = Qt.MouseButton.LeftButton
-            return _QME4(kind, _QP4(80.0, y), btn,
-                         btn if down else Qt.MouseButton.NoButton,
-                         Qt.KeyboardModifier.NoModifier)
-
-        if _geo4 is not None:
-            _ly4, _tp4, _bt4 = _geo4
-            _span4 = _bt4 - _tp4
-            app.sendEvent(_vp4, _me4(_QE4.Type.MouseButtonPress, _ly4))
-            app.sendEvent(_vp4, _me4(_QE4.Type.MouseMove, _tp4 + _span4 * 0.30))
-            app.sendEvent(_vp4, _me4(_QE4.Type.MouseButtonRelease,
-                                     _tp4 + _span4 * 0.30, down=False))
-            check("★ 分界把手**往上拖也响应**（双向跟手；主图权重真变小）",
-                  _brd.chart._host.pane_stretch('breadth') <= 40)
-            app.processEvents()                     # 让布局回流落地，再按**新交界**抓把手
-            _geo4b = _brd.chart._host._divider_geometry()
-            _ly4b = _geo4b[0] if _geo4b is not None else _tp4 + _span4 * 0.30
-            app.sendEvent(_vp4, _me4(_QE4.Type.MouseButtonPress, _ly4b))
-            app.sendEvent(_vp4, _me4(_QE4.Type.MouseMove, _tp4 + _span4 * 0.85))
-            app.sendEvent(_vp4, _me4(_QE4.Type.MouseButtonRelease,
-                                     _tp4 + _span4 * 0.85, down=False))
-            check("★ 往下拖把主图调大（指数图空间收小）—— 两个方向都是直线映射，无振荡死区",
-                  _brd.chart._host.pane_stretch('breadth') >= 80)
-            _brd.chart._host.reset_divider_stretch()
-            check("双击/重置分界线恢复默认 3:1",
-                  _brd.chart._host.pane_stretch('breadth') == 3
-                  and _brd.chart._host.pane_stretch('index') == 1)
-        else:   # 离屏几何拿不到 ⇒ 直接判红（拖动功能依赖它，不许静默跳过）
-            check("分界几何可算（拖动功能的前置）", False)
+        check("★ 指数副图高度**钉死**（min == max = 170px ⇒ 不随行数被压扁，设计稿硬规则②）",
+              _brd.chart._host.pane('index').plot_item.minimumHeight() == 170
+              and _brd.chart._host.pane('index').plot_item.maximumHeight() == 170)
+        # 分界拖动：多行模式**与"固定高度"互斥**（`ChartHost` 的拖动只改 `_stretch`，
+        #   而 `fixed_height` 把 min==max 钉死 ⇒ 拖了也不变）⇒ 本版按设计稿选**固定**，
+        #   不启用拖动（**留个假把手比没有更坏**），"调高指数图"改走待做的数值控件。
+        #   ⚠ 这是**已知取舍**，记在方案书 §6「未决项」；旧版那段鼠标拖动模拟随之下线。
+        check("（取舍记录）多行模式**未启用**分界拖动 ⇒ 没有假把手；指数副图高度走固定值 + 待做数值控件",
+              _brd.chart._host._drag_pairs is None
+              and _brd.chart._host.pane('index') is not None)
         check("★ 口径印在标题行上（E 节）：范围 · 前复权 · 有效 N/M · 区间",
               '前复权' in _brd.lbl_cal.text() and '有效' in _brd.lbl_cal.text()
               and str(_brd.cb_scope.currentText()).replace('…', '') in _brd.lbl_cal.text())
@@ -3227,7 +3221,7 @@ try:
         _brd._display_pane.chk_ratio.setChecked(True)
         app.processEvents()
         check("切换「占比 %」口径：纵轴单位跟着换（家数（只）→ 占比（%））",
-              '占比' in _brd.chart._host.pane('breadth').plot_item.getAxis('left').labelText)
+              _brd.chart._host.pane('row0').plot_item.getAxis('left').labelText == '%')
         _brd._display_pane.chk_ratio.setChecked(False)
         app.processEvents()
 
@@ -3329,13 +3323,20 @@ try:
     # ---- ⑨ 偏好「记住上次」：只存轻量配置，**绝不存扫描结果** ----
     _brd.save_breadth_ui()
     _brd_ui = preferences.get('breadth_ui')
-    check("breadth_ui 偏好只含配置十一项（结果只进会话缓存，D3）",
+    # ★1.73 / §7-B16 期 1：多一项 `items`（统计项列表）—— **逐项点名**，且**只存轻量配置**
+    #   （统计项只存 key/label/color/visible/focus，绝不存家数/矩阵 ⇒ 结果仍只进会话缓存 D3）。
+    check("breadth_ui 偏好只含配置**十四项**（含 `items` 统计项 + `index_h` 副图高度"
+          "+ `hint_done` 引导已读；结果只进会话缓存，D3）",
           isinstance(_brd_ui, dict)
           and set(_brd_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds',
                                'range', 'chart', 'index_style', 'smooth', 'ratio',
-                               'overlay', 'overlay_code'}
+                               'overlay', 'overlay_code', 'items', 'index_h', 'hint_done'}
           and str(_brd_ui.get('formula') or '').strip() != ''
           and isinstance(_brd_ui.get('thresholds'), dict)
+          and isinstance(_brd_ui.get('items'), list)
+          and all(isinstance(_it, dict) and set(_it) <= {'key', 'label', 'color',
+                                                         'visible', 'focus'}
+                  for _it in (_brd_ui.get('items') or []))
           and _brd_ui.get('range') in ('3m', '6m', '1y', '3y', '5y', 'all')
           and _brd_ui.get('chart') in ('bars', 'line')
           and _brd_ui.get('index_style') in ('line', 'area', 'kline', 'ohlc'))
@@ -5722,6 +5723,236 @@ except Exception as _e131:  # noqa: BLE001
     check(f"§11.5-131 北交所前缀断言整段抛异常: {type(_e131).__name__}: {_e131}", False)
 
 # ==========================================
+# §7-B16 期 0 · M3 三道闸阈值：**可调 + 与偏好默认同源 + 有引导**（不许写死）—— ★1.73
+#   用户 2026-10-12 拍板原话：『E 页三道闸的阈值先按照你的来，但是必须在相关页面给调整按钮
+#   不能直接一口气写死。然后最好给用户一个比较合适的引导，因为这种功能没有引导根本不知道
+#   这个阈值到底是啥。』
+#   ⇒ 三项声明进设置注册表（唯一写入点）+ 默认值与 `preferences.DEFAULTS` 同源（防两套默认）
+#     + 每项都要有**人话 tip 与长 help**（讲清"命中天数占比"是什么、为什么以 5%/30% 为界）。
+# ==========================================
+print("\n== §7-B16 期 0 · 三道闸阈值可调（设置注册表三项）==")
+try:
+    from core.preferences import DEFAULTS as _DEFS132  # noqa: E402
+    from ui import settings_registry as _sr132  # noqa: E402
+
+    _tri132 = {_k: _sr132.find(_k) for _k in ('sweep3dense.sparse_max',
+                                              'sweep3dense.freq_min',
+                                              'sweep3dense.indep_gap')}
+    check("★ 1.73：设置页声明了**三项可调阈值**（用户拍板：不许写死）",
+          all(_tri132.values()))
+    check("★ 1.73：三项的落点都指向自己（`where == key` ⇒ 唯一写入点，§9-D）",
+          all(i.where == i.key for i in _tri132.values() if i is not None))
+    _dens132 = _DEFS132.get('sweep3dense') or {}
+    check("★ 1.73：注册表默认值 == `preferences.DEFAULTS`（防『两套默认』漂移）",
+          bool(_dens132)
+          and abs(float(_tri132['sweep3dense.sparse_max'].default)
+                  - float(_dens132['sparse_max'])) < 1e-9
+          and abs(float(_tri132['sweep3dense.freq_min'].default)
+                  - float(_dens132['freq_min'])) < 1e-9
+          and int(_tri132['sweep3dense.indep_gap'].default) == int(_dens132['indep_gap']))
+    check("★ 1.73：每项都有**人话说明**（tip + 至少 80 字 help —— 用户原话："
+          "『没有引导根本不知道这个阈值到底是啥』）",
+          all(i.tip for i in _tri132.values() if i is not None)
+          and all(len(i.help or '') > 80 for i in _tri132.values() if i is not None))
+    _fold132 = _sr132.find('defaults.first_scan_hint')
+    check("★ 1.73：三项挂 `defaults` 组（回测与扫描默认 —— 与既有默认项同组，不新开空组）",
+          _fold132 is not None
+          and _tri132['sweep3dense.sparse_max'].group == 'defaults'
+          and _tri132['sweep3dense.freq_min'].group == 'defaults'
+          and _tri132['sweep3dense.indep_gap'].group == 'defaults')
+    from core import relation_stats as _rs132  # noqa: E402
+
+    check("★ 1.73：判据模块与注册表**指向同一个偏好组**"
+          "（`relation_stats.PREF_KEY` == 三项 `where` 的前缀 ⇒ 改一处不会只改半边）",
+          _rs132.PREF_KEY == 'sweep3dense'
+          and all(str(i.where).startswith(_rs132.PREF_KEY + '.')
+                  for i in _tri132.values() if i is not None))
+    check("★ 1.73：默认值三处同源（`relation_stats` 常量 == 注册表声明 == `preferences.DEFAULTS`）",
+          abs(float(_rs132.DEFAULT_SPARSE_MAX)
+              - float(_tri132['sweep3dense.sparse_max'].default)) < 1e-9
+          and abs(float(_rs132.DEFAULT_FREQ_MIN)
+                  - float(_tri132['sweep3dense.freq_min'].default)) < 1e-9
+          and int(_rs132.DEFAULT_INDEP_GAP)
+          == int(_tri132['sweep3dense.indep_gap'].default))
+except Exception as _e132:  # noqa: BLE001
+    check(f"§7-B16 期 0 阈值注册断言整段抛异常: {type(_e132).__name__}: {_e132}", False)
+
+# ==========================================
+# §7-B16 期 1 · M3「多行小图」控件（★1.73 · 用户 2026-10-12 拍板 B 方案 + 要柱状）
+#   形态 = `design/1.72-m3-multi-plan-ui/b-多行小图.html`：每项一行（柱 + 5 周均线）
+#   + 底部**固定高度**指数副图 + 全行共享 x 轴与竖直十字线 + 读数**统一一处**。
+#   ⚠ 本段只断言**结构 / 数据 / 交互**（窗格数、行序、x 联动、焦点权重、读数内容、
+#     缺帧跳过）——**不断言文字形态**：离屏 `offscreen` 环境下所有 Qt 文字都渲染成豆腐块
+#     （用**既有生产控件** `BreadthChart` 同环境比对确认过 ⇒ 是环境问题，不是控件问题），
+#     所以文字必须在**真机**上看（§10-10：离屏断言只证逻辑、不证手感）。
+# ==========================================
+print("\n== §7-B16 期 1 · 多行小图控件（结构 / 行序 / 焦点 / 读数）==")
+try:
+    from ui.widgets.breadth_rows import (FOCUS_STRETCH, BreadthRowsChart,  # noqa: E402
+                                         INDEX_PANE_HEIGHT)
+
+    _D11 = pd.date_range("2019-01-02", periods=160, freq="B")
+    _rng11 = np.random.default_rng(5)
+
+    def _bf11(seed, peak, freq):
+        _r = np.random.default_rng(seed)
+        _valid = np.full(len(_D11), 4800.0)
+        _hits = (np.abs(np.sin(np.arange(len(_D11)) / freq)) ** 3
+                 * peak + _r.normal(0, peak * 0.05, len(_D11))).clip(0, None).round()
+        return pd.DataFrame({"hits": _hits, "valid": _valid,
+                             "ratio": _hits / _valid}, index=_D11)
+
+    _items11 = [{"key": "E80", "label": "情绪≥80", "color": "#E53935"},
+                {"key": "E20", "label": "情绪<20", "color": "#1E88E5"},
+                {"key": "DYN", "label": "QSD>0且GLX>0", "color": "#6A1B9A"}]
+    _frames11 = {"E80": _bf11(1, 900, 40), "E20": _bf11(2, 1200, 26), "DYN": _bf11(3, 2100, 9)}
+    _idx11 = pd.DataFrame({"date": _D11,
+                           "close": 2500 + np.cumsum(_rng11.normal(0, 20, len(_D11)))})
+    _rows11 = BreadthRowsChart()
+    _rows11.resize(1200, 560)
+    for _ in range(3):
+        app.processEvents()
+
+    check("★ 1.73：空输入 ⇒ **0 行**（调用方给空态；绝不画零线冒充「有数据」）",
+          _rows11.render([], {}) == 0 and _rows11.pane_names() == ['row0'])
+    _n11 = _rows11.render(_items11, _frames11, _idx11, focus="DYN", index_label="上证指数")
+    for _ in range(3):
+        app.processEvents()
+    check(f"★ 1.73：三项 ⇒ 画出 {_n11} 行、窗格 = 行 + **1 个指数副图**（副图恒在最后）",
+          _n11 == 3 and _rows11.pane_names() == ['row0', 'row1', 'row2', 'index'])
+    check("★ 1.73：**焦点行置顶**（设计稿：焦点是主角，放最上面一眼看到）",
+          _rows11.row_keys()[0] == "DYN" and _rows11.focus_stretch() == FOCUS_STRETCH)
+    check("★ 1.73：全部窗格 **x 轴联动**（除源窗格）—— 【对齐】这件事的物理保证",
+          all(_rows11._host.x_linked(_p) for _p in _rows11.pane_names()[1:]))
+    check("★ 1.73：指数副图**固定高度**（不随行数被压扁 —— 设计稿三条硬规则之一）",
+          INDEX_PANE_HEIGHT >= 120
+          and _rows11._host.pane('index') is not None)
+    _ro11 = _rows11._readout("row0", float(len(_D11) - 1), 0.0)
+    check("★ 1.73：读数**统一一处**且含**所有行**当天的值 + 指数"
+          "（不在每行各弹一个框 —— 那是视觉噪声）",
+          all(_it["label"] in _ro11 for _it in _items11)
+          and "上证指数" in _ro11 and "2019" in _ro11)
+    _n_part11 = _rows11.render(
+        [_items11[0], {"key": "NOPE", "label": "没有数据", "color": "#000000"}, _items11[1]],
+        {"E80": _frames11["E80"], "E20": _frames11["E20"]}, _idx11)
+    check("★ 1.73：**缺帧的项被跳过**（不画空行、不拿零线冒充）",
+          _n_part11 == 2 and _rows11.row_keys() == ["E80", "E20"])
+    check("★ 1.73：柱口径可切（占比 ↔ 家数）且读数跟着换单位",
+          _rows11.render(_items11, _frames11, _idx11, bar_mode="hits") == 3
+          and "只" in _rows11._readout("row0", 159.0, 0.0)
+          and _rows11.render(_items11, _frames11, _idx11) == 3
+          and "%" in _rows11._readout("row0", 159.0, 0.0))
+except Exception as _e11b:  # noqa: BLE001
+    check(f"§7-B16 期 1 多行小图断言整段抛异常: {type(_e11b).__name__}: {_e11b}", False)
+
+# ==========================================
+# §7-B16 期 1 收尾 · 副图高度可调 + 引导 + 行区滚动（★1.73 · 用户拍板）—— ★1.73
+#   用户拍板三条：① 副图高度/阈值**不许写死**，必须有调整入口；② **必须给引导**
+#   （原话："这种功能没有引导根本不知道这个阈值到底是啥"）；③ 行数变多要**统筹布局**。
+#   本段：高度控件（夹域 / 生效 / 不重建窗格 / 内容最小高随行数长）、引导条（首次可见 →
+#   关掉记住 → **常驻 ⓘ 仍在**）、行区滚动容器（图与容器成对显隐）。
+# ==========================================
+print("\n== §7-B16 期 1 收尾 · 副图高度 / 引导 / 行区滚动 ==")
+try:
+    from ui.widgets.breadth_items import MAX_ITEMS as _MI12  # noqa: E402
+    from ui.widgets.breadth_layout import (GATES_HELP_TEXT as _GH12,  # noqa: E402
+                                           HINT_TEXT as _HT12,
+                                           BreadthDisplayPane as _BDP12)
+    from ui.widgets.breadth_rows import (INDEX_HEIGHT_RANGE as _IHR12,  # noqa: E402
+                                         INDEX_PANE_HEIGHT as _IPH12,
+                                         MINI_ROW_MIN_H as _MRH12,
+                                         BreadthRowsChart as _BRC12)
+
+    # ⚠ 临时 widget 必须**存进变量并挂父件**（无引用会被 GC ⇒ `QCheckBox has been deleted`）
+    _pane12 = _BDP12(win)
+    _sp12 = _pane12.spin_index_h
+    check(f"★ 1.73：展示卡有「副图高度」控件（{_sp12.minimum()}~{_sp12.maximum()}px，"
+          f"默认 {_sp12.value()}）—— 用户拍板：尺寸**不许写死**，必须有调整入口",
+          _sp12.minimum() == _IHR12[0] and _sp12.maximum() == _IHR12[1]
+          and _sp12.value() == _IPH12)
+
+    _c12 = _BRC12()
+    _one12 = [{"key": "K", "label": "K", "color": "#E53935"}]
+    _f12 = {"K": _frames11["E80"]}
+    _c12.render(_one12, _f12, _idx11, index_height=240)
+    _idx12 = _c12._host.pane('index')
+    check("★ 1.73：改副图高度**真的生效**（窗格 min == max == 设定值 ⇒ 行数再多也不压扁它）",
+          _idx12.plot_item.minimumHeight() == 240
+          and _idx12.plot_item.maximumHeight() == 240)
+    _rb12 = _c12.rebuilds
+    _c12.render(_one12, _f12, _idx11, index_height=120)
+    check("★ 1.73：只调高度**不重建窗格**（复用 ⇒ 不闪、不丢外部引用；`rebuilds` 不变）",
+          _c12.rebuilds == _rb12 and _idx12.plot_item.maximumHeight() == 120)
+    check("★ 1.73：高度**夹过域**（越界 / 脏值回落合法域，界面每帧都在传它，不许抛）",
+          _c12._clamp_index_h(9999) == _IHR12[1] and _c12._clamp_index_h('x') == _IPH12
+          and _c12._clamp_index_h(0) == _IHR12[0])
+
+    _h1_12 = _c12.min_content_height()
+    # ⚠ 两行要**两份帧**（缺帧的项会被"跳过" ⇒ 只画一行，最小高自然不变 —— 第一版断言就栽在这）
+    _c12.render(_one12 + [{"key": "K2", "label": "K2", "color": "#1E88E5"}],
+                {"K": _frames11["E80"], "K2": _frames11["E20"]}, _idx11, index_height=120)
+    check(f"★ 1.73：内容最小高**随行数增长**（1 行 {_h1_12} → 2 行 "
+          f"{_c12.min_content_height()}）⇒ 放进 `QScrollArea` 后行区自己滚动、"
+          "副图不被压扁（设计稿硬规则②）",
+          _c12.min_content_height() > _h1_12
+          and _c12.min_content_height() >= _MRH12 + 120)
+    check("★ 1.73：行数上限 = 12（设计稿 7~12 档走「焦点 + 迷你」，>12 折叠）",
+          _MI12 == 12)
+
+    _brd12 = next(win.page_backtest.tabs.widget(_i12)
+                  for _i12 in range(win.page_backtest.tabs.count())
+                  if type(win.page_backtest.tabs.widget(_i12)).__name__ == 'BreadthView')
+    check("★ 1.73：**首次引导条**存在且默认可见（用户原话：没有引导根本不知道阈值是啥）",
+          hasattr(_brd12, 'hint_bar') and not _brd12.hint_bar.isHidden())
+    check("★ 1.73：引导文案讲了「柱 = 每天多少 / 线 = 均线 / 可切家数占比 / ★放大」",
+          all(_k in _HT12 for _k in ('柱', '线', '家数', '占比', '★')))
+    check("★ 1.73：三道闸说明含三闸 + **阈值在哪调** + 「不会重跑扫描」（诚实指引）",
+          all(_k in _GH12 for _k in ('稀疏度闸', '独立性闸', '多重检验闸',
+                                     '设置', '不会重跑扫描')))
+    check("★ 1.73：**常驻 ⓘ 入口**存在（关掉引导条后仍能再看 —— 说明不许只存在弹窗里）",
+          hasattr(_brd12, 'hint_icon'))
+    # —— ★1.73 修（复核抓到）：已读状态**不许从可见性反推** ——
+    #   旧写法 `not hint_bar.isVisibleTo(page)`：页签没切到 / 窗口没显示时恒 False ⇒
+    #   把"用户从没关过"误存成"已读"（引导**静默永不出现**），且该值随"什么时候保存"来回翻。
+    _mod12 = win.page_backtest
+    _keep_tab12 = _mod12.tabs.currentWidget()
+    _brd12._hint_done = False
+    _brd12.hint_bar.setVisible(True)
+    _mod12.tabs.setCurrentWidget(_mod12.backtest_single)      # 切走（用户并未关过引导条）
+    app.processEvents()
+    _brd12.save_breadth_ui()
+    _off12 = (preferences.get('breadth_ui') or {}).get('hint_done')
+    check(f"★ 1.73 回归：**在别的页签上保存**不许把引导标成已读（实测 hint_done = {_off12}）"
+          "—— 旧版按可见性反推 ⇒ 引导条静默永不出现",
+          _off12 is False)
+
+    _mod12.tabs.setCurrentWidget(_keep_tab12)
+    app.processEvents()
+    _brd12._flow.on_hint_dismissed()
+    app.processEvents()
+    _ui12 = preferences.get('breadth_ui') or {}
+    check("★ 1.73：点「知道了」⇒ 收起 + 记住已读（`hint_done`）；副图高度也进偏好（记住上次）",
+          _brd12.hint_bar.isHidden() and _ui12.get('hint_done') is True
+          and isinstance(_ui12.get('index_h'), int))
+    _mod12.tabs.setCurrentWidget(_mod12.backtest_single)       # 再切走 + 保存
+    app.processEvents()
+    _brd12.save_breadth_ui()
+    check("★ 1.73 回归：关掉之后**从别的页签保存**仍是已读（值不随保存时机翻转）",
+          (preferences.get('breadth_ui') or {}).get('hint_done') is True)
+    _mod12.tabs.setCurrentWidget(_keep_tab12)
+    app.processEvents()
+
+    check("★ 1.73：L0 用 `QScrollArea` 包住图（宽跟随 + 竖向按需 + **绝不横向**）"
+          "⇒ 行区自己滚动、整页不跟着滚；且**图与容器成对显隐**（不留空框）",
+          hasattr(_brd12, 'chart_scroll')
+          and _brd12.chart_scroll.widget() is _brd12.chart
+          and _brd12.chart_scroll.widgetResizable()
+          and _brd12.chart_scroll.horizontalScrollBarPolicy()
+          == Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+except Exception as _e12b:  # noqa: BLE001
+    check(f"§7-B16 期 1 收尾断言整段抛异常: {type(_e12b).__name__}: {_e12b}", False)
+
+# ==========================================
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71
 #   现象（用户原话）："我在参数研究里面却显示 m2，我在 m2 里面显示 m3，我在 m3 里面显示在回测，
 #   这直接导致我没办法在 m2 和 m3 里面保存方案"。
@@ -7244,8 +7475,16 @@ try:
     check("★ S2-4：页面读设置一律走**注册表唯一出口**（`_setting = reg.get_setting`，无第二份默认）",
           '_setting = reg.get_setting' in _sfsrc81)
     _view81 = _SV81()
-    check("★ S2-4：「回测与扫描默认」组 = 3 项（原先那行 todo 已撤）",
-          _view81.count_rows('defaults') == len(_sr81.items('defaults')) == 3)
+    # ★1.73 / §7-B16 期 0：本组**又加了 3 项**（M3 三道闸阈值，用户拍板「不许写死」）
+    #   ⇒ 按 §11.5-123 ③ 的纪律，老断言从"数项数"改成**逐项点名**（新增项不该把老断言带红，
+    #   但也不许悄悄多/少项）。不变量「页面行数 == 注册表项数」原样保留。
+    _keys81 = [i.key for i in _sr81.items('defaults')]
+    check(f"★ S2-4 + §7-B16 期 0：「回测与扫描默认」组**逐项点名**（实测 {len(_keys81)} 项）"
+          "—— 含新增的 M3 三道闸阈值三项",
+          _keys81 == ['defaults.range_preset', 'archive.auto', 'defaults.first_scan_hint',
+                      'sweep3dense.sparse_max', 'sweep3dense.freq_min',
+                      'sweep3dense.indep_gap']
+          and _view81.count_rows('defaults') == len(_keys81))
 except Exception as _e81:  # noqa: BLE001
     check(f"§7-B13 S2-4 断言整段抛异常: {type(_e81).__name__}: {_e81}", False)
 

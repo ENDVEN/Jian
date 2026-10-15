@@ -34,7 +34,8 @@ from core.cross_section import (
 
 __all__ = [
     'ScanKey', 'ScanStore', 'ScanOutcome', 'get_scan_store',
-    'formula_fingerprint', 'thresholds_fingerprint', 'universe_fingerprint',
+    'formula_fingerprint', 'signals_fingerprint', 'thresholds_fingerprint',
+    'universe_fingerprint',
     'data_version', 'kline_zone_dir', 'scan_key', 'scan_cached', 'merge_tail',
 ]
 
@@ -117,9 +118,22 @@ def kline_zone_dir(zone: str = 'kline_daily') -> str:
     return os.path.join(settings.USER_DATA_DIR, 'data_lake', 'kline', leaf)
 
 
+def signals_fingerprint(names=None) -> str:
+    """**判定变量集合**的指纹（★1.73 / §7-B16 期 1：必须进缓存键）。
+
+    【为什么必须进键】判定变量不同 ⇒ 家数/矩阵**完全不同**。虽然"换判定变量"通常会改动公式文本
+      （公式指纹就变了），但**多判定变量公式里换一个变量**可以做到"文本一字不动"：
+      `A:=…; B:=…;` 里把判定变量从 A 换成 B ⇒ 只用公式指纹会**静默拿到旧口径的数**。
+    【为什么"柱 = 家数 / 占比"**不进键**】那是**显示**口径，同一矩阵的两种画法；
+      进了键就等于"切一下显示要重扫几十秒"（用户会以为卡住 —— §11.5-19 同级纪律）。
+    """
+    keys = sorted(str(n or '').strip().upper() for n in (names or []) if str(n or '').strip())
+    return '-'.join(keys) or '-'
+
+
 @dataclass(frozen=True)
 class ScanKey:
-    """会话缓存的键（frozen ⇒ 可做字典键）。六样见 `scan_key()`。"""
+    """会话缓存的键（frozen ⇒ 可做字典键）。七样见 `scan_key()`。"""
 
     formula: str
     thresholds: str
@@ -127,6 +141,7 @@ class ScanKey:
     adjust: str
     data_version: str
     snapshot: str = ''
+    signals: str = '-'                       # ★1.73：判定变量集合（见 `signals_fingerprint`）
 
     def label(self) -> str:
         """给日志 / 界面回执看的短标识"""
@@ -136,10 +151,11 @@ class ScanKey:
 
 def scan_key(formula: str, thresholds: ScanThresholds = None, symbols=None,
              adjust: str = 'qfq', zone_dir: str = None, params: dict = None,
-             snapshot_columns=()) -> ScanKey:
+             snapshot_columns=(), signal_names=None) -> ScanKey:
     """构造缓存键（跨模块的"键"必须有**唯一规范入口** —— §11.5-19 同级纪律）。
 
-    进键的**六样**（少一样 = 静默陈旧）：
+    进键的**七样**（少一样 = 静默陈旧）：
+      ⓪ ★1.73：**判定变量集合**（`signals_fingerprint` —— 多判定变量公式里换变量时公式文本不变）
       ① 公式指纹（忽略注释/空白/大小写）
       ② **粗筛阈值**（决定"被剔除"桶 —— v6.35 修订，见 `thresholds_fingerprint`）
       ③ 标的域（自选 / 指数成分 / 全市场）
@@ -161,6 +177,7 @@ def scan_key(formula: str, thresholds: ScanThresholds = None, symbols=None,
         adjust=str(adjust or 'qfq'),
         data_version=data_version(zone_dir),
         snapshot='-'.join(sorted(str(col) for col in (snapshot_columns or ()))),
+        signals=signals_fingerprint(signal_names),
     )
 
 
@@ -168,9 +185,21 @@ def scan_key(formula: str, thresholds: ScanThresholds = None, symbols=None,
 # 2) 缓存本体（LRU + 占用可见可清）
 # ==========================================
 def _nbytes(result: CrossSectionResult) -> int:
-    """粗略估算一条缓存的占用（矩阵是绝对大头；dict 里的短字符串按 200 B/条 估）"""
+    """粗略估算一条缓存的占用（矩阵是绝对大头；dict 里的短字符串按 200 B/条 估）。
+
+    ★1.73：多判定变量后必须**按对象去重** —— 主变量的矩阵/家数在 `status_matrix_by_signal` /
+      `counters_by_signal` 里是**同一对象**，不去重就会把同一块内存算两遍，体积闸提前误触发
+      （§10-10：占用要**看得见**，假的占用比没有更坏）。
+    """
     total = 0
-    for array in (getattr(result, 'status_matrix', None), getattr(result, 'counters', None)):
+    seen = set()
+    arrays = [getattr(result, 'status_matrix', None), getattr(result, 'counters', None)]
+    arrays += list((getattr(result, 'status_matrix_by_signal', None) or {}).values())
+    arrays += list((getattr(result, 'counters_by_signal', None) or {}).values())
+    for array in arrays:
+        if array is None or id(array) in seen:
+            continue
+        seen.add(id(array))
         total += int(getattr(array, 'nbytes', 0))
     total += len(getattr(result, 'status', {}) or {}) * 200
     return total
@@ -218,6 +247,7 @@ class ScanStore:
             if (item_key.formula == key.formula and item_key.thresholds == key.thresholds
                     and item_key.universe == key.universe and item_key.adjust == key.adjust
                     and item_key.snapshot == key.snapshot
+                    and item_key.signals == key.signals          # ★1.73：判定变量集合也必须一致
                     and item_key.data_version != key.data_version):
                 return result
         return None
@@ -286,27 +316,31 @@ class ScanOutcome:
     elapsed_ms: float = 0.0
     note: str = ''
 
-    def status_on(self, date=None) -> dict:
+    def status_on(self, date=None, signal=None) -> dict:
         stamp = self.asof if date is None else date
         if self.result.status_matrix is None or self.result.dates is None:
             # 没有矩阵（如整份名单都无本地文件，v6.42）⇒ 只能回答基准日那天，
             # 直接用 scan() 当日产出的 status（含「无文件 ⇒ 数据不足」的逐只名单）。
             # ⚠ 早退路径的 result.asof 是 None，界面传来的 stamp 可能是 NaT ——
             #   两者都按"问的就是基准日"处理，否则永远回空表。
+            # ★1.73：这条路只有**主判定变量**的当日名单；问别的变量一律回空（诚实，别拿主变量的凑）。
+            if signal and (str(signal).strip().upper()
+                           != str(self.result.signal_name or '').upper()):
+                return {}
             if stamp is None or pd.isna(stamp):
                 return dict(self.result.status)
             if (self.result.asof is not None
                     and pd.Timestamp(stamp) == self.result.asof):
                 return dict(self.result.status)
             return {}
-        return self.result.status_on(stamp)
+        return self.result.status_on(stamp, signal=signal)
 
-    def counts_on(self, date=None) -> dict:
+    def counts_on(self, date=None, signal=None) -> dict:
         stamp = self.asof if date is None else date
-        return tally_status(self.status_on(stamp))
+        return tally_status(self.status_on(stamp, signal=signal))
 
-    def breadth_frame(self, start=None) -> pd.DataFrame:
-        return self.result.breadth_frame(start)
+    def breadth_frame(self, start=None, signal=None) -> pd.DataFrame:
+        return self.result.breadth_frame(start, signal=signal)
 
 
 def merge_tail(base: CrossSectionResult, fresh: CrossSectionResult) -> CrossSectionResult | None:
@@ -327,6 +361,22 @@ def merge_tail(base: CrossSectionResult, fresh: CrossSectionResult) -> CrossSect
     tail_mask = fresh.dates > base.dates[-1]
     if not bool(tail_mask.any()):
         return None
+    # ★1.73：**逐判定变量**一起续接（历史沿用旧矩阵、只追加新交易日）——
+    #   只合并两边都有的变量名（正常路径下集合恒等，因为 `find_base` 已把 `signals` 纳入匹配）；
+    #   真出现了集合不一致（例如调用方绕过 find_base）⇒ **如实出声**，绝不静默混口径。
+    base_c = getattr(base, 'counters_by_signal', None) or {}
+    fresh_c = getattr(fresh, 'counters_by_signal', None) or {}
+    base_m = getattr(base, 'status_matrix_by_signal', None) or {}
+    fresh_m = getattr(fresh, 'status_matrix_by_signal', None) or {}
+    merged_c = {n: np.concatenate([arr, fresh_c[n][tail_mask]], axis=0)
+                for n, arr in base_c.items() if n in fresh_c and arr is not None}
+    merged_m = {n: np.concatenate([arr, fresh_m[n][:, tail_mask]], axis=1)
+                for n, arr in base_m.items() if n in fresh_m and arr is not None}
+    skipped = sorted(set(base_c) - set(merged_c))
+    warnings = list(fresh.warnings)
+    if skipped:
+        warnings.append('判定变量集合在两次扫描间不一致（' + '、'.join(skipped)
+                        + '）⇒ 只合并了交集，请用「⟳ 全量重算」')
     return _dc_replace(
         fresh,
         dates=base.dates.append(fresh.dates[tail_mask]),
@@ -334,13 +384,17 @@ def merge_tail(base: CrossSectionResult, fresh: CrossSectionResult) -> CrossSect
         status_matrix=np.concatenate(
             [base.status_matrix, fresh.status_matrix[:, tail_mask]], axis=1),
         symbols=list(base.symbols),                 # 行序以 base 为准（与 fresh 已验证相等）
+        counters_by_signal=merged_c or base_c,
+        status_matrix_by_signal=merged_m or base_m,
+        warnings=warnings,
     )
 
 
 def scan_cached(zone_dir: str, formula: str, symbols=None, params: dict = None,
                 thresholds: ScanThresholds = None, asof=None, names: dict = None,
                 adjust: str = 'qfq', store: ScanStore = None, force: bool = False,
-                snapshot_columns=(), incremental: bool = False, **kwargs) -> ScanOutcome:
+                snapshot_columns=(), incremental: bool = False, signal_names=None,
+                **kwargs) -> ScanOutcome:
     """带会话缓存的扫描（M2 / M3 的唯一入口）。
 
     · **命中** ⇒ 完全不读盘、不求值（只用缓存矩阵切片）—— "切日期 / 换统计窗口"走这条；
@@ -360,7 +414,7 @@ def scan_cached(zone_dir: str, formula: str, symbols=None, params: dict = None,
     store = store or get_scan_store()
     th = thresholds or ScanThresholds()
     key = scan_key(formula, th, symbols, adjust=adjust, zone_dir=zone_dir, params=params,
-                   snapshot_columns=snapshot_columns)
+                   snapshot_columns=snapshot_columns, signal_names=signal_names)
 
     if not force:
         hit = store.get(key)
@@ -381,7 +435,8 @@ def scan_cached(zone_dir: str, formula: str, symbols=None, params: dict = None,
     if base is not None and base.symbols:
         fresh = scan_lake(zone_dir, formula, symbols=symbols, params=params, thresholds=th,
                           asof=asof, names=names, keep_matrix=True,
-                          snapshot_columns=snapshot_columns, **kwargs)
+                          snapshot_columns=snapshot_columns,
+                          signal_names=signal_names, **kwargs)
         if fresh.symbols != base.symbols:            # 有标的 newly 有了数据 / 读了不出来 ⇒ 结构变了
             store.put(key, fresh)
             return ScanOutcome(result=fresh, key=key, cached=False, asof=fresh.asof,
@@ -404,7 +459,8 @@ def scan_cached(zone_dir: str, formula: str, symbols=None, params: dict = None,
 
     result = scan_lake(zone_dir, formula, symbols=symbols, params=params, thresholds=th,
                        asof=asof, names=names, keep_matrix=True,
-                       snapshot_columns=snapshot_columns, **kwargs)
+                       snapshot_columns=snapshot_columns,
+                       signal_names=signal_names, **kwargs)
     store.put(key, result)
     return ScanOutcome(result=result, key=key, cached=False, asof=result.asof,
                        elapsed_ms=(perf_counter() - started) * 1000,

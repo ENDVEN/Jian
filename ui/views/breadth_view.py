@@ -63,6 +63,14 @@ class BreadthView(QWidget):
         self._index_code = ''                        # _index_df 属于哪只指数
         self._open_key = None                        # 当前展开的抽屉卡片
         self._last_pane = 'fn'                       # 「⚙ 配置」的落点
+        # ★1.73 修（复核发现）：**引导条是否已读 = 显式标志**，绝不用 `isVisibleTo` 反推 ——
+        #   页面没被切到 / 窗口没显示时可见性恒 False ⇒ 会把"没关过"误存成"已读"（引导永不出现），
+        #   而且同一个值会随"什么时候保存"来回翻。状态只由"用户有没有点知道了"决定（唯一写点）。
+        self._hint_done = False
+        # ★1.73 / §7-B16 期 1：**统计项**（上屏的判定变量列表）—— 唯一真源在本页，
+        #   `breadth_items` 面板只渲染 + 发请求（§9-D：同一项只有一个写入点）。
+        #   每项 = {'key','label','color','visible','focus'}；空 = 用公式最后一条（老行为）。
+        self._items: list = []
         self._ui_restoring = False                   # 恢复偏好期间不回写
 
         # ---------------- 装配 ----------------
@@ -222,11 +230,14 @@ class BreadthView(QWidget):
     def reset_thresholds(self):
         self._flow.reset_thresholds()
 
-    def current_breadth(self):
-        """当前区间的广度帧（冒烟 / 上层用；口径与 scan 同源）。"""
+    def current_breadth(self, signal: str = None):
+        """当前区间的广度帧（冒烟 / 上层用；口径与 scan 同源）。
+
+        ★1.73：`signal` 指定判定变量（`None` = 主变量）—— 多统计项时每个项各问一次。
+        """
         if self._outcome is None:
             return None
-        return self._outcome.breadth_frame()
+        return self._outcome.breadth_frame(signal=signal)
 
     # ==========================================
     # 偏好（记住上次；坏数据逐字段回落，§9-D）
@@ -272,8 +283,24 @@ class BreadthView(QWidget):
             display.cb_index_style.setCurrentIndex(
                 istyle_keys.index(istyle_key) if istyle_key in istyle_keys else 0)
             display.chk_smooth.setChecked(bool(data.get('smooth', True)))
-            display.chk_ratio.setChecked(bool(data.get('ratio', False)))
+            # ★1.73 / §7-B16 期 1：**柱口径默认「占比」**（用户拍板）⇒ 缺省值从 False 改 True
+            display.chk_ratio.setChecked(bool(data.get('ratio', True)))
             display.chk_overlay.setChecked(bool(data.get('overlay', True)))
+            # ★1.73：统计项（上屏哪几个判定变量）—— 只存**轻量列表**（key/label/color/visible）
+            items = data.get('items')
+            if isinstance(items, list) and items:
+                self._items = [it for it in items if isinstance(it, dict) and it.get('key')]
+            # ★1.73 收尾：副图高度（可调、记住）+ 首次引导条是否已读
+            from ui.widgets.breadth_rows import INDEX_HEIGHT_RANGE, INDEX_PANE_HEIGHT
+            try:
+                _h = int(data.get('index_h', INDEX_PANE_HEIGHT))
+            except (TypeError, ValueError):
+                _h = INDEX_PANE_HEIGHT
+            display.spin_index_h.setValue(
+                min(max(_h, int(INDEX_HEIGHT_RANGE[0])), int(INDEX_HEIGHT_RANGE[1])))
+            # ★1.73 修：接**显式标志**（不读可见性）；据此显隐引导条（常驻 ⓘ 始终在）
+            self._hint_done = bool(data.get('hint_done', False))
+            self.hint_bar.setVisible(not self._hint_done)
             overlay_code = str(data.get('overlay_code') or '')
             if overlay_code:
                 idx = display.cb_overlay_code.findData(overlay_code)
@@ -301,4 +328,12 @@ class BreadthView(QWidget):
             'ratio': display.chk_ratio.isChecked(),
             'overlay': display.chk_overlay.isChecked(),
             'overlay_code': str(display.cb_overlay_code.currentData() or ''),
+            # ★1.73：统计项（只存轻量列表；公式本身另存 formula 字段）
+            'items': [{'key': it.get('key'), 'label': it.get('label'),
+                       'color': it.get('color'), 'visible': bool(it.get('visible', True)),
+                       'focus': bool(it.get('focus', False))}
+                      for it in self._items],
+            # ★1.73 收尾：副图高度（可调、记住）+ 引导条已读标记（**显式标志**，见 `_hint_done` 注释）
+            'index_h': int(self._display_pane.spin_index_h.value()),
+            'hint_done': bool(self._hint_done),
         })

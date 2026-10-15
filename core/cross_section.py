@@ -514,6 +514,31 @@ class CrossSectionResult:
     status_matrix: np.ndarray | None = None         # (标的, 交易日) uint8 状态码
     warnings: list = field(default_factory=list)
     elapsed_ms: float = 0.0
+    # ★1.73 / §7-B16 期 1：**多判定变量**（M3「多统计项」的地基）——
+    #   同一段公式常含多个可判定变量（如"情绪≥80"与"情绪<20"），过去只能各扫一次。
+    #   现在一次读盘 + 一次求值就能全拿到（`execute_programs` 本就返回该 program 的**所有**输出）
+    #   ⇒ 第一个是**主判定变量**（`signal_name`，老的 `status/counters/status_matrix` 就是它），
+    #     其余的在下面两个 dict 里按变量名索引。
+    signal_names: list = field(default_factory=list)            # 本次实际算出的（主在前）
+    counters_by_signal: dict = field(default_factory=dict)      # 变量名 → (交易日, 4) 逐日家数
+    status_matrix_by_signal: dict = field(default_factory=dict)  # 变量名 → (标的, 交易日) uint8
+
+    # ---------- 多判定变量的取数口（`signal=None` ⇒ 主判定变量，老调用零变化） ----------
+    def _counters_for(self, signal: str = None):
+        name = str(signal or '').strip().upper()
+        if name and name in self.counters_by_signal:
+            return self.counters_by_signal[name]
+        return self.counters
+
+    def _matrix_for(self, signal: str = None):
+        name = str(signal or '').strip().upper()
+        if name and name in self.status_matrix_by_signal:
+            return self.status_matrix_by_signal[name]
+        return self.status_matrix
+
+    def signals(self) -> list[str]:
+        """本结果里**可选的判定变量**（含主变量；老结果 = `[signal_name]`）。"""
+        return list(self.signal_names) or ([self.signal_name] if self.signal_name else [])
 
     # ---------- M2 ----------
     @property
@@ -525,18 +550,20 @@ class CrossSectionResult:
         """有效样本数 = 命中 + 未命中（**广度占比的分母**）"""
         return int(self.counts.get(HIT, 0)) + int(self.counts.get(MISS, 0))
 
-    def status_on(self, date) -> dict:
+    def status_on(self, date, signal: str = None) -> dict:
         """某一天的横截面三态 —— 有缓存矩阵时**秒回**（改日期不重算，D3）。
 
         返回 `{标的: 状态}`；没开 `keep_matrix` 时返回空 dict（调用方应改用 `scan`）。
+        ★1.73：`signal` 指定判定变量（`None` = 主变量）—— M3 多统计项时每个项各问一次。
         """
-        if self.status_matrix is None or self.dates is None:
+        matrix = self._matrix_for(signal)
+        if matrix is None or self.dates is None:
             return {}
         stamp = pd.Timestamp(date)
         idx = int(self.dates.searchsorted(stamp))
         if idx >= len(self.dates) or self.dates[idx] != stamp:
             return {}
-        column = self.status_matrix[:, idx]
+        column = matrix[:, idx]
         out = {sym: _CODE_STATUS[int(code)] for sym, code in zip(self.symbols, column)}
         # 本地没文件的标的：每一天都是「数据不足」（与 scan() 当日口径同源，
         # 否则"扫描时 429 只、切日期后变 27 只"这种数字跳变会让用户以为软件坏了）
@@ -544,23 +571,25 @@ class CrossSectionResult:
             out[sym] = INSUFFICIENT
         return out
 
-    def counts_on(self, date) -> dict:
+    def counts_on(self, date, signal: str = None) -> dict:
         """某一天的横截面四态计数 —— **缓存命中时用它**（不必重扫），口径与 `scan` 同源。"""
-        return tally_status(self.status_on(date))
+        return tally_status(self.status_on(date, signal=signal))
 
     # ---------- M3 ----------
-    def breadth_frame(self, start=None) -> pd.DataFrame:
+    def breadth_frame(self, start=None, signal: str = None) -> pd.DataFrame:
         """广度表：index = 交易日，columns = hits / valid / filtered / insufficient / ratio。
 
         `ratio` 的分母 = **有效样本**（valid），不是全市场只数 —— 见本模块头「口径铁律」。
+        ★1.73：`signal` 指定判定变量（`None` = 主变量）—— M3「多统计项」每项一行就是它。
         """
-        if self.counters is None or self.dates is None:
+        counters = self._counters_for(signal)
+        if counters is None or self.dates is None:
             return pd.DataFrame()
         frame = pd.DataFrame({
-            'hits': self.counters[:, _C_HIT],
-            'valid': self.counters[:, _C_MISS] + self.counters[:, _C_HIT],
-            'filtered': self.counters[:, _C_FILTERED],
-            'insufficient': self.counters[:, _C_INSUFFICIENT],
+            'hits': counters[:, _C_HIT],
+            'valid': counters[:, _C_MISS] + counters[:, _C_HIT],
+            'filtered': counters[:, _C_FILTERED],
+            'insufficient': counters[:, _C_INSUFFICIENT],
         }, index=self.dates)
         frame['ratio'] = np.where(frame['valid'] > 0, frame['hits'] / frame['valid'], np.nan)
         if start is not None:
@@ -575,7 +604,7 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
          asof=None, names: dict = None, signal_name: str = None, snapshot_columns=(),
          breadth: bool = True, keep_matrix: bool = False,
          progress=None, should_stop=None, chunk: int = DEFAULT_CHUNK,
-         missing=None) -> CrossSectionResult:
+         missing=None, signal_names=None) -> CrossSectionResult:
     """跑一次扫描：**一个引擎，两种视图**（§7-B1/B2 C 节）。
 
     :param groups: `{标的: 日线 df}`（`read_daily` 的产出）
@@ -603,11 +632,20 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
     declared = program.output_names
     if not declared:
         raise FormulaProgramError('筛选条件里没有可判定的变量：请写成「变量名 := 表达式」。')
-    want = str(signal_name or declared[-1]).strip().upper()
-    sig_key = next((name for name in declared if name.upper() == want), None)
-    if sig_key is None:
-        raise FormulaProgramError(
-            f"筛选条件里没有变量 '{signal_name}'（现有：{'、'.join(declared)}）。")
+    def _resolve(name) -> str:
+        want = str(name or '').strip().upper()
+        hit = next((d for d in declared if d.upper() == want), None)
+        if hit is None:
+            raise FormulaProgramError(
+                f"筛选条件里没有变量 '{name}'（现有：{'、'.join(declared)}）。")
+        return hit
+
+    sig_key = _resolve(signal_name or declared[-1])
+    # ★1.73 / §7-B16 期 1：**多判定变量** —— 一次读盘 + **一次求值**全拿到
+    #   （`execute_programs` 本就返回该 program 的**所有**输出 ⇒ 多算一项的边际成本 ≈ 0）。
+    #   顺序 = **主变量在前**，其余按公式里的声明顺序；去重（同名只算一次）。
+    sig_all = [sig_key] + [n for n in dict.fromkeys(
+        _resolve(n) for n in (signal_names or []) if str(n or '').strip()) if n != sig_key]
     if program.unsupported:
         warnings.append('本期不渲染的绘图函数已忽略：' + '、'.join(program.unsupported))
     if th.exclude_st and not names:
@@ -638,7 +676,8 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
             status=no_file, detail=det,
             counts=tally_status(no_file, total=len(missing_syms)),
             missing_files=missing_syms, warnings=w,
-            elapsed_ms=(time.perf_counter() - t0) * 1000)
+            elapsed_ms=(time.perf_counter() - t0) * 1000,
+            signal_names=list(sig_all))
 
     # ---- 基准日 ----
     if asof is None:
@@ -649,14 +688,14 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
     need_axis = breadth or keep_matrix
     axis_np = None
     dates = None
-    counters = None
+    counters_by_signal: dict[str, np.ndarray] = {}
     n_axis = 0
     if need_axis:
         dates = pd.DatetimeIndex(np.unique(np.concatenate(
             [frame['date'].to_numpy() for frame in prepared.values()]))).sort_values()
         axis_np = dates.to_numpy()
         n_axis = len(dates)
-        counters = np.zeros((n_axis, 4), dtype=np.int64)
+        counters_by_signal = {n: np.zeros((n_axis, 4), dtype=np.int64) for n in sig_all}
 
         # ---- 基准日**就近落位**（v6.42）：用户选到周末/节假日/本地没有数据的一天，
         #      不该让整轮扫描"全市场数据不足"地空跑 —— 用最近的交易日并**出声**
@@ -671,7 +710,11 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
 
     symbols = sorted(prepared)
     total = len(symbols)
-    status_matrix = np.zeros((len(symbols), n_axis), dtype=np.uint8) if keep_matrix else None
+    # ★1.73：每个判定变量一份矩阵；主变量的那份**就是**老的 `status_matrix`（同一个对象
+    #   ⇒ 内存不翻倍，`scan_store._nbytes` 按 id 去重也不会重复计费）
+    matrix_by_signal = ({n: np.zeros((len(symbols), n_axis), dtype=np.uint8) for n in sig_all}
+                        if keep_matrix else {})
+    status_matrix = matrix_by_signal.get(sig_key)
     status: dict[str, str] = {}
     detail: dict[str, str] = {}
     snapshot: dict[str, dict] = {}
@@ -686,36 +729,56 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
         is_st = th.exclude_st and bool(names) and _is_st(names.get(sym, ''))
         data_ok, passes, hard, note = _row_masks(frame, th, is_st=is_st)
 
-        # ---- 公式求值（编译已通过；这里只可能因"这只票的数据"失败）----
+        # ---- 公式求值（**一次**；编译已通过，这里只可能因"这只票的数据"失败）----
         sig = None
+        outs = None
         if hard is None:
             try:
-                values = execute_programs([program], frame, params or {})[sig_key]
-                sig = _as_signal(values)
-                if len(sig) != len(frame):
-                    raise FormulaProgramError(f'信号长度 {len(sig)} 与行情长度 {len(frame)} 不一致')
+                outs = execute_programs([program], frame, params or {})
             except FormulaProgramError as e:
                 hard = R_FORMULA
                 note = R_LABELS[R_FORMULA]
-                sig = None
                 failed.append(f'{sym}: {e}')
                 data_ok = np.zeros(len(frame), dtype=bool)
                 passes = np.zeros(len(frame), dtype=bool)
 
         # ---- 逐行状态码（**唯一的判定处**：M2/M3 都从它来，不会两处口径打架）----
-        row = np.full(len(frame), _C_INSUFFICIENT, dtype=np.uint8)
-        eligible = data_ok & passes
-        row[data_ok & ~passes] = _C_FILTERED
-        if sig is not None:
-            row[eligible & sig] = _C_HIT
-            row[eligible & ~sig] = _C_MISS
+        #   ★1.73：每个判定变量各算一列 —— 判定逻辑只有这一份，加一项不会多出一套口径。
+        rows: dict[str, np.ndarray] = {}
+        for name in sig_all:
+            one = None
+            if outs is not None:
+                try:
+                    one = _as_signal(outs[name])
+                    if len(one) != len(frame):
+                        raise FormulaProgramError(
+                            f'信号长度 {len(one)} 与行情长度 {len(frame)} 不一致')
+                except FormulaProgramError as e:
+                    one = None
+                    if name == sig_key:         # 主变量失败 ⇒ 整只记失败（**老口径一字不变**）
+                        hard = R_FORMULA
+                        note = R_LABELS[R_FORMULA]
+                        failed.append(f'{sym}: {e}')
+                        data_ok = np.zeros(len(frame), dtype=bool)
+                        passes = np.zeros(len(frame), dtype=bool)
+            row = np.full(len(frame), _C_INSUFFICIENT, dtype=np.uint8)
+            eligible = data_ok & passes
+            row[data_ok & ~passes] = _C_FILTERED
+            if one is not None:
+                row[eligible & one] = _C_HIT
+                row[eligible & ~one] = _C_MISS
+            rows[name] = row
+            if name == sig_key:
+                sig = one                        # M2 的"基准日三态"仍只看**主变量**
 
         # ---- 逐日累计：一次 bincount 收四个状态（不写逐行 Python 循环）----
         if need_axis:
             pos = np.searchsorted(axis_np, dates_np)
-            counters += np.bincount(pos * 4 + row, minlength=n_axis * 4).reshape(n_axis, 4)
-            if status_matrix is not None:
-                status_matrix[k, pos] = row
+            for name in sig_all:
+                counters_by_signal[name] += np.bincount(
+                    pos * 4 + rows[name], minlength=n_axis * 4).reshape(n_axis, 4)
+                if keep_matrix:
+                    matrix_by_signal[name][k, pos] = rows[name]
 
         # ---- M2：基准日那一行的三态 ----
         i = int(np.searchsorted(dates_np, np.datetime64(asof), side='right')) - 1
@@ -760,10 +823,13 @@ def scan(groups: dict, formula: str, params: dict = None, thresholds: ScanThresh
     return CrossSectionResult(
         asof=asof, formula=formula, signal_name=sig_key, thresholds=th,
         status=status, detail=detail, snapshot=snapshot, counts=counts,
-        dates=dates, counters=counters, symbols=symbols,
+        dates=dates, counters=counters_by_signal.get(sig_key), symbols=symbols,
         missing_files=missing_syms,
         status_matrix=status_matrix,
         warnings=warnings, elapsed_ms=(time.perf_counter() - t0) * 1000,
+        signal_names=list(sig_all),
+        counters_by_signal=counters_by_signal,
+        status_matrix_by_signal=matrix_by_signal,
     )
 
 

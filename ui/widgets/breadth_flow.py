@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox
 
 from core.cross_section import ScanThresholds
@@ -36,6 +37,8 @@ from data.watchlist_store import WatchlistStore
 from ui.download_jobs import SingleSyncGate   # ★1.59：真源直连（不再经 hub 再导出）
 from ui.widgets.breadth_chart import DEFAULT_CHART_TYPE, DEFAULT_INDEX_STYLE
 from ui.widgets.breadth_layout import DEFAULT_INDEX_CODE, DEFAULT_RANGE, RANGE_PRESETS
+# ★1.73 / §7-B16 期 1：多行小图（每统计项一行）—— 柱口径常量与配色取自控件件（同一真源）
+from ui.widgets.breadth_rows import BAR_MODE_HITS, BAR_MODE_RATIO, ROW_COLORS
 from ui.widgets.custom_widgets import SYNC_ACTION_LABEL
 from ui.widgets.summary_chip import set_chip_state   # ★1.64：胶囊高亮（三页同一份 chip）
 from ui.widgets.readiness_flow import (constituent_failure_text,
@@ -87,6 +90,21 @@ class BreadthFlow:
         p._display_pane.cb_overlay_code.currentIndexChanged.connect(self.on_overlay_code_changed)
         p._display_pane.cb_chart.currentIndexChanged.connect(self.on_display_changed)
         p._display_pane.cb_index_style.currentIndexChanged.connect(self.on_display_changed)
+        # ★1.73 / §7-B16 期 1：**统计项面板**（唯一的编辑入口）—— 面板只发请求，
+        #   本模块落地改动（`p._items` 是唯一真源），改完回灌 + 重画。**一律不重扫**。
+        _panel = p._items_pane.panel
+        _panel.add_requested.connect(self.on_item_add)
+        _panel.remove_requested.connect(self.on_item_remove)
+        _panel.toggle_visible_requested.connect(self.on_item_toggle_visible)
+        _panel.focus_requested.connect(self.on_item_focus)
+        # 公式一改，"可选判定变量"就变了 ⇒ 面板跟着刷新（解析很轻，逐键调用无压力）
+        p._formula_pane.txt_formula.textChanged.connect(
+            lambda: self.sync_items_panel(p))
+        # ★1.73 收尾：首次引导条（可关）+ 常驻说明入口 + 副图高度（改完立即重画、不重扫）
+        p.btn_hint_ok.clicked.connect(self.on_hint_dismissed)
+        p.btn_gates_help.clicked.connect(self.show_gates_help)
+        p._display_pane.spin_index_h.valueChanged.connect(self.on_display_changed)
+        self.sync_items_panel(p)                 # 装配完成先喂一次（面板不该是空白下拉）
 
     # ==========================================
     # 范围（自选 / 指数成分 / 全 A）—— 与 M2 同一套语义
@@ -212,14 +230,24 @@ class BreadthFlow:
                      if flag)
         p.chip_filter.setText(f'🎚 粗筛 {n_th + n_bool} 项')
 
+        # ★1.73：统计项胶囊（上屏几项 + 哪一项是焦点）
+        _items = self.active_items(p)
+        _focus = self.focus_key(p)
+        _focus_label = next((str(it.get('label') or '') for it in _items
+                             if str(it.get('key') or '') == _focus), '')
+        p.chip_items.setText(f'📋 统计项 {len(_items)}' + (f'·焦点 {_focus_label}' if _focus_label else ''))
+        p.chip_items.setToolTip(
+            '上屏的判定变量（每项一行）：' + ('、'.join(str(it.get('label') or '') for it in _items)
+                                          or '（空 —— 用公式最后一条）')
+            + ' —— 点击打开「📋 统计项」卡')
+
         pane = p._display_pane
         parts = []
         chart_label = str(pane.cb_chart.currentText()).split('（')[0].strip()
         parts.append(chart_label or '柱状')
         if pane.chk_smooth.isChecked():
-            parts.append('MA5')
-        if pane.chk_ratio.isChecked():
-            parts.append('占比%')
+            parts.append('均线')
+        parts.append('占比%' if pane.chk_ratio.isChecked() else '家数')
         if pane.chk_overlay.isChecked():
             parts.append(str(pane.cb_overlay_code.currentText()).split(' ')[0])
             style_text = str(pane.cb_index_style.currentText() or '')
@@ -284,7 +312,9 @@ class BreadthFlow:
             job, kline_zone_dir('kline_daily'), formula, symbols=list(p._symbols),
             params=params, thresholds=p._thresholds, asof=None,
             names=dict(p._names), force=force, incremental=incremental,
-            store=p._store)
+            store=p._store,
+            # ★1.73 / §7-B16 期 1：把**上屏的判定变量**一起算（一次读盘全部拿到）
+            signal_names=[str(it.get('key')) for it in self.active_items(p)])
         p._worker.progress.connect(self._on_progress)
         p._worker.finished.connect(self._on_finished)
         p._worker.failed.connect(self._on_failed)
@@ -465,52 +495,226 @@ class BreadthFlow:
         self.on_display_changed()
 
     def refresh(self) -> None:
-        """用缓存矩阵重画当前区间（**零成本**：不进线程、不读盘，D3）。"""
+        """用缓存矩阵重画当前区间（**零成本**：不进线程、不读盘，D3）。
+
+        ★1.73 / §7-B16 期 1：**逐统计项**取广度帧（每项一行）；区间切片对每一项各做一次
+        （切片是纯内存操作，多做几次仍是"零成本"级）。
+        """
         p = self.page
         outcome = p._outcome
         if outcome is None:
             return
-        full = outcome.breadth_frame()
-        if full.empty:
+        items = self.active_items(p)
+        if not items:
+            p._result.set_empty('还没有统计项 —— 打开「📋 统计项」加一个判定变量，'
+                                '或直接用公式的最后一条（默认）。')
+            return
+        offset = _RANGE_OFFSET.get(p._range_key)
+        frames: dict[str, pd.DataFrame] = {}
+        for it in items:
+            full = outcome.breadth_frame(signal=it.get('key'))
+            if full is None or full.empty:
+                continue
+            frame = full if offset is None else full[full.index >= full.index[-1] - offset]
+            frames[str(it.get('key'))] = frame if not frame.empty else full
+        if not frames:
             # ★v1.41 / §11.5-80：文案说"先补数据再扫"，按钮就该是**补数据** ——
             #   旧版这里给的是「重新扫描」，与文案所指的动作根本不是一件事
             #   （数据没变，重扫一遍还是没产出），按钮名与实际行为必须一致。
+            _miss = '、'.join(str(it.get('label') or '') for it in items)
             p._result.set_empty(
-                '这次扫描没有产出任何广度数据 —— 范围内标的本地没有日线文件是首要原因'
-                f'（看上方回执的 ⚠ 提示），先「{SYNC_ACTION_LABEL}」把数据补上再扫。',
+                f'这次扫描没有产出广度数据（涉及：{_miss}）—— 范围内标的本地没有日线文件是首要原因'
+                f'（看上方回执的 ⚠ 提示），先「{SYNC_ACTION_LABEL}」把数据补上再扫；'
+                '若只是**新加的统计项没算过**，点「▶ 开始扫描」把它一起算进来即可。',
                 SYNC_ACTION_LABEL, lambda: p._readiness.update_latest())
             return
-        offset = _RANGE_OFFSET.get(p._range_key)
-        frame = full if offset is None else full[full.index >= full.index[-1] - offset]
-        if frame.empty:
-            frame = full
-        self._render(frame)
+        self._render(items, frames)
         if p._display_pane.chk_overlay.isChecked():
             self._ensure_index()
 
-    def _render(self, frame: pd.DataFrame) -> None:
+    def _render(self, items, frames) -> None:
         p = self.page
-        overlay_wanted = p._display_pane.chk_overlay.isChecked()
-        overlay_code = str(p._display_pane.cb_overlay_code.currentData() or '')
+        pane = p._display_pane
+        overlay_wanted = pane.chk_overlay.isChecked()
+        overlay_code = str(pane.cb_overlay_code.currentData() or '')
         index_df = p._index_df if (overlay_wanted and p._index_code == overlay_code) else None
-        index_label = str(p._display_pane.cb_overlay_code.currentText()).split(' ')[0]
+        index_label = str(pane.cb_overlay_code.currentText()).split(' ')[0]
         painted = p.chart.render(
-            frame, index_df, index_label=index_label,
-            smooth=p._display_pane.chk_smooth.isChecked(),
-            ratio=p._display_pane.chk_ratio.isChecked(),
-            chart_type=str(p._display_pane.cb_chart.currentData() or DEFAULT_CHART_TYPE),
-            index_style=str(p._display_pane.cb_index_style.currentData()
-                            or DEFAULT_INDEX_STYLE))
+            items, frames, index_df,
+            bar_mode=(BAR_MODE_RATIO if pane.chk_ratio.isChecked() else BAR_MODE_HITS),
+            ma_window=5 if pane.chk_smooth.isChecked() else 0,
+            chart_type=str(pane.cb_chart.currentData() or DEFAULT_CHART_TYPE),
+            index_style=str(pane.cb_index_style.currentData() or DEFAULT_INDEX_STYLE),
+            with_index=overlay_wanted,
+            focus=self.focus_key(p),
+            index_label=index_label,
+            # ★1.73 收尾：副图高度**可调**（用户拍板"必须有调整入口"）—— 改了立即重画、不重扫
+            index_height=p._display_pane.spin_index_h.value())
         if painted:
-            p.chart.show()
+            p._result._show_chart(p, True)      # ★1.73：图 + 行区滚动容器**成对显隐**
             p.empty_box.hide()
+            # 行区最小高 = 行数×行高下限 + 副图高 ⇒ 行多了由**行区自己滚动**（硬规则②），
+            # 副图保持固定高度不被压扁、整页也不跟着滚。
+            try:
+                p.chart.setMinimumHeight(p.chart.min_content_height())
+            except Exception:                    # noqa: BLE001 —— 布局高度是装饰性约束，绝不阻断渲染
+                pass
+            # —— L0 头部与页脚的三处状态行（口径 / 缓存标记 / 近 5 日）——
+            #   ⚠ 它们原先挂在**旧 `_render` 的尾部**；接线时我把旧函数换掉、漏抄了这四行，
+            #     结果它们被"甩"到 `on_item_focus` 末尾（既写错对象、又永不执行）。
+            #     这正是那几条断言红的原因：**状态行没人写** ⇒ 现在归位到唯一的渲染出口。
+            p.btn_incr.setEnabled(True)
+            p.lbl_cached.setText('缓存命中（未重算）' if p._outcome.cached else '')
+            # ⚠ 不能写 `frames.get(k) or next(...)` —— DataFrame 的布尔求值会抛
+            #   "truth value of a DataFrame is ambiguous"（与 `relation_stats.hit_day_stats`
+            #   里那条注释同一个坑；我在这里又踩了一次）。
+            _primary = frames.get(str((items[0] or {}).get('key')))
+            if _primary is None:
+                _primary = next(iter(frames.values()))
+            self._render_caption(_primary)
+            self._render_mini(_primary)
         else:
-            p.chart.hide()
+            p._result._show_chart(p, False)
             p.empty_box.show()
-        p.btn_incr.setEnabled(True)
-        p.lbl_cached.setText('缓存命中（未重算）' if p._outcome.cached else '')
-        self._render_caption(frame)
-        self._render_mini(frame)
+
+    # ==========================================
+    # 收尾（★1.73 / §7-B16 期 1）：引导条 + 常驻说明
+    #   【为什么必须有】用户 2026-10-12 原话："这种功能没有引导根本不知道这个阈值到底是啥"
+    #   ⇒ ① 首次进入弹一条**可关闭**的引导；② 关上之后**常驻 ⓘ 入口**还能再看
+    #     （说明不许只存在首次弹窗里）；③ 关闭状态进偏好，不反复打扰。
+    # ==========================================
+    def on_hint_dismissed(self) -> None:
+        """收起首次引导条（记住已读 ⇒ 下次不再弹；随时可点 ⓘ 再看）。
+
+        ⚠ 这里是 `_hint_done` 的**唯一写入点**（★1.73 修：旧版按可见性反推 ⇒ 页签没切到就被
+          误记成"已读"）。写标志 → 再保存，顺序不能反。
+        """
+        p = self.page
+        p._hint_done = True
+        bar = getattr(p, 'hint_bar', None)
+        if bar is not None:
+            bar.hide()
+        p.save_breadth_ui()
+        p.lbl_receipt.setText('引导已收起（随时点标题行的 ⓘ 再看；阈值在「📈 展示」卡里就地可调）')
+
+    def show_gates_help(self) -> None:
+        """弹「三道闸是什么」说明（内容 = 设计稿 E 页浓缩版，**同一份常量**）。"""
+        from ui.widgets.breadth_layout import GATES_HELP_TEXT
+
+        box = QMessageBox(self.page)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle('三道闸：什么样的条件配什么样的图')
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(GATES_HELP_TEXT)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
+
+    # ==========================================
+    # 统计项（★1.73 / §7-B16 期 1）—— 真源 = `p._items`，**本模块是唯一写入点**（§9-D）
+    # ==========================================
+    @staticmethod
+    def formula_signals(p) -> list[str]:
+        """这段公式里可当**判定变量**的名字（`core.cross_section.signal_names`，与引擎同源）。"""
+        from core.cross_section import signal_names as _names
+        try:
+            return list(_names(p._formula_pane.txt_formula.toPlainText()))
+        except Exception:                     # noqa: BLE001 —— 公式还没写完 ⇒ 给空（面板如实说）
+            return []
+
+    def active_items(self, p=None) -> list[dict]:
+        """上屏项（`visible != False`）；**空则退化成"公式最后一条"单项**（= 老行为）。
+
+        ⚠ 退化是**有意的**：老用户的偏好里没有 `items` 字段，升级后打开本页必须仍是他熟悉的
+          单条曲线（零迁移成本），而不是空白图。
+        """
+        p = p or self.page
+        items = [it for it in (getattr(p, '_items', None) or [])
+                 if bool(it.get('visible', True))]
+        if items:
+            return items
+        signals = self.formula_signals(p)
+        if not signals:
+            return []
+        return [{'key': signals[-1], 'label': signals[-1], 'color': ROW_COLORS[0],
+                 'visible': True, 'focus': False}]
+
+    def focus_key(self, p=None) -> str:
+        """当前焦点项（空 = 全部等分）。焦点行会被置顶并加高（控件负责）。"""
+        p = p or self.page
+        for it in (getattr(p, '_items', None) or []):
+            if it.get('focus') and bool(it.get('visible', True)):
+                return str(it.get('key') or '')
+        return ''
+
+    def sync_items_panel(self, p=None) -> None:
+        """回灌面板（可选变量 + 列表）—— 面板只渲染，真源永远在 `p._items`。"""
+        p = p or self.page
+        panel = p._items_pane.panel
+        panel.set_available(self.formula_signals(p))
+        panel.set_items(p._items)
+
+    def _after_items_changed(self, msg: str) -> None:
+        """统计项改动后：回灌面板 → 重画（**不重扫**）→ 回执说清"哪些需要重扫才生效"。"""
+        p = self.page
+        self.sync_items_panel(p)
+        self._refresh_chips()        # ⚠ 统计项胶囊是在 `_refresh_chips` 里写的（不是 sync_chip_states）
+        have = set(p._outcome.result.signals()) if p._outcome is not None else set()
+        want = {str(it.get('key')) for it in self.active_items(p)}
+        missing = sorted(want - have)
+        if missing:
+            p.lbl_receipt.setText(
+                f'{msg} —— 但「{"、".join(missing)}」还没算过：点「▶ 开始扫描」把它一起算进来'
+                '（同一段公式的多个判定变量**一次扫描全部拿到**，不用为它单跑一遍）')
+        else:
+            p.lbl_receipt.setText(f'{msg}（已按缓存重画，**没有重扫**）')
+        self.refresh()
+        p.save_breadth_ui()
+
+    def on_item_add(self, key: str) -> None:
+        p = self.page
+        # ⚠ **先固化"默认那一条"**：`p._items` 为空时页面上显示的是"公式最后一条"（隐式默认），
+        #   若直接把新项写进空列表，用户会看到**原来那一行凭空消失**（用户实测口径：这是 bug）。
+        items = [dict(it) for it in ((p._items or []) or self.active_items(p))]
+        if any(str(it.get('key')) == str(key) for it in items):
+            return
+        items.append({'key': str(key), 'label': str(key),
+                      'color': ROW_COLORS[len(items) % len(ROW_COLORS)],
+                      'visible': True, 'focus': False})
+        p._items = items
+        self._after_items_changed(f'已添加统计项「{key}」')
+
+    def on_item_remove(self, key: str) -> None:
+        p = self.page
+        p._items = [dict(it) for it in (p._items or [])
+                    if str(it.get('key')) != str(key)]
+        self._after_items_changed(f'已移除统计项「{key}」')
+
+    def on_item_toggle_visible(self, key: str) -> None:
+        p = self.page
+        items = [dict(it) for it in (p._items or [])]
+        for it in items:
+            if str(it.get('key')) == str(key):
+                it['visible'] = not bool(it.get('visible', True))
+        p._items = items
+        self._after_items_changed(f'已{"隐藏" if not self._is_visible(p, key) else "显示"}'
+                                  f'统计项「{key}」')
+
+    @staticmethod
+    def _is_visible(p, key: str) -> bool:
+        for it in (p._items or []):
+            if str(it.get('key')) == str(key):
+                return bool(it.get('visible', True))
+        return False
+
+    def on_item_focus(self, key: str) -> None:
+        """设/取消焦点（再点一次 = 取消，与抽屉"再点收起"同款交互）。"""
+        p = self.page
+        items = [dict(it) for it in (p._items or [])]
+        already = any(str(it.get('key')) == str(key) and it.get('focus') for it in items)
+        for it in items:
+            it['focus'] = (str(it.get('key')) == str(key)) and not already
+        p._items = items
+        self._after_items_changed(f'已{"取消焦点" if already else "设为焦点"}「{key}」')
 
     def _render_caption(self, frame: pd.DataFrame) -> None:
         """口径印在标题行上（E 节）：范围 · 前复权 · 有效 N/M · 区间。"""

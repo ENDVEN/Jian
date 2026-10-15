@@ -816,13 +816,16 @@ class CrossSectionWorker(QThread):
     def __init__(self, job_id: int, zone_dir: str, formula: str, symbols=None, params=None,
                  thresholds=None, asof=None, names=None, adjust: str = 'qfq',
                  snapshot_columns=(), force: bool = False, incremental: bool = False,
-                 store=None, chunk: int = 200, parent=None):
+                 store=None, chunk: int = 200, parent=None, signal_names=None):
         super().__init__(parent)
         self._job_id = int(job_id)
         self._kwargs = dict(zone_dir=zone_dir, formula=formula, symbols=symbols,
                             params=params, thresholds=thresholds, asof=asof, names=names,
                             adjust=adjust, snapshot_columns=snapshot_columns,
-                            force=force, incremental=incremental, store=store)
+                            force=force, incremental=incremental, store=store,
+                            # ★1.73 / §7-B16 期 1：**多判定变量**（M3 多统计项）——
+                            #   一次扫描全部拿到；它进缓存键（换变量必须重算，§11.5-19 同族）。
+                            signal_names=signal_names)
         self._chunk = max(1, int(chunk or 1))
         self._cancel = False
         self.cancelled = False          # 事后判读：这次是不是被用户取消掉的
