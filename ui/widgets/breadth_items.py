@@ -47,6 +47,7 @@ class BreadthItemsPanel(QWidget):
     """统计项列表（渲染 + 请求信号）。**不持有状态**。"""
 
     add_requested = pyqtSignal(str)          # 判定变量名
+    import_requested = pyqtSignal()          # ★1.76 期 4：「从其他方案添加」（不带参数：方案由流程问）
     remove_requested = pyqtSignal(str)
     toggle_visible_requested = pyqtSignal(str)
     focus_requested = pyqtSignal(str)
@@ -77,6 +78,21 @@ class BreadthItemsPanel(QWidget):
         self.btn_add.clicked.connect(self._on_add)
         row.addWidget(self.btn_add)
         root.addLayout(row)
+
+        # ★1.76 期 4：**从其他方案添加**（借另一份已存方案的判定变量与本页同屏对比）
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+        self.btn_import = QPushButton('＋ 从其他方案添加…')
+        self.btn_import.setStyleSheet(FLAT_QSS)
+        self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_import.setToolTip(
+            '从**已保存的筛选方案**里借一个判定变量上屏（与本页那些项同屏对比）。\n'
+            '条件 / 参数 / 粗筛阈值取该方案；**统计范围与复权仍用本页当前设置**。\n'
+            '借来的项在**本次扫描**里会被单独扫一次（点「▶ 开始扫描」即可，回执会说进度）。')
+        self.btn_import.clicked.connect(self.import_requested.emit)
+        row2.addWidget(self.btn_import)
+        row2.addStretch()
+        root.addLayout(row2)
 
         self.lbl_hint = QLabel('')
         self.lbl_hint.setWordWrap(True)
@@ -144,6 +160,26 @@ class BreadthItemsPanel(QWidget):
         name.setToolTip(f'判定变量 `{key}`（公式里的一条输出；扫描时取的信号就是它）')
         name.setStyleSheet('font-size: 12px;' + ('' if visible else ' color: #B4BECB;'))
         lay.addWidget(name, 1)
+        # ★1.76 期 4：**来源**（借来的项必须一眼看出"它来自哪个方案" —— 数字要能追到它属于谁）
+        _src = str(it.get('source_label') or '')
+        if _src:
+            src = QLabel(_src)
+            src.setStyleSheet('font-size: 10px; color: #8A94A6;')
+            src.setToolTip('这一项的数字来自**另一个已存方案**：条件 / 参数 / 粗筛阈值取它；\n'
+                           '统计范围与复权仍用本页当前设置。\n'
+                           '（想看它与本页条件的完整对比 → 切「🧮 关系卡」）')
+            lay.addWidget(src)
+        # ★1.76 修（用户 2026-10-16 实测）：**不属于当前条件的项要当面标出来** ——
+        #   它们是"上一份条件留下的"（换条件后没清），旧版会**整次扫描失败**（内核严格报错），
+        #   用户完全不知道发生了什么。现在：手上一眼能看出哪几项过期 + 扫描时会被跳过（回执会说）。
+        if self._available and str(it.get('key') or '') not in {
+                str(s) for s in self._available}:
+            stale = QLabel('（不属于当前条件）')
+            stale.setStyleSheet('font-size: 10px; color: #C62828;')
+            stale.setToolTip('这一项是**上一份筛选条件**里的判定变量，当前条件里没有它 ——\n'
+                             '扫描时会被**跳过**（回执会说明）。想继续看它：切回那份条件，\n'
+                             '或用「＋ 从其他方案添加…」从那个方案借过来（那会独立扫一次）。')
+            lay.addWidget(stale)
         # ★1.74 期 2：**三道闸徽标**（"这个条件能不能用事件对齐图看"一眼可见）——
         #   文案/颜色/判据全部来自 `gate_hint.verdict_badge`（判据在 `core.relation_stats`），
         #   本面板只贴一个标签，绝不自己判阈值。

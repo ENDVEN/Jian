@@ -333,12 +333,16 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    #     · breadth_flow.py：范围解析 / 扫描 / **⚡增量** / **⟳全量重算**（二次确认闸门）/
     │                    #         区间切片 / 指数补拉链（`_ensure_index`）/ ★1.73 **逐统计项取帧与切片** +
     │                    #         统计项增删改（add/remove/toggle/focus）+ 引导（`on_hint_dismissed`/`show_gates_help`）
+    │                    # ★1.74 **三道闸**（`gate_verdicts` / `_sync_gate_bar` / `on_thresholds_changed`）
+    │                    # ★1.76 **三视图与关系报告**（`current_view` / `relation_report` / `_refresh_views` / `on_export_png|csv`）
+    │                    # ★1.77 **多方案**（`plan_field` / `plan_digest` / `item_uid` / `item_frame` / `outcome_for` /
+    │                    # `scan_plan_queue` / `_run_queued_plan` / `on_import_item`）⇒ ⚠ **1388 行，已远超 400 红线**：再动先拆（候选见 RULES §4）
     │                    #     · ★1.73 **breadth_rows.py**：**多行小图**（`BreadthRowsChart`）——
     │                    #         每统计项一行 = **柱（占比/家数）+ 5 周均线**；焦点行置顶 3 倍高；
     │                    #         底部指数副图**固定高度**（四图形：折线/面积/K线/美国线）；全行 x 联动 +
     │                    #         竖线贯穿 + 读数**统一一处**；`min_content_height()` 供行区滚动
     │                    #     · ★1.73 **breadth_items.py**：统计项面板（chip 列表 + 「＋ 添加」下拉 =
-    │                    #         公式的可判定变量 + 👁/★/✕ + ★1.75 **三道闸徽标**；**不持状态**，
+    │                    #         公式的可判定变量 + 👁/★/✕ + ★1.74 **三道闸徽标** + ★1.77「＋ **从其他方案添加…**」（只发请求，方案由流程问）+ 行内「来自方案：X」与「（不属于当前条件）」标记；**不持状态**，
     │                    #         真源在页面 `p._items`）
     │                    #     · ★1.76 **relation_chart.py**（150）：**事件对齐图**（每项一条均值路径 +
     │                    #         该项 ±1σ 漏斗带 + 0 处竖虚线；脚注写两个 n 与"样本不足"）·
@@ -522,7 +526,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | 复盘页 UI | `ui/views/review.py`（**173 行**，1.26 拆分后只做装配与转发）；行为落 `ui/widgets/review_*.py`：`review_layout`(版式/可拖竖分栏) / `review_charts`(日历·月度·时长) / `review_playback`(交易回放) / `review_editor`(清单·编辑·孤儿缝合) / `review_flow`(筛选·导航·视图刷新) |
 | M2/M3 新子页 | **均已落地**：M2 = `ui/views/scan_view.py`（164 行）+ `ui/widgets/scan_layout|flow|result.py`（★v6.86 起**第 3 页签**）；M3 = `ui/views/breadth_view.py`（197 行）+ `ui/widgets/breadth_layout|flow|result|chart.py`（★第 4 页签）。**共用** `core/cross_section` / `data/scan_store`（含 ⚡增量）/ `ui/workers.CrossSectionWorker` |
 | 🧪 参数研究页（B15 MVP） | 页面 = **`ui/views/param_sweep.py`**（**583 行**⚠ §4 已登记拆法；子页签 index 1，M1/M2 之间——用户定）。左栏表单 = `ui/widgets/sweep_form.py`（**394 行**：306px 定宽白卡 + 46px 折叠竖条 + 步号徽标，★v6.86 视觉返工后形态）；图表 = `ui/widgets/sweep_chart.py`（时间轴/散点/热力图/分布 + 图例 chips）；编排（两段流程 / 红线①确认闸 / 统计装配 / 存快照）在页面。**依赖**：`core/sweep_plan`（网格闸门）→ `core/param_sweep`（逐组回测）→ `core/sweep_stats`（IC/邻域/PBO 唯一真源）→ `data/sweep_archive`（快照 + OOS 计数器）；切块 = `core/index_regimes` + 缓存 `index_regimes.json`。**改统计口径 → `core/sweep_stats` 一处**；改网格护栏 → `sweep_plan`；worker = `ui/workers.ParamSweepWorker`（stage 两段式） |
-| M3 广度页（折线 / 指数副图 / 增量 / 重算） | 页面 = `ui/views/breadth_view.py`（状态 + 同名薄壳）。**版式** `breadth_layout.py`（ƒ/🎚 两卡**直接复用 `scan_layout`**；`BreadthDisplayPane` = 平滑/占比/指数）；**流程** `breadth_flow.py`（`_start_worker` 统一入口：`force` / `incremental` 两开关；`_ensure_index` 指数补拉链）；**图表** `breadth_chart.py`（`BreadthChart`：ChartHost 双窗格 + `attach_all` + 读数条 provider —— **别在页面手写 addPlot/setTicks**）。**⚡增量的矩阵续接在 `data/scan_store.py`**（`find_base` + `merge_tail`），改它必跑 `smoke_chart` 的「STEP 5」段 |
+| M3 广度页（折线 / 指数副图 / 增量 / 重算） | 页面 = `ui/views/breadth_view.py`（状态 + 同名薄壳）。**版式** `breadth_layout.py`（ƒ/🎚 两卡**直接复用 `scan_layout`**；`BreadthDisplayPane` = 平滑/占比/指数）；**流程** `breadth_flow.py`（`_start_worker` 统一入口：`force` / `incremental` 两开关；`_ensure_index` 指数补拉链）；**图表** ★1.73 起 = `breadth_rows.py`（`BreadthRowsChart`：**每统计项一行**（柱 + 均线）+ 底部指数副图 + ★1.76 三视图（多行小图 / 事件对齐 / 关系卡）+ ★1.77 色带；`breadth_chart.py` 只剩"显示选项目录"常量 —— **别在页面手写 addPlot/setTicks**）。**⚡增量的矩阵续接在 `data/scan_store.py`**（`find_base` + `merge_tail`），改它必跑 `smoke_chart` 的「STEP 5」段 |
 | 就绪度体检 / 更新到最新（M2/M3 共用） | 内核 = **`data/readiness.py`**（`probe_readiness` 只读 footer 四分类 + `latest` + `summary_line`/`gap_preview`/`detail_text` + **v6.47 `format_stale`** 滞后文案；**别在页面另写“有没有数据”的判断**）；线程 = `ui/workers.py:ReadinessWorker`（第 8 个）/ `CalendarWorker`（第 9 个，滞后判据）；编排 = **`ui/widgets/readiness_flow.py:ReadinessFlow`**（两页共用：自动体检、**v6.47 一键「⬆ 更新到最新」`update_latest` 与“补齐缺失”合并（整批当前范围增量，共用 `_launch_sync`；`fill_missing` 保留但退位次级）**、`start_calendar_fetch` 挂日历→`trading_target`、滞后用 `trading_days_between`、M2 `_calibrate_asof_date` 抬升上限+`lbl_asof_hint` 回显、**回调绑定各自 scope** —— 改它必跑 `smoke_pages_overlay` 的「STEP 6」段）；成分股失败文案唯一出口 = `constituent_failure_text()`；「全市场扫描就绪」预设 = `bulk_download._apply_scan_ready_preset` |
 | 全市场筛选页（M2） | `ui/views/scan_view.py`（状态 + 同名薄壳）。**版式** `scan_layout.py`（阈值⇄控件的**唯一换算处**在 `ScanFilterPane`，界面亿元/% ⇄ 内核元/小数）；**流程** `scan_flow.py`（范围解析 / 后台扫描 / 切日期零成本）；**渲染** `scan_result.py`（KPI 三态 + 结果表） |
 | 改摘要条 chip / 摘要条动作按钮（★1.64 收编） | **chip = `ui/widgets/summary_chip.py`**（`CHIP_STATES` / `chip_qss()` / `build_chip()` / `set_chip_state()` —— 唯一来源）；**主操作 = `styles.SUMMARY_RUN_QSS`**、**次级 = `styles.SUMMARY_GHOST_QSS`**。⚠ M1/M2/M3 **一律引用**：不许再在页面里 `setStyleSheet(CHIP_QSS_ON)`（恒绿假状态）或自写一份蓝色实心按钮（`smoke_pages_overlay` §1.65 有**源码级**断言钉住）。行情页工具行那族 chip（`desk_chips` + MRU 规则）**不在收编范围**（形状用途不同） |

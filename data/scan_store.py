@@ -39,7 +39,12 @@ __all__ = [
     'data_version', 'kline_zone_dir', 'scan_key', 'scan_cached', 'merge_tail',
 ]
 
-DEFAULT_MAX_ENTRIES = 2                      # 会话里同时留两套（比如"自选"与"全市场"各一）
+# ★1.76 / §7-B16 期 4（多方案）：**2 → 4**。
+#   【为什么必须涨】M3 现在允许统计项**来自不同方案**（各自公式/参数/粗筛阈值）—— 同屏最多 3 个方案 +
+#   当前页那一个。旧上限 2 会在用户第二次切视图时**淘汰掉正在用的那一套**，表现是"刚看过的方案
+#   再切回来又要重扫几十秒"（而且**没有任何提示** ⇒ 正是"悄悄淘汰在用的那套"）。
+#   【为什么不更大】每套全市场 ≈22 MB ⇒ 4 套 ≈88 MB（配额 256 MB 仍留足冗余，§10-10 占用要看得见）。
+DEFAULT_MAX_ENTRIES = 4                      # 会话里同时留四套（3 个方案 + 当前页那一个）
 DEFAULT_MAX_BYTES = 256 * 1024 * 1024        # 256 MB（全市场一套 ≈22 MB，留足冗余）
 
 
@@ -65,7 +70,13 @@ def thresholds_fingerprint(thresholds: ScanThresholds = None) -> str:
 
     ★【v6.35 修订】**阈值必须进键**：它决定四态里的「**被粗筛剔除**」那一桶 ——
       若不进键，用户改了阈值、界面却还在展示旧分桶 ⇒ **静默陈旧**（正是本键要防的那类事故）。
+    ★【1.76 修 · 用户 2026-10-16 实测】**普通 dict 也接受** —— 筛选方案记录里存的就是
+      `to_dict()` 落盘的 dict（`config['thresholds']`），直接喂进来会
+      `AttributeError: 'dict' object has no attribute 'to_dict'`（控制台 traceback + 界面"没反应"）。
+      统一走 `ScanThresholds.from_dict`（**唯一还原口径**，坏数据逐字段回落默认）。
     """
+    if isinstance(thresholds, dict):
+        thresholds = ScanThresholds.from_dict(thresholds)
     items = sorted((thresholds or ScanThresholds()).to_dict().items())
     return hashlib.sha1(repr(items).encode('utf-8')).hexdigest()[:16]
 

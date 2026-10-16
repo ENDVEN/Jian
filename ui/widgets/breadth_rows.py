@@ -135,7 +135,11 @@ class BreadthRowsChart(QWidget):
         drawn = []
         for it in self._items:
             key = str(it.get('key') or '')
-            frame = (frames or {}).get(key)
+            # ★1.76 修（用户 2026-10-16 实测：「四个方案里的同名变量，四条线完全一样」）：
+            #   取帧要按**项的身份**（`uid` = 方案指纹 + 变量名），不能只按变量名 ——
+            #   四个方案都叫 `COND` 时，只按变量名取 ⇒ 四行**全都拿到同一份帧**（后面的覆盖前面的）。
+            #   `uid` 由页面给（没有则回落到 `key`，老调用零变化）。
+            frame = (frames or {}).get(str(it.get('uid') or key))
             if frame is None or frame.empty or 'hits' not in frame.columns:
                 continue
             if str(it.get('visible', True)) in ('0', 'False', 'false'):

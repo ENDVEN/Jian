@@ -3339,8 +3339,9 @@ try:
           and str(_brd_ui.get('formula') or '').strip() != ''
           and isinstance(_brd_ui.get('thresholds'), dict)
           and isinstance(_brd_ui.get('items'), list)
+          # ★1.76 期 4：项多一个可选 `plan`（借来的项存**方案快照**：条件/参数/阈值 —— 仍不含结果）
           and all(isinstance(_it, dict) and set(_it) <= {'key', 'label', 'color',
-                                                         'visible', 'focus'}
+                                                         'visible', 'focus', 'plan'}
                   for _it in (_brd_ui.get('items') or []))
           and _brd_ui.get('range') in ('3m', '6m', '1y', '3y', '5y', 'all')
           and _brd_ui.get('chart') in ('bars', 'line')
@@ -6187,11 +6188,14 @@ try:
     app.processEvents()
     _ver_f3u = _brd3u._flow.gate_verdicts(_brd3u)
     _rep_f3u = _brd3u._flow.relation_report(_brd3u)
+    # ⚠ 判决表自 1.76 起按**项身份**（uid）索引（同名不同源不许覆盖）⇒ 这里按 uid 取。
+    _uid_fast3u = _brd3u._flow.item_uid(_brd3u, {'key': 'FAST', 'plan': None})
+    _uid_slow3u = _brd3u._flow.item_uid(_brd3u, {'key': 'SLOW', 'plan': None})
     check("★ 1.75 修：**未算过的项**徽标 = 「未扫描」，**不照抄主变量的占比**"
           "（旧版回落成主变量 ⇒ 两项显示同一个数，就是用户报的那个 bug）",
-          _ver_f3u.get('FAST', {}).get('mode') == _rsP2.MODE_UNKNOWN
-          and _ver_f3u.get('FAST', {}).get('ratio_pct') is None
-          and _ver_f3u.get('SLOW', {}).get('mode') != _rsP2.MODE_UNKNOWN)
+          _ver_f3u.get(_uid_fast3u, {}).get('mode') == _rsP2.MODE_UNKNOWN
+          and _ver_f3u.get(_uid_fast3u, {}).get('ratio_pct') is None
+          and _ver_f3u.get(_uid_slow3u, {}).get('mode') != _rsP2.MODE_UNKNOWN)
     check("★ 1.75 修：未算过的项**不画行**（不拿主变量的数据冒充自己）",
           _brd3u.chart.row_keys() == ['SLOW'])
     check("★ 1.75 修：未算过的项**不进关系报告**（卡上不会多出一行假数字）",
@@ -6258,6 +6262,160 @@ try:
     app.processEvents()
 except Exception as _e3u:  # noqa: BLE001
     check(f"§7-B16 期 3 三视图/关系卡断言整段抛异常: {type(_e3u).__name__}: {_e3u}", False)
+
+# ==========================================
+# §7-B16 期 4 · 多方案（★1.76 · 用户 2026-10-16「按原计划进行下一步」）
+#   【口径】统计项带 `plan` ⇒ 去**它那个方案**的结果里取数；不带 ⇒ 本页方案（老行为零变化）。
+#   【已知偏差（写进方案书 §3 期 4）】借方案时取它的**条件 / 参数 / 粗筛阈值**，
+#     **统计范围与复权仍用本页当前设置**（范围解析绑着本页 🌐 卡的一整串状态，
+#     复制一份 = 第二套真源 §11.5-112）—— 回执里如实说出来。
+#   【上限】`ScanStore` 2 → 4 套（3 个方案 + 本页那一个；旧上限会**悄悄淘汰正在用的那套**）。
+# ==========================================
+print("\n== §7-B16 期 4 · 多方案（按项取数 / 排队 / 上限）==")
+try:
+    from data.scan_store import DEFAULT_MAX_ENTRIES as _MAXE4u  # noqa: E402
+    from data.scan_store import ScanStore as _SS4u  # noqa: E402
+
+    _fc4u = _brd3u._flow
+    check(f"★ 1.76 期 4：会话缓存上限 2 → **{_MAXE4u}** 套（3 个方案 + 本页那一个）"
+          "—— 旧上限会在切视图时**悄悄淘汰正在用的那套**（再切回来又要重扫）",
+          int(_MAXE4u) >= 4)
+    _st4u = _SS4u()
+    _sr4u = _brd3u._outcome.result if _brd3u._outcome is not None else None
+    if _sr4u is not None:
+        for _n4u in ('SLOW', 'COND', 'FAST', 'MA5'):
+            _st4u.put(_sk3u(_F3u, _TH3u, sorted(_G3u), signal_names=[_n4u]), _sr4u)
+        check(f"★ 1.76 期 4：**四套共存不被淘汰**（实测留 {_st4u.entries()} 套）",
+              _st4u.entries() == 4)
+        _st4u.put(_sk3u(_F3u, _TH3u, sorted(_G3u), signal_names=['X5']), _sr4u)
+        check("★ 1.76 期 4：第 5 套进来 ⇒ 只淘汰**最久未用**那一套（且至少留一条）",
+              _st4u.entries() == 4)
+
+    # ⚠ **夹具必须用真实记录结构**（用户 2026-10-16 实测 bug 就出在这：真实方案把公式放在
+    #   `config['formula']`，我的第一版代码读顶层 `plan['formula']` ⇒ 永远空 ⇒ "加不了"。
+    #   教训同 §11.5-68：**测试打桩的结构必须与线上一致**，否则这条 bug 永远测不出来。）
+    _pA4u = {'name': '方案A', 'id': 'pa',
+             'config': {'formula': 'COND := C > MA(C,5);', 'params': '', 'thresholds': {}}}
+    _pB4u = {'name': '方案B', 'id': 'pb',
+             'config': {'formula': 'SLOW := C > MA(C,20);', 'params': '', 'thresholds': {}}}
+    check("★ 1.76 期 4：方案字段**顶层与 `config` 都读得到**（真实记录在 `config` 里）——"
+          "两个**公式不同**的方案必须给出**不同**指纹（旧版都空 ⇒ 完全相同）",
+          _fc4u.plan_field(_pB4u, 'formula') == 'SLOW := C > MA(C,20);'
+          and _fc4u.plan_digest(_pA4u) == _fc4u.plan_digest(dict(_pA4u))
+          and _fc4u.plan_digest(_pA4u) != _fc4u.plan_digest(_pB4u)
+          and _fc4u.plan_digest(None) == 'page')
+
+    # ★1.76 修（用户 2026-10-16 实测 · 症状 A）：**换了条件后旧统计项还在屏上** ——
+    #   旧版把它们的名字一并交给内核 ⇒ 内核严格报错（"筛选条件里没有变量 X"）⇒ **整次扫描失败**。
+    _brd3u._formula_pane.txt_formula.setPlainText('KEEP := C > MA(C,5);\n')
+    _brd3u._items = [{'key': 'KEEP', 'label': '在册', 'color': '#E53935', 'visible': True},
+                     {'key': 'GONE', 'label': '过期', 'color': '#1E88E5', 'visible': True}]
+    _qs_4u = _fc4u.scan_plan_queue(_brd3u)
+    check("★ 1.76 修：交下去的 `signal_names` **只含当前条件里有的**（不让整次扫描全军覆没），"
+          "过期项**记在案上**由回执当面说清",
+          _qs_4u[0]['signal_names'] == ['KEEP'] and _qs_4u[0].get('skipped') == ['GONE'])
+    _fc4u.sync_items_panel(_brd3u)          # 面板也要标出来（过期项不能装作没看见）
+
+    _brd3u._formula_pane.txt_formula.setPlainText(_F3u)
+    _brd3u._items = [{'key': 'COND', 'label': '本页项', 'color': '#E53935', 'visible': True}]
+    _q1_4u = _fc4u.scan_plan_queue(_brd3u)
+    _brd3u._items = [{'key': 'COND', 'label': '本页项', 'color': '#E53935', 'visible': True},
+                     {'key': 'SLOW', 'label': '借来的', 'color': '#1E88E5', 'visible': True,
+                      'plan': _pB4u}]
+    _q2_4u = _fc4u.scan_plan_queue(_brd3u)
+    check("★ 1.76 期 4：**只有本页项 ⇒ 队列长度 1**（老路径零变化）；带借来的项 ⇒ "
+          "本页一步 + 该方案一步，`signal_names` **各归各的方案**",
+          len(_q1_4u) == 1 and _q1_4u[0]['signal_names'] == ['COND']
+          and len(_q2_4u) == 2 and _q2_4u[0]['signal_names'] == ['COND']
+          and _q2_4u[1]['signal_names'] == ['SLOW']
+          and _q2_4u[1]['digest'] == _fc4u.plan_digest(_pB4u))
+
+    _brd3u._outcomes = {'page': _brd3u._outcome, _fc4u.plan_digest(_pB4u): _brd3u._outcome}
+    check("★ 1.76 期 4：**按项取对的方案**（本页项取本页、借来的取它那格）；"
+          "**没扫过的方案 ⇒ None**（不回落成别人的数据 —— §11.5-134 同族）",
+          _fc4u.item_frame(_brd3u, {'key': 'COND', 'plan': None}, sliced=False) is not None
+          and _fc4u.item_frame(_brd3u, {'key': 'SLOW', 'plan': _pB4u}, sliced=False) is not None
+          and _fc4u.item_frame(_brd3u, {'key': 'SLOW', 'plan': _pA4u}, sliced=False) is None)
+
+    check("★ 1.76 期 4：统计项面板多了**「＋ 从其他方案添加…」**（真按钮，不是占位）",
+          hasattr(_brd3u._items_pane.panel, 'btn_import')
+          and _brd3u._items_pane.panel.btn_import.isEnabled())
+    _fc4u.sync_items_panel(_brd3u)
+    check("★ 1.76 期 4：借来的项在行内**写明来源**（`source_label` 是**派生**的，不另存一份）",
+          '来自方案' in str(_brd3u._items_pane.panel._items[1].get('source_label') or ''))
+
+    # ⚠ 先把方案 B 的槽位**清掉**（上一条路由断言为验证"取对格子"预置过它）——
+    #   否则这一条会验成"已算过"（夹具问题，不是代码问题）。
+    _brd3u._outcomes = {'page': _brd3u._outcome}
+    # ★1.76 修（用户 2026-10-16 实测报的第三个 bug）：方案里的 `thresholds` 是**普通 dict**
+    #   ⇒ 直接喂 `thresholds_fingerprint` 会 AttributeError（控制台 traceback、界面"没反应"）；
+    #   且我第一版手搓的字段白名单**丢**了换手率/市值/涨跌幅 ⇒ 借来的方案会拿**本页**阈值去扫。
+    _pT4u = {'name': '带阈值的方案', 'id': 'pt',
+             'config': {'formula': 'BIAS := (C - MA(C,20)) / MA(C,20);', 'params': '',
+                        'thresholds': {'min_amount': 1.2e7, 'min_price': 3.0, 'min_bars': 60,
+                                       'exclude_suspended': False, 'exclude_st': False,
+                                       'exclude_limit': False, 'min_turnover': 0.01,
+                                       'min_float_mktcap': 5e9, 'max_float_mktcap': 8e10,
+                                       'min_change_pct': -0.05, 'max_change_pct': 0.05}}}
+    check("★ 1.76 修：方案里那坨**普通 dict 阈值**不再让指纹函数抛异常（用户实测的 traceback）",
+          isinstance(_fc4u.plan_digest(_pT4u), str))
+    _p4u_params, _th4u = _fc4u._plan_scan_kwargs(_pT4u, {}, None)
+    check("★ 1.76 修：借方案的粗筛阈值**逐字段原样还原**（换手率 / 市值 / 涨跌幅 **不许丢** ——"
+          "丢了就会拿本页阈值去扫，静默换口径）",
+          abs(float(_th4u.min_turnover) - 0.01) < 1e-12
+          and abs(float(_th4u.min_float_mktcap) - 5e9) < 1
+          and abs(float(_th4u.max_float_mktcap) - 8e10) < 1
+          and abs(float(_th4u.min_change_pct) + 0.05) < 1e-12
+          and int(_th4u.min_bars) == 60 and _th4u.exclude_st is False)
+    check("★ 1.76 修：`plan_digest` **绝不抛**（怪数据也回落成内容摘要 —— 指纹只是分组键，"
+          "不许拖垮交互）",
+          isinstance(_fc4u.plan_digest({'formula': 123, 'thresholds': 'x'}), str))
+    from PyQt6.QtWidgets import QMessageBox as _QMB4u  # noqa: E402
+    _orig_warn4u, _orig_impl4u = _QMB4u.warning, _fc4u._on_import_item_impl
+    try:
+        _QMB4u.warning = staticmethod(lambda *a, **k: None)      # 弹窗会阻塞 ⇒ 打桩
+        _fc4u._on_import_item_impl = lambda: (_ for _ in ()).throw(RuntimeError('故意炸'))
+        _fc4u.on_import_item()
+    finally:
+        _QMB4u.warning, _fc4u._on_import_item_impl = _orig_warn4u, _orig_impl4u
+    check("★ 1.76 修：添加入口**任何失败都弹窗 + 回执**（根治用户实测的「点了没反应」）",
+          '从其他方案添加失败' in _brd3u.lbl_receipt.text())
+
+    # ★1.76 修（用户 2026-10-16 实测：「四个方案里的**同名变量**画成四条一模一样的线」）：
+    #   凡是"按变量名建字典"的地方（帧表 / 闸判决表）在**同名不同源**时会互相覆盖 ⇒
+    #   一切按项索引的容器都必须用 `item_uid`（方案指纹 + 变量名）。
+    from ui.widgets.breadth_rows import BreadthRowsChart as _BRC4u  # noqa: E402
+    check("★ 1.76 修：**同名不同源**的项身份不同（本页 vs 方案A vs 方案B 各一个键）",
+          len({_fc4u.item_uid(_brd3u, {'key': 'COND', 'plan': None}),
+               _fc4u.item_uid(_brd3u, {'key': 'COND', 'plan': _pA4u}),
+               _fc4u.item_uid(_brd3u, {'key': 'COND', 'plan': _pB4u})}) == 3)
+    _c4u = _BRC4u(_brd3u)
+    _fA4u = _brd3u._outcome.breadth_frame(signal='COND').copy()
+    _fB4u = _fA4u.copy()
+    # ⚠ 两份帧都要动：占比模式下**值来自 `ratio` 列**（只清零 `hits` 的话两行仍然一样 —— 我第一版
+    #   夹具就栽在这，白红了一条）
+    _fB4u['hits'] = 0.0
+    _fB4u['ratio'] = 0.0
+    _n4u = _c4u.render([{'key': 'COND', 'label': 'A', 'color': '#E53935', 'uid': 'x|COND'},
+                        {'key': 'COND', 'label': 'B', 'color': '#1E88E5', 'uid': 'y|COND'}],
+                       {'x|COND': _fA4u, 'y|COND': _fB4u}, None, with_index=False)
+    _s0_4u = float(np.nansum(_c4u._rows[0]['values'])) if _c4u._rows else -1.0
+    _s1_4u = float(np.nansum(_c4u._rows[1]['values'])) if len(_c4u._rows) > 1 else -1.0
+    check(f"★ 1.76 修：图上**同名不同源的两行各取各的帧**（旧版两行都会取到最后写入的那一份）"
+          f"（实测 行数={_n4u} 行0和={_s0_4u:.1f} 行1和={_s1_4u:.1f}）",
+          _n4u == 2 and _s0_4u > 0 and _s1_4u == 0.0)
+
+    _brd3u._items = [{'key': 'COND', 'label': '本页项', 'color': '#E53935', 'visible': True}]
+    _fc4u._add_imported_item(_pB4u, 'SLOW')
+    _imp4u = _brd3u._items[-1]
+    check("★ 1.76 期 4：借来的项**存下方案快照**（条件/参数/阈值 ⇒ 能独立成一次扫描），"
+          "且回执**把已知偏差写在脸上**（范围与复权仍用本页）+ 说清「还没算过」",
+          isinstance(_imp4u.get('plan'), dict)
+          and _imp4u['plan'].get('formula') == _fc4u.plan_field(_pB4u, 'formula')
+          and '范围与复权仍用本页' in _brd3u.lbl_receipt.text()
+          and '还没算过' in _brd3u.lbl_receipt.text())
+except Exception as _e4u:  # noqa: BLE001
+    check(f"§7-B16 期 4 多方案断言整段抛异常: {type(_e4u).__name__}: {_e4u}", False)
 
 # ==========================================
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71

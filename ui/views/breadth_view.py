@@ -72,6 +72,9 @@ class BreadthView(QWidget):
         #   `breadth_items` 面板只渲染 + 发请求（§9-D：同一项只有一个写入点）。
         #   每项 = {'key','label','color','visible','focus'}；空 = 用公式最后一条（老行为）。
         self._items: list = []
+        # ★1.76 期 4 / §7-B16：**多方案** —— 每个来源方案一份扫描结果（键 = `plan_digest`）。
+        #   `p._outcome` 仍是**本页方案**那一份（老调用/断言零变化）；借来的方案各占一格。
+        self._outcomes: dict = {}
         self._ui_restoring = False                   # 恢复偏好期间不回写
 
         # ---------------- 装配 ----------------
@@ -346,9 +349,13 @@ class BreadthView(QWidget):
             'overlay': display.chk_overlay.isChecked(),
             'overlay_code': str(display.cb_overlay_code.currentData() or ''),
             # ★1.73：统计项（只存轻量列表；公式本身另存 formula 字段）
+            # ★1.76 期 4：借来的项额外存一份**方案快照**（条件/参数/粗筛阈值 —— 它能独立成一次扫描，
+            #   所以必须记住"当初借的是哪一份"；只存这几样，不存结果，§D3 不变）
             'items': [{'key': it.get('key'), 'label': it.get('label'),
                        'color': it.get('color'), 'visible': bool(it.get('visible', True)),
-                       'focus': bool(it.get('focus', False))}
+                       'focus': bool(it.get('focus', False)),
+                       'plan': (dict(it.get('plan')) if isinstance(it.get('plan'), dict)
+                                else None)}
                       for it in self._items],
             # ★1.73 收尾：副图高度（可调、记住）+ 引导条已读标记（**显式标志**，见 `_hint_done` 注释）
             'index_h': int(self._display_pane.spin_index_h.value()),
