@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from data.sync_service import (ZONE_KLINE, ThrottlePolicy, abort_reason_text,
-                               failure_hint, format_duration)
+                               estimate_seconds, failure_hint, format_duration)
 
 
 # 任务状态（面板与下载条共用同一套标签，别处不许再写中文状态字面量）
@@ -74,13 +74,17 @@ class DownloadJob:
         return self.receipt_text()
 
     def eta_text(self) -> str:
-        """还剩多久 —— 按**剩余只数**估（不是总数），避免"永远 50 分钟"的劝退式预估。"""
+        """还剩多久 —— 走**唯一估算出口** `sync_service.estimate_seconds`（按**剩余只数**、**含并发**）。
+
+        ★1.78 修：旧版这里自己写 `remain × interval` —— **没除并发**、也没有"每条请求的网络地板"
+        ⇒ K=3 时把耗时**高估约 3 倍**（用户 2026-10-16 反馈"每次补 12 天要半小时"，估时得能对得上），
+        且 `interval=0` 的激进档会算出"约剩 0 秒"。口径一律走那一个函数（它也已按同一口径修好）。
+        """
         if not self.running or not self.total:
             return ""
         remain = max(0, self.total - self.done)
-        interval = (self.policy.interval if self.policy is not None
-                    else ThrottlePolicy().interval)
-        return f"约剩 {format_duration(remain * interval)}"
+        pol = self.policy if self.policy is not None else ThrottlePolicy()
+        return f"约剩 {format_duration(estimate_seconds(self.total, pol, stale_count=remain))}"
 
     def receipt_text(self) -> str:
         """结束回执（成功 / 已最新 / 失败 + 中断原因）。原因只走 `abort_reason_text`。"""
@@ -93,6 +97,12 @@ class DownloadJob:
         why = abort_reason_text(s)
         if why:
             base = f"已中断：{why}（可再点「更新到最新」续传）· " + base
+        # ★1.78（用户 2026-10-16）：**断点续抓要看得见** —— 中断后明说"还剩多少只没碰过、
+        #   下次从这些继续、已完成的不会重下"（O(1) 口径，见 `rest_count`）。
+        if self.status == STATUS_CANCELLED:
+            rest = self.rest_count()
+            if rest:
+                base += f" · 还剩 {rest} 只没碰过（下次从这些继续，已完成的不会重下）"
         return base
 
     @property

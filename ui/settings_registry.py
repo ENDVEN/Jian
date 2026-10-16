@@ -295,9 +295,13 @@ _ITEMS_V1 = (
          where='download_prefs.circuit_breaker', lo=1, hi=999, step=1, unit='次',
          tip='连续失败达到该数即停手，避免把额度/账号往死里打。'),
     Item('download.concurrency', 'download', '并发', KIND_NUMBER, default=2,
-         where='download_prefs.concurrency', lo=1, hi=4, step=1, unit='路',
-         tip='K≤4：只靠网络往返重叠提速，**聚合请求率不变**。',
-         help='上限 4 是刻意留的（"宁可慢也不封 IP"）；调大不会让你更快被限流放过。'),
+         where='download_prefs.concurrency', lo=1, hi=8, step=1, unit='路',
+         tip='1~8 路：并发只让**网络往返彼此重叠**提速，**聚合请求率仍由「请求间隔」决定**'
+             '（所以调大它不会让"请求率"变高）。',
+         help='★1.78 起上限 4 → **8**（你 2026-10-16 拍板"放开上限"）。两道安全网仍在：\n'
+              '① 一旦检测到东财限流，下载会**自动降到 1.2 秒 / 1 路**并告诉你；\n'
+              '② 调成 **1** = 完全串行（最保守，零风险回滚）。\n'
+              '默认 2 是"稳妥档"（0.5 秒 × 2 ≈ 4 请求/秒）；想更快再自己往上调。'),
     Item('download.skip_fresh', 'download', '跳过已最新', KIND_TOGGLE, default=True,
          where='download_prefs.skip_fresh',
          tip='本地已是最新的标的直接跳过（断点续传的基础）。'),

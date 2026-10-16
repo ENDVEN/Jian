@@ -35,9 +35,8 @@ from typing import Iterable
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.preferences import preferences
-from data.sync_service import (DEFAULT_DOWNLOAD_CONCURRENCY, ZONE_KLINE,
-                               ThrottlePolicy,
-                               format_duration)
+from data.sync_service import (DEFAULT_DOWNLOAD_CONCURRENCY, MAX_DOWNLOAD_CONCURRENCY,
+                               ZONE_KLINE, ThrottlePolicy, format_duration)
 from ui.workers import SyncWorker
 
 # ★v6.70 / §4 体积债：任务形状、状态口径、单只互斥已拆到 `ui/download_jobs.py`
@@ -63,8 +62,8 @@ def download_policy_from_prefs(prefs=None) -> ThrottlePolicy:
 
     所有批量 submit（数据管理 / 预下载弹窗 / M2/M3）均经 `DownloadHub.submit` 读同一份，
     “一处调、处处生效”（编辑面 = 设置页「下载与取数」组 · `ui/settings_registry.py`）。
-    【字段映射】`jitter: bool`(勾) → float 0.3/0.0；`concurrency` 夹进 [1, 4]（K≤4，与
-    “宁可慢也不封 IP”一致）；其余逐项直读。
+    【字段映射】`jitter: bool`(勾) → float 0.3/0.0；`concurrency` 夹进 [1, MAX]（★1.78 起 MAX=8，
+    由用户在设置页选，默认仍是 2）；其余逐项直读。
     【容错】偏好缺键/脏值 ⇒ 逐项回落默认（“锦上添花”原则，绝不让偏好坏了阻断下载）。
     :param prefs: 测试可注入带 `get()` 的对象；None ⇒ 用进程级 `preferences` 单例。
     """
@@ -110,7 +109,7 @@ def download_policy_from_prefs(prefs=None) -> ThrottlePolicy:
         jitter=0.3 if d.get("jitter", True) else 0.0,
         circuit_breaker=max(1, breaker),
         skip_fresh=bool(d.get("skip_fresh", True)),
-        concurrency=max(1, min(4, conc)),
+        concurrency=max(1, min(MAX_DOWNLOAD_CONCURRENCY, conc)),
     )
 
 

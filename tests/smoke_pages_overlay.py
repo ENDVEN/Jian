@@ -3203,8 +3203,8 @@ try:
         #   而 `fixed_height` 把 min==max 钉死 ⇒ 拖了也不变）⇒ 本版按设计稿选**固定**，
         #   不启用拖动（**留个假把手比没有更坏**），"调高指数图"改走待做的数值控件。
         #   ⚠ 这是**已知取舍**，记在方案书 §6「未决项」；旧版那段鼠标拖动模拟随之下线。
-        check("（取舍记录）多行模式**未启用**分界拖动 ⇒ 没有假把手；指数副图高度走固定值 + 待做数值控件",
-              _brd.chart._host._drag_pairs is None
+        check("★ 1.77：分界拖动机制**已整体删除**（拖了也不生效的假把手比没有更坏；M3 用「副图高度」数值框代替）—— 宿主里不许再出现 `enable_divider_drag`（有 = 有人偷偷加回来）",
+              not hasattr(_brd.chart._host, 'enable_divider_drag')
               and _brd.chart._host.pane('index') is not None)
         check("★ 口径印在标题行上（E 节）：范围 · 前复权 · 有效 N/M · 区间",
               '前复权' in _brd.lbl_cal.text() and '有效' in _brd.lbl_cal.text()
@@ -4441,9 +4441,15 @@ try:
           and (_spin_iv12.minimum(), _spin_iv12.maximum())
           == (float(_itv12.lo), float(_itv12.hi)))
     _spin_cc12 = _view12.control_of("download.concurrency")
-    check("★ 并发框范围 1~4（K≤4，与不封 IP 取向一致）",
+    # ★1.78：上限 4 → 8（用户 2026-10-16 拍板"放开上限"；**默认仍是稳妥的 2**）
+    # ⚠ 只断言**控件范围**与**注册表声明默认**，绝不断言控件当前值 —— 那会读到你真实偏好里的
+    #   concurrency（§11.5-90："冒烟不许依赖用户真实偏好"，本轮我又踩了一次，亏得断言当场红）
+    from ui import settings_registry as _sr78  # noqa: E402
+
+    check("★ 1.78：并发框范围 1~8（上限放开）+ 注册表**声明默认仍是 2**（稳妥档，不擅自替用户加速）",
           _spin_cc12 is not None
-          and (_spin_cc12.minimum(), _spin_cc12.maximum()) == (1, 4))
+          and (_spin_cc12.minimum(), _spin_cc12.maximum()) == (1, 8)
+          and int(_sr78.find('download.concurrency').default) == 2)
 
     # ---- ③ 工厂自身的契约（新页面误用也能被发现）----
     _probe12 = _dsp12(value=1.0, lo=0.0, hi=9.9, decimals=1)
@@ -6290,6 +6296,9 @@ try:
         _st4u.put(_sk3u(_F3u, _TH3u, sorted(_G3u), signal_names=['X5']), _sr4u)
         check("★ 1.76 期 4：第 5 套进来 ⇒ 只淘汰**最久未用**那一套（且至少留一条）",
               _st4u.entries() == 4)
+        check("★ 1.77 续：**淘汰要计数**（页面据此在回执里出声 —— 纪律是"
+              "『不许悄悄淘汰正在用的那套』，淘汰了必须让人知道）",
+              int(getattr(_st4u, 'evicted', 0)) == 1)
 
     # ⚠ **夹具必须用真实记录结构**（用户 2026-10-16 实测 bug 就出在这：真实方案把公式放在
     #   `config['formula']`，我的第一版代码读顶层 `plan['formula']` ⇒ 永远空 ⇒ "加不了"。

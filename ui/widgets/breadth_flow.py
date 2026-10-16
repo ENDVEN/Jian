@@ -57,7 +57,9 @@ from ui.widgets.summary_chip import set_chip_state   # ★1.64：胶囊高亮（
 from ui.widgets.readiness_flow import (constituent_failure_text,
                                        constituent_snapshot_text, mark_archived,
                                        scope_snapshot)
-from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard, SingleSyncWorker
+from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard, SingleSyncWorker
+from ui.widgets.breadth_plan_flow import BreadthPlanFlowMixin
+from ui.widgets.breadth_relation_flow import BreadthRelationFlowMixin
 
 __all__ = ['BreadthFlow', 'BREADTH_UI_KEY']
 
@@ -66,15 +68,10 @@ logger = logging.getLogger(__name__)
 BREADTH_UI_KEY = 'breadth_ui'    # 页面偏好键（core/preferences.DEFAULTS 里登记）
 
 # 区间 key → pd.DateOffset（'all' 不截断）
-_RANGE_OFFSET = {
-    '3m': pd.DateOffset(months=3), '6m': pd.DateOffset(months=6),
-    '1y': pd.DateOffset(months=12), '3y': pd.DateOffset(years=3),
-    '5y': pd.DateOffset(years=5),
-}
 _RANGE_LABELS = dict(RANGE_PRESETS)
 
 
-class BreadthFlow:
+class BreadthFlow(BreadthRelationFlowMixin, BreadthPlanFlowMixin):
     """M3 页的运行流程（只读写 `p.X`，不存状态）。"""
 
     def __init__(self, page):
@@ -335,6 +332,8 @@ class BreadthFlow:
         # ★1.76 期 4：**多方案** —— 先排队（第一项恒为本页方案：条件/参数/阈值就是本页那一套），
         #   然后逐个跑（一次只起一个线程；跑完由 `_on_finished` 续下一个）。
         #   ⚠ 队列只有本页方案时，跑的与旧版**逐字相同**（`signal_names` = 本页那些项的判定变量）。
+        # ★1.77 续：记下"这次扫描前"的淘汰计数 ⇒ 回包时如实说清有没有淘汰过别的方案
+        p._evicted_seen = int(getattr(p._store, 'evicted', 0))
         p._scan_queue = self.scan_plan_queue(p)
         p._scan_index = 0
         self._scan_force = bool(force)
@@ -453,6 +452,13 @@ class BreadthFlow:
                 < pd.Timestamp(meta['snapshot_date'])):
             text += (f' · ⚠ 成分是 {meta["snapshot_date"]} 的当前名单，'
                      f'区间更早 ⇒ 幸存者偏差（非时点名单）')
+        # ★1.77 续：**缓存淘汰必须出声**（纪律："不许悄悄淘汰正在用的那套"）——
+        #   多方案同屏超过上限（默认 4 套）时，旧方案的结果会被挤掉；用户切回去会"莫名其妙要重扫"。
+        _ev_now = int(getattr(p._store, 'evicted', 0))
+        if _ev_now > int(getattr(p, '_evicted_seen', _ev_now)):
+            text += (f' · ⚠ 会话缓存已满：淘汰了 {_ev_now - int(p._evicted_seen)} 套旧方案结果'
+                     '（再切回那些方案需要重扫）—— 想同时留更多方案请看设置里的缓存上限')
+            p._evicted_seen = _ev_now
         p.lbl_receipt.setText(text)
         p.lbl_receipt.setToolTip(
             ('\n'.join(filter(None, [outcome.note or '',
@@ -536,311 +542,6 @@ class BreadthFlow:
         p._index_df = None                                # 换指数 ⇒ 重新走取数链
         self.on_display_changed()
 
-    # ==========================================
-    # ★1.76 / §7-B16 期 4：**多方案**（统计项可来自不同方案）
-    #   【口径】项不带 `plan` ⇒ **本页方案**（老行为零变化）；带了 ⇒ 去它自己那个方案的结果里取数。
-    #   【范围与复权 —— 已知偏差（记方案书 §3 期 4）】借别的方案时取它的**条件 / 参数 / 粗筛阈值**，
-    #     而**统计范围与复权仍用本页当前设置**：范围解析依赖本页 🌐 卡的一整串状态，
-    #     复制一份解析器 = 第二套真源（§11.5-112）⇒ 明确"范围跟本页"，并在回执里说出来。
-    #   【绝不静默】某个方案还没扫过 ⇒ 该项**不画、徽标「未扫描」**，回执告诉用户点扫描会一起补。
-    # ==========================================
-    @staticmethod
-    def plan_field(plan, key: str, default=None):
-        """取方案字段 —— **先顶层、再 `config`**。
-
-        ⚠ 用户 2026-10-16 实测报的 bug（症状 B「从其他方案添加」永远说加不了）根因就在这里：
-          真实的筛选方案记录是 `{'config': {'formula','params','thresholds','scope','adjust'},
-          'name','id','created_at','updated_at'}` —— **公式在 `config['formula']`**，
-          而本模块第一版读的是 `plan['formula']`（永远空）⇒ 解析出 0 个可判定变量 ⇒ "加不了"。
-          ⇒ 一个访问器管住"存哪都读得到"（**一处修好**，调用方不再各自记字段位置）。
-        """
-        if not isinstance(plan, dict):
-            return default
-        if plan.get(key) not in (None, ''):
-            return plan.get(key)
-        cfg = plan.get('config')
-        if isinstance(cfg, dict) and cfg.get(key) not in (None, ''):
-            return cfg.get(key)
-        return default
-
-    @staticmethod
-    def _as_thresholds(raw):
-        """方案里那坨阈值 → `ScanThresholds`（**用引擎自己的 `from_dict`**）。
-
-        ⚠ 用户 2026-10-16 实测报的第二个 bug 就在这里：方案记录里 `thresholds` 是**普通 dict**
-          （`to_dict()` 落盘的），而 `thresholds_fingerprint` 只吃 `ScanThresholds` 或 `None`
-          ⇒ 直接喂 dict = `AttributeError: 'dict' object has no attribute 'to_dict'`（控制台 traceback）。
-        ⚠ 顺带修掉一个**更坏**的：我第一版手搓了 6 个字段的白名单 ⇒ `min_turnover` /
-          `min_float_mktcap` / `max_float_mktcap` / `min_change_pct` / `max_change_pct`
-          **被悄悄丢掉** ⇒ 借来的方案会**用本页的换手率/市值/涨跌幅阈值**去扫（静默换口径 ✗）。
-          ⇒ 一律走 `ScanThresholds.from_dict`（**唯一还原口径**，且坏数据逐字段回落默认）。
-        """
-        from core.cross_section import ScanThresholds
-
-        if raw is None or raw == '':
-            return None
-        if isinstance(raw, ScanThresholds):
-            return raw
-        if isinstance(raw, dict):
-            return ScanThresholds.from_dict(raw)
-        return None
-
-    @classmethod
-    def plan_digest(cls, plan: dict = None) -> str:
-        """方案指纹 = **条件 + 参数 + 粗筛阈值**（决定"要不要单独扫一次"）；空方案（本页）⇒ `'page'`。
-
-        ⚠ **本函数绝不许抛**：它用在面板/添加/排队的半路，抛出去就是"点了没反应"（用户实测）。
-          真取不到指纹时回落到**方案内容自身的摘要**（仍然"不同方案不同键" ⇒ 不会把两个方案
-          混成一份数据 —— 那比崩溃坏得多）。
-        """
-        if not plan:
-            return 'page'
-        import hashlib as _hl
-
-        try:
-            from data.scan_store import formula_fingerprint, thresholds_fingerprint
-
-            _f = formula_fingerprint(str(cls.plan_field(plan, 'formula', '') or ''),
-                                     cls.plan_field(plan, 'params') or None)
-            _t = thresholds_fingerprint(cls._as_thresholds(cls.plan_field(plan, 'thresholds')))
-            return _hl.sha1(f'{_f}|{_t}'.encode('utf-8')).hexdigest()[:12]
-        except Exception:                     # noqa: BLE001 —— 指纹只是分组键，绝不拖垮交互
-            return 'raw' + _hl.sha1(repr(plan).encode('utf-8')).hexdigest()[:12]
-
-    def saved_plans(self, p=None) -> list[dict]:
-        """可"借"的**已存筛选方案**（M2/M3 共用池，唯一真源 —— 页面不许另存一份）。"""
-        p = p or self.page
-        try:
-            return list(p._strategy.store.list_strategies() or [])
-        except Exception:                     # noqa: BLE001 —— 方案库不可用不该拖垮页面
-            return []
-
-    def item_uid(self, p, item) -> str:
-        """项的**身份** = `方案指纹 + 变量名`。
-
-        【为什么必须有它】用户 2026-10-16 实测：四个方案里的判定变量**同名**（都叫 `COND`）——
-          凡是"按变量名建字典"的地方（帧表 / 闸判决表）都会**互相覆盖** ⇒ 四条线画成同一条
-          （读数都是 282 只 / 34.1%）。⇒ 一切"按项索引"的容器都必须用本函数。
-          （§11.5-134 同族：数字必须能追到它属于谁。）
-        """
-        return f'{self.plan_digest(self.plan_for_item(p, item))}|{str((item or {}).get("key") or "")}'
-
-    def plan_for_item(self, p, item) -> dict:
-        """项的来源方案（无 ⇒ `{}` = 本页方案）。"""
-        plan = (item or {}).get('plan')
-        return dict(plan) if isinstance(plan, dict) else {}
-
-    def outcome_for(self, p, item):
-        """项该去哪个结果取数：带 `plan` ⇒ 查 `p._outcomes[digest]`；**没有就 `None`（不回落）**。"""
-        if not self.plan_for_item(p, item):
-            return p._outcome
-        return (getattr(p, '_outcomes', None) or {}).get(
-            self.plan_digest(self.plan_for_item(p, item)))
-
-    @staticmethod
-    def _range_offset(p=None):
-        """当前区间档对应的 `Timedelta`（`None` = 全历史）—— 切区间只切片、不重算（D3）。"""
-        return _RANGE_OFFSET.get(p._range_key) if p is not None else None
-
-    def item_frame(self, p, item, *, sliced: bool = True):
-        """该项的广度帧（**按它自己的方案**取；`sliced=False` = 全历史）。
-
-        ⚠ 取不到 ⇒ `None`/空 —— **绝不回落成"当前页那套"**（§11.5-134 的同族纪律：
-          静默拿别人的数据冒充自己，比缺数据坏得多）。
-        """
-        outcome = self.outcome_for(p, item)
-        if outcome is None:
-            return None
-        full = outcome.breadth_frame(signal=(item or {}).get('key'))
-        if full is None or getattr(full, 'empty', True):
-            return None
-        if not sliced:
-            return full
-        offset = self._range_offset(p)
-        if offset is None:
-            return full
-        frame = full[full.index >= full.index[-1] - offset]
-        return frame if not frame.empty else full
-
-    def scan_plan_queue(self, p=None) -> list[dict]:
-        """本次「▶ 开始扫描」要跑的**方案队列**（第一项恒为**本页方案**）。
-
-        每项 = `{'digest','plan','label','signal_names'}`；`signal_names` = **属于该方案**的上屏判定变量。
-        只有本页方案时队列长度 = 1 ⇒ **老路径逐字不变**（先跑本页，再补借来的方案）。
-        """
-        p = p or self.page
-        items = self.active_items(p)
-        # ⚠ 用户 2026-10-16 实测报的 bug（症状 A）：**换了条件之后旧统计项还留在屏上**时，
-        #   把它们的名字当 `signal_names` 交给内核 ⇒ 内核**严格报错**（"筛选条件里没有变量 X"）
-        #   ⇒ **整次扫描失败**（不是"少一行"，是全军覆没）。⇒ 这里**先按当前条件过滤**：
-        #   只把当前条件里确实存在的判定变量交下去，不在的**如实记下来**交给回执说清。
-        _declared = set(self.formula_signals(p))
-        _page_keys = [str(it.get('key') or '') for it in items
-                      if not self.plan_for_item(p, it)]
-        _usable = [k for k in _page_keys if k in _declared] if _declared else _page_keys
-        _skipped = [k for k in _page_keys if k not in _usable]
-        queue = [{'digest': 'page', 'plan': {}, 'label': '本页方案',
-                  'signal_names': _usable, 'skipped': _skipped}]
-        for it in items:
-            plan = self.plan_for_item(p, it)
-            if not plan:
-                continue
-            dg = self.plan_digest(plan)
-            hit = next((q for q in queue if q['digest'] == dg), None)
-            if hit is None:
-                hit = {'digest': dg, 'plan': plan,
-                       'label': str(plan.get('name') or '其他方案'), 'signal_names': []}
-                queue.append(hit)
-            hit['signal_names'].append(str(it.get('key') or ''))
-        return queue
-
-    def _item_computed(self, p, item) -> bool:
-        """该项**在它自己那个方案的结果里**算过没有（没有 ⇒ 回执要说"点扫描把它一起算进来"）。"""
-        oc = self.outcome_for(p, item)
-        if oc is None:
-            return False
-        return str((item or {}).get('key') or '') in {
-            str(s) for s in (oc.result.signals() or [])}
-
-    def _queue_step(self, p=None) -> dict:
-        """队列里**当前**那一步（越界 ⇒ 给一个安全的"本页"步，绝不抛）。"""
-        p = p or self.page
-        queue = list(getattr(p, '_scan_queue', None)
-                     or [{'digest': 'page', 'plan': {}, 'label': '本页方案',
-                          'signal_names': []}])
-        idx = int(getattr(p, '_scan_index', 0))
-        return queue[idx] if 0 <= idx < len(queue) else queue[-1]
-
-    def _has_more_plans(self, p) -> bool:
-        return int(getattr(p, '_scan_index', 0)) + 1 < len(
-            getattr(p, '_scan_queue', None) or [])
-
-    @staticmethod
-    def _plan_scan_kwargs(plan: dict, fallback_params, fallback_thresholds) -> tuple:
-        """借来的方案给什么用：**它的条件 / 参数 / 粗筛阈值**；缺哪样沿用本页那一样。"""
-        from core.cross_section import ScanThresholds
-
-        params = fallback_params
-        _ptext = BreadthFlow.plan_field(plan, 'params')
-        if _ptext:
-            params = parse_params_text(str(_ptext))
-        # ⚠ 一律走 `_as_thresholds`（= 引擎的 `from_dict`）—— 手搓白名单会**悄悄丢字段**：
-        #   换手率 / 流通市值 / 涨跌幅 三项曾被我漏掉 ⇒ 借来的方案会拿本页阈值去扫（静默换口径）。
-        th = BreadthFlow._as_thresholds(BreadthFlow.plan_field(plan, 'thresholds'))
-        if th is None:
-            th = fallback_thresholds
-        return params, th
-
-    def _run_queued_plan(self, busy_text: str = '') -> bool:
-        """起线程跑队列里的**当前**方案（跑完由 `_on_finished` 续下一个；**一次只起一个线程**）。"""
-        p = self.page
-        step = self._queue_step(p)
-        plan = step.get('plan') or {}
-        formula = str(self.plan_field(plan, 'formula', '')
-                      or p._formula_pane.txt_formula.toPlainText()).strip()
-        if not formula:
-            p.lbl_receipt.setText('（借来的方案）筛选条件是空的 ⇒ 跳过它。')
-            return False
-        params, th = self._plan_scan_kwargs(plan, getattr(self, '_scan_params', {}),
-                                           p._thresholds)
-        job = p._guard.next()                             # 取号：迟到的旧回包会被丢弃（§9-O5）
-        p._worker = CrossSectionWorker(
-            job, kline_zone_dir('kline_daily'), formula, symbols=list(p._symbols),
-            params=params, thresholds=th, asof=None, names=dict(p._names),
-            force=bool(getattr(self, '_scan_force', False)),
-            incremental=bool(getattr(self, '_scan_incremental', False)), store=p._store,
-            # ★1.73 期 1：把**属于这个方案**的判定变量一起算（一次读盘全部拿到）
-            signal_names=list(step.get('signal_names') or []))
-        p._worker.progress.connect(self._on_progress)
-        p._worker.finished.connect(self._on_finished)
-        p._worker.failed.connect(self._on_failed)
-        p._worker.start()
-        _idx = int(getattr(p, '_scan_index', 0))
-        _n = len(getattr(p, '_scan_queue', None) or [])
-        if _idx > 0:
-            p.lbl_receipt.setText(f'正在补第 {_idx + 1}/{_n} 个方案的扫描'
-                                  f'（{step.get("label")}）…')
-        elif busy_text:
-            p.lbl_receipt.setText(busy_text)
-        return True
-
-    # ---------- 多方案：UI 入口（从已存方案借一个判定变量）----------
-    def on_import_item(self) -> None:
-        """「＋ 从其他方案添加」——**任何失败都要看得见**（绝不"点了没反应"，§10-4）。
-
-        ⚠ 用户 2026-10-16 实测："换了不同名的变量 ⇒ 直接没有反应" —— 根因是槽函数里抛异常
-          （见 `plan_digest` 那条 dict/ScanThresholds 的类型错），异常一抛，用户什么也看不到。
-          ⇒ 入口包一层：出错 ⇒ **弹窗 + 回执**都写清（用户知道发生了什么、可以重试）。
-        """
-        try:
-            self._on_import_item_impl()
-        except Exception as e:                # noqa: BLE001 —— 方案库/解析/取字段任一步都可能出错
-            p = self.page
-            p.lbl_receipt.setText(f'从其他方案添加失败：{type(e).__name__}: {e}')
-            QMessageBox.warning(
-                p, '从其他方案添加失败',
-                f'{type(e).__name__}: {e}\n\n'
-                '（这一步只**读**方案库、不改你的配置 ⇒ 可以重试或换一个方案。）')
-
-    def _on_import_item_impl(self) -> None:
-        """「＋ 从其他方案添加」正文：选方案 → 选它的判定变量 → 上屏（**没算过 ⇒ 回执说要扫描**）。
-
-        ⚠ **只读**方案池、**不改**本页配置（不是"载入方案"：载入会把本页条件换掉）。
-        """
-        p = self.page
-        plans = self.saved_plans(p)
-        if not plans:
-            QMessageBox.information(
-                p, '从其他方案添加',
-                '还没有保存过筛选方案 —— 先在「ƒ 库」浮窗的「📚 本页方案」区把当前配置存一个。')
-            return
-        names = [str(pl.get('name') or '未命名') for pl in plans]
-        name, ok = QInputDialog.getItem(p, '从其他方案添加', '选择方案：', names, 0, False)
-        if not ok or not name:
-            return
-        plan = next((pl for pl in plans if str(pl.get('name') or '未命名') == name), None)
-        if plan is None:
-            return
-        from core.cross_section import signal_names as _sig_names
-        try:
-            signals = list(_sig_names(str(self.plan_field(plan, 'formula', '') or '')))
-        except Exception:                     # noqa: BLE001 —— 方案里的公式解析不了 ⇒ 如实说
-            signals = []
-        if not signals:
-            QMessageBox.information(p, '从其他方案添加',
-                                    f'方案「{name}」里没有可当判定变量的输出 ⇒ 加不了。')
-            return
-        sig, ok2 = QInputDialog.getItem(p, '从其他方案添加', '选它的判定变量：', signals,
-                                        len(signals) - 1, False)
-        if not ok2 or not sig:
-            return
-        self._add_imported_item(plan, str(sig))
-
-    def _add_imported_item(self, plan: dict, sig: str) -> None:
-        """把"借来的判定变量"落成一个统计项（存**方案快照**：条件/参数/粗筛阈值 ⇒ 可独立成一次扫描）。"""
-        p = self.page
-        plan = dict(plan or {})
-        # ⚠ 一律走访问器（真实记录的公式在 `config['formula']` —— 读错位置就会存出一个**空公式**，
-        #   那样"借来的项"这一步扫描会**悄悄用本页公式**算（静默错数据，§11.5-134 同族））
-        descriptor = {'plan_id': str(self.plan_field(plan, 'id', '') or ''),
-                      'name': str(self.plan_field(plan, 'name', '') or ''),
-                      'formula': str(self.plan_field(plan, 'formula', '') or ''),
-                      'params': str(self.plan_field(plan, 'params', '') or ''),
-                      'thresholds': self.plan_field(plan, 'thresholds') or {}}
-        items = [dict(it) for it in ((p._items or []) or self.active_items(p))]
-        _dg = self.plan_digest(descriptor)
-        if any(str(it.get('key')) == str(sig)
-               and self.plan_digest(it.get('plan')) == _dg for it in items):
-            p.lbl_receipt.setText(f'「{sig}」已经在屏上了（同一个方案）。')
-            return
-        items.append({'key': str(sig), 'label': f'{sig}（{descriptor["name"]}）',
-                      'color': ROW_COLORS[len(items) % len(ROW_COLORS)], 'visible': True,
-                      'focus': False, 'plan': descriptor,
-                      'source_label': f'来自方案：{descriptor["name"]}'})
-        p._items = items
-        self._after_items_changed(
-            f'已从方案「{descriptor["name"]}」添加判定变量「{sig}」'
-            '（**条件 / 参数 / 粗筛阈值取该方案**；统计范围与复权仍用本页当前设置）')
 
     def refresh(self) -> None:
         """用缓存矩阵重画当前区间（**零成本**：不进线程、不读盘，D3）。
@@ -977,179 +678,6 @@ class BreadthFlow:
         box.setStandardButtons(QMessageBox.StandardButton.Ok)
         box.exec()
 
-    # ==========================================
-    # ★1.75 / §7-B16 期 3：三视图（多行小图 / 事件对齐 / 关系卡）+ "与指数的关系"报告
-    #   用户 2026-10-15 确认：**L1 分段控件切三视图（不新开页面）** · 色带做副图叠加 ·
-    #   关系卡**要导出 PNG/CSV**。三视图共用同一份结果 ⇒ 切换/刷新全是**纯计算**，**不重扫**。
-    # ==========================================
-    def current_view(self, p=None) -> str:
-        """当前视图 key —— **状态只在分段控件一处**（`SegmentedControl.current_key()`，
-        §7-B6-D-6：禁止从控件外观反推业务状态）。"""
-        p = p or self.page
-        seg = getattr(p, 'seg_view', None)
-        key = str(seg.current_key() if seg is not None else VIEW_ROWS)
-        return key if key in VIEW_INDEX else VIEW_ROWS
-
-    def _index_close(self, p=None):
-        """副图那个指数的收盘序列（index = 交易日）—— 没有就返回 None（报告如实说"缺指数"）。"""
-        p = p or self.page
-        df = getattr(p, '_index_df', None)
-        if df is None or getattr(df, 'empty', True):
-            return None
-        if 'date' not in getattr(df, 'columns', []) or 'close' not in df.columns:
-            return None
-        data = df[['date', 'close']].copy()
-        data['date'] = pd.to_datetime(data['date'], errors='coerce')
-        data['close'] = pd.to_numeric(data['close'], errors='coerce')
-        data = data.dropna().drop_duplicates(subset='date', keep='last').sort_values('date')
-        return None if data.empty else data.set_index('date')['close']
-
-    def relation_report(self, p=None) -> dict:
-        """把"与指数的关系"算成一份**可渲染 · 可导出**的报告（纯计算，**零重扫**）。
-
-        `{'items': [...], 'index_label', 'range_label', 'windows', 'missing'}`；每项含
-        `fwd`（条件 vs 基线，逐窗口）· `event`（事件对齐原始 dict，含两个 n）· `leadlag`（逐 lag 相关）
-        · `lead_peak`（峰值 (lag, r)）· `ic`（逐窗口 Rank IC）· `perm`（置换检验）· `verdict_text`
-        （三道闸结论，供关系卡"结论"列直接引用 —— 不自造措辞）。
-        """
-        p = p or self.page
-        out = {'items': [], 'index_label': '', 'range_label': '', 'missing': '', 'note': ''}
-        idx = self._index_close(p)
-        if idx is None:
-            out['missing'] = ('没有指数数据 ⇒ 算不了关系：请在「🌐 统计范围」里选一个指数，'
-                             '并确保副图已取到数据（缺数据时会自动补拉一次）。')
-            return out
-        out['index_label'] = str(p._display_pane.cb_overlay_code.currentText() or '').split(' ')[0]
-        out['range_label'] = str(p.cb_range.currentText() or '')
-        offsets = _RANGE_OFFSET.get(p._range_key)
-        outcome = p._outcome
-        if outcome is None:
-            out['missing'] = '还没有扫描结果 —— 先点「▶ 开始扫描」。'
-            return out
-        verdicts = self.gate_verdicts(p)
-        labels = {}
-        for it in self.active_items(p):
-            key = str(it.get('key') or '')
-            full = self.item_frame(p, it, sliced=False)       # ★1.76 期 4：按项取它自己那个方案
-            if full is None or getattr(full, 'empty', True):
-                continue
-            frame = full if offsets is None else full[full.index >= full.index[-1] - offsets]
-            if frame.empty:
-                frame = full
-            hits, ratio = frame.get('hits'), frame.get('ratio')
-            if hits is None or ratio is None:
-                continue
-            ev = event_study(hits, idx, window=20)
-            ll = lead_lag_corr(ratio, idx, lags=range(-10, 11))
-            _valid = {k: abs(v) for k, v in ll.items() if v == v}
-            peak = (max(_valid, key=_valid.get), _valid[max(_valid, key=_valid.get)]
-                    if _valid else (None, None))
-            dec = verdicts.get(key) or {}
-            labels[key] = str(it.get('label') or key)
-            out['items'].append({
-                'key': key, 'label': labels[key],
-                'color': str(it.get('color') or '#1E88E5'),
-                'ratio_pct': float(frame['hits'].gt(0).mean() * 100.0),
-                'fwd': conditional_forward_returns(hits, idx, RELATION_WINDOWS),
-                'event': ev,
-                'leadlag': ll,
-                'lead_peak': [peak[0], (ll.get(peak[0]) if peak[0] is not None else None)],
-                'ic': {str(w): rank_ic_of(ratio, idx, window=w) for w in RELATION_WINDOWS},
-                'perm': dict(permutation_p(hits, idx, window=20, draws=1000),
-                             n=int(ev.get('n_hit_days') or 0)),
-                'verdict_text': str(dec.get('reason') or ''),
-                # ★1.75 期 3：闸结论一并带上 —— 事件对齐图**据此跳过**不适用项（用户认可的口径：
-                #   "被闸拦住的项在事件图里显示『已跳过 + 为什么』"，而不是硬画一条读不出来的线）
-                'mode': str(dec.get('mode') or MODE_UNKNOWN),
-                'event_ok': bool(dec.get('event_ok', False)),
-                'n_hit_days': int(ev.get('n_hit_days') or 0),
-                'n_independent': int(ev.get('n_independent') or 0),
-            })
-        if not out['items']:
-            out['missing'] = '上屏的统计项都没有可用帧 —— 先扫描一次。'
-        return out
-
-    def _refresh_views(self, p=None, *, notify: bool = False) -> None:
-        """按**当前视图**刷新（切换视图、扫描回包、换区间、增删统计项都走这里）。
-
-        ⚠ 只在"需要它的视图"上做重活：多行小图由 `refresh()` 画（主路径），
-          事件对齐 / 关系卡才去算报告（含 1000 次置换）—— 不让人白白等。
-        """
-        p = p or self.page
-        key = self.current_view(p)
-        stack = getattr(p, 'view_stack', None)
-        if stack is not None:
-            stack.setCurrentIndex(VIEW_INDEX.get(key, 0))
-        if key == VIEW_ROWS:
-            return
-        report = self.relation_report(p)
-        if report.get('missing'):
-            p.event_chart.render([])
-            p.event_chart.lbl_note.setText(str(report['missing']))
-            p.relation_card.set_report(None)
-            if notify:
-                p.lbl_receipt.setText(str(report['missing']))
-            return
-        # ⚠ 事件图**只画闸允许的条件**（用户认可的口径）：被闸拦下的项在这里"已跳过 + 为什么"，
-        #   而不是硬画一条"命中日连成片、读不出东西"的线（那等于用图骗人）。
-        _ok = [it for it in report['items'] if it.get('event_ok')]
-        _skip = [it for it in report['items'] if not it.get('event_ok')]
-        p.event_chart.render([(it['label'], it['color'], it.get('event') or {}) for it in _ok])
-        if _skip:
-            _why = '；'.join(f"{it['label']}（{it.get('verdict_text') or '太频繁'}）"
-                            for it in _skip[:3])
-            p.event_chart.lbl_note.setText(
-                p.event_chart.lbl_note.text()
-                + f'　·　⛔ 已跳过 {len(_skip)} 项（事件图不适用，请看「🧮 关系卡」的占比分档 / IC）：'
-                + _why)
-        p.relation_card.set_report(report)
-
-    def on_view_changed(self, key: str) -> None:
-        """L1 分段控件切换视图 —— **纯渲染**（不进线程、不读盘、**不重扫**）。"""
-        p = self.page
-        self._refresh_views(p)
-        names = {VIEW_ROWS: '多行小图', VIEW_EVENT: '事件对齐', VIEW_CARD: '关系卡'}
-        self._refresh_views(p, notify=True)
-        p.lbl_receipt.setText(f'已切到「{names.get(str(key), key)}」——'
-                              '同一份扫描结果换一种看法，**没有重扫**。')
-        p.save_breadth_ui()
-
-    # ---------- 导出（用户 2026-10-15 拍板：要）----------
-    def on_export_png(self) -> None:
-        """导出关系卡（PNG）—— 卡长什么样就存什么样（`grab()`，不重画、不重算）。"""
-        p = self.page
-        default = os.path.join(os.path.expanduser('~'),
-                               f'jian-m3-relation-{_dt.date.today().isoformat()}.png')
-        path, _sel = QFileDialog.getSaveFileName(p, '导出关系卡（PNG）', default,
-                                                 'PNG 图片 (*.png)')
-        if not path:
-            p.lbl_receipt.setText('已取消导出（没有写任何文件）。')
-            return
-        ok = bool(p.relation_card.grab().save(path))
-        p.lbl_receipt.setText(f'已导出关系卡：{path}' if ok
-                              else f'导出失败：{path}（目录不可写？）—— 没有静默成功。')
-
-    def on_export_csv(self) -> None:
-        """导出关系数字（CSV，utf-8-sig ⇒ Excel 直接开不乱码）。**导出的就是卡上那些数**。"""
-        p = self.page
-        rows = p.relation_card.rows_for_csv()
-        if not rows:
-            p.lbl_receipt.setText('没有可导出的关系数字 —— 先扫描一次，并切到「🧮 关系卡」视图。')
-            return
-        default = os.path.join(os.path.expanduser('~'),
-                               f'jian-m3-relation-{_dt.date.today().isoformat()}.csv')
-        path, _sel = QFileDialog.getSaveFileName(p, '导出关系数字（CSV）', default,
-                                                 'CSV 表格 (*.csv)')
-        if not path:
-            p.lbl_receipt.setText('已取消导出（没有写任何文件）。')
-            return
-        try:
-            pd.DataFrame(rows).to_csv(path, index=False, encoding='utf-8-sig')
-        except OSError as e:                       # noqa: PERF203 —— 磁盘/权限问题如实说
-            p.lbl_receipt.setText(f'导出失败：{path}（{e}）—— 没有静默成功。')
-            return
-        p.lbl_receipt.setText(f'已导出 {len(rows)} 行关系数字：{path}'
-                              '（口径：前向收益与 IC 的单位见表头；样本不足的行标了"样本足够=False"）')
 
     # ==========================================
     # 统计项（★1.73 / §7-B16 期 1）—— 真源 = `p._items`，**本模块是唯一写入点**（§9-D）

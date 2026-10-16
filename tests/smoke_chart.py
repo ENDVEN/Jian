@@ -4256,7 +4256,8 @@ print("\n== §7-B11 后续 · 后台下载并发池（v1.44）==")
 # ==========================================
 try:
     import ui.workers as _uw66
-    from data.sync_service import ThrottlePolicy as _TP66, DEFAULT_DOWNLOAD_CONCURRENCY
+    from data.sync_service import (MAX_DOWNLOAD_CONCURRENCY, ThrottlePolicy as _TP66,
+                                   DEFAULT_DOWNLOAD_CONCURRENCY)
     from ui.workers import RateGovernor as _RG66
     from ui.download_hub import download_policy_from_prefs as _dpf66
     from ui.download_hub import DownloadHub as _DH66
@@ -4341,9 +4342,18 @@ try:
     check("★ download_policy_from_prefs：逐项读全局（interval/熍断/跳过/jitter bool→float）",
           abs(_pp66.interval - 1.2) < 1e-9 and _pp66.jitter == 0.0
           and _pp66.circuit_breaker == 5 and _pp66.skip_fresh is False)
-    check("★ concurrency 越界夹进 [1,4]（K≤4：9→4、0→1）",
-          _dpf66(_P66({"concurrency": 9})).concurrency == 4
+    check("★ 1.78：concurrency 越界夹进 [1, MAX]（MAX=8：9→8、0→1）—— 上限只有一处常量",
+          _dpf66(_P66({"concurrency": 9})).concurrency == MAX_DOWNLOAD_CONCURRENCY == 8
           and _dpf66(_P66({"concurrency": 0})).concurrency == 1)
+    # ★1.78（用户 2026-10-16 要求"等待可预期"）：ETA 必须**含并发**且**不许算出 0 秒**
+    from data.sync_service import estimate_seconds as _est66
+    check("★ 1.78：ETA 估算**除以并发**（K=1 与 K=4 差约 4 倍：原来完全没算并发 ⇒ K=3 时高估 3 倍）",
+          _est66(400, _TP66(interval=1.0, jitter=0.0, concurrency=1), stale_count=400) > 4
+          * _est66(400, _TP66(interval=1.0, jitter=0.0, concurrency=4), stale_count=400) - 10)
+    check("★ 1.78：ETA **不许算出 0 秒**（interval=0 的激进档也给『每条请求的网络地板』）",
+          _est66(10, _TP66(interval=0.0, jitter=0.0, concurrency=4), stale_count=10) >= 1)
+    check("★ 1.78：『已新鲜』的只数**不发请求 ⇒ 零耗时**（stale_count=0 ⇒ 0 秒，不再『永远 50 分钟』）",
+          _est66(1000, _TP66(interval=0.5, jitter=0.3), stale_count=0) == 0)
     check("★ v6.74（B 档）：空/缺键 ⇒ 回落默认（K=2 / interval 0.5，唯一真源 = preferences.DEFAULTS）",
           _dpf66(_P66({})).concurrency == DEFAULT_DOWNLOAD_CONCURRENCY
           and abs(_dpf66(_P66({})).interval - 0.5) < 1e-9)
@@ -5902,6 +5912,52 @@ try:
           bool(np.isnan(_p_na3['p'])) and bool(_p_na3['reason']))
 except Exception as _e3:  # noqa: BLE001
     check(f"§7-B16 期 3 关系内核断言整段抛异常: {type(_e3).__name__}: {_e3}", False)
+
+# ==========================================
+# §9 两条口径债收口（★1.78 · 用户 2026-10-16："请根据软件显示情况与用户体验综合权衡"）
+#   §9.1 = 数据湖列结构 / 隐性依赖 ⇒ **列合约**（`data/lake_schema.py`：required / optional /
+#          forbidden + 与落盘白名单**交叉一致**断言）；
+#   §9.2 = 宽表 shift / REF / CROSS 的跨空洞 ⇒ **已定口径 (a)**："按标的自身的交易日集合"
+#          （与显示一致 / 与 M1 一致 / 与通达信直觉一致），并用"挖了空洞的序列"钉住。
+# ==========================================
+print("\n== §9 口径债收口：数据湖列合约（§9.1）+ 空洞语义（§9.2）==")
+try:
+    from data.akshare_feed import DAILY_KEEP_COLUMNS as _DKC78  # noqa: E402
+    from data.lake_schema import DAILY as _LS78  # noqa: E402
+    from data.lake_schema import KNOWN_UNSUPPORTED as _LSU78  # noqa: E402
+    from data.lake_schema import split_columns as _lsc78  # noqa: E402
+
+    check("★ 1.78 / §9.1：**列合约与落盘白名单同源**（required ∪ optional == 白名单）"
+          "—— 否则『声明说支持、落盘却裁掉』就是下一个静默事故",
+          set(_LS78.required) | set(_LS78.optional) == set(_DKC78))
+    check("★ 1.78 / §9.1：**隐性依赖已登记**（turnover / outstanding_share 进 optional —— "
+          "它们只有新浪源给、东财兜底源不给；缺了记「数据不足」，**绝不当 0**）",
+          {'turnover', 'outstanding_share'} <= set(_LS78.optional))
+    check("★ 1.78 / §9.1：历史透传列（期货 / 中文列）登记为**明确不认**且**不做映射**"
+          "（映射 = §9-V 的 100× 静默事故）",
+          {'持仓量', '动态结算价', '成交额', '换手率'} <= set(_LSU78)
+          and '成交额' not in _LS78.required and '成交额' not in _LS78.optional)
+    _miss78 = _lsc78(pd.DataFrame({'date': [], 'close': []}), 'kline_daily')
+    check("★ 1.78 / §9.1：缺 required ⇒ 报出来（该标的三态「数据不足」）；缺 optional ⇒ "
+          "单列「数据不足」（`split_columns` 是下游唯一入口）",
+          'open' in _miss78['missing_required']
+          and 'turnover' in _miss78['missing_optional'])
+
+    from core.formula.program import (execute_programs as _ep78,  # noqa: E402
+                                      parse_program as _pp78)
+    from core.formula.runtime import GAP_SEMANTICS as _GS78  # noqa: E402
+
+    _d78 = pd.DataFrame({'date': pd.bdate_range('2024-01-01', periods=4),
+                         'close': [10.0, 11.0, 12.0, 14.0]})   # 第 4 行 = 空洞之后（中间少一天）
+    _r78 = _ep78([_pp78('X := REF(C, 1);')], _d78, {})       # ⚠ 用 `execute_programs`（回 dict）；
+    check("★ 1.78 / §9.2：**已定口径 = (a) 按标的自身序列**（`REF(C,1)` 取上一根**有数据**的 K 线 = 12.0）"
+          "—— 若按全局日历对齐会是 NaN / 错位，这正是宽表向量化必须 groupby 的原因",
+          _GS78 == 'per_symbol' and abs(float(_r78['X'].iloc[-1]) - 12.0) < 1e-9)
+    _r78b = _ep78([_pp78('Y := MA(C, 2);')], _d78, {})
+    check("★ 1.78 / §9.2：窗口函数同口径（`MA(C,2)` 用**该标的自己的两根 K 线** = (12+14)/2 = 13）",
+          abs(float(_r78b['Y'].iloc[-1]) - 13.0) < 1e-9)
+except Exception as _e78:  # noqa: BLE001
+    check(f"§9 口径债断言整段抛异常: {type(_e78).__name__}: {_e78}", False)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:

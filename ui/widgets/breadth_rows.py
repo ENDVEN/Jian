@@ -194,10 +194,7 @@ class BreadthRowsChart(QWidget):
             self._render_bands()
         self._attach_axes()
         self._host.align_axis_widths()
-        try:
-            self._host._update_divider_position()
-        except Exception:                    # noqa: BLE001 —— 把手是装饰件，绝不许打断渲染
-            pass
+        # ★1.77：分界把手机制已删（M3 用「副图高度」数值框代替）⇒ 这里不再需要刷新把手位置
         self._host.set_readout_text(self._readout(self._pane_name(0), float(self._n - 1), 0.0))
         return len(self._rows)
 

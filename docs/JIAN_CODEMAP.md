@@ -336,7 +336,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
     │                    # ★1.74 **三道闸**（`gate_verdicts` / `_sync_gate_bar` / `on_thresholds_changed`）
     │                    # ★1.76 **三视图与关系报告**（`current_view` / `relation_report` / `_refresh_views` / `on_export_png|csv`）
     │                    # ★1.77 **多方案**（`plan_field` / `plan_digest` / `item_uid` / `item_frame` / `outcome_for` /
-    │                    # `scan_plan_queue` / `_run_queued_plan` / `on_import_item`）⇒ ⚠ **1388 行，已远超 400 红线**：再动先拆（候选见 RULES §4）
+    │                    # `scan_plan_queue` / `_run_queued_plan` / `on_import_item`）⇒ ⚠ **已拆**（见下两行）
+    │                    #     · ★1.77 **breadth_plan_flow.py**（**mixin**，300）：多方案路由（`plan_field` / `plan_digest` / `item_uid` / `item_frame` / `outcome_for`）+ `scan_plan_queue` / `_run_queued_plan`（逐个补扫）+ 「＋ 从其他方案添加…」（`on_import_item`）
+    │                    #     · ★1.77 **breadth_relation_flow.py**（**mixin**，182）：三视图切换（`current_view` / `on_view_changed` / `_refresh_views`）+ 关系报告（`relation_report`）+ 导出 PNG/CSV
     │                    #     · ★1.73 **breadth_rows.py**：**多行小图**（`BreadthRowsChart`）——
     │                    #         每统计项一行 = **柱（占比/家数）+ 5 周均线**；焦点行置顶 3 倍高；
     │                    #         底部指数副图**固定高度**（四图形：折线/面积/K线/美国线）；全行 x 联动 +
@@ -502,7 +504,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | 改行情同步/抓取节流 | `data/sync_service.py`（增量合并 + `ThrottlePolicy` 都在这里，**勿在 UI 里另起炉灶**） |
 | 改**失败原因分类 / 失败文案** | **`data/sync_service.py` 一处**（v1.38/§7-E2）：`_classify_error`（⚠ **先判 `looks_like_proxy_error` 文本指纹、再退回 isinstance** —— `requests.ProxyError` 也是 `OSError` 子类）+ `short_fetch_reason` / `friendly_fetch_message` / `friendly_constituent_message` 三出口 + `abort_reason_text`（批量中断原因，**三消费方共用**）。⚠ 文案里**不许写死本机端口/proxy 术语当唯一解释**（§10-10），有断言钉着 |
 | 改**代理全灭时的停手时机** | `ThrottlePolicy.proxy_circuit_breaker`（默认 **3**，与通用 `circuit_breaker=12` 分开，v1.38/§7-E2）+ `ui/workers.py: SyncWorker.run` 的 `consecutive_proxy` 计数与 `aborted_by` 回传 |
-| 改**数据湖里允许存在哪些列** | **`data/akshare_feed.py: DAILY_KEEP_COLUMNS`（唯一白名单）**（v1.39/§7-E3）—— `_normalize_ohlcv` 末尾 apply-if-present 裁列。⚠ **要加列先想清楚**：下游要读的列必须在这里登记，否则 **M2/M3 的相应筛选会静默失效**（`smoke_chart` 有"白名单 ⊇ 内核所需列"的交叉断言钉着）；⚠ 各分区列集合本来就不同（`index_daily` 无 `amount`、`kline_min` 无 `symbol`）⇒ 只能"只减不增"，**别 require** |
+| 改**数据湖里允许存在哪些列** | ★1.78 起**两处配套**：**声明** = `data/lake_schema.py`（列合约：required/optional/forbidden + `KNOWN_UNSUPPORTED`；下游唯一入口 `split_columns()`）· **落盘白名单** = `data/akshare_feed.py: DAILY_KEEP_COLUMNS`（两者有**交叉一致断言**，改一处必看另一处）（v1.39/§7-E3）—— `_normalize_ohlcv` 末尾 apply-if-present 裁列。⚠ **要加列先想清楚**：下游要读的列必须在这里登记，否则 **M2/M3 的相应筛选会静默失效**（`smoke_chart` 有"白名单 ⊇ 内核所需列"的交叉断言钉着）；⚠ 各分区列集合本来就不同（`index_daily` 无 `amount`、`kline_min` 无 `symbol`）⇒ 只能"只减不增"，**别 require** |
 | 改日线收盘定稿判据 | **`data/sync_service.py` 一处**（v6.46 / §7-B10）：`DAILY_SETTLE_HHMM` + `is_daily_bar_settled`（纯函数）+ `_drop_unsettled_tail`（`refresh_one` 落盘前对 `DAILY_ZONES` 裁尾）。M1/M2/M3 一律复用，**别在页面另写一套“今天算不算数”** |
 | 改“最近交易日”/交易日历 | **`data/trade_calendar.py`（v6.46 / §7-B10）**：`load_or_fetch`（当日 JSON 缓存 `~/.jian_data/trade_calendar.json` + 失败回退）/ `latest_settled_trading_day`（日历 ∩ 定稿判据）。接口细节在 `data/akshare_feed.py:fetch_trade_calendar`；UI 取数只走 `ui/workers.py:CalendarWorker` |
 | 改 M1 回测区间默认终点/滞后补 | `ui/views/backtest.py`（`date_end` 默认 + `lbl_range_note` 回执行 + 构页时 `flow.start_calendar_fetch()`）+ `ui/widgets/backtest_flow.py`（`_on_calendar` 精修默认终点 / `_prepare_stock_then_run` 滞后自动补 / `_apply_end_date_receipt` 补不到回退+回执）。⚠ **控件名 `date_end`/`date_start`/`cmb_range_preset` 不能改**（迁移护栏）；状态仍留在页面 |

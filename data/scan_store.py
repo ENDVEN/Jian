@@ -230,6 +230,10 @@ class ScanStore:
         self.max_bytes = max(1, int(max_bytes))
         self.hits = 0
         self.misses = 0
+        # ★1.77 续：**淘汰计数** —— 多方案同屏时（M3 期 4）上限 4 套也可能被超出：
+        #   纪律要求"**不许悄悄淘汰正在用的那套**"（§7-B16 期 4 测试要点）⇒ 淘汰必须**可见**：
+        #   页面读它、在被淘汰的那一轮回执里说清"旧方案结果已淘汰、切回去要重扫"。
+        self.evicted = 0
         self._items: 'OrderedDict[ScanKey, CrossSectionResult]' = OrderedDict()
 
     # ---------- 基本读写 ----------
@@ -268,6 +272,7 @@ class ScanStore:
         while len(self._items) > 1 and (len(self._items) > self.max_entries
                                         or self.bytes_used() > self.max_bytes):
             self._items.popitem(last=False)   # 淘汰最久未用的
+            self.evicted += 1                 # ★1.77 续：**淘汰要计数**（页面据此出声，见 `evicted`）
 
     def entries(self) -> int:
         return len(self._items)

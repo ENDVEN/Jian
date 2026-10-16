@@ -358,7 +358,10 @@ class SyncWorker(QThread):
             if fail_reason is not None:
                 self.failed.emit(symbol, fail_reason)
 
-        workers = max(1, min(int(policy.concurrency), 4, total or 1))
+        # ★1.78：上限从**硬编码 4** 改成唯一常量 `MAX_DOWNLOAD_CONCURRENCY`（=8，用户 2026-10-16 拍板）
+        #   —— 以前这个 4 与设置页/偏好夹取处的 4 是三处**各写一遍**，改一处漏两处是迟早的事。
+        from data.sync_service import MAX_DOWNLOAD_CONCURRENCY as _MAXC
+        workers = max(1, min(int(policy.concurrency), _MAXC, total or 1))
         ex = ThreadPoolExecutor(max_workers=workers)
         try:
             for symbol in self._symbols:

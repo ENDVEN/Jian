@@ -62,7 +62,7 @@ MINUTE_KEY_SEP = "@"
 __all__ = ["MarketSyncService", "ThrottlePolicy", "ADJUST_QFQ", "ADJUST_NONE",
            "ADJUST_CHOICES", "ADJUST_LABELS", "adjust_label", "zone_for_adjust",
            "ZONE_KLINE", "ZONE_KLINE_RAW", "ZONE_INDEX", "ZONE_MIN", "estimate_seconds",
-           "format_duration", "DEFAULT_DOWNLOAD_CONCURRENCY",
+           "format_duration", "DEFAULT_DOWNLOAD_CONCURRENCY", "MAX_DOWNLOAD_CONCURRENCY",
            "short_fetch_reason", "friendly_fetch_message", "friendly_constituent_message",
            "looks_like_proxy_error", "abort_reason_text",
            "DEFAULT_MIN_DATE", "MINUTE_PERIODS", "MINUTE_DEPTH_DAYS",
@@ -116,7 +116,14 @@ def zone_for_adjust(adjust: str) -> str:
 #   而是靠"等待与网络往返重叠"：并发池共享**一把全局节流阀**（见 ui/workers.RateGovernor），
 #   聚合请求发起间隔仍 == `ThrottlePolicy.interval`，只是把每只的 fetch 往返藏进别的等待里。
 #   → 相同请求率下约 2× 提速，封 IP 风险与今日串行**基本持平**。
-# ⚠ 上限 K<=4（与"宁可慢也不封 IP"取向一致）；把它调回 1 == 完全退回旧串行（可零风险回滚）。
+# ⚠ ★1.78（用户 2026-10-16 拍板"放开上限"）：上限 **K<=8**（旧为 4）——**默认仍是 2**：
+#   默认档是"多数人一直用着"的那档，保持 v6.74 定的 B 档（0.5s × K2 ≈4 请求/秒）；
+#   上限只影响**愿意冒险**的人（设置页「下载与取数」可调，文案已写明风险）。
+#   两道安全网仍在：① 检测到东财限流 ⇒ **自动降到 1.2s / K=1**（`download_policy_from_prefs`）；
+#   ② 调回 1 == 完全退回旧串行（零风险回滚开关）。
+MAX_DOWNLOAD_CONCURRENCY = 8
+# 每条请求的**网络地板**（秒）：ETA 估算用（`interval` 为 0 的激进档也不能算出"0 秒"）。
+MIN_PER_REQUEST_SECONDS = 0.25
 # ⚠ 这是**下载队列**（DownloadHub.submit）用的档位；`ThrottlePolicy.concurrency` 字段默认仍是 1
 #   （裸构造 / 单测 / 直接起 SyncWorker 一律串行，确定性不变）。
 DEFAULT_DOWNLOAD_CONCURRENCY = 2
@@ -786,9 +793,19 @@ def estimate_seconds(count: int, policy: ThrottlePolicy, stale_count: int = None
     已新鲜的一只不发请求、零耗时。旧版一律按 `count` 算，于是哪怕该干的是 0 件，
     界面也永远显示"约 50 分钟"（**等于把用户劝退**，§7-E5 实测复核）。
     未给定时保持旧语义：结果视为**上限**（调用方应据此说"最多约…"）。
+
+    ★1.78 修正两条（用户 2026-10-16 实测"半小时"后要求"等待可预期"）：
+    ① **并发要除进去**：并发池让 N 个请求的"等待"彼此重叠（聚合请求率不变）⇒ 旧版
+       `n × interval` 在 K=3 时把耗时**高估约 3 倍**，用户按它安排时间会被误导；
+    ② **给每条请求留网络地板**：`interval=0`（激进档）时旧版算出 0 秒 ⇒ 说"约 0 秒"等于骗人；
+       每条请求至少 `~0.25s` 的网络往返 + 解析，故取下限。
+    ⚠ 仍是**粗略**：不含重试/熔断/限流降档的影响（那些只会更慢）⇒ 界面文案一律用"约"。
     """
     n = count if stale_count is None else max(0, int(stale_count))
-    return int(n * policy.interval * (1 + policy.jitter / 2))
+    k = max(1, int(getattr(policy, "concurrency", 1) or 1))
+    per = max(float(getattr(policy, "interval", 0.0) or 0.0), MIN_PER_REQUEST_SECONDS) \
+        * (1 + float(getattr(policy, "jitter", 0.0) or 0.0) / 2)
+    return int(n / k * per + 0.999)
 
 
 def format_duration(seconds) -> str:

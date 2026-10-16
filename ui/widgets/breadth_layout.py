@@ -76,6 +76,15 @@ GATES_HELP_TEXT = (
     '这三个阈值都可以在 设置 → 回测与扫描默认（M3 稀疏闸 / 频密闸 / 独立事件间隔）里调，\n'
     '也可以在相关页面就地调；改完立即生效、【不会重跑扫描】。')
 
+# ★1.77：**两条诚实边界**（用户 2026-10-16 定稿："提醒措辞加上"）——
+#   关系卡底部已常驻同款文案；这里再挂到常驻 ⓘ 上（说明不许只存在一个地方）。
+HONESTY_TEXT = ('两条必读的诚实边界（关系卡底部也常驻显示）：\n'
+                '① **幸存者偏差**：花名册是「今天的名单」—— 用它回看历史会漏掉当年还没上市、'
+                '后来退市的票，结论偏向"活下来的那批"。别把关系卡的数字当成无偏历史统计。\n'
+                '② **相关 ≠ 因果**：关系卡只回答"同期 / 领先 N 期有多相关"，不回答"能不能预测"；'
+                '多方案 × 多窗口一起比较时请按比较次数收紧显著性'
+                '（例：3 条件 × 3 窗口 = 9 次 ⇒ Bonferroni 需 p < 0.0056）。')
+
 # 抽屉几何（与 scan_layout / backtest.py 同款口径，§11.5-26）
 DRAWER_MIN_WIDTH = 420
 DRAWER_MAX_WIDTH = 560
@@ -424,7 +433,7 @@ class BreadthLayout:
         p.lbl_cached.setStyleSheet('font-size: 11px; color: #8A94A6;')
         head.addWidget(p.lbl_cached)
         # ★1.73 收尾：**常驻说明入口**（ⓘ 三道闸 + 怎么看图）—— 说明**不许只存在首次弹窗里**
-        p.hint_icon = hint_icon(GATES_HELP_TEXT)
+        p.hint_icon = hint_icon(GATES_HELP_TEXT + '\n\n' + HONESTY_TEXT)
         head.addWidget(p.hint_icon)
         lay.addLayout(head)
 
