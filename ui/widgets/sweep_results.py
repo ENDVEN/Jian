@@ -124,9 +124,14 @@ class SweepResultsMixin:
                               nb_mean=metrics.nb_mean, rank_ic=ic, platform=plat)
         self._show_heatmap(metrics, plat, spike)
         self._show_other_views(metrics, labels, champ)
+        # ★1.79 / §7-B15 第二轮①：**换了研究 ⇒ 上一轮的成本斜率必须作废**（不许张冠李戴：
+        #   斜率属于"上一批候选 + 上一段样本外"，与这一批不是一回事）
+        self._cost_slopes = {}
+        self._cost_levels_used = ()
         self._set_verdict(ic, pbo, rows)
         self._fill_table(rows)
         self.btn_save.setEnabled(True)
+        self.btn_cost.setEnabled(True)   # 两段都跑完才谈得上"换成本档重跑样本外"
         usage = self._archive.oos_usage(self._oos_key())
         msg = (f"样本外完成 {len(oos_c)} 组。⚠ 该样本外窗口已被 {usage} 项研究引用"
                "（含本次）—— 引用越多，它越像样本内（红线①）")
@@ -179,7 +184,8 @@ class SweepResultsMixin:
             f"区间 <b>{iv.is_start} ~ {iv.is_end}</b>（样本内）→ "
             f"<b>{iv.oos_start} ~ {iv.oos_end}</b>（样本外）· 成交：<b>{fill}</b> · "
             f"风控：<b>{risk_txt}</b> · 过门槛 <b>"
-            f"{sum(1 for r in rows if r.get('kept'))}</b> 组")
+            f"{sum(1 for r in rows if r.get('kept'))}</b> 组"
+            + self._cost_verdict_line())
         # ★R1：KPI 小卡行（与 M2 结果区**同一个** `kpi_card`）—— 数字与结论条**同源同一批变量**；
         #   结论条文字是给"读"的，这排卡是给"扫一眼"的（红线③：两者都在屏上、都不许折叠）。
         kpi = getattr(self, "kpi", None) or {}
@@ -251,8 +257,9 @@ class SweepResultsMixin:
                               platform_cells=p_cells, spike_cells=s_cells)
 
     def _fill_table(self, rows) -> None:
-        """候选表（★R5：9 列 —— 补「过门槛 ✓✗」与「平台/尖峰」两列 + 行悬停）。"""
+        """候选表（★R5：9 列 → ★1.79：**10 列** —— 再加「成本斜率」；行悬停带依据）。"""
         n_kept = sum(1 for r in rows if r.get("kept"))
+        self._rows = list(rows)     # ★1.79：成本敏感性要按**候选表当前顺序**取 Top-N
         self.table.setRowCount(len(rows))
         self.table.setUpdatesEnabled(False)
         for r, row in enumerate(rows):
@@ -269,33 +276,62 @@ class SweepResultsMixin:
                     nbr = "；邻居：" + "、".join(who[:6]) + ("…" if len(who) > 6 else "")
             except (IndexError, KeyError, TypeError):
                 nbr = ""
+            # ★1.79 第二轮①：**成本斜率**（只对 Top-N 重跑 OOS 得到；不参与排序）
+            # ★1.79 重做（用户 2026-10-17 实测"点了没反应"）：三种「—」必须分清 ——
+            #   ① 还没跑过 ② **不在前 N 名**（口径上就没跑它 ⇒ 不是 0）③ 跑了但该候选有档失败。
+            #   混成同一个「—」+ 同一句 tooltip，用户只能得出"没反应"的结论。
+            _slope = (getattr(self, "_cost_slopes", None) or {}).get(row.get("key"))
+            _has_cost = _slope is not None and _slope == _slope
+            _cost_ran = bool(getattr(self, "_cost_slopes", None))
+            _in_topn = int(row.get("rank") or 0) <= int(getattr(self, "COST_TOP_N", 10))
+            cost_txt = (f"{float(_slope) * 100:+.2f}" if _has_cost else "—")
+            if _has_cost:
+                cost_tip = ("· 成本斜率 %s 个百分点/万分之（= 每加 1 万分之佣金，年化变化多少；"
+                            "越接近 0 越稳）· **不参与排序**" % cost_txt)
+            elif not _cost_ran:
+                cost_tip = "· 成本斜率**还没跑**（跑完样本内+样本外后点「▶ 跑成本敏感性」）"
+            elif not _in_topn:
+                cost_tip = ("· 这一行**不在前 %d 名** ⇒ 本次没给它重跑（方案书口径：只跑 Top-N、"
+                            "不跑全网格）⇒ 显示「—」，**不是 0**"
+                            % int(getattr(self, "COST_TOP_N", 10)))
+            else:
+                cost_tip = "· 这一档没跑成（该候选有档位失败 / 结果缺失）⇒ 斜率为空（不插值）"
             tip = (f"{combo_txt} ⇒ IS {row['is_annual']:.2%} · OOS {row['oos_annual']:.2%} · "
                    f"邻域均值 {row['nb_mean']:.2%}（最差 {row['nb_worst']:.2%}）· "
                    f"交易 {row['trades']} 次"
                    + ("· ✅ 过门槛" if row.get("kept") else "· ❌ 未过门槛（门槛只筛不排，仍列出）")
                    + (f"· 判定：{'平台' if row['flag'] == '平' else '尖峰'}" if row.get("flag") else "")
-                   + nbr)
+                   + cost_tip + nbr)
             vals = [str(row["rank"]), combo_txt, f"{row['oos_annual']:.1%}",
                     f"{row['is_annual']:.1%}", f"{row['delta']:+.1%}",
                     f"{row['nb_mean']:.1%}", str(row["trades"]),
                     "✓" if row.get("kept") else "✗",
+                    cost_txt,
                     {"平": "平", "尖": "尖"}.get(row.get("flag"), "—")]
             for c, txt in enumerate(vals):
                 item = QTableWidgetItem(txt)
-                if c in (2, 3, 4, 5):
+                if c in (2, 3, 4, 5, 8):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight
                                           | Qt.AlignmentFlag.AlignVCenter)
-                elif c in (7, 8):
+                elif c in (7, 9):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setToolTip(tip)
                 if not row.get("kept"):          # ★R5：没过的**灰显保留**（不是删掉）
                     item.setForeground(QColor("#B4BECB"))
                 self.table.setItem(r, c, item)
         self.table.setUpdatesEnabled(True)
-        self.lbl_table_meta.setText(
+        # ★1.79：这行要**尽量短**（它横向可收缩，太长会被裁）—— 完整解释在「成交成本」卡里
+        _meta_txt79 = (
             "按 邻域均值 ↓, OOS ↓, |Δ| ↑ 排序；门槛只筛不排（✗ = 未过门槛，灰显保留）"
             f" · 过门槛 {n_kept} / 列出 {len(rows)} 组"
-            + (f"（只显示前 {CANDIDATE_SHOW_MAX} 行）" if len(rows) >= CANDIDATE_SHOW_MAX else ""))
+            + (f"（只显示前 {CANDIDATE_SHOW_MAX} 行）" if len(rows) >= CANDIDATE_SHOW_MAX else "")
+            + (f" · 成本斜率：前 {int(getattr(self, 'COST_TOP_N', 10))} 名 × "
+               f"{len(self._cost_levels_used)} 档（不参与排序）"
+               if getattr(self, "_cost_slopes", None) else ""))
+        self.lbl_table_meta.setText(_meta_txt79)
+        self.lbl_table_meta.setToolTip(
+            _meta_txt79 + "　（成本斜率只给候选表**前 N 名**：其余行是「没跑」不是 0；"
+                          "口径与逐档年化见下方「成交成本」卡）")
 
     @staticmethod
     def _idle_verdict_text() -> str:

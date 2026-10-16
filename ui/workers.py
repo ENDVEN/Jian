@@ -668,7 +668,8 @@ class ParamSweepWorker(QThread):
     failed = pyqtSignal(int, str)
 
     def __init__(self, job_id: int, df, spec, grid: GridPlan, interval: StudyInterval,
-                 stage: str = "both", done_keys=(), parent=None):
+                 stage: str = "both", done_keys=(), parent=None,
+                 commission_rate: float = None):
         super().__init__(parent)
         self._job_id = int(job_id)
         self._df = df
@@ -677,6 +678,11 @@ class ParamSweepWorker(QThread):
         self._interval = interval
         self._stage = str(stage or "both")
         self._done_keys = frozenset(done_keys)
+        # ★1.79 / §7-B15 第二轮①：**佣金档透传**。`run_sweep` 本来就吃这个参数
+        #   （core/param_sweep.py:144 → 两段 engine.run），而本线程此前从不转出来
+        #   ⇒ 全仓"成本敏感性"一直是零实现（审计 §7 可疑点①：宣称全参透传、实际恒为默认万3）。
+        #   `None` = 不传 ⇒ 走 `run_sweep` 自己的默认（老行为逐字不变）。
+        self._commission_rate = commission_rate
         self._cancel = False
         self.cancelled = False          # 事后判读：这次是不是被用户取消掉的
 
@@ -686,12 +692,16 @@ class ParamSweepWorker(QThread):
 
     def run(self):
         try:
+            _kw = {}
+            if self._commission_rate is not None:
+                _kw['commission_rate'] = float(self._commission_rate)
             outcome = run_sweep(
                 self._df, self._spec, self._grid, self._interval,
                 stage=self._stage,
                 done_keys=self._done_keys,
                 should_stop=lambda: self._cancel,
-                on_progress=lambda d, t, note: self.progress.emit(int(d), int(t), str(note)))
+                on_progress=lambda d, t, note: self.progress.emit(int(d), int(t), str(note)),
+                **_kw)
             self.cancelled = outcome.cancelled
             self.finished.emit(self._job_id, outcome)
         except Exception as e:  # noqa: BLE001 —— 异常绝不穿透线程

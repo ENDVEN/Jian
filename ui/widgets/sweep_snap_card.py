@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QMessageBox, QPushButton,
 
 from config import settings
 from ui.widgets.styles import ACCORD_STATE_COLOR, SEC_HINT_QSS, SUMMARY_GHOST_QSS
+from ui.widgets.sweep_compare import SweepCompareView, compare_snapshots  # ★1.79 第二轮③
 from ui.widgets.sweep_parts import _hint, panel_card, panel_head
 
 logger = logging.getLogger(__name__)
@@ -92,10 +93,18 @@ class SweepSnapshotsMixin:
             tag = QLabel("旧版本")
             tag.setStyleSheet(SEC_HINT_QSS + "color:#E65100;")
             tag.setToolTip(f"该快照存于 v{e.get('app_version')}，本机 v{settings.APP_VERSION}"
-                           "（算法口径可能已变，回看只读、不做对比结论）")
+                           "（算法口径可能已变 ⇒ 与它对比时会**标注口径不一致、差异仅供参考**）")
             lay.addWidget(tag)
+        if rid and rid == str(getattr(self, "_compare_a", "")):
+            # ★1.79 第二轮③：A/B 对比的"选中的是这一份"要看得见（否则用户不知道等下点谁）
+            tag_a = QLabel("A")
+            tag_a.setStyleSheet(SEC_HINT_QSS + "color:#1976D2;font-weight:bold;")
+            tag_a.setToolTip("这份已选作对比的「A」—— 再点另一份的「对比」就打开并排比较")
+            lay.addWidget(tag_a)
         for text, tip, slot in (("回看", "只读回放：把该快照的统计与候选表填回界面（不重跑）",
                                  self._on_snap_replay),
+                                ("对比", "与另一份快照并排比差别（只读；先点一份=A，再点另一份）",
+                                 self._on_snap_compare),   # ★1.79 第二轮③
                                 ("★", "置顶 / 取消置顶", self._on_snap_pin),
                                 ("删除", "删除该快照（二次确认）", self._on_snap_delete)):
             btn = QPushButton(text)
@@ -147,6 +156,18 @@ class SweepSnapshotsMixin:
             set_kpi(kpi["pbo"], "PBO", "—" if pbo is None else f"{float(pbo):.0%}",
                     "快照记录")
         # ★R5b：优先用**展示行**（含未过门槛的，能复原当时那张表）；老快照没有它 ⇒ 回落 candidates
+        # ★1.79 QA 复核发现（**回看 × 成本态串味**）：回看的是**历史快照**，而屏上可能还留着
+        #   上一轮**真跑**出来的成本斜率 —— `_fill_table` 按 `key` 匹配 ⇒ 会把 live 的斜率
+        #   **贴到快照的行上**（张冠李戴，正是 1.76 那类"数字追不到归属"）。⇒ 进回看态就把
+        #   **只属于当前研究**的东西清干净（成本列回到「—」），并把对比卡收起来
+        #   （"对比两份历史快照"与"正在回看某一快照"同屏，容易被读成同一件事）。
+        self._cost_slopes = {}
+        self._cost_spans = {}
+        self._cost_levels_used = ()
+        self._cost_topn = 0
+        _cmp_qa = getattr(self, "compare_view", None)
+        if _cmp_qa is not None:
+            _cmp_qa.setVisible(False)
         self._fill_table(st.get("rows") or st.get("candidates") or [])
         if getattr(self, "_chart_empty_backup", None) is None:   # 原空态文案要留着（重跑恢复）
             self._chart_empty_backup = self.chart_empty.text()
@@ -158,6 +179,42 @@ class SweepSnapshotsMixin:
         self.btn_save.setEnabled(False)
         self.form.set_receipt(f"已回看快照 {rid}（只读）：统计与候选表来自存档，**没有重跑**；"
                               "再点「▶ 跑样本内」会退出回看态")
+
+    # ---------------- A/B 对比（★1.79 / §7-B15 第二轮③）----------------
+    def _on_snap_compare(self, rid: str) -> None:
+        """两次点击完成一次 A/B：先点一份 = 定为「A」；再点另一份 = 打开并排对比（**只读**）。
+
+        红线：① 只读快照 —— **不重跑任何回测、不重绘四图、不动 `_spec/_interval`**；
+              ② 文案**不许替用户选**（"选 A / 推荐 / 该用哪个"一律不出现，见 `COMPARE_FORBIDDEN`）。
+        """
+        view = getattr(self, "compare_view", None)
+        if view is None:
+            return
+        cur_a = str(getattr(self, "_compare_a", ""))
+        if not cur_a:
+            self._compare_a = str(rid)
+            self._refresh_snapshots()      # 行上出 A 标记："选中的是哪一份"要看得见
+            self.form.set_receipt(f"已把快照 {rid} 选为「A」—— 再点另一份的「对比」就能并排看差别"
+                                  "（只读快照，**不会重跑任何回测**）。")
+            return
+        if str(rid) == cur_a:
+            self._compare_a = ""
+            view.setVisible(False)
+            self._refresh_snapshots()
+            self.form.set_receipt("已取消对比选择。")
+            return
+        a = self._archive.load(cur_a)
+        b = self._archive.load(str(rid))
+        if not a or not b:
+            self.form.set_receipt("有一份快照读不出来（文件缺失或损坏）—— 诚实报告，不猜内容")
+            return
+        res = compare_snapshots(a, b)
+        view.show_pair(a, b, res)
+        self.form.set_receipt(
+            f"已对比 {cur_a} ↔ {rid}（**只读快照**，没有重跑任何回测）· "
+            + ("两侧口径一致 ⇒ 逐项差异可直接比" if res.get("aligned")
+               else "⚠ 两侧口径不一致 ⇒ 差异仅供参考（卡上有逐条说明）")
+            + "　本对比**不替你选参**（红线②：软件只摆事实）。")
 
     def _on_snap_pin(self, rid: str) -> None:
         entries = {str(e.get("id")): e for e in (self._archive.list() or [])}
@@ -247,5 +304,9 @@ def build_snapshot_card(page) -> QWidget:
     box.setSpacing(3)
     bl.addLayout(box)
     page.snap_rows = box
+    # ★1.79 第二轮③：**A/B 对比视图**（默认藏起；只在真的选了 A 与 B 之后才出现 —— 不留空壳）
+    page.compare_view = SweepCompareView()
+    page._compare_a = ""
+    bl.addWidget(page.compare_view)
     page.snap_card = card
     return card

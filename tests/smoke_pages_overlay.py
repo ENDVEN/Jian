@@ -5501,11 +5501,13 @@ try:
     check("★R4-c：图体有**上限**（300~460px）⇒ 不再把候选表顶出窗口（余量给表）",
           _psw.charts.minimumHeight() >= 300 and _psw.charts.maximumHeight() <= 500)
 
-    # ---- ★R5：候选表补齐（9 列 + ✓✗ + 平/尖 + 行悬停"邻居是谁"）----
-    check("★R5：候选表 9 列（补「门槛 ✓✗」与「平台/尖峰」；判定与热力图**同一个**函数）",
-          _psw.table.columnCount() == 9
-          and [_psw.table.horizontalHeaderItem(_c).text() for _c in range(9)][-2:]
-          == ["门槛", "判定"])
+    # ---- ★R5：候选表补齐（★1.79 起 **10 列**：门槛 ✓✗ + 成本斜率 + 平/尖 + 行悬停"邻居是谁"）----
+    # ★1.79：9 → **10** 列（补「成本斜率」；红线③：成本必须与排名同屏）
+    check("★R5 + ★1.79：候选表 10 列（补「门槛 ✓✗」「成本斜率」「平台/尖峰」；"
+          "判定与热力图**同一个**函数）",
+          _psw.table.columnCount() == 10
+          and [_psw.table.horizontalHeaderItem(_c).text() for _c in range(10)][-3:]
+          == ["门槛", "成本斜率", "判定"])
     check("★R5：门槛只筛不排 ⇒ 未过门槛的行**灰显保留**；行悬停报 IS/OOS/邻域三值 + **邻居是谁**",
           "include_gated=True" in _psw_res_src and "B4BECB" in _psw_res_src
           and '"kept"' in _psw_res_src and '"flag"' in _psw_res_src
@@ -6425,6 +6427,272 @@ try:
           and '还没算过' in _brd3u.lbl_receipt.text())
 except Exception as _e4u:  # noqa: BLE001
     check(f"§7-B16 期 4 多方案断言整段抛异常: {type(_e4u).__name__}: {_e4u}", False)
+
+# ==========================================
+# §7-B15 第二轮① · 成本敏感性页面接线（★1.79 · 用户 2026-10-16「就开 B15 第二轮」）
+#   【口径】只对**候选表前 N（默认 10）**、只重跑 **样本外**、只换佣金档（万3/万5/万10）；
+#     成本结果**不参与排序**（红线①②不动）⇒ 候选表加一列 + 结论条加一行（红线③同屏）。
+#   【本段验什么】① 表确实 10 列且列名对；② 入口是**真按钮**且初始禁用；③ 取候选**按候选表顺序**；
+#     ④ **端到端**：打桩 worker ⇒ 三档串行、**佣金真的透传进 worker**、斜率落表落结论条、回执说清；
+#     ⑤ 取消 ⇒ 不再续档。⚠ 打桩点 = `ui.workers.ParamSweepWorker`（页面里是**局部 import** ⇒
+#     改模块属性即可生效，且必须成对还原）。
+# ==========================================
+print("\n== §7-B15 第二轮① · 成本敏感性（页面接线）==")
+try:
+    from types import SimpleNamespace as _SNS79  # noqa: E402
+
+    from PyQt6.QtCore import QObject as _QO79  # noqa: E402
+    from PyQt6.QtCore import pyqtSignal as _sig79  # noqa: E402
+
+    import ui.workers as _uw79  # noqa: E402
+    from core.param_sweep import ComboOutcome as _CO79  # noqa: E402
+    from core.param_sweep import SweepOutcome as _SO79  # noqa: E402
+    from core.sweep_stats import DEFAULT_COST_LEVELS as _DCL79  # noqa: E402
+
+    _sv79 = next(win.page_backtest.tabs.widget(_i79)
+                 for _i79 in range(win.page_backtest.tabs.count())
+                 if type(win.page_backtest.tabs.widget(_i79)).__name__ == 'ParamSweepView')
+    check("★ 1.79：候选表 10 列，第 9 列 = 「成本斜率」（红线③：成本与排名**同屏**）",
+          _sv79.table.columnCount() == 10
+          and _sv79.table.horizontalHeaderItem(8).text() == "成本斜率")
+    # ★1.79 重做（用户 2026-10-17：「窗口小的时候**完全看不见**」+「点了没反应」）：
+    #   入口从「候选表头条行里的一颗按钮」（会被窗口右边缘**裁掉**）改成**独立卡片**
+    #   （口径说明 / 三档佣金 / 跑按钮 / 状态行 / 结果区）—— 三条诚实边界都写在**卡面上**。
+    from PyQt6.QtWidgets import QLabel as _QL79  # noqa: E402
+
+    _card_txt79 = ' '.join(_l79.text() for _l79 in _sv79.cost_card.findChildren(_QL79)) \
+        if getattr(_sv79, 'cost_card', None) is not None else ''
+    check("★ 1.79 重做：成本入口是**独立卡片**（不再是会被裁掉的头条按钮）—— 卡面写明"
+          "『只含佣金』『回测本身固定万3』与『只给前 10 名』",
+          getattr(_sv79, 'cost_card', None) is not None
+          and len(_sv79.cost_spins) == 3
+          and '只含佣金' in _card_txt79 and '万3' in _card_txt79
+          and '前 10 名' in _card_txt79
+          and _sv79.btn_cost.text().startswith('▶'))
+    check("★ 1.79 重做：三档佣金**可调且记住**（0.1~100 万分之；默认 3/5/10）",
+          [float(_s.value()) for _s in _sv79.cost_spins] == [3.0, 5.0, 10.0]
+          and abs(_sv79._cost_levels()[0] - 0.0003) < 1e-9
+          and len(_sv79._cost_levels()) == 3)
+
+    # ---- 造最小可用状态（真机状态依赖太深；这里只喂"成本敏感性"要读的那几样）----
+    # ⚠ 夹具必须**自洽**：组合键的真源是 `combo_key(combo)`（不是随便起个 'k0'）——
+    #   我第一版给行写了 `key='k0'`、组合却是 `{'fast': 0}` ⇒ 按组合派生就对不上 ⇒
+    #   候选取空、`_cost_keys` 根本没建（断言红的是夹具，不是代码）。
+    from core.param_sweep import combo_key as _ck79  # noqa: E402
+
+    _combos79 = [{'fast': float(i)} for i in range(12)]
+    _keys79 = [_ck79(c) for c in _combos79]
+    _sv79._rows = [{'key': _keys79[i], 'combo': _combos79[i],
+                    'rank': i + 1, 'is_annual': 0.10, 'oos_annual': 0.08, 'delta': -0.02,
+                    'nb_mean': 0.07, 'nb_worst': 0.01, 'trades': 40, 'kept': True,
+                    'flag': ''} for i in range(12)]
+    _sv79._items = [(_keys79[i], _combos79[i]) for i in range(12)]
+    _sv79._grid = _SNS79(dims=(), est_seconds=12.0, n_combos=12)
+    # ⚠ 夹具要把"结论条要读的那几样"给全：`_set_verdict` 会读 `_spec.fill_mode` / `_spec.risk`
+    #   与 `_interval` 的四个日期 —— 缺一个就抛 AttributeError，而它发生在 **Qt 槽里**
+    #   （信号 emit 触发）⇒ 异常被吞、只有断言红，看不出真因（§10-4 同族：不许静默）。
+    _sv79._spec = _SNS79(symbol='600000', fill_mode='next_open', risk={}, segments=())
+    _sv79._interval = _SNS79(is_start='2024-01-01', is_end='2024-06-30',
+                             oos_start='2024-07-01', oos_end='2024-10-31', more=())
+    _sv79._lake = _SNS79(load_data=lambda *a, **k: None)     # 打桩：绝不在冒烟里读真湖
+    _sv79._oos_out = _SO79()
+    # ⚠ `ComboOutcome` 的 is_returns / is_dates / oos_dates 是**必填**（没有默认值）⇒ 打桩也得给全
+    _sv79._oos_out.completed['x'] = _CO79(key='x', combo={}, is_returns=None,
+                                          is_dates=(), oos_returns=np.array([0.001] * 30),
+                                          oos_dates=())
+    _sv79._stats = {'rank_ic': 0.2, 'pbo': 0.3, 'n_failed': 0}
+    _sv79._stage = ""
+    _sv79._worker = None
+    check("★ 1.79：取候选**按候选表顺序**、只取前 N（12 个候选 ⇒ `top_candidate_keys(10)` 给 10 个，"
+          "且顺序一致）—— 成本敏感性**不许**按成本结果重排",
+          _sv79.top_candidate_keys(10) == _keys79[:10])
+
+    _calls79 = []
+    _statuses79 = []      # 每档起跑那一刻的状态行（验"跑起来看得见"）
+    _enabled79 = []       # 每档起跑那一刻的按钮可用态（验"跑的时候是灭的"）
+
+    class _CostWorker79(_QO79):
+        progress = _sig79(int, int, str)
+        finished = _sig79(int, object)
+        failed = _sig79(int, str)
+
+        def __init__(self, job_id, df, spec, grid, interval, stage="both", done_keys=(),
+                     commission_rate=None, parent=None):
+            super().__init__(parent)
+            self._jid = int(job_id)
+            _calls79.append(float(commission_rate))
+            self._n = int(getattr(grid, 'n_combos', 0) or 0)
+
+        def start(self):
+            """立即回包（离屏：绝不起真线程/真回测）；三档给不同日收益 ⇒ 斜率非零。"""
+            _statuses79.append(_sv79.lbl_cost_status.text())
+            _enabled79.append(bool(_sv79.btn_cost.isEnabled()))
+            _rate = _calls79[-1]
+            _daily = {0.0003: 0.002, 0.0005: 0.000, 0.001: -0.004}.get(_rate, 0.0)
+            out = _SO79()
+            for k in _keys79[:self._n]:
+                out.completed[k] = _CO79(key=k, combo={}, is_returns=None, is_dates=(),
+                                         oos_returns=np.full(60, _daily), oos_dates=())
+            if len(_calls79) == 2 and getattr(_CostWorker79, 'cancel_second', False):
+                out.cancelled = True
+            self.finished.emit(self._jid, out)
+
+        def isRunning(self):
+            return False
+
+        def cancel(self):
+            pass
+
+    _orig_w79 = _uw79.ParamSweepWorker
+    try:
+        _uw79.ParamSweepWorker = _CostWorker79
+        _sv79._run_cost()
+        app.processEvents()
+        check(f"★ 1.79：**三档串行各跑一次**，且**佣金真的透传进 worker**"
+              f"（实测 {[f'{r:.4f}' for r in _calls79]}）—— 旧版 worker 从不转这个参数，"
+              "所以这个功能一直是零实现",
+              [round(r, 4) for r in _calls79] == [round(r, 4) for r in _DCL79])
+        check("★ 1.79：**只跑 Top-N**（实测这一轮只重跑 10 个候选，不是 12 个、更不是全网格）",
+              len(_sv79._cost_keys) == 10)
+        _slopes79 = getattr(_sv79, '_cost_slopes', None) or {}
+        check(f"★ 1.79：斜率落到候选表（实测 {len(_slopes79)} 个候选有斜率）"
+              "—— 表里第 9 列不再全是「—」",
+              len(_slopes79) == 10 and _sv79.table.item(0, 8).text() != '—')
+        check("★ 1.79：结论条**同屏**写了成本那一行（含『不参与选参』——红线①要说在脸上）",
+              '成本敏感性' in _sv79.lbl_verdict.text()
+              and '不参与选参' in _sv79.lbl_verdict.text())
+        check("★ 1.79：回执写清**只含佣金** + 结论（最平/最陡），且阶段已清空（不留残状态）",
+              '成本敏感性完成' in _sv79.form.lbl_receipt.text()
+              and '只含佣金' in _sv79.form.lbl_receipt.text() and _sv79._stage == "")
+        check("★ 1.79 重做：**跑起来看得见** —— 每档都写了状态行（『第 k/3 档』+ 佣金档），"
+              "按钮在跑时是**灭的**，跑完自动恢复 + 结果区给逐档年化"
+              f"（实测状态：{_statuses79[:1]}）",
+              len(_statuses79) == 3 and '第 1/3 档' in _statuses79[0]
+              and '第 3/3 档' in _statuses79[2]
+              and all(_e is False for _e in _enabled79)
+              and bool(_sv79.btn_cost.isEnabled())
+              and '个百分点/万分之' in _sv79.lbl_cost_result.text())
+
+        # ---- 取消 ⇒ 不再续档（否则用户一按中断，后台还在偷偷跑）----
+        _calls79.clear()
+        _CostWorker79.cancel_second = True
+        _sv79._run_cost()
+        app.processEvents()
+        _rc79 = _sv79.form.lbl_receipt.text()
+        check(f"★ 1.79：某一档**被中断** ⇒ **不再续档**（实测只起 {len(_calls79)} 次）"
+              f"且回执如实说『已中断、再点一次从头跑』（实测回执：{_rc79[:40]}）",
+              len(_calls79) == 2 and '已中断' in _rc79)
+        _CostWorker79.cancel_second = False
+
+        # ★1.79 **QA 复核补的两条**（我原先的测试没覆盖"回看 × 成本态"这条路 —— 复核时才发现）：
+        _calls79.clear()
+        _sv79._replay_rid = 'RID-QA'          # 假装正在回看历史快照
+        _sv79._cost_slopes = {'x': -1.0}      # 屏上还留着上一轮**真跑**出来的斜率
+        _sv79._run_cost()
+        app.processEvents()
+        _rc79b = _sv79.form.lbl_receipt.text()
+        check(f"★ 1.79 QA：**回看态**下点成本敏感性 ⇒ **拒绝**（不起线程，实测 {len(_calls79)} 次）"
+              f"+ 说清怎么办（回执：{_rc79b[:30]}）",
+              len(_calls79) == 0 and '回看' in _rc79b and _sv79._stage != 'cost')
+        _sv79._replay_rid = None
+        # 回看本身要**清干净"只属于当前研究"的东西** —— 否则 live 的斜率会按 key 贴到**快照的行**上
+        _orig_arc79c = _sv79._archive
+        _sv79._archive = _SNS79(load=lambda rid: {
+            'id': 'RID-QA', 'app_version': '', 'symbol': '600000',
+            'strategy': {'name': 'S'}, 'grid': {'n_combos': 1}, 'gate': {'min_trades': 1},
+            'interval': {}, 'stats': {'rank_ic': 0.1, 'pbo': 0.2, 'n_done': 1, 'n_failed': 0,
+                                      'rows': [{'key': 'x', 'combo': {'fast': 1.0}, 'rank': 1,
+                                                'is_annual': 0.1, 'oos_annual': 0.1,
+                                                'delta': 0.0, 'nb_mean': 0.1, 'nb_worst': 0.0,
+                                                'trades': 30, 'kept': True, 'flag': ''}]}})
+        try:
+            _sv79._on_snap_replay('RID-QA')
+            app.processEvents()
+        finally:
+            _sv79._archive = _orig_arc79c
+        check("★ 1.79 QA：**进回看态 ⇒ 成本列清空**（live 的斜率绝不许贴到快照的行上）"
+              "—— 状态槽已清 + 表里第 9 列回到「—」",
+              not getattr(_sv79, '_cost_slopes', None)
+              and _sv79.table.item(0, 8).text() == '—')
+        _sv79._replay_rid = None
+    finally:
+        _uw79.ParamSweepWorker = _orig_w79
+except Exception as _e79u:  # noqa: BLE001
+    check(f"§7-B15 第二轮① 页面接线断言整段抛异常: {type(_e79u).__name__}: {_e79u}", False)
+
+# ==========================================
+# §7-B15 第二轮③ · 研究快照 A/B 对比（★1.79）
+#   口径 = 只读两份**已存**快照并排比差别：**不重跑 / 不重绘 / 不动 `_spec`**（红线①）；
+#   措辞**不许替用户选**（红线②：`COMPARE_FORBIDDEN` + 断言扫词，全链路扫）。
+# ==========================================
+print("\n== §7-B15 第二轮③ · 快照 A/B 对比 ==")
+try:
+    import pathlib as _pl79  # noqa: E402
+    from types import SimpleNamespace as _SNS79b  # noqa: E402
+
+    from config import settings as _st79  # noqa: E402
+    from ui.widgets.sweep_compare import (COMPARE_FORBIDDEN as _CF79,  # noqa: E402
+                                          compare_snapshots as _cmp79)
+
+    def _snap79(rid, ic, pbo, kept=1, oos='2024-07-01', symbol='600000'):
+        return {'id': rid, 'app_version': _st79.APP_VERSION, 'symbol': symbol,
+                'strategy': {'name': 'S'},
+                'grid': {'n_combos': 25, 'dims': [{'name': 'fast'}]},
+                'gate': {'min_trades': 30},
+                'interval': {'is_start': '2024-01-01', 'is_end': '2024-06-30',
+                             'oos_start': oos, 'oos_end': '2024-10-31', 'more': []},
+                'stats': {'rank_ic': ic, 'pbo': pbo, 'n_done': 25, 'n_failed': 0,
+                          'rows': [{'kept': True} for _ in range(kept)]}}
+
+    _A79, _B79 = _snap79('A1', 0.21, 0.32, kept=3), _snap79('B1', 0.15, 0.55, kept=1)
+    _r79c = _cmp79(_A79, _B79)
+    _by79 = {r['label']: r for r in _r79c['rows']}
+    check("★ 1.79：口径一致 ⇒ 逐项差异可比，且**方向标记给在更稳的一侧**"
+          "（A 的 IC 更高、PBO 更低 ⇒ 两项都标 a）",
+          _r79c['aligned'] is True and _by79['Rank IC']['better'] == 'a'
+          and _by79['PBO']['better'] == 'a'
+          and abs(float(_by79['Rank IC']['diff']) - 0.06) < 1e-9)
+    _r79x = _cmp79(_A79, _snap79('B1', 0.15, 0.55, oos='2023-01-01'))
+    check("★ 1.79：口径**不一致**（换样本外区间 / 换标的）⇒ `aligned=False` + **不给方向结论**"
+          "（差异只作参考，不冒充『改了这一个因素』的结论）",
+          _r79x['aligned'] is False and all(not r['better'] for r in _r79x['rows'])
+          and _cmp79(_A79, _snap79('B1', 0.15, 0.55, symbol='000001'))['aligned'] is False)
+    check("★ 1.79：**红线②措辞** —— 对比文案里绝不出现替用户选的词（选 A / 推荐 / 该用 / 最优选择 …）",
+          not any(w in str(_r79c.get('note', '')) for w in _CF79))
+    check("★ 1.79：缺字段**不崩也不编**（老快照没有 stats/rows/more ⇒ 显示「—」）",
+          _cmp79({'id': 'old'}, {'id': 'old2'})['rows'][0]['a_text'] == '—')
+    _snap_src79 = _pl79.Path('ui/widgets/sweep_snap_card.py').read_text(encoding='utf-8')
+    check("★ 1.79：快照行有「对比」真按钮（与回看/置顶/删除同列），且卡上挂了对比视图",
+          '"对比"' in _snap_src79 and '_on_snap_compare' in _snap_src79)
+
+    _sv79b = next(win.page_backtest.tabs.widget(_i79b)
+                  for _i79b in range(win.page_backtest.tabs.count())
+                  if type(win.page_backtest.tabs.widget(_i79b)).__name__ == 'ParamSweepView')
+    _orig_arc79 = _sv79b._archive
+    _sv79b._archive = _SNS79b(       # 打桩：**绝不写/读用户真实快照目录**
+        list=lambda *a, **k: [{'id': 'A1', 'app_version': _st79.APP_VERSION, 'pinned': False}],
+        load=lambda rid: {'A1': _A79, 'B1': _B79}.get(str(rid)),
+        set_pinned=lambda *a, **k: True, delete=lambda *a, **k: True)
+    try:
+        _sv79b._compare_a = ""
+        _sv79b._on_snap_compare('A1')
+        check("★ 1.79：第一次点「对比」= **定为 A**（回执说清下一步，且不重跑）",
+              _sv79b._compare_a == 'A1' and '选为' in _sv79b.form.lbl_receipt.text())
+        _sv79b._on_snap_compare('B1')
+        check("★ 1.79：第二次点另一份 ⇒ **并排视图出现** + 回执明说『没有重跑』"
+              "+ 明说『不回答该用哪一套』（红线①②都要写在脸上）",
+              not _sv79b.compare_view.isHidden()
+              and '没有重跑' in _sv79b.form.lbl_receipt.text()
+              and '不替你选参' in _sv79b.form.lbl_receipt.text())
+        _txt79 = (_sv79b.compare_view.lbl_title.text() + _sv79b.compare_view.lbl_note.text())
+        check("★ 1.79：对比视图里的文案同样**不含**替用户选的词（红线②全链路）",
+              not any(w in _txt79 for w in _CF79))
+    finally:
+        _sv79b._archive = _orig_arc79
+        _sv79b._compare_a = ""
+        _sv79b.compare_view.setVisible(False)
+except Exception as _e79c:  # noqa: BLE001
+    check(f"§7-B15 第二轮③ 快照对比断言整段抛异常: {type(_e79c).__name__}: {_e79c}", False)
 
 # ==========================================
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71

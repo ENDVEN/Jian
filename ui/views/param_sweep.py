@@ -41,6 +41,7 @@ from ui.widgets.sweep_regimes import (SweepRegimesMixin,  # ★R3 拆件：切�
 from ui.widgets.sweep_snap_card import (SweepSnapshotsMixin,  # ★R5b：研究快照卡
                                         build_snapshot_card)
 from ui.widgets.sweep_form import SweepForm
+from ui.widgets.sweep_cost import SweepCostMixin, build_cost_card   # ★1.79：成交成本卡
 from ui.widgets.sweep_results import SweepResultsMixin   # ★R0 拆件：结果装配与渲染
 from ui.workers import JobGuard, ParamSweepWorker
 
@@ -57,7 +58,7 @@ from ui.widgets.sweep_parts import (_hint, _title,  # noqa: F401
 
 
 class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
-                     SweepResultsMixin, QWidget):
+                     SweepResultsMixin, SweepCostMixin, QWidget):
     """🧪 参数研究子页签（插在 单股回测 与 全市场筛选 之间，用户定，勿改）。"""
 
     def __init__(self, main_win, parent=None):
@@ -98,7 +99,10 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # ★1.79 修（用户 2026-10-17："窗口小的时候完全看不见"）：原来 `AlwaysOff` ⇒ 内容比视口宽时
+        #   **多出来的部分永远够不到**（不是藏 tooltip，是看不见也滚不到）。改 `AsNeeded`：
+        #   宽时无条（外观不变）、窄时能滚到（详因见 §11.5-137；§10-4）。
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 10, 8)
@@ -151,6 +155,8 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         self.chart_empty = QLabel("图表区 —— 跑完样本内 + 样本外后出图\n"
                                   "左 = 散点 IS×OOS（离对角线越远，冠军崩塌越狠） · "
                                   "右 = 参数平面热力图（一块亮的「平台」好过一根孤立的「尖峰」）")
+        # ★1.79 修：空态文案不换行（min 758px）会决定整栏宽度 ⇒ 窄窗把右侧控件挤出可视区（量宽实证）
+        self.chart_empty.setWordWrap(True)
         self.chart_empty.setStyleSheet(EMPTY_STATE_QSS)
         self.chart_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.chart_empty.setMinimumHeight(260)
@@ -169,6 +175,7 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         self.btn_save.setStyleSheet(SUMMARY_GHOST_QSS)
         self.btn_save.setEnabled(False)
         tb_head.layout().addWidget(self.btn_save)
+        # ★1.79 重做：成本敏感性原在此头条行右侧 ⇒ 窄窗被裁（截图实证）⇒ 已升级为独立卡片（见 sweep_cost）
         tb = QVBoxLayout(self.table_card)
         tb.setContentsMargins(0, 0, 0, 0)
         tb.setSpacing(2)
@@ -180,22 +187,29 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         tb2.setContentsMargins(8, 8, 8, 8)
         tb2.setSpacing(6)
         # ★R5：列数 7 → **9**（补「过门槛 ✓✗」与「平台/尖峰」—— 门槛只筛不排、判定与热力图同源）
-        self.table = QTableWidget(0, 9)
+        # ★1.79 / §7-B15 第二轮①：9 → **10**（补「成本斜率」—— 红线③：成本必须与排名**同屏**）
+        self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels(
-            ["#", "参数", "OOS 年化", "IS 年化", "|Δ|", "邻域均值", "交易数", "门槛", "判定"])
+            ["#", "参数", "OOS 年化", "IS 年化", "|Δ|", "邻域均值", "交易数", "门槛",
+             "成本斜率", "判定"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
-        for w, col in ((40, 0), (150, 1), (90, 2), (90, 3), (80, 4), (90, 5),
-                       (70, 6), (52, 7), (52, 8)):
+        # ★1.79：列宽收一收（782 → 710）⇒ 窄窗更可能不用滚就看全（放不下由 `AsNeeded` 兜底）
+        for w, col in ((40, 0), (132, 1), (82, 2), (82, 3), (70, 4), (82, 5),
+                       (58, 6), (52, 7), (60, 8), (52, 9)):
             self.table.setColumnWidth(col, w)
         self.table.verticalHeader().setDefaultSectionSize(24)
         self.table.setMinimumHeight(180)
         self.table.horizontalHeader().setStyleSheet(TABLE_HEAD_QSS)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # ★1.79 修：同理，10 列在窄窗下必须**能滚到**（「成本斜率 / 判定」在最右）
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         tb2.addWidget(self.table)
         rl.addWidget(self.table_card, 1)     # ★R4-c：竖向余量归候选表（图已封顶）
+        # ★1.79 重做：**成交成本卡**（口径 + 三档佣金 + 按钮 + 状态 + 逐档结果），放候选表正下方
+        #   （结果就是那张表的「成本斜率」列 + 结论条一行）
+        rl.addWidget(build_cost_card(self))
         rl.addWidget(build_snapshot_card(self))   # ★R5b ⑨ 研究快照卡（列表 + 回看/置顶/删除）
 
         scroll.setWidget(right)
@@ -203,6 +217,8 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
 
         # ---- 信号 ----
         self.btn_save.clicked.connect(self._save_snapshot)
+        # ★1.79 重做：成本按钮的接线**在卡内**（`build_cost_card` 里连 `page._run_cost`）——
+        #   这里若再连一次就成了**双触发**（点一下跑两轮，正是本仓 R7 返工记过的坑）。
         self.form.run_is_requested.connect(self._run_is)
         self.form.run_oos_requested.connect(self._run_oos)
         self.form.cancel_requested.connect(self._cancel)
@@ -415,6 +431,10 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
     def _on_failed(self, job: int, reason: str) -> None:
         if not self._guard.accept(job):
             return
+        # ★1.79 QA 复核（卫生项）：失败路径也要**清阶段** —— 否则 `_stage` 会停在 'cost'，
+        #   下次点别的按钮时状态含义与实际不符（迟到回包已被 `JobGuard` 丢弃，故不会误路由，
+        #   但"状态字面量与实际不符"本身就是隐患）。
+        self._stage = ""
         self.form.set_running(False)
         self.form.set_receipt(f"参数扫描失败：{reason}")
 
@@ -427,6 +447,9 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         n_fail = len(outcome.failed)
         if outcome.failed:
             merged_notes.append(f"{n_fail} 组失败（详见回执）")
+        if self._stage == "cost":          # ★1.79 第二轮①：成本档（独立阶段，不污染 `_oos_out`）
+            self._on_cost_finished(outcome)
+            return
         if self._stage == "is":
             base = self._is_out or SweepOutcome()
             base.completed.update(outcome.completed)

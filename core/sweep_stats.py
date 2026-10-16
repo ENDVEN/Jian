@@ -35,6 +35,71 @@ import pandas as pd
 TRADING_DAYS_PER_YEAR = 244  # A股年交易日惯例；本模块唯一的年化口径出口
 
 
+# ==========================================
+# 成本敏感性（★1.79 / §7-B15 **第二轮** ①）
+#   【它回答什么】"我按这张排名挑出来的参数，把佣金换个档还成立吗？" ——
+#     网格里那些**高换手、赚小差价**的组合在"不含成本"时最漂亮，实盘会被佣金吃掉
+#     （方案书 JIAN_SWEEP_PLAN.md 原话："成本一调就崩 ⇒ 不是真本事"）。
+#   【怎么做】只拿**已经选定的 Top-N 候选**，只重跑 **OOS 段**，只换 `commission_rate`
+#     （默认三档 = 万3 / 万5 / 万10）—— **不重跑全网格、不重排候选**。
+#   【红线自查】① 样本外"只看一次"的闸门不动：这里**不产生新的挑参依据**（候选顺序由
+#     既有排序键决定，成本结果**不参与**排序）；② 无"一键最优"入口；③ 结果与排名**同屏**。
+#   【单位】`cost_levels` 是**小数比例/每边**（与 `core.backtest.DEFAULT_COMMISSION_RATE`
+#     同源：0.0003 = 万3）；斜率单位 = **年化(小数) / 万分之** ⇒ 界面再 ×100 变"百分点"。
+# ==========================================
+DEFAULT_COST_LEVELS = (0.0003, 0.0005, 0.0010)   # 万3 / 万5 / 万10（与回测默认档同单位）
+COST_LEVEL_PER_UM = 10000.0                      # "万分之"换算（斜率/展示的唯一出口）
+
+
+def cost_tier_label(rate) -> str:
+    """佣金档的人话标签（`0.0005` ⇒ `万5`）—— **展示单位只在这里换算**，别在 UI 各写一遍。"""
+    try:
+        return f"万{float(rate) * COST_LEVEL_PER_UM:.1f}".rstrip('0').rstrip('.')
+    except (TypeError, ValueError):
+        return "—"
+
+
+def cost_sensitivity(annual_by_cost, cost_levels=DEFAULT_COST_LEVELS) -> dict:
+    """每组的「年化对佣金的**一阶斜率**」（最小二乘）与「跨档极差」。
+
+    :param annual_by_cost: 形状 `(n_costs, n_groups)` —— **行 = 成本档，列 = 候选**
+      （每格 = 该候选在该档下重跑 OOS 得到的年化；缺失给 NaN）。
+    :param cost_levels: 与行对应的佣金档（小数/每边）。
+    :return: `{'slope','span','levels','unit','enough'}`：
+      · `slope`（`(n_groups,)`）= 年化对佣金的斜率，单位 **年化/万分之**（**越接近 0 越平**；
+        负得越狠 = 越怕成本）；`span` = 跨档年化极差（max−min）；
+      · 某组只要有 NaN ⇒ 该组 slope/span 给 NaN（**不猜、不插值**）；
+      · `enough` = 档数 ≥ 2（不足 2 档算不出斜率 ⇒ 全 NaN 并据此让界面如实说）。
+
+    ⚠ **不判"平/陡"阈值**：方案书只写"越平越好"，没定门槛 ⇒ 这里只给数，"是不是够平"由人看
+      （发明一个阈值 = 假判据，本仓红线之一）。
+    """
+    import numpy as np
+
+    x = np.asarray(list(cost_levels or ()), dtype=float) * COST_LEVEL_PER_UM
+    y = np.asarray(annual_by_cost, dtype=float)
+    if y.ndim == 1:
+        y = y.reshape(-1, 1)
+    n_cost = min(x.shape[0], y.shape[0])
+    groups = y.shape[1] if y.ndim == 2 else 0
+    nan_col = np.full(max(0, groups), np.nan)
+    if n_cost < 2 or groups == 0:
+        return {'slope': nan_col, 'span': nan_col, 'levels': tuple(x[:n_cost]),
+                'unit': '年化/万分之', 'enough': False}
+    x, y = x[:n_cost], y[:n_cost, :]
+    bad = ~np.isfinite(y).all(axis=0)          # 该组有缺档 ⇒ 整组不给结论（不插值）
+    xm = x.mean()
+    denom = float(((x - xm) ** 2).sum())
+    with np.errstate(invalid='ignore', divide='ignore'):
+        slope = (((x - xm)[:, None] * (y - y.mean(axis=0))).sum(axis=0) / denom
+                 if denom > 0 else np.full(groups, np.nan))
+    span = np.nanmax(y, axis=0) - np.nanmin(y, axis=0)
+    slope = np.where(bad, np.nan, slope)
+    span = np.where(bad, np.nan, span)
+    return {'slope': slope, 'span': span, 'levels': tuple(x), 'unit': '年化/万分之',
+            'enough': True}
+
+
 @dataclass(frozen=True)
 class SweepMetrics:
     """一次研究的全部排序键指标（study_key_stats 的产物；候选表 / 结论条 / 散点全从这里取）。"""

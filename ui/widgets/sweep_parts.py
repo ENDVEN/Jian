@@ -51,6 +51,13 @@ def panel_head(title: str, meta: str = "") -> QFrame:
     head.title_label = _title(title)
     head.meta_label = QLabel(str(meta or ""))
     head.meta_label.setStyleSheet(SEC_META_QSS)
+    # ★1.79 修（用户 2026-10-17 实测："窗口小的时候完全看不见"）：
+    #   头条的元信息**不许顶宽**容器 —— 它变长后会把这**一整行**撑宽，于是右侧的按钮被窗口边缘
+    #   **裁掉**（截图实证：候选表头条那颗「成本…」只剩半个字）。这正是本模块自己的纪律
+    #   （"定宽/窄容器里的控件一律 `_shrink`（横向 Ignored）"，见本件头注）：元信息当时漏了这条。
+    #   ⇒ 横向可收缩 + 全文进 tooltip（调用方 `setText` 时一并 `setToolTip` ⇒ 不丢信息）。
+    _shrink(head.meta_label)
+    head.meta_label.setToolTip(str(meta or ""))
     lay.addWidget(head.title_label)
     lay.addWidget(head.meta_label, 1)
     return head

@@ -5959,6 +5959,46 @@ try:
 except Exception as _e78:  # noqa: BLE001
     check(f"§9 口径债断言整段抛异常: {type(_e78).__name__}: {_e78}", False)
 
+# ==========================================
+# §7-B15 第二轮① · 成本敏感性（★1.79 · 用户 2026-10-16「就开 B15 第二轮」）
+#   口径 = 只对**已选定的 Top-N** 重跑 OOS、只换佣金档 ⇒ "年化对佣金的一阶斜率"（越平越好）。
+#   本段只验**纯函数**（手算核对 / 缺档不插值 / 不发明"平陡"阈值）；页面接线在 overlay。
+# ==========================================
+print("\n== §7-B15 第二轮① · 成本敏感性（内核纯函数）==")
+try:
+    from core.sweep_stats import (DEFAULT_COST_LEVELS,  # noqa: E402
+                                  cost_sensitivity, cost_tier_label)
+
+    check("★ 1.79：三档默认 = 万3 / 万5 / 万10（与 `core.backtest.DEFAULT_COMMISSION_RATE` 同单位："
+          "小数/每边）—— 展示换算只走 `cost_tier_label`",
+          tuple(DEFAULT_COST_LEVELS) == (0.0003, 0.0005, 0.0010)
+          and cost_tier_label(0.0003) == '万3' and cost_tier_label(0.0005) == '万5'
+          and cost_tier_label(0.001) == '万10')
+    _Y79 = np.array([[0.20, 0.30], [0.10, 0.28], [-0.20, 0.26]])   # 行=档，列=候选
+    _r79 = cost_sensitivity(_Y79, DEFAULT_COST_LEVELS)
+    _x79 = np.array([3.0, 5.0, 10.0])                              # 万分之
+    _y0 = np.array([0.20, 0.10, -0.20])
+    _manual79 = ((_x79 - _x79.mean()) * (_y0 - _y0.mean())).sum() / ((_x79 - _x79.mean()) ** 2).sum()
+    check(f"★ 1.79：斜率 == 手算（实测 {float(_r79['slope'][0]):.6f} vs 手算 {_manual79:.6f}）"
+          "—— 单位 = 年化/万分之（界面 ×100 变百分点）",
+          abs(float(_r79['slope'][0]) - _manual79) < 1e-12 and _r79['enough'] is True)
+    check("★ 1.79：**越怕成本 ⇒ 斜率越负**（第二组 0.30→0.26 几乎不动 ⇒ 斜率更接近 0）",
+          float(_r79['slope'][1]) < 0
+          and abs(float(_r79['slope'][1])) < abs(float(_r79['slope'][0])) * 0.2)
+    check("★ 1.79：跨档极差 = max−min（第一组 0.20 −(−0.20) = 0.40）",
+          abs(float(_r79['span'][0]) - 0.40) < 1e-12)
+    _rmiss79 = cost_sensitivity(np.array([[0.1, 0.2], [np.nan, 0.1], [0.0, 0.0]]),
+                                DEFAULT_COST_LEVELS)
+    check("★ 1.79：某组**缺一档** ⇒ 该组斜率 NaN（**不插值、不猜**），另一组照常给",
+          bool(np.isnan(_rmiss79['slope'][0])) and bool(np.isfinite(_rmiss79['slope'][1])))
+    _rone79 = cost_sensitivity(np.array([[0.1, 0.2]]), (0.0003,))
+    check("★ 1.79：只有一档 ⇒ `enough=False` + 全 NaN（算不出就如实说，不编）",
+          _rone79['enough'] is False and bool(np.isnan(_rone79['slope'][0])))
+    check("★ 1.79：**不发明『够不够平』的阈值** —— 返回里只有数（slope/span），没有平/陡判定字段",
+          set(_r79) == {'slope', 'span', 'levels', 'unit', 'enough'})
+except Exception as _e79:  # noqa: BLE001
+    check(f"§7-B15 第二轮① 内核断言整段抛异常: {type(_e79).__name__}: {_e79}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)
