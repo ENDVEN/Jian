@@ -225,7 +225,9 @@ class SweepCostMixin:
         self._worker = ParamSweepWorker(job, df, self._spec, self._cost_grid, self._interval,
                                         stage="oos", done_keys=frozenset(),
                                         commission_rate=rate)
-        self._worker.progress.connect(self.form.set_progress)
+        # ★1.81：进度**累进**（旧版直接连 `form.set_progress` ⇒ 每档从 0 开始，
+        #   用户看到"倒退/重启" ⇒ 以为卡住或重跑）
+        self._worker.progress.connect(self._on_cost_progress)
         self._worker.finished.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         # ⚠ 状态写在 `start()` **之前**：回包可能同步到达，写在后面会盖掉它的话（QA 复核实测）
@@ -233,6 +235,18 @@ class SweepCostMixin:
             f"正在跑：第 {self._cost_index + 1}/{len(self._cost_levels_run)} 档"
             f"（佣金 {cost_tier_label(rate)}）· 只重跑 {self._cost_grid.n_combos} 个候选的样本外…")
         self._worker.start()
+
+    def _on_cost_progress(self, done: int, total: int, note: str) -> None:
+        """**累进**进度：已完成档 × 每档组数 + 本档进度（★1.81）。
+
+        旧版把 worker 的 `(done,total)` 直接喂进度条 ⇒ 第 2 档又从 0 开始。
+        """
+        n = max(1, int(total or 0))
+        self._cost_per_tier_n = n
+        tiers = max(1, len(getattr(self, "_cost_levels_run", ()) or ()))
+        tier = int(getattr(self, "_cost_index", 0))
+        self.form.set_progress(tier * n + int(done), tiers * n,
+                               f"第 {tier + 1}/{tiers} 档 · {note}")
 
     def _on_cost_finished(self, outcome) -> None:
         """累计本档 ⇒ 还有档就续跑；最后一档算斜率、上屏、写回执。"""

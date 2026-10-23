@@ -267,15 +267,16 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #             + 量程留白收成 `RANGE_PAD`；护栏 = 冒烟断言"本模块不许再定义任何类"。
 #          ③ 本轮踩到并记进 `§11.5-133`：rich text 与纯文本**不能混用同一套记号**（`**` vs `<b>`）；
 #             `QSpinBox` 只吃 int（float 直接抛）；抽屉里的 SpinBox 必须用 `NoWheel*`。
-#   1.81 = 回测佣金「全局唯一口径」（2026-10-23 · 用户："佣金涉及的全部都要改，不要漏"）：
-#          一处设置 `backtest_prefs.commission_um`（默认万3，0~100 万分之）⇒ 
-#          `commission_rate_from_prefs()` 唯一读取；`BacktestEngine.run` / `run_sweep` 的默认值改成 
-#          **None → 解析** ⇒ M1 / 参数研究 / 将来任何新入口**自动跟随**（不是逐个调用点改数字）；
-#          显示三处（M1 摘要条 / 参数研究结论条取**发起时**快照 / 运行历史·旧记录写"未存"）+ 
-#          存档 `build_record` 记 `commission` + 成本卡三档默认跟随基准 + 「↺ 跟随基准」；
-#          ⚠ 账本侧（复盘/交割单的 commission 列）**未动**：那是券商实收，与回测假设是两回事。
+#   1.82 = 三件"看得见/用得上"的修补（2026-10-23）：
+#          ① **M3 闸条可手动收起**（用户"没找到手动关闭的地方"）：「✕」+ dismissed 信号；
+#             同一批被拦项只提示一次（`breadth_ui.gate_dismissed_sig` 签名记忆），
+#             被拦项变了 / 问题消失过再出现 ⇒ 重新提示；关掉不丢信息（ⓘ 同文案 + 徽标仍在）；
+#          ② **param_sweep 腾余量 470→387**：`_build_study` / `_experiment_signature` /
+#             `_refresh_run_enabled` 搬 `ui/widgets/sweep_input.py`（mixin 共享 self，调用点不变）；
+#          ③ **成本三档进度累进**（`_on_cost_progress`：分母 = 档数 × 每档组数）；
+#          ④ 台账：`breadth_flow` 953→979 登记 · `param_sweep` 出红榜（<400 不标数字）。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.81"
+APP_VERSION = "1.82"
 
 # ==========================================
 # 界面配置 (UI Settings)

@@ -3329,13 +3329,13 @@ try:
     _brd_ui = preferences.get('breadth_ui')
     # ★1.73 / §7-B16 期 1：多一项 `items`（统计项列表）—— **逐项点名**，且**只存轻量配置**
     #   （统计项只存 key/label/color/visible/focus，绝不存家数/矩阵 ⇒ 结果仍只进会话缓存 D3）。
-    check("breadth_ui 偏好只含配置**十七项**（`items` · `index_h` · `hint_done` · `ma_window` · "
-          "`view` 三视图 · `bands` 色带；结果只进会话缓存，D3）",
+    check("breadth_ui 偏好只含配置**十八项**（`items` · `index_h` · `hint_done` · `ma_window` · "
+          "`view` 三视图 · `bands` 色带 · ★1.81 `gate_dismissed_sig` 闸条收起；结果只进会话缓存，D3）",
           isinstance(_brd_ui, dict)
           and set(_brd_ui) <= {'scope', 'index_code', 'formula', 'params', 'thresholds',
                                'range', 'chart', 'index_style', 'smooth', 'ratio',
                                'overlay', 'overlay_code', 'items', 'index_h', 'hint_done',
-                               'ma_window', 'view', 'bands'}
+                               'ma_window', 'view', 'bands', 'gate_dismissed_sig'}
           and str(_brd_ui.get('formula') or '').strip() != ''
           and isinstance(_brd_ui.get('thresholds'), dict)
           and isinstance(_brd_ui.get('items'), list)
@@ -5257,8 +5257,12 @@ try:
 
     # ---- 源码级纪律（判据 = 代码形状，§11.5-101）----
     _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _psw_src = open(os.path.join(_repo_root, "ui", "views", "param_sweep.py"),
-                    encoding="utf-8").read()
+    # ★1.81：`_build_study` / `_experiment_signature` / `_refresh_run_enabled` 已搬进
+    #   `ui/widgets/sweep_input.py` ⇒ 源码级判据必须**两件合并看**（否则会假红/假绿）
+    _psw_src = (open(os.path.join(_repo_root, "ui", "views", "param_sweep.py"),
+                     encoding="utf-8").read()
+                + open(os.path.join(_repo_root, "ui", "widgets", "sweep_input.py"),
+                       encoding="utf-8").read())
     _psw_form = open(os.path.join(_repo_root, "ui", "widgets", "sweep_form.py"),
                      encoding="utf-8").read()
     check("§8-11 策略来源唯一：页面 import StrategyStore，且不存在自由编辑函数的输入控件",
@@ -5279,7 +5283,10 @@ try:
           and "同屏不可折叠" in _psw_res_src)
 
     # ---- ★R0 拆件：视图回到"编排 + 闸门"，结果渲染另成一件事 ----
-    _psw_lines = len([l for l in _psw_src.splitlines() if l.strip()])
+    # ⚠ 这里必须数**该文件自身**（`_psw_src` 自 ★1.81 起是"param_sweep + sweep_input"的合并文本，
+    #   拿它数行数会把搬走的那 81 行又算回来 —— 我本轮就被自己的这个合并坑了一次）
+    _psw_lines = len([l for l in open(os.path.join(_repo_root, "ui", "views", "param_sweep.py"),
+                                      encoding="utf-8").read().splitlines() if l.strip()])
     _res_lines = len([l for l in _psw_res_src.splitlines() if l.strip()])
     check(f"★R0/R3：param_sweep.py 拆件后 ≤470 行（实测 {_psw_lines}）+ 结果/区间两件独立"
           f"（sweep_results.py {_res_lines} 行）",
@@ -6774,6 +6781,92 @@ try:
         _prefs81u.set(COMMISSION_PREF_KEY, _orig81u)
 except Exception as _e81u:  # noqa: BLE001
     check(f"★1.81 佣金 UI 断言整段抛异常: {type(_e81u).__name__}: {_e81u}", False)
+
+
+
+# ==========================================
+# ★1.81 · M3 闸条**可手动收起**（用户 2026-10-17："m3 里这个提醒我没找到手动关闭的地方"）
+#   口径：**同一批被拦项只提示一次**；被拦项变了会再出现；关掉不丢信息（ⓘ 有同一份文案）。
+# ==========================================
+print("\n== ★1.81 · M3 闸条可收起 ==")
+try:
+    from ui.widgets.gate_hint import GateHintBar as _GHB81  # noqa: E402
+
+    _gb81 = _GHB81()
+    _hits81 = []
+    _gb81.dismissed.connect(lambda *_: _hits81.append(1))
+    _gb81.set_blocked([('条件A', {'event_ok': False, 'mode': 'continuous',
+                                  'reason': '命中天数占比 66.7% ⇒ 几乎天天命中',
+                                  'suggest': '看占比 / IC'})])
+    check("★ 1.81 闸条：**有「✕ 收起」**（原来只能一直看着），且点它发 `dismissed`（真按钮）",
+          _gb81.btn_close.text() == '✕' and not _gb81.isHidden()
+          and '不丢信息' in _gb81.btn_close.toolTip())
+    _gb81.btn_close.click()
+    check("★ 1.81 闸条：点「✕」→ 发信号（流程据此收起并记住），不是假按钮", _hits81 == [1])
+
+    _flow81 = open('ui/widgets/breadth_flow.py', encoding='utf-8').read()
+    _view81 = open('ui/views/breadth_view.py', encoding='utf-8').read()
+    check("★ 1.81 闸条：**同一批被拦项只提示一次**（收起后不反复冒；换了被拦项再出现）"
+          "—— 判据 = 被拦项签名比对",
+          'def on_gate_dismissed' in _flow81 and '_gate_dismissed_sig' in _flow81
+          and 'sig = ' in _flow81 and "getattr(p, '_gate_dismissed_sig'" in _flow81)
+    check("★ 1.81 闸条：收起状态**记住**（`breadth_ui.gate_dismissed_sig`，与 hint_done 同族）"
+          "且**关掉不丢信息**（常驻 ⓘ 仍含三道闸文案）",
+          "'gate_dismissed_sig': str(self._gate_dismissed_sig or '')" in _view81
+          and "data.get('gate_dismissed_sig')" in _view81
+          and 'GATES_HELP_TEXT' in open('ui/widgets/breadth_layout.py', encoding='utf-8').read())
+except Exception as _e81g:  # noqa: BLE001
+    check(f"★1.81 闸条收起断言整段抛异常: {type(_e81g).__name__}: {_e81g}", False)
+
+
+
+# ==========================================
+# ★1.81 · 第 2 档第 1 步（拆件腾余量）+ 第 2 步（进度累进）
+#   ① `param_sweep.py` 从 470（贴上限）回到 ~390：三块"表单→研究规格"搬进 `SweepInputMixin`；
+#   ② 成本敏感性三档进度**累进**（旧版每档从 0 开始 ⇒ 观感"倒退"）。
+# ==========================================
+print("\n== ★1.81 · 拆件腾余量 + 三档进度累进 ==")
+try:
+    _ps81 = io_src81 = open('ui/views/param_sweep.py', encoding='utf-8').read()
+    _si81 = open('ui/widgets/sweep_input.py', encoding='utf-8').read()
+    _ne81 = sum(1 for l in _ps81.splitlines() if l.strip())
+    check(f"★ 1.81 拆件：`param_sweep.py` 非空 {_ne81} 行（原 470 = 贴着 470 上限，**零余量**）"
+          "—— 三块搬进 `SweepInputMixin`，方法与调用点都不变（mixin 共享 self）",
+          _ne81 <= 400 and 'def _build_study' not in _ps81
+          and 'def _refresh_run_enabled' not in _ps81
+          and all(k in _si81 for k in ('def _build_study', 'def _refresh_run_enabled',
+                                       'def _experiment_signature')))
+    check("★ 1.81 拆件：搬走的方法**仍挂在页面上**（MRO 解析）+ 调用点一字未改",
+          all(hasattr(_sv81b := next(win.page_backtest.tabs.widget(_i81b)
+                                     for _i81b in range(win.page_backtest.tabs.count())
+                                     if type(win.page_backtest.tabs.widget(_i81b)).__name__
+                                     == 'ParamSweepView'),
+                      n) for n in ('_build_study', '_refresh_run_enabled', '_experiment_signature'))
+          and 'self.form.changed.connect(self._refresh_run_enabled)' in _ps81)
+
+    _sv81c = next(win.page_backtest.tabs.widget(_i81c)
+                  for _i81c in range(win.page_backtest.tabs.count())
+                  if type(win.page_backtest.tabs.widget(_i81c)).__name__ == 'ParamSweepView')
+    _calls81 = []
+    _orig_prog81 = _sv81c.form.set_progress
+    try:
+        _sv81c.form.set_progress = lambda d, t, note=None: _calls81.append((d, t, note))
+        _sv81c._cost_levels_run = (0.0003, 0.0005, 0.0010)
+        _sv81c._cost_index = 0
+        _sv81c._on_cost_progress(3, 10, 'combo-A')
+        _sv81c._cost_index = 1
+        _sv81c._on_cost_progress(3, 10, 'combo-B')
+        _sv81c._cost_index = 2
+        _sv81c._on_cost_progress(10, 10, 'combo-C')
+    finally:
+        _sv81c.form.set_progress = _orig_prog81
+    check(f"★ 1.81 进度：三档**累进**（4/30 → 13/30 → 30/30；旧版三段都是 x/10 ⇒ 进度条回跳）"
+          f"实测 {_calls81}",
+          [d for d, _t, _n in _calls81] == [3, 13, 30]
+          and sorted({t for _d, t, _n in _calls81}) == [30]
+          and '第 2/3 档' in str(_calls81[1][2]))
+except Exception as _e81p:  # noqa: BLE001
+    check(f"★1.81 拆件/进度断言整段抛异常: {type(_e81p).__name__}: {_e81p}", False)
 
 
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71

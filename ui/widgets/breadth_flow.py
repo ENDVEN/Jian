@@ -57,7 +57,8 @@ from ui.widgets.summary_chip import set_chip_state   # ★1.64：胶囊高亮（
 from ui.widgets.readiness_flow import (constituent_failure_text,
                                        constituent_snapshot_text, mark_archived,
                                        scope_snapshot)
-from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard, SingleSyncWorker
+from ui.workers import ConstituentsWorker, CrossSectionWorker, JobGuard, SingleSyncWorker
+
 from ui.widgets.breadth_plan_flow import BreadthPlanFlowMixin
 from ui.widgets.breadth_relation_flow import BreadthRelationFlowMixin
 
@@ -121,6 +122,7 @@ class BreadthFlow(BreadthRelationFlowMixin, BreadthPlanFlowMixin):
         p._display_pane.gate_row.set_values(thresholds_from_prefs(), silent=True)  # 开局回灌真值
         p.gate_bar.fix_requested.connect(self.on_gate_fix_clicked)
         p.gate_bar.why_requested.connect(self.show_gates_help)
+        p.gate_bar.dismissed.connect(self.on_gate_dismissed)   # ★1.81 可手动收起
         # ★1.75 期 3：三视图切换 + 关系卡导出（按钮只发信号，落盘在本模块 —— widgets 不碰文件系统）
         p.seg_view.sigChanged.connect(self.on_view_changed)
         p.relation_card.export_png_requested.connect(self.on_export_png)
@@ -766,7 +768,34 @@ class BreadthFlow(BreadthRelationFlowMixin, BreadthPlanFlowMixin):
         blocked = [(labels.get(k, k), v) for k, v in verdicts.items()
                    if v and not v.get('event_ok', False)
                    and str(v.get('mode')) != MODE_UNKNOWN]
+        # ★1.81：**同一批被拦项只提示一次** —— 用户收起后不反复冒；被拦项变了才再出现
+        if not blocked:
+            # 问题消失（全都不被拦了）⇒ **忘掉**收起状态：将来再被拦下要重新提示，
+            # 否则"永久静音"会把新问题也一起压掉（诚实优先）
+            p._gate_dismissed_sig = ''
+        sig = '|'.join(sorted(lab for lab, _v in blocked))
+        p._gate_blocked_sig = sig
+        if blocked and sig and sig == str(getattr(p, '_gate_dismissed_sig', '')):
+            bar.set_blocked([])
+            return
         bar.set_blocked(blocked)
+
+    def on_gate_dismissed(self) -> None:
+        """收起闸条（★1.81）—— 记下"这一批被拦项"，并写进 `breadth_ui`。
+
+        ⚠ **不丢信息**：常驻 ⓘ 有同一份三道闸文案；每行统计项的徽标仍标"不适用"。
+        """
+        p = self.page
+        p._gate_dismissed_sig = str(getattr(p, '_gate_blocked_sig', ''))
+        bar = getattr(p, 'gate_bar', None)
+        if bar is not None:
+            bar.set_blocked([])
+        try:
+            p._save_ui()
+        except Exception:                   # noqa: BLE001 —— 记住与否都不该拖垮交互
+            pass
+        p.lbl_receipt.setText('已收起这条提醒 —— 右上 ⓘ 里有同一份「三道闸」说明；'
+                              '被拦下的项有变化时它会再出现。')
 
     def on_thresholds_changed(self, values: dict) -> None:
         """展示卡**就地**改阈值 ⇒ 写进同一份偏好（经设置注册表）⇒ 重算徽标与闸条。

@@ -190,6 +190,7 @@ class GateHintBar(QFrame):
 
     fix_requested = pyqtSignal()        # 去改阈值（页面打开「📈 展示」卡）
     why_requested = pyqtSignal()        # 看三道闸说明（与常驻 ⓘ 同一份文案）
+    dismissed = pyqtSignal()            # ★1.81 用户手动收起（"同一批被拦项"只提示一次）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -215,6 +216,17 @@ class GateHintBar(QFrame):
         self.btn_why.setToolTip('1 分钟看完：什么样的条件配什么样的图（以及 n 该怎么算）')
         self.btn_why.clicked.connect(self.why_requested.emit)
         lay.addWidget(self.btn_why)
+        # ★1.81（用户 2026-10-17 实测："m3 里这个提醒我没找到手动关闭的地方"）：
+        #   **收起**按钮。关掉**不丢信息**：右上常驻 ⓘ 里有同一份「三道闸」说明，
+        #   而且每一行统计项的徽标仍标着"不适用"；被拦下的项有变化时它会再出现。
+        self.btn_close = QPushButton('✕')
+        self.btn_close.setStyleSheet(FLAT_QSS)
+        self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_close.setFixedWidth(24)
+        self.btn_close.setToolTip('收起这条提醒（不丢信息：右上 ⓘ 有同一份说明，'
+                                  '每行的徽标也还在）；被拦下的项有变化时会再出现')
+        self.btn_close.clicked.connect(self.dismissed.emit)
+        lay.addWidget(self.btn_close)
         self.hide()
 
     def set_blocked(self, rows: list) -> None:

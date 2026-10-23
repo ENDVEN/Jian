@@ -68,6 +68,7 @@ class BreadthView(QWidget):
         #   页面没被切到 / 窗口没显示时可见性恒 False ⇒ 会把"没关过"误存成"已读"（引导永不出现），
         #   而且同一个值会随"什么时候保存"来回翻。状态只由"用户有没有点知道了"决定（唯一写点）。
         self._hint_done = False
+        self._gate_dismissed_sig = ''      # ★1.81 闸条已收起的那一批被拦项
         # ★1.73 / §7-B16 期 1：**统计项**（上屏的判定变量列表）—— 唯一真源在本页，
         #   `breadth_items` 面板只渲染 + 发请求（§9-D：同一项只有一个写入点）。
         #   每项 = {'key','label','color','visible','focus'}；空 = 用公式最后一条（老行为）。
@@ -320,6 +321,7 @@ class BreadthView(QWidget):
                                          int(display.spin_ma.maximum())))
             # ★1.73 修：接**显式标志**（不读可见性）；据此显隐引导条（常驻 ⓘ 始终在）
             self._hint_done = bool(data.get('hint_done', False))
+            self._gate_dismissed_sig = str(data.get('gate_dismissed_sig') or '')
             self.hint_bar.setVisible(not self._hint_done)
             overlay_code = str(data.get('overlay_code') or '')
             if overlay_code:
@@ -364,4 +366,5 @@ class BreadthView(QWidget):
             'view': str(self.seg_view.current_key()),
             'bands': bool(self._display_pane.chk_bands.isChecked()),
             'hint_done': bool(self._hint_done),
+            'gate_dismissed_sig': str(self._gate_dismissed_sig or ''),
         })

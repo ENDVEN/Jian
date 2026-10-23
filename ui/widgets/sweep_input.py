@@ -19,6 +19,9 @@ import logging
 
 import pandas as pd
 
+from core.conditions import gate_expression
+from core.param_sweep import SweepSpec
+from core.sweep_plan import StudyInterval, build_grid, validate_interval
 from core.formula.program import parse_program, probe_missing_parameters
 from core.utils import synthetic_bars      # ⚠ 参数探测要用"合成样本"，随块一起搬过来
 from data.strategy_store import index_gate_enabled, segments_of
@@ -113,3 +116,94 @@ class SweepInputMixin:
             " —— 样本内/样本外都要落在这段里")
         # ★R7：把范围推给表单 ⇒「合并全部」只收**本机有数据**的窗口（并如实标注筛掉了多少对）
         self.form.set_data_range(str(d.min().date()), str(d.max().date()))
+
+# ================= ★1.81 从 param_sweep 搬来：表单 → 研究规格 =================
+#   为什么在输入侧：这三块只做"读表单 / 校验闸门 / 组装 `SweepSpec`+`GridPlan`+区间"，
+#   不碰结果；页面源文件因此从 470 行（贴着结构上限）回到 ~390。
+    # ================= 闸门要看得见 =================
+    def _refresh_run_enabled(self) -> None:
+        """网格 / 区间不合规 ⇒ **禁用「▶ 跑样本内」+ 就地写原因**。
+
+        ★用户 2026-10-01 实测根因：`L1 起5 止20 步1` = **16 档 > 上限 15** ⇒ 网格被闸门拒、
+        `_build_study()` 直接返回 ⇒ 右边结果图当然不变；但运行按钮**照样能点**、原因只躲在
+        一行小灰字里 ⇒ 用户判定"坏了 / 没重构完"。现在：拦住时按钮禁用 + 橙字一行说明 +
+        tooltip 同句（一句话：**闸门的拒绝必须落在用户正在看的地方**）。
+        """
+        self._invalidate_if_changed()        # ★1.66：网格/区间变了 ⇒ 上一轮结果作废
+        _dims, err = self.form.grid_dims()
+        why = str(err or "")
+        if not why:
+            problems = validate_interval(self.form.interval())
+            why = problems[0] if problems else ""
+        self.form.set_run_blocked(why)
+
+    # ================= 实验身份（★1.66）=================
+    def _experiment_signature(self):
+        """**这一次实验**的身份 = 网格（维名 + 档位）+ 区间四日期（网格不合法 ⇒ None）。"""
+        dims, err = self.form.grid_dims()
+        if err:
+            return None
+        iv = self.form.interval()
+        return (tuple((d.name, tuple(d.values)) for d in dims),
+                iv.is_start, iv.is_end, iv.oos_start, iv.oos_end,
+                tuple(getattr(iv, "more", ()) or ()))      # ★R7：合并窗口也算实验身份
+
+    def _build_study(self) -> tuple[SweepSpec, object, StudyInterval] | None:
+        payload = self.form.strategy_payload()
+        symbol = self.form.symbol()
+        if not symbol:
+            self.form.set_receipt("先填标的代码")
+            return None
+        if payload is None:
+            self.form.set_receipt("先选一个 M1 已保存的策略（只列带条件的配方）")
+            return None
+        if index_gate_enabled(payload.get("index")):   # ★1.70 / §11.5-128：判 `enabled`，别判字典非空
+            self.form.set_receipt("该策略带指数门控（已启用），本页暂不支持（红线：不复刻阶段C 门控）")
+            return None
+        # ★1.66：条件在**运行前**就地判空 —— 配置 → DSL 是 `core.conditions` 的事，
+        #   空条件到不了引擎（否则引擎会抛"不是表达式"的怪错，用户看不懂）。
+        if not gate_expression(payload.get("condition_buy")) or \
+                not gate_expression(payload.get("condition_sell")):
+            self.form.set_receipt("该策略的买卖条件为空（或条件行没配好）⇒ 没有可回测的东西；"
+                                  "先在 M1 配好买卖条件再存策略")
+            return None
+        dims, dim_err = self.form.grid_dims()
+        if dim_err:
+            self.form.set_receipt(f"参数网格：{dim_err}")
+            return None
+        grid = build_grid(dims)
+        if not grid.ok:
+            self.form.set_receipt(f"参数网格：{grid.rejection}")
+            return None
+        iv = self.form.interval()
+        df = self._lake.load_data("kline_daily", symbol)
+        data_start = data_end = ""
+        if df is not None and not df.empty and "date" in df.columns:
+            d = pd.to_datetime(df["date"])
+            data_start, data_end = str(d.min().date()), str(d.max().date())
+        problems = list(validate_interval(iv, data_start, data_end))
+        if df is None or df.empty:
+            problems.insert(0, f"本地没有 {symbol} 的前复权日线 —— 先去 🗄 数据管理 预下载")
+        if problems:
+            self.form.set_interval_receipt("；".join(problems))
+            self.form.set_receipt("区间没过校验，先解决上面的问题")
+            return None
+        self.form.set_interval_receipt(f"区间 OK（本地数据 {data_start} → {data_end}）")
+        spec = SweepSpec(
+            symbol=symbol,
+            segments=segments_of(payload),
+            params_text=str(payload.get("params_text") or ""),
+            # ★1.66：条件**原样**递过去（是**配置 dict**，不是字符串）—— 旧版在这里 `str(...)`，
+            #   dict 被转成 repr 文本（"{'rule': 'rise', …}"）⇒ 引擎 `parse` 报
+            #   "无法识别的字符 '{'" ⇒ **每一组都失败**（点运行只看到"完成 0 组，失败 N 组"）。
+            #   配置 → DSL 的转换由 `core.conditions` 在求值前统一做（唯一真源）。
+            condition_buy=payload.get("condition_buy") or "",
+            condition_sell=payload.get("condition_sell") or "",
+            risk=dict(payload.get("risk") or {}),
+            fill_mode=(payload.get("fill") or {}).get("fill_mode"),
+            trigger_tick=(payload.get("fill") or {}).get("trigger_tick"),
+            has_index_gate=index_gate_enabled(payload.get("index")))   # ★1.70 / §11.5-128
+        self._spec, self._grid, self._interval = spec, grid, iv
+        self._preset_key = self.form.preset_key()
+        return spec, grid, iv
+
