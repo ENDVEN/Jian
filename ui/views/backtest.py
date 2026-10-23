@@ -47,6 +47,7 @@ from core.backtest import (DEFAULT_START_DATE,
                            EXIT_REASON_COLORS, EXIT_REASON_LABELS,
                            FILL_CLOSE, FILL_MODE_LABELS, FILL_NEXT_OPEN, FILL_TRIGGER,
                            T1_SUMMARY, fill_mode_oneliner, fill_summary, normalize_fill,
+                           commission_rate_from_prefs, commission_text,
                            risk_summary, tick_to_yuan, yuan_to_tick)
 from core.preferences import preferences
 from core.utils import parse_params_text, synthetic_bars
@@ -906,6 +907,8 @@ class SingleStockBacktestView(QWidget):
         fill_txt = FILL_MODE_LABELS.get(conf["fill_mode"], str(conf["fill_mode"]))
         if conf["fill_mode"] == FILL_TRIGGER:
             fill_txt += f" · {tick_to_yuan(conf['trigger_tick']):.2f} 元"
+        # ★1.81：佣金进"成交"这块（属于成交成本，不是风控）—— 与设置/结论条同源
+        fill_txt += " · 佣金 " + commission_text(commission_rate_from_prefs())
         self.summary.set_value("fill", fill_txt, "on")
 
     # ---------- 状态记忆（打开页面用记住上次）----------

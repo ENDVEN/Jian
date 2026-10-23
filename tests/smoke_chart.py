@@ -5999,6 +5999,78 @@ try:
 except Exception as _e79:  # noqa: BLE001
     check(f"§7-B15 第二轮① 内核断言整段抛异常: {type(_e79).__name__}: {_e79}", False)
 
+
+# ==========================================
+# ★1.81 · 回测佣金「全局唯一口径」（用户 2026-10-23：**佣金涉及的全部都要改，不要漏**）
+#   一处设置（`backtest_prefs.commission_um`，万分之）⇒ 引擎 / M1 / 参数研究 / 存档 / 显示全跟随；
+#   不设时 == `DEFAULT_COMMISSION_RATE`（万3）⇒ 旧行为逐位不变。
+#   本段验**内核**：解析器 / 单位换算 / 引擎真跟随 / 参数研究默认跟随 / 调用点不许写死费率。
+# ==========================================
+print("\n== ★1.81 · 回测佣金全局口径（内核）==")
+try:
+    import inspect as _insp81  # noqa: E402
+
+    from core.backtest import (COMMISSION_PREF_KEY, COMMISSION_UM_FIELD,  # noqa: E402
+                               DEFAULT_COMMISSION_RATE, commission_rate_from_prefs,
+                               commission_text, rate_to_um, um_to_rate)
+    from core.param_sweep import run_sweep as _rs81  # noqa: E402
+    from core.preferences import preferences as _prefs81  # noqa: E402
+
+    _orig81 = dict(_prefs81.get(COMMISSION_PREF_KEY) or {})
+    check("★ 1.81：**不设佣金 ⇒ 回落万3**（旧行为逐位不变；`preferences` 里没有这个键时也一样）",
+          abs(commission_rate_from_prefs() - DEFAULT_COMMISSION_RATE) < 1e-12)
+    check("★ 1.81：单位换算**唯一**（万分之 ⇄ 小数/每边）+ 人话（0 ⇒ 免佣金）",
+          abs(rate_to_um(0.0003) - 3.0) < 1e-9 and abs(um_to_rate(2.5) - 0.00025) < 1e-12
+          and commission_text(0.0003) == '万3' and commission_text(0.0) == '免佣金')
+    try:
+        _prefs81.set(COMMISSION_PREF_KEY, {**_orig81, COMMISSION_UM_FIELD: 5.0})
+        check("★ 1.81：设 5 万分之 ⇒ 解析器给 0.0005（**全站唯一读取口**）",
+              abs(commission_rate_from_prefs() - 0.0005) < 1e-12)
+        _prefs81.set(COMMISSION_PREF_KEY, {**_orig81, COMMISSION_UM_FIELD: 999})
+        _hi81 = commission_rate_from_prefs()
+        _prefs81.set(COMMISSION_PREF_KEY, {**_orig81, COMMISSION_UM_FIELD: -3})
+        _lo81 = commission_rate_from_prefs()
+        _prefs81.set(COMMISSION_PREF_KEY, {**_orig81, COMMISSION_UM_FIELD: 5.0})  # 复原，供下面用
+        check("★ 1.81：越界夹进 [0, 100] 万分之（手滑输 999 ⇒ 100；输 -3 ⇒ 0）",
+              abs(_hi81 - 0.01) < 1e-12 and abs(_lo81 - 0.0) < 1e-12
+              and abs(commission_rate_from_prefs() - 0.0005) < 1e-12)
+
+        import pandas as _pd81  # noqa: E402
+
+        _d81 = _pd81.DataFrame({
+            'date': _pd81.bdate_range('2024-01-01', periods=60),
+            'close': [10.0 + (1.0 if i % 6 < 3 else -0.8) for i in range(60)]})
+        _d81['open'] = _d81['close']
+        _d81['high'] = _d81['close'] + 0.1
+        _d81['low'] = _d81['close'] - 0.1
+        _d81['volume'] = 1e6
+        _e81 = BacktestEngine()
+        _buy, _sell = 'CROSS(C, MA(C, 3))', 'CROSS(MA(C, 3), C)'
+        _r_free = _e81.run(_d81, _buy, _sell, symbol='T81', commission_rate=0.0)
+        _r_fee = _e81.run(_d81, _buy, _sell, symbol='T81', commission_rate=0.01)
+        _r_def = _e81.run(_d81, _buy, _sell, symbol='T81')
+        _c_free = sum(float(getattr(t, 'commission', 0.0)) for t in _r_free.trades)
+        _c_fee = sum(float(getattr(t, 'commission', 0.0)) for t in _r_fee.trades)
+        check(f"★ 1.81：**引擎真按费率收费**（0 ⇒ 手续费合计 {_c_free:g}；1% ⇒ {_c_fee:.2f}）"
+              "且**信号不受影响**（成交笔数相同）",
+              len(_r_free.trades) == len(_r_fee.trades) and len(_r_free.trades) > 0
+              and abs(_c_free) < 1e-12 and _c_fee > 0)
+        check(f"★ 1.81：**不传就跟随设置**（实测 {float(_r_def.commission_rate):.6f} == 0.0005）"
+              "—— 这是『不漏任何调用点』的关键：默认值 = None + 解析",
+              abs(float(_r_def.commission_rate) - 0.0005) < 1e-12)
+    finally:
+        _prefs81.set(COMMISSION_PREF_KEY, _orig81)
+    check("★ 1.81：参数研究**默认跟随**（`run_sweep(commission_rate=None)`），显式档位仍可覆盖",
+          _insp81.signature(_rs81).parameters['commission_rate'].default is None)
+    _src81 = ''
+    for _f81 in ('ui/workers.py', 'ui/views/backtest.py', 'ui/widgets/sweep_results.py',
+                 'core/param_sweep.py'):
+        _src81 += open(_f81, encoding='utf-8').read()
+    check("★ 1.81：**调用点里不许再写死费率**（`0.0003` 只准出现在 `core/backtest.py` 常量与其 docstring）",
+          '0.0003' not in _src81)
+except Exception as _e81:  # noqa: BLE001
+    check(f"★1.81 佣金内核断言整段抛异常: {type(_e81).__name__}: {_e81}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)

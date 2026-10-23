@@ -25,7 +25,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QTableWidgetItem
 
-from core.backtest import risk_summary
+from core.backtest import (commission_rate_from_prefs,  # ★1.81 佣金同源
+                           commission_text, risk_summary)
 from core.param_sweep import (ComboOutcome, SweepOutcome, build_matrix,
                               combo_key, split_indices)
 from core.sweep_plan import neighborhood_indices
@@ -163,6 +164,9 @@ class SweepResultsMixin:
         fill = _FILL_LABELS.get(self._spec.fill_mode or "next_open",
                                 str(self._spec.fill_mode))
         risk_txt = risk_summary(self._spec.risk) or "无"
+        # ★1.81：佣金与本批研究**同源**（取发起时记录的，回落当前设置）
+        _comm_txt = commission_text(getattr(self, "_study_commission", None)
+                                    or commission_rate_from_prefs())
         ic_txt = "—" if ic is None or ic != ic else f"{ic:.2f}"
         pbo_txt = "—" if pbo is None or pbo != pbo else f"{pbo:.0%}"
         bad = pbo is not None and pbo == pbo and pbo > 0.5
@@ -183,7 +187,7 @@ class SweepResultsMixin:
             f"Rank IC <b>{ic_txt}</b>（&lt;0.15 ⇒ 无预测力）· PBO <b>{pbo_txt}</b>{warn}<br>"
             f"区间 <b>{iv.is_start} ~ {iv.is_end}</b>（样本内）→ "
             f"<b>{iv.oos_start} ~ {iv.oos_end}</b>（样本外）· 成交：<b>{fill}</b> · "
-            f"风控：<b>{risk_txt}</b> · 过门槛 <b>"
+            f"风控：<b>{risk_txt}</b> · 佣金：<b>{_comm_txt}</b>（每边） · 过门槛 <b>"
             f"{sum(1 for r in rows if r.get('kept'))}</b> 组"
             + self._cost_verdict_line())
         # ★R1：KPI 小卡行（与 M2 结果区**同一个** `kpi_card`）—— 数字与结论条**同源同一批变量**；

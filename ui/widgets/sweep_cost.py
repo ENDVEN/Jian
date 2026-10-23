@@ -26,6 +26,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
                              QWidget)
 
+from core.backtest import commission_rate_from_prefs, commission_text   # ★1.81 基准
 from core.sweep_plan import GridPlan
 from core.sweep_stats import DEFAULT_COST_LEVELS, annual_returns, cost_sensitivity
 from core.sweep_stats import cost_tier_label
@@ -35,6 +36,13 @@ from ui.widgets.sweep_parts import panel_card, panel_head
 
 COST_TOP_N = 10          # 只对候选表**前 N 行**重跑（方案书：只跑 Top-N，不跑全网格）
 TIER_UM_RANGE = (0.1, 100.0)     # 佣金档可调范围（万分之）—— 上限 100 万分之（千分之一）够用
+
+
+def default_tiers_um() -> tuple:
+    """三档默认 = **以全局回测佣金为基准**（基准万3 时正好 3 / 5 / 10）。"""
+    base = max(commission_rate_from_prefs() * 10000.0, 0.1)
+    return (round(base, 1), round(max(base * 5.0 / 3.0, base + 0.5), 1),
+            round(max(base * 10.0 / 3.0, base + 1.0), 1))
 
 
 def _um(rate: float) -> float:
@@ -57,11 +65,11 @@ class SweepCostMixin:
         except Exception:               # noqa: BLE001 —— 偏好坏了不拖垮页面
             raw = None
         vals = []
-        for i, dflt in enumerate(DEFAULT_COST_LEVELS):
+        for i, dflt in enumerate(default_tiers_um()):
             try:
                 v = float(raw[i])
             except (TypeError, ValueError, IndexError):
-                v = _um(dflt)
+                v = dflt
             vals.append(min(max(v, TIER_UM_RANGE[0]), TIER_UM_RANGE[1]))
         return tuple(vals)
 
@@ -154,6 +162,21 @@ class SweepCostMixin:
         self.form.set_receipt(str(text))
 
     # ---------------- 跑（Top-N × 3 档，逐档串行，可中断） ----------------
+    def _follow_cost_base(self) -> None:
+        """把三档按**当前基准**重排（基准来自设置；只影响敏感性测算）。"""
+        base = default_tiers_um()
+        for sp, v in zip(getattr(self, "cost_spins", ()), base):
+            sp.blockSignals(True)
+            sp.setValue(float(v))
+            sp.blockSignals(False)
+        self._persist_cost_tiers()
+        if getattr(self, "lbl_cost_base", None) is not None:
+            self.lbl_cost_base.setText(
+                "回测基准：<b>" + commission_text(commission_rate_from_prefs()) + "</b>（每边）—— "
+                "改它去「⚙ 设置 → 回测与扫描默认」；下面三档只用于测算敏感性。")
+        self._cost_status("三档已按基准重排：" + " / ".join(f"万{v:g}" for v in base)
+                          + "（只影响敏感性测算，不改本次研究的成交口径）")
+
     def _run_cost(self) -> None:
         """「▶ 跑成本敏感性」入口。"""
         # ★1.79 QA：**回看态下点它 = 语境错位**（屏上是历史快照的行，却拿 live 候选重跑）
@@ -277,6 +300,13 @@ def build_cost_card(page) -> QWidget:
     intro.setWordWrap(True)              # ★窗口窄时自动换行 —— 不再被裁掉
     intro.setStyleSheet(SEC_HINT_QSS)
     bl.addWidget(intro)
+    page.lbl_cost_base = QLabel("")
+    page.lbl_cost_base.setWordWrap(True)
+    page.lbl_cost_base.setStyleSheet(SEC_HINT_QSS)
+    bl.addWidget(page.lbl_cost_base)
+    page.lbl_cost_base.setText(
+        "回测基准：<b>" + commission_text(commission_rate_from_prefs()) + "</b>（每边）—— "
+        "改它去「⚙ 设置 → 回测与扫描默认」；下面三档只用于测算敏感性。")
 
     row_tiers = QHBoxLayout()
     row_tiers.setSpacing(6)
@@ -308,6 +338,12 @@ def build_cost_card(page) -> QWidget:
     page.btn_cost.setToolTip("只对候选表**前 10 名**重跑样本外（不跑全网格）· 可随时中断\n"
                              "跑完：候选表第 9 列出现斜率 + 结论条多一行 + 本卡下方给逐档年化")
     page.btn_cost.clicked.connect(page._run_cost)
+    page.btn_cost_follow = QPushButton("↺ 跟随基准")
+    page.btn_cost_follow.setStyleSheet(SUMMARY_GHOST_QSS)
+    page.btn_cost_follow.setCursor(Qt.CursorShape.PointingHandCursor)
+    page.btn_cost_follow.setToolTip("把三档按**当前回测佣金**重排（万3 ⇒ 3 / 5 / 10）")
+    page.btn_cost_follow.clicked.connect(page._follow_cost_base)
+    row_tiers.addWidget(page.btn_cost_follow)
     row_tiers.addWidget(page.btn_cost)
     row_tiers.addStretch(1)
     bl.addLayout(row_tiers)

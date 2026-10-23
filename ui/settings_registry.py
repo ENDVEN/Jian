@@ -302,6 +302,14 @@ _ITEMS_V1 = (
               '① 一旦检测到东财限流，下载会**自动降到 1.2 秒 / 1 路**并告诉你；\n'
               '② 调成 **1** = 完全串行（最保守，零风险回滚）。\n'
               '默认 2 是"稳妥档"（0.5 秒 × 2 ≈ 4 请求/秒）；想更快再自己往上调。'),
+    Item('backtest.commission_um', 'defaults', '回测佣金', KIND_NUMBER, default=3.0,
+         where='backtest_prefs.commission_um', lo=0.0, hi=100.0, step=0.5, decimals=1,
+         unit='万分之',
+         tip='每边收一次（买、卖各收）：引擎按 (买价+卖价)×费率 计。万3 = 3.0（默认）。',
+         help='★1.81：这是**全站回测唯一的佣金口径** —— M1 单股回测、参数研究（含成本敏感性）'
+              '都用它，改完对**下一次**回测生效（已跑完的结果不改）。\n'
+              '⚠ 与「复盘/交割单」里的手续费**不是一回事**：那个是你券商实际收的（账本列）。\n'
+              '设 0 = 免佣金（用来对照"策略本身的毛利"）。'),
     Item('download.skip_fresh', 'download', '跳过已最新', KIND_TOGGLE, default=True,
          where='download_prefs.skip_fresh',
          tip='本地已是最新的标的直接跳过（断点续传的基础）。'),

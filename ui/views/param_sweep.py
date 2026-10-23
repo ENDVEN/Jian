@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QLabel,
                              QPushButton, QScrollArea, QTableWidget,
                              QVBoxLayout, QWidget)
 
+from core.backtest import commission_rate_from_prefs   # ★1.81 佣金同源
 from core.conditions import gate_expression
 from core.param_sweep import SweepOutcome, SweepSpec
 from core.sweep_plan import StudyInterval, build_grid, validate_interval
@@ -175,7 +176,6 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         self.btn_save.setStyleSheet(SUMMARY_GHOST_QSS)
         self.btn_save.setEnabled(False)
         tb_head.layout().addWidget(self.btn_save)
-        # ★1.79 重做：成本敏感性原在此头条行右侧 ⇒ 窄窗被裁（截图实证）⇒ 已升级为独立卡片（见 sweep_cost）
         tb = QVBoxLayout(self.table_card)
         tb.setContentsMargins(0, 0, 0, 0)
         tb.setSpacing(2)
@@ -207,7 +207,6 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         tb2.addWidget(self.table)
         rl.addWidget(self.table_card, 1)     # ★R4-c：竖向余量归候选表（图已封顶）
-        # ★1.79 重做：**成交成本卡**（口径 + 三档佣金 + 按钮 + 状态 + 逐档结果），放候选表正下方
         #   （结果就是那张表的「成本斜率」列 + 结论条一行）
         rl.addWidget(build_cost_card(self))
         rl.addWidget(build_snapshot_card(self))   # ★R5b ⑨ 研究快照卡（列表 + 回看/置顶/删除）
@@ -372,6 +371,8 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         spec, grid, iv = self._spec, self._grid, self._interval
         df = self._lake.load_data("kline_daily", spec.symbol)
         self._stage = stage
+        # ★1.81：记下**本批研究**用的佣金（结论条按它印；事后改设置不改历史结论）
+        self._study_commission = commission_rate_from_prefs()
         self.form.set_running(True)
         job = self._guard.next()
         self._worker = ParamSweepWorker(job, df, spec, grid, iv, stage=stage,

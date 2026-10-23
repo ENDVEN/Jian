@@ -785,6 +785,10 @@ class HistoryPreviewPane(QFrame):
             risk_bits.append(f"回撤 {risk['trailing_pct']:g}%")
         lines.append("风控：" + (" · ".join(risk_bits) if risk_bits else "全部关闭"))
         lines.append("成交：" + _fill_text(fill))
+        # ★1.81：佣金一起显示（旧记录没存 ⇒ 如实说"未存"，不猜）
+        _cr = record.get("commission")
+        lines.append("佣金：" + ("—（该记录未存佣金）" if _cr is None
+                                 else f"{float(_cr) * 10000:g} 万分之（每边）"))
         lines.append("大盘门控：" + (
             f"{index.get('symbol')}（买 {index.get('expr_buy') or '—'} / 卖 {index.get('expr_sell') or '—'}）"
             if index else "未启用"))

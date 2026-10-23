@@ -5687,7 +5687,7 @@ from config import settings  # noqa: E402
 #   两级都不满足才 FAIL（真污染仍然抓得住）。
 _AFTER_LIB = _real_lib_fingerprint()
 _OUR_KEYS = ("desk_ui", "scan_ui", "breadth_ui", "review_ui", "download_prefs", "hub_ui",
-             "sweep_ui")
+             "sweep_ui", "backtest_prefs")
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
               "backtest_strategies.json", "preferences.json", "trade_calendar.json",
               "scan_strategies.json", "industry_map.json", "backtest_results",
@@ -6695,6 +6695,87 @@ except Exception as _e79c:  # noqa: BLE001
     check(f"§7-B15 第二轮③ 快照对比断言整段抛异常: {type(_e79c).__name__}: {_e79c}", False)
 
 # ==========================================
+
+# ==========================================
+# ★1.81 · 回测佣金「全局唯一口径」（UI 侧）
+#   设置项 / 参数研究结论条 / 运行历史 / 存档 / 成本卡「跟随基准」。
+# ==========================================
+print("\n== ★1.81 · 回测佣金全局口径（UI）==")
+try:
+    from core.backtest import (COMMISSION_PREF_KEY, COMMISSION_UM_FIELD,  # noqa: E402
+                               commission_rate_from_prefs)
+    from core.preferences import preferences as _prefs81u  # noqa: E402
+    from ui.settings_registry import find as _find81u  # noqa: E402
+
+    _it81 = _find81u('backtest.commission_um')
+    check("★ 1.81：设置项落点**唯一**（defaults 组 / `backtest_prefs.commission_um` / 0~100 / 默认 3）"
+          "—— 与 §9-D「同一项只可能有一处写入点」一致",
+          _it81 is not None and _it81.group == 'defaults'
+          and _it81.where == 'backtest_prefs.commission_um'
+          and (_it81.lo, _it81.hi) == (0.0, 100.0) and abs(float(_it81.default) - 3.0) < 1e-9
+          and _it81.unit == '万分之')
+
+    _orig81u = dict(_prefs81u.get(COMMISSION_PREF_KEY) or {})
+    try:
+        _sv81 = next(win.page_backtest.tabs.widget(_i81u)
+                     for _i81u in range(win.page_backtest.tabs.count())
+                     if type(win.page_backtest.tabs.widget(_i81u)).__name__ == 'ParamSweepView')
+        from types import SimpleNamespace as _SNS81u  # noqa: E402
+
+        _sv81._spec = _SNS81u(symbol='600000', fill_mode='next_open', risk={}, segments=())
+        _sv81._interval = _SNS81u(is_start='2024-01-01', is_end='2024-06-30',
+                                  oos_start='2024-07-01', oos_end='2024-10-31', more=())
+        _sv81._grid = _SNS81u(n_combos=4, dims=(), est_seconds=1.0)
+        _sv81._study_commission = 0.0005
+        _rows81 = [{'rank': 1, 'combo': {'a': 1.0}, 'oos_annual': 0.1, 'is_annual': 0.1,
+                    'delta': 0.0, 'nb_mean': 0.1, 'nb_worst': 0.0, 'trades': 9,
+                    'kept': True, 'flag': '', 'key': 'a=1'}]
+        _sv81._stats = {'rank_ic': 0.2, 'pbo': 0.3, 'n_failed': 0}
+        _sv81._set_verdict(0.2, 0.3, _rows81)
+        check("★ 1.81：参数研究结论条印「佣金：万5（每边）」—— 取**本批研究发起时**的值"
+              "（事后改设置不改历史结论）",
+              '佣金：<b>万5</b>（每边）' in _sv81.lbl_verdict.text())
+
+        from ui.widgets.backtest_history_ui import HistoryPreviewPane as _BHV81  # noqa: E402
+
+        _txt81 = _BHV81._extra_params({'meta': {'params_text': '', 'risk': {}, 'fill': {}},
+                                       'config': {}, 'commission': 0.0005})
+        _txt81_old = _BHV81._extra_params({'meta': {'params_text': '', 'risk': {}, 'fill': {}},
+                                           'config': {}})
+        check("★ 1.81：运行历史写「佣金：5 万分之（每边）」；**旧记录**如实写「该记录未存佣金」",
+              '佣金：5 万分之（每边）' in _txt81 and '该记录未存佣金' in _txt81_old)
+
+        from data.backtest_archive import build_record as _br81  # noqa: E402
+
+        class _Res81:
+            commission_rate = 0.0005
+            trades = []
+
+            @staticmethod
+            def summary():
+                return {}
+
+        _rec81b = _br81(_Res81(), {'params_text': ''}, config={})
+        check("★ 1.81：存档记录写入 `commission`（否则运行历史无从显示）",
+              abs(float(_rec81b.get('commission')) - 0.0005) < 1e-12)
+
+        from ui.widgets.sweep_cost import default_tiers_um as _dt81  # noqa: E402
+
+        _prefs81u.set(COMMISSION_PREF_KEY, {**_orig81u, COMMISSION_UM_FIELD: 2.0})
+        _t2 = _dt81()
+        check(f"★ 1.81：基准改 2 万分之 ⇒ 成本三档默认 {_t2}（基准万3 时正好 3/5/10）",
+              len(_t2) == 3 and abs(_t2[0] - 2.0) < 0.05 and _t2[1] > _t2[0] and _t2[2] > _t2[1])
+        _sv81._follow_cost_base()
+        check("★ 1.81：「↺ 跟随基准」按基准重排三个输入框 + 说明『只影响测算』",
+              [round(float(sp.value()), 1) for sp in _sv81.cost_spins]
+              == [round(v, 1) for v in _t2]
+              and '只影响敏感性测算' in _sv81.lbl_cost_status.text())
+    finally:
+        _prefs81u.set(COMMISSION_PREF_KEY, _orig81u)
+except Exception as _e81u:  # noqa: BLE001
+    check(f"★1.81 佣金 UI 断言整段抛异常: {type(_e81u).__name__}: {_e81u}", False)
+
+
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71
 #   现象（用户原话）："我在参数研究里面却显示 m2，我在 m2 里面显示 m3，我在 m3 里面显示在回测，
 #   这直接导致我没办法在 m2 和 m3 里面保存方案"。
@@ -8222,10 +8303,8 @@ try:
     #   但也不许悄悄多/少项）。不变量「页面行数 == 注册表项数」原样保留。
     _keys81 = [i.key for i in _sr81.items('defaults')]
     check(f"★ S2-4 + §7-B16 期 0：「回测与扫描默认」组**逐项点名**（实测 {len(_keys81)} 项）"
-          "—— 含新增的 M3 三道闸阈值三项",
-          _keys81 == ['defaults.range_preset', 'archive.auto', 'defaults.first_scan_hint',
-                      'sweep3dense.sparse_max', 'sweep3dense.freq_min',
-                      'sweep3dense.indep_gap']
+          "—— 含 M3 三道闸阈值三项 + ★1.81「回测佣金」一项",
+          _keys81 == ['backtest.commission_um', 'defaults.range_preset', 'archive.auto', 'defaults.first_scan_hint', 'sweep3dense.sparse_max', 'sweep3dense.freq_min', 'sweep3dense.indep_gap']
           and _view81.count_rows('defaults') == len(_keys81))
 except Exception as _e81:  # noqa: BLE001
     check(f"§7-B13 S2-4 断言整段抛异常: {type(_e81).__name__}: {_e81}", False)

@@ -32,7 +32,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from core.backtest import BacktestEngine, DEFAULT_COMMISSION_RATE
+from core.backtest import (BacktestEngine, DEFAULT_COMMISSION_RATE,
+                           commission_rate_from_prefs)
 from core.conditions import gate_expression
 from core.formula.program import (FormulaProgramError, execute_programs,
                                   parse_program)
@@ -141,7 +142,8 @@ def _merged_frame(df: pd.DataFrame, programs, params: dict) -> pd.DataFrame:
 def run_sweep(df, spec: SweepSpec, grid: GridPlan, interval: StudyInterval, *,
               stage: str = "both",
               done_keys=frozenset(), should_stop=None, on_progress=None,
-              commission_rate: float = DEFAULT_COMMISSION_RATE) -> SweepOutcome:
+              commission_rate: float | None = None) -> SweepOutcome:
+    """  `commission_rate=None` ⇒ **跟随全局设置**（★1.81）。"""
     """逐组跑回测，收集逐日收益。中断安全、可续跑（见模块 docstring）。
 
     `stage`：**"is"** 只跑样本内 / **"oos"** 只跑样本外 / **"both"** 两段都跑。
@@ -175,6 +177,10 @@ def run_sweep(df, spec: SweepSpec, grid: GridPlan, interval: StudyInterval, *,
 
     # 碰撞检查只与"变量名集合"有关，与参数取值无关 ⇒ 循环外做一次（用基准参数）
     _merged_frame(df, programs, base_params)
+
+    # ★1.81：佣金跟随全局设置（成本敏感性的逐档重跑会**显式**传不同档位）
+    if commission_rate is None:
+        commission_rate = commission_rate_from_prefs()
 
     engine = BacktestEngine()
     total = grid.n_combos

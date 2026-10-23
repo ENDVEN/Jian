@@ -62,6 +62,63 @@ DEFAULT_START_DATE = "2010-04-16"
 
 # 默认双边佣金率 (万3)
 DEFAULT_COMMISSION_RATE = 0.0003
+# ══════════════════════════════════════════════════════════════════
+# ★1.81 · 回测佣金「全局唯一口径」
+#   【为什么要有解析器】佣金以前是**写死的默认参数**（`DEFAULT_COMMISSION_RATE`）——
+#     结果就是"用户没有任何地方能改，也看不到用的是多少"，而账本侧（复盘/交割单）里的
+#     `commission` 是**另一件事**（你券商实际收的），两者混起来看必然对不上账。
+#   【口径】一个设置项「⚙ 设置 → 回测与扫描默认 → 回测佣金（每边，万分之）」，
+#     存在偏好 `backtest_prefs.commission_um`；**所有回测**（M1 / 参数研究 / 将来任何新入口）
+#     都从这里取 ⇒ 只改一处、全站一致。
+#   【不设时】= `DEFAULT_COMMISSION_RATE`（万3）⇒ **旧行为逐位不变**（口径迁移零风险）。
+#   【单位】引擎按**每边**收一次：`commission = (买价 + 卖价) × 费率`（见 `_run_on_signals`）；
+#     UI 用"万分之"（万3 = 3），换算只在 `rate_to_um / um_to_rate` 两处。
+# ══════════════════════════════════════════════════════════════════
+COMMISSION_PREF_KEY = "backtest_prefs"
+COMMISSION_UM_FIELD = "commission_um"
+COMMISSION_UM_RANGE = (0.0, 100.0)     # 万分之：0 = 免佣金 · 100 = 千分之一（够用且防手滑）
+UM_PER_UNIT = 10000.0
+
+
+def rate_to_um(rate) -> float:
+    """小数比例/每边 → 万分之（`0.0003` ⇒ `3.0`）。"""
+    return float(rate) * UM_PER_UNIT
+
+
+def um_to_rate(um) -> float:
+    """万分之 → 小数比例/每边（`3.0` ⇒ `0.0003`）。"""
+    return float(um) / UM_PER_UNIT
+
+
+def commission_text(rate) -> str:
+    """人话：`0.0003` ⇒ `万3`；`0` ⇒ `免佣金`；坏值 ⇒ `—`。"""
+    try:
+        um = rate_to_um(rate)
+    except (TypeError, ValueError):
+        return "—"
+    if um <= 0:
+        return "免佣金"
+    return f"万{um:g}"
+
+
+def commission_rate_from_prefs() -> float:
+    """**全站唯一读取口**：回测佣金（每边，小数比例）。
+
+    缺省 / 坏值 ⇒ `DEFAULT_COMMISSION_RATE`（万3）；越界 ⇒ 夹进 `COMMISSION_UM_RANGE`。
+    ⚠ 一律**惰性 import** 偏好（引擎是纯计算层，不该在导入期拉偏好/配置）。
+    """
+    try:
+        from core.preferences import preferences
+        raw = (preferences.get(COMMISSION_PREF_KEY) or {}).get(COMMISSION_UM_FIELD)
+    except Exception:                       # noqa: BLE001 —— 偏好坏了就用默认，绝不拖垮回测
+        return DEFAULT_COMMISSION_RATE
+    try:
+        um = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_COMMISSION_RATE
+    lo, hi = COMMISSION_UM_RANGE
+    return um_to_rate(min(max(um, lo), hi))
+
 
 # ---- 成交时点模型 (v6.17 · §7-B5 C1) ----
 FILL_NEXT_OPEN = "next_open"   # 信号日收盘成立 → 次日开盘成交 (默认，与旧版逐位一致)
@@ -308,11 +365,15 @@ class BacktestEngine:
         params: dict = None,
         start_date: str = DEFAULT_START_DATE,
         end_date: str = None,
-        commission_rate: float = DEFAULT_COMMISSION_RATE,
+        commission_rate: float | None = None,   # ★1.81：None = 跟随全局设置
         risk: dict = None,
         fill_mode: str = FILL_NEXT_OPEN,
         trigger_tick: int = DEFAULT_TRIGGER_TICK,
     ) -> BacktestResult:
+        # ★1.81：佣金跟随**全局设置**（`commission_rate_from_prefs`）—— 显式传入才覆盖
+        if commission_rate is None:
+            commission_rate = commission_rate_from_prefs()
+
         # ---- 数据准备 ----
         data = df.copy()
         data['date'] = pd.to_datetime(data['date'])

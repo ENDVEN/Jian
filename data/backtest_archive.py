@@ -208,6 +208,9 @@ def build_record(result, meta: dict, config: dict = None, kind: str = KIND_M1,
         "pinned": False, "source": source,
         "meta": _clean_meta(meta),
         "config": config or {},
+        # ★1.81：把**这次实际用的佣金**一起存档（旧记录没这个字段 ⇒ 展示端写"未存"）
+        "commission": (None if getattr(result, "commission_rate", None) is None
+                       else float(result.commission_rate)),
         "kpi": result.summary(),
         "trades": trades,
         "equity": sample_equity(result),
