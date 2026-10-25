@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QMessageBox, QPushButton,
+from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QMessageBox, QPushButton, QSizePolicy,
                              QVBoxLayout, QWidget)
 
 from config import settings
@@ -83,6 +83,13 @@ class SweepSnapshotsMixin:
                f"IC {'—' if ic is None else f'{float(ic):.2f}'} · "
                f"PBO {'—' if pbo is None else f'{float(pbo):.0%}'}")
         lab = QLabel(txt)
+        # ★1.84 覆盖：窄窗换行 + 全文 tooltip —— 这一行原来是**单行不换行**的长文本，
+        #   实测它的最小宽把「研究快照」卡撑到 **1475px**（右栏横向滚动的真凶）。
+        #   换行后信息一字不少（窄了变两行），tooltip 再兜一次全文。
+        lab.setWordWrap(True)
+        lab.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        lab.setMinimumWidth(0)
+        lab.setToolTip(txt)
         lab.setStyleSheet(SEC_HINT_QSS)
         lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         if e.get("pinned"):

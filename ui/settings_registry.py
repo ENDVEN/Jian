@@ -286,7 +286,7 @@ _ITEMS_V1 = (
     Item('download.interval', 'download', '请求间隔', KIND_NUMBER, default=0.5,
          where='download_prefs.interval', lo=0.0, hi=10.0, step=0.1, decimals=1, unit='秒',
          tip='每次请求前的等待时间（并发时是全局发起节奏）。越慢越安全，建议不低于 0.4 秒。',
-         help='对所有批量下载生效（数据管理 / 预下载 / M2 / M3）—— 唯一真源，改完立即对下一个任务生效。'),
+         help='对所有批量下载生效（数据管理 / 预下载 / 全市场筛选 / 广度统计）—— 唯一真源，改完立即对下一个任务生效。'),
     Item('download.jitter', 'download', '随机抖动', KIND_TOGGLE, default=True,
          where='download_prefs.jitter',
          tip='让间隔随机浮动 ±30%，打散"机器人固定频率"特征。',
@@ -306,7 +306,7 @@ _ITEMS_V1 = (
          where='backtest_prefs.commission_um', lo=0.0, hi=100.0, step=0.5, decimals=1,
          unit='万分之',
          tip='每边收一次（买、卖各收）：引擎按 (买价+卖价)×费率 计。万3 = 3.0（默认）。',
-         help='★1.81：这是**全站回测唯一的佣金口径** —— M1 单股回测、参数研究（含成本敏感性）'
+         help='★1.81：这是**全站回测唯一的佣金口径** —— 单股回测、参数研究（含成本敏感性）'
               '都用它，改完对**下一次**回测生效（已跑完的结果不改）。\n'
               '⚠ 与「复盘/交割单」里的手续费**不是一回事**：那个是你券商实际收的（账本列）。\n'
               '设 0 = 免佣金（用来对照"策略本身的毛利"）。'),
@@ -460,7 +460,7 @@ _ITEMS_V1 = (
     #   口径 = 命中**天数**占比（有命中的交易日 / 全部交易日），**不是**命中家数占比。
     #   判据唯一实现 = `core.relation_stats.gate_decision`；本处只声明"能改"与"怎么解释"，
     #   相关页面（M3 的选图规则页 / 事件图 / 色带）会有**就地入口**并复用同一份阈值。
-    Item('sweep3dense.sparse_max', 'defaults', 'M3 稀疏闸：事件图适用上限', KIND_NUMBER,
+    Item('sweep3dense.sparse_max', 'defaults', '广度统计 · 稀疏闸：事件图适用上限', KIND_NUMBER,
          default=5.0, where='sweep3dense.sparse_max', lo=0.5, hi=50, step=0.5, decimals=1,
          unit='%',
          tip='命中**天数**占比低于它 ⇒ 这个条件够稀疏，适合做「事件对齐图 / K 线色带」。',
@@ -470,7 +470,7 @@ _ITEMS_V1 = (
               '为什么以 5% 为界：够稀疏才谈得上"事件"（每次命中 ≈ 一个独立观测）；\n'
               '天天命中就属于"状态"，事件对齐图会因事件互相重叠而失真。\n'
               '**这是经验起点，不是定律** —— 不同条件差别很大，随时可改；改完立即生效、不用重扫。'),
-    Item('sweep3dense.freq_min', 'defaults', 'M3 频密闸：改用占比 / IC 的下限', KIND_NUMBER,
+    Item('sweep3dense.freq_min', 'defaults', '广度统计 · 频密闸：改用占比 / IC 的下限', KIND_NUMBER,
          default=30.0, where='sweep3dense.freq_min', lo=5, hi=99, step=1, unit='%',
          tip='命中天数占比 ≥ 它 ⇒ 基本天天命中（是"状态"不是"事件"）⇒ 事件图自动禁用并给替代。',
          help='到这一档，命中日几乎连成片：色带会铺满整张 K 线，对齐图里每次"命中前刚好也在命中"，\n'
@@ -479,7 +479,7 @@ _ITEMS_V1 = (
               '典型参考：趋势类条件（如"QSD>0 且 GLX>0"）常年在 30% 以上；\n'
               '极端条件（如"市场情绪 ≥80"）通常只有 2%~3%。\n'
               '⚠ 本项必须**严格大于**上面的稀疏闸，否则中间那一档会消失（软件会自动抬高并明说）。'),
-    Item('sweep3dense.indep_gap', 'defaults', 'M3 独立事件：最小间隔', KIND_NUMBER,
+    Item('sweep3dense.indep_gap', 'defaults', '广度统计 · 独立事件：最小间隔', KIND_NUMBER,
          default=5, where='sweep3dense.indep_gap', lo=1, hi=60, step=1, unit='个交易日',
          tip='连续命中要塌成"一个事件"：与上一个被接受的命中相隔 ≥ 它才算新的独立事件。',
          help='为什么需要它：一段行情会**连续命中几十天**，按天计数会让 n 虚高\n'

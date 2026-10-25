@@ -69,8 +69,8 @@ def confirm_and_delete_asset(parent, store, asset_id: str, say) -> bool:
     refs = hub_assets.ref_counts(asset_id)
     m1, m2m3 = refs['m1'], refs['m2m3']
     if m1 or m2m3:
-        lines = (['M1 策略 ' + '、'.join(f'「{x}」' for x in m1)] if m1 else []) \
-              + (['M2/M3 方案 ' + '、'.join(f'「{x}」' for x in m2m3)] if m2m3 else [])
+        lines = (['单股回测策略 ' + '、'.join(f'「{x}」' for x in m1)] if m1 else []) \
+              + (['筛选与广度方案 ' + '、'.join(f'「{x}」' for x in m2m3)] if m2m3 else [])
         typed, ok = QInputDialog.getText(
             parent, '删除被引用的函数',
             f"⚠ 「{asset.get('name')}」正被 {' 和 '.join(lines)} 引用。\n\n"
@@ -182,8 +182,8 @@ class HubFlow:
         refs = hub_assets.ref_counts(asset['id'], self._refs)
         m1, m2m3 = refs['m1'], refs['m2m3']
         if m1 or m2m3:
-            lines = (['M1 策略：' + '、'.join(f'「{x}」' for x in m1)] if m1 else []) \
-                  + (['M2/M3 方案：' + '、'.join(f'「{x}」' for x in m2m3)] if m2m3 else [])
+            lines = (['单股回测策略：' + '、'.join(f'「{x}」' for x in m1)] if m1 else []) \
+                  + (['筛选与广度方案：' + '、'.join(f'「{x}」' for x in m2m3)] if m2m3 else [])
             self.p.d_refs.setText('被引用（只读；删除前会先提示）—— ' + '；'.join(lines))
         else:
             self.p.d_refs.setText('被引用（只读）：暂无 —— 独立的自由函数，删除只需二次确认。')

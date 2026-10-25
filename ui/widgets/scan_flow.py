@@ -507,7 +507,7 @@ class ScanFlow:
                 p._last_archive_id = rid
                 mark_archived(p, label)
         except Exception as e:  # noqa: BLE001
-            logger.warning('M2 自动存档失败（忽略）: %s', e)
+            logger.warning('全市场筛选：自动存档失败（忽略）: %s', e)
 
     # ==========================================
     # ★P5 B 层估值（当前值：仅基准日==数据最新交易日才取/才显，否则 '—'）

@@ -335,6 +335,8 @@ def _count_true(ctx, *conds) -> pd.Series:
 #   ⚠ **护栏**：将来若做**宽表向量化档**（全市场一张宽表，STEP 7），**绝不允许**直接对宽表
 #      `shift(1)` —— 那会跨过该标的的空洞（实测 0.1% 边界不符）。必须 `groupby(symbol)` 或
 #      先按 symbol 分组再 shift；`smoke_chart` 有断言用"挖了一个空洞的合成序列"钉住本口径。
+# ⚠ **声明型 · 待接线（★1.84）**：全仓**没有任何生产代码读取**它（只有这里 + 测试）⇒ 当前不构成可执行拦截；
+#   真保证是"引擎本来就是逐只"，将来做宽表向量化时必须在**新代码**里 `groupby(symbol)`。
 GAP_SEMANTICS = 'per_symbol'
 
 FUNCTIONS = {

@@ -88,7 +88,7 @@ class ScanFormulaPane(EditPane):
             "QTextEdit { " + mono_font_css() + " font-size: 12.5px; }")
         self.txt_formula.setToolTip(
             "可写多段 `变量 := 表达式;`；**最后一条变量**就是判定变量（也可在下方指定）。\n"
-            "函数与 M1 单股回测 / 行情页叠加同一套引擎 —— 口径一致。")
+            "函数与「单股回测」「行情」叠加同一套引擎 —— 口径一致。")
         self.body_lay.addWidget(self.txt_formula)
 
         row = QHBoxLayout()
@@ -366,7 +366,7 @@ class ScanLayout:
         p.lbl_adjust.setStyleSheet(
             'font-size: 11.5px; color: #1976D2; border:1px solid #BBDEFB;'
             'border-radius:8px; padding:3px 8px;')
-        p.lbl_adjust.setToolTip('本轮只用前复权一种口径（与 M1 单股回测同口径）。\n'
+        p.lbl_adjust.setToolTip('本轮只用前复权一种口径（与「单股回测」同口径）。\n'
                                 '不复权分区尚未备齐 —— 备齐前不在界面上假装支持（主案 D8）。')
         lay.addWidget(p.lbl_adjust)
 

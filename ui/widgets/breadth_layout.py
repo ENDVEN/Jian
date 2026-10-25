@@ -73,7 +73,7 @@ GATES_HELP_TEXT = (
     '   （把命中日期随机打乱反复重算 ⇒ 回答"随机情况下能不能也凑出这个差"）。\n\n'
     '关键坑：把"命中家数"当事件数会严重虚高（同一天全市场同向 ⇒ 1500 只其实只有 1 个观测，\n'
     'n 会被放大上千倍、p 值失去意义）。n 要按【天】或【独立事件】算。\n\n'
-    '这三个阈值都可以在 设置 → 回测与扫描默认（M3 稀疏闸 / 频密闸 / 独立事件间隔）里调，\n'
+    '这三个阈值都可以在 设置 → 回测与扫描默认（广度统计的稀疏闸 / 频密闸 / 独立事件间隔）里调，\n'
     '也可以在相关页面就地调；改完立即生效、【不会重跑扫描】。')
 
 # ★1.77：**两条诚实边界**（用户 2026-10-16 定稿："提醒措辞加上"）——
@@ -293,7 +293,7 @@ class BreadthLayout:
         p.lbl_adjust.setStyleSheet(
             'font-size: 11.5px; color: #1976D2; border:1px solid #BBDEFB;'
             'border-radius:8px; padding:3px 8px;')
-        p.lbl_adjust.setToolTip('本轮只用前复权一种口径（与 M1 单股回测 / M2 筛选同口径，D8）。\n'
+        p.lbl_adjust.setToolTip('本轮只用前复权一种口径（与「单股回测」「全市场筛选」同口径，D8）。\n'
                                 '不复权分区尚未备齐 —— 备齐前不在界面上假装支持。')
         lay.addWidget(p.lbl_adjust)
 
@@ -319,7 +319,7 @@ class BreadthLayout:
         lay = QHBoxLayout()
         lay.setSpacing(6)
 
-        p.chip_formula = _chip('ƒ 条件 —', '筛选条件（与 M2/M1 同一套引擎）')
+        p.chip_formula = _chip('ƒ 条件 —', '筛选条件（与「全市场筛选」「单股回测」同一套引擎）')
         p.chip_filter = _chip('🎚 粗筛 —', '粗筛阈值')
         p.chip_scope = _chip('🌐 范围 —', '统计范围（标的域与只数）')
         p.chip_display = _chip('📈 展示 —', '柱口径（占比/家数）/ 均线 / 指数副图')

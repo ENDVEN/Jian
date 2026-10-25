@@ -28,7 +28,7 @@ from data.backtest_archive import KIND_M1, KIND_M2, KIND_M3, BacktestArchive
 from ui.widgets.backtest_history_ui import build_history_layout
 from ui.widgets.history_kinds import spec_of
 
-_KIND_PAGE = {KIND_M2: "M2 全市场筛选", KIND_M3: "M3 广度统计"}
+_KIND_PAGE = {KIND_M2: "全市场筛选", KIND_M3: "广度统计"}
 SEARCH_DEBOUNCE_MS = 220      # 搜索防抖：旧版每敲一个字就重读索引 + 重建整张表
 
 

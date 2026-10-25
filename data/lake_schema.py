@@ -16,7 +16,9 @@
 
 【纪律】要新订阅一列 ⇒ **先在本文件登记**（并写清"兜底源给不给"），再动白名单与读取方；
   只读某一列前先问 `split_columns(...)`，别写 `if col in df.columns` 然后各处理各的（§11.5-57 同族）。
-"""
+
+
+⚠ **声明型 · 待接线（★1.84）**：本模块目前**没有任何生产代码读取**（只有测试与注释引用）；它把"隐性依赖"变成了"有名字的隐性依赖"，但**不构成可执行拦截**。真接 = 把 M2/M3 的判定改走 `split_columns()`（独立一轮）。"""
 from __future__ import annotations
 
 from dataclasses import dataclass

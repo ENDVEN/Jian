@@ -121,7 +121,7 @@ class FloatHubList(QWidget):
         self.btn_save_fn.setStyleSheet(FLAT_QSS)
         self.btn_save_fn.setToolTip(
             '把**当前页面上正在编辑的函数**取过来预填进编辑器，确认后再「💾 保存」。\n'
-            '这样在 M1 / M2·M3 / 行情页写好的函数不必跑去总库重抄一遍。')
+            '这样在单股回测 / 全市场筛选 / 广度统计 / 行情页写好的函数不必跑去总库重抄一遍。')
         store_row.addWidget(self.btn_save_fn)
         self.btn_save_plan = QPushButton('📚 存为方案')
         self.btn_save_plan.setStyleSheet(FLAT_QSS)

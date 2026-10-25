@@ -147,7 +147,7 @@ def gate_decision(ratio_pct, sparse_max: float = DEFAULT_SPARSE_MAX,
         return GateDecision(
             mode=MODE_UNKNOWN, event_ok=False, ratio_pct=None,
             reason='还没有扫描结果，无法判定该用哪种表现',
-            suggest='先跑一次扫描（M3 ▶ 开始扫描），拿到"命中天数占比"再回来看这一页')
+            suggest='先跑一次扫描（「广度统计」▶ 开始扫描），拿到"命中天数占比"再回来看这一页')
     lo = float(sparse_max)
     hi = float(freq_min)
     if ratio < lo:
@@ -168,7 +168,7 @@ def gate_decision(ratio_pct, sparse_max: float = DEFAULT_SPARSE_MAX,
         reason=f'命中天数占比 {ratio:.1f}% ≥ 频密闸 {hi:g}% ⇒ 它几乎天天命中，'
                '是**状态**不是**事件**（色带会铺满整张图，读不出东西）',
         suggest='把"命中占比"当一条连续指标：占比分档 / Rank IC / 稳健回归（n = 交易日数）；'
-                '若想问"命中的股票之后表现如何"，那是横截面问题，请用 M2')
+                '若想问"命中的股票之后表现如何"，那是横截面问题，请用「全市场筛选」')
 
 
 # ==========================================

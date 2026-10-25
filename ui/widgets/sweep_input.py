@@ -155,7 +155,7 @@ class SweepInputMixin:
             self.form.set_receipt("先填标的代码")
             return None
         if payload is None:
-            self.form.set_receipt("先选一个 M1 已保存的策略（只列带条件的配方）")
+            self.form.set_receipt("先选一个「单股回测」已保存的策略（只列带条件的配方）")
             return None
         if index_gate_enabled(payload.get("index")):   # ★1.70 / §11.5-128：判 `enabled`，别判字典非空
             self.form.set_receipt("该策略带指数门控（已启用），本页暂不支持（红线：不复刻阶段C 门控）")
@@ -165,7 +165,7 @@ class SweepInputMixin:
         if not gate_expression(payload.get("condition_buy")) or \
                 not gate_expression(payload.get("condition_sell")):
             self.form.set_receipt("该策略的买卖条件为空（或条件行没配好）⇒ 没有可回测的东西；"
-                                  "先在 M1 配好买卖条件再存策略")
+                                  "先在「单股回测」配好买卖条件再存策略")
             return None
         dims, dim_err = self.form.grid_dims()
         if dim_err:

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>组合 · 样式样板（★1.84）</title>
+<style>
+  :root{
+    --bg:#F5F7FA; --card:#FFFFFF; --line:#E7EAF0; --ink:#20242C; --muted:#8A94A6;
+    --accent:#1565C0; --up:#4CAF50; --down:#F44336; --warn:#B26A00; --chip:#EEF3FA;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 "Microsoft YaHei","Segoe UI",system-ui,sans-serif}
+  .app{display:grid;grid-template-columns:186px 1fr;min-height:100vh;max-width:1560px;margin:0 auto}
+
+  /* ===== 左导航（与现有 6 项同列）===== */
+  .rail{background:#FFFFFF;border-right:1px solid var(--line);padding:14px 8px}
+  .rail .brand{font-weight:700;font-size:15px;padding:6px 10px 14px;color:#111}
+  .rail a{display:flex;gap:8px;align-items:center;color:#4A5361;text-decoration:none;
+          padding:8px 10px;border-radius:8px;margin-bottom:2px;font-size:13.5px}
+  .rail a.on{background:var(--chip);color:var(--accent);font-weight:600}
+  .rail a .n{width:18px;text-align:center}
+
+  /* ===== 主区 ===== */
+  main{padding:16px 18px 8px;display:flex;flex-direction:column;gap:12px}
+  .pagehead{display:flex;align-items:center;gap:10px}
+  .pagehead h1{font-size:17px;margin:0 8px 0 0}
+  .pagehead .sub{color:var(--muted);font-size:12px}
+  .spacer{flex:1}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;
+       font-size:13px;cursor:pointer;color:#33475B}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .btn.ghost{background:transparent}
+
+  .cols{display:grid;grid-template-columns:300px minmax(560px,1fr) 330px;gap:12px;align-items:start}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .card h2{font-size:13px;margin:0 0 8px;color:#33475B;display:flex;align-items:center;gap:6px}
+  .card h2 .dot{width:6px;height:6px;border-radius:3px;background:var(--accent)}
+  .card h2 .meta{margin-left:auto;color:var(--muted);font-weight:400;font-size:11.5px}
+
+  /* ===== 组合列表 ===== */
+  .plist{display:flex;flex-direction:column;gap:8px}
+  .pitem{border:1px solid var(--line);border-radius:9px;padding:9px 10px;cursor:pointer;background:#fff}
+  .pitem.on{border-color:#BBD3F2;background:#F7FBFF;box-shadow:0 0 0 2px #EAF2FC inset}
+  .pitem .t{display:flex;gap:6px;align-items:center;font-weight:600;font-size:13.5px}
+  .pitem .t .tag{font-size:10.5px;color:var(--accent);background:var(--chip);
+                 border-radius:5px;padding:0 5px}
+  .pitem .nums{display:flex;gap:12px;margin-top:5px;font-size:11.5px;color:var(--muted)}
+  .pitem .nums b{font-size:13px}
+  .up{color:var(--up)} .down{color:var(--down)}
+
+  /* ===== 净值图 ===== */
+  .chart{height:250px;background:linear-gradient(#FCFDFF,#FFFFFF);border:1px dashed #DCE4F0;
+         border-radius:8px;position:relative;overflow:hidden}
+  .chart svg{position:absolute;inset:0;width:100%;height:100%}
+  .legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);margin-top:6px}
+  .legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;
+        font-size:12px;color:#4A5361;cursor:pointer}
+  .chip.on{background:var(--chip);border-color:#BBD3F2;color:var(--accent);font-weight:600}
+
+  /* ===== 持仓表 ===== */
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{color:var(--muted);font-weight:500;text-align:right;padding:6px 6px;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  th:nth-child(2),td:nth-child(2){text-align:left}
+  td{padding:6px;border-bottom:1px solid #F2F5F9;text-align:right}
+  tr.cash td{color:var(--warn)}
+  .pct{color:var(--muted);font-size:11px}
+  .tabs{display:flex;gap:6px;margin-bottom:6px}
+
+  /* ===== 概览 KPI ===== */
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .kpi{border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+  .kpi .l{font-size:11px;color:var(--muted)}
+  .kpi .v{font-size:17px;font-weight:700;margin-top:2px}
+  .kpi .s{font-size:11px;color:var(--muted)}
+
+  /* ===== 环形图 ===== */
+  .ringrow{display:flex;align-items:center;gap:10px}
+  .ringrow svg{flex:0 0 108px}
+  .ringlegend{font-size:11.5px;color:#4A5361;line-height:1.7}
+
+  /* ===== 再平衡记录 ===== */
+  .log{font-size:12px;color:#33475B}
+  .log .row{display:flex;gap:8px;padding:5px 0;border-bottom:1px dashed #EEF1F6}
+  .log .row:last-child{border:0}
+  .log .when{color:var(--muted);white-space:nowrap}
+  .log .why{color:var(--muted);font-size:11px}
+
+  /* ===== 页脚口径 ===== */
+  footer{margin:2px 0 8px;color:var(--muted);font-size:11.5px;display:flex;gap:14px;flex-wrap:wrap}
+  footer b{color:#4A5361;font-weight:600}
+
+  /* ===== 标注 ===== */
+  .pin{display:inline-flex;width:16px;height:16px;border-radius:8px;background:#FFF4E0;
+       color:#8A5A00;font-size:10.5px;align-items:center;justify-content:center;
+       font-weight:700;margin-left:5px;vertical-align:1px}
+  .notes{margin:6px 0 18px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+  .notes h3{margin:0 0 8px;font-size:13.5px}
+  .notes ol{margin:0;padding-left:0;list-style:none;font-size:12.5px;line-height:1.85;color:#33475B}
+  .notes b{color:#111}
+  .warnline{color:var(--warn)}
+
+  /* ===== 自适应（★1.84）：只换排布，不删内容、不缩字号、不出横向滚动条 ===== */
+  @media (max-width:1439px){
+    .cols{grid-template-columns:260px minmax(480px,1fr) 300px}
+  }
+  @media (max-width:1199px){
+    .cols{grid-template-columns:250px minmax(0,1fr)}
+    .cols > .col-side{grid-column:1/-1;display:grid !important;
+                      grid-template-columns:repeat(3,1fr);gap:12px}
+  }
+  @media (max-width:999px){
+    .app{grid-template-columns:64px 1fr}
+    .rail .brand{font-size:0;padding:4px 0 8px}
+    .rail a{justify-content:center;padding:9px 0}
+    .rail a .tx{display:none}
+    .rail .pin{display:none}
+    .cols{grid-template-columns:1fr}
+    .plist{display:grid;grid-template-columns:1fr 1fr}
+    .cols > .col-side{grid-template-columns:1fr 1fr}
+    th:nth-child(4), td:nth-child(4){display:none}   /* 成本价：窄窗让位（信息仍在组合管理/详情） */
+    .chart{height:200px}
+  }
+  @media (max-width:819px){
+    .plist{grid-template-columns:1fr}
+    .cols > .col-side{grid-template-columns:1fr}
+    .pagehead{flex-wrap:wrap}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ① 左导航：与现有 6 项同级，新增第 7 项 -->
+  <aside class="rail">
+    <div class="brand">Jian · 工作台</div>
+    <a><span class="n">📈</span><span class="tx">行情</span></a>
+    <a><span class="n">⭐</span><span class="tx">自选股</span></a>
+    <a><span class="n">🧾</span><span class="tx">复盘</span></a>
+    <a><span class="n">📐</span><span class="tx">市场回测</span></a>
+    <a class="on"><span class="n">📊</span><span class="tx">组合</span> <span class="pin">1</span></a>
+    <a><span class="n">🔍</span><span class="tx">全市场筛选</span></a>
+    <a><span class="n">🌐</span><span class="tx">行业数据</span></a>
+    <a><span class="n">⚙</span><span class="tx">设置</span></a>
+  </aside>
+
+  <main>
+    <div class="pagehead">
+      <h1>📊 组合</h1>
+      <span class="sub">把「自选股组」变成可回测的组合 —— 同一份成分，三种看法：行情 / 组合 / 回测<br><span style="color:#B26A00">拖窗口看自适应：≥1200 三栏 · 1000–1199 右栏下移 · &lt;1000 单列（全程不出横向滚动条）</span></span>
+      <span class="spacer"></span>
+      <button class="btn ghost">↻ 从自选股组导入<span class="pin">2</span></button>
+      <button class="btn primary">＋ 新建组合</button>
+    </div>
+
+    <div class="cols">
+      <!-- 左：我的组合 -->
+      <section class="card col-list">
+        <h2><span class="dot"></span>我的组合 <span class="meta">共 3 个 · 点击切换</span></h2>
+        <div class="plist">
+          <div class="pitem on">
+            <div class="t">麟平组合 <span class="tag">自选组：核心持仓</span></div>
+            <div class="nums">
+              <span>净收益 <b class="up">+9.31%</b></span>
+              <span>日 <b class="up">+0.16%</b></span>
+              <span>累计 <b class="up">1.0931</b></span>
+            </div>
+          </div>
+          <div class="pitem">
+            <div class="t">秋天弱势 <span class="tag">自选组：观察</span></div>
+            <div class="nums">
+              <span>净收益 <b class="down">-1.47%</b></span>
+              <span>日 <b class="down">-0.19%</b></span>
+              <span>累计 <b class="down">0.9853</b></span>
+            </div>
+          </div>
+          <div class="pitem">
+            <div class="t">核下大 <span class="tag">自选组：宽基</span></div>
+            <div class="nums">
+              <span>净收益 <b class="up">+11.46%</b></span>
+              <span>日 <b class="up">+0.03%</b></span>
+              <span>累计 <b class="up">1.1146</b></span>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:8px;color:var(--muted);font-size:11px">
+          成分来源<b>只有一处</b>：行情页 → 自选股 → 组（这里只引用，不复制名单）
+        </div>
+      </section>
+
+      <!-- 中：净值 + 持仓 -->
+      <section style="display:flex;flex-direction:column;gap:12px">
+        <div class="card">
+          <h2><span class="dot"></span>净值曲线
+            <span class="pin">3</span>
+            <span class="meta">日线（收盘）· 截至 2026-10-23 · 前复权</span></h2>
+          <div class="chips" style="margin-bottom:8px">
+            <span class="chip on">近 3 月</span><span class="chip">近 1 年</span>
+            <span class="chip">全部</span>
+            <span style="flex:1"></span>
+            <span class="chip">基准：沪深300 ▾<span class="pin">4</span></span>
+          </div>
+          <div class="chart">
+            <svg viewBox="0 0 900 250" preserveAspectRatio="none">
+              <g stroke="#EEF2F8" stroke-width="1">
+                <line x1="0" y1="50" x2="900" y2="50"/><line x1="0" y1="100" x2="900" y2="100"/>
+                <line x1="0" y1="150" x2="900" y2="150"/><line x1="0" y1="200" x2="900" y2="200"/>
+              </g>
+              <polyline fill="none" stroke="#9AA6B8" stroke-width="1.6"
+                points="0,170 70,160 140,175 210,150 280,165 350,140 420,155 490,135 560,150 630,120 700,140 770,110 840,125 900,105"/>
+              <polyline fill="none" stroke="#1565C0" stroke-width="2.2"
+                points="0,180 70,165 140,150 210,128 280,140 350,112 420,120 490,95 560,108 630,80 700,92 770,66 840,74 900,52"/>
+            </svg>
+          </div>
+          <div class="legend">
+            <span><i style="background:#1565C0"></i>组合（等权 · 按月再平衡 · 佣金 万3）</span>
+            <span><i style="background:#9AA6B8"></i>基准：沪深300</span>
+            <span style="margin-left:auto" class="warnline">⚠ 日线收盘，非实时</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2><span class="dot"></span>持仓
+            <span class="pin">5</span>
+            <span class="meta">合计 100.00% · 4 只 + 现金</span></h2>
+          <div class="tabs">
+            <span class="chip on">按标的</span><span class="chip">按行业</span>
+            <span class="chip">按市场</span>
+          </div>
+          <table>
+            <thead><tr>
+              <th>#</th><th>代码 / 名称</th><th>仓位</th><th>成本价</th><th>最新价</th><th>盈亏</th>
+            </tr></thead>
+            <tbody>
+              <tr><td>1</td><td>510100 · 上证50ETF</td><td>70.30%</td><td>2.770</td><td>2.812</td><td class="up">+1.52%</td></tr>
+              <tr><td>2</td><td>512880 · 证券ETF</td><td>20.50%</td><td>0.986</td><td>0.977</td><td class="down">-0.91%</td></tr>
+              <tr><td>3</td><td>501300 · 美元债LOF</td><td>6.87%</td><td>0.928</td><td>0.931</td><td class="up">+0.32%</td></tr>
+              <tr><td>4</td><td>518880 · 黄金ETF</td><td>2.33%</td><td>5.764</td><td>5.812</td><td class="up">+0.83%</td></tr>
+              <tr class="cash"><td>—</td><td>现金 <span class="pct">（可调，默认 0%）</span><span class="pin">6</span></td>
+                  <td>0.00%</td><td>—</td><td>—</td><td>—</td></tr>
+            </tbody>
+          </table>
+          <div style="margin-top:6px;color:var(--muted);font-size:11px">
+            权重：等权（默认）· 市值 · 自定义 —— 三选一；“大票吃掉资金”时可按<span style="color:#33475B">金额取整</span>提示
+            <span class="pin">7</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右：概览 + 分布 + 再平衡 -->
+      <aside class="col-side" style="display:flex;flex-direction:column;gap:12px">
+        <div class="card">
+          <h2><span class="dot"></span>组合概览</h2>
+          <div class="kpis">
+            <div class="kpi"><div class="l">总收益</div><div class="v up">+9.31%</div><div class="s">区间内</div></div>
+            <div class="kpi"><div class="l">净值</div><div class="v">1.0931</div><div class="s">起始 = 1.0000</div></div>
+            <div class="kpi"><div class="l">日收益</div><div class="v up">+0.16%</div><div class="s">2026-10-23</div></div>
+            <div class="kpi"><div class="l">超额收益</div><div class="v up">+3.22%</div><div class="s">对 沪深300</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2><span class="dot"></span>市场分布 <span class="pin">8</span></h2>
+          <div class="ringrow">
+            <svg viewBox="0 0 42 42" width="108" height="108">
+              <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="#EDF1F7" stroke-width="7"/>
+              <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="#1565C0" stroke-width="7"
+                      stroke-dasharray="70.3 100" stroke-dashoffset="25"/>
+              <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="#4C8DD6" stroke-width="7"
+                      stroke-dasharray="27.37 100" stroke-dashoffset="54.7"/>
+              <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="#B26A00" stroke-width="7"
+                      stroke-dasharray="2.33 100" stroke-dashoffset="82.07"/>
+            </svg>
+            <div class="ringlegend">
+              <div>沪市 <b>70.30%</b></div>
+              <div>深市 <b>27.37%</b></div>
+              <div>现金 <b>0.00%</b></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2><span class="dot"></span>行业分布 <span class="pin">9</span></h2>
+          <div class="ringrow">
+            <svg viewBox="0 0 42 42" width="108" height="108">
+              <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="#EDF1F7" stroke-width="7"/>
+              <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="#7E57C2" stroke-width="7"
+                      stroke-dasharray="70.3 100" stroke-dashoffset="25"/>
+              <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="#26A69A" stroke-width="7"
+                      stroke-dasharray="27.37 100" stroke-dashoffset="54.7"/>
+            </svg>
+            <div class="ringlegend">
+              <div>宽基 / 金融 <b>70.30%</b></div>
+              <div>债券 / 黄金 <b>27.37%</b></div>
+              <div>未分类 <b>2.33%</b></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2><span class="dot"></span>再平衡记录
+            <span class="pin">10</span>
+            <span class="meta">仅本软件内事件</span></h2>
+          <div class="log">
+            <div class="row">
+              <span class="when">2026-10-01</span>
+              <span><b>按月再平衡</b><br><span class="why">权重回到等权 · 换手 4.2% · 成本 万3 · ¥18.40</span></span>
+            </div>
+            <div class="row">
+              <span class="when">2026-09-01</span>
+              <span><b>按月再平衡</b><br><span class="why">权重回到等权 · 换手 2.8% · 成本 万3 · ¥11.20</span></span>
+            </div>
+          </div>
+          <div style="margin-top:6px;color:var(--muted);font-size:11px">
+            不导入券商流水：这里只显示"软件里发生过的再平衡"（可点开看到换手与成本）
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ⑪ 口径常驻：组合最容易藏假设 -->
+    <footer>
+      <span><b>口径</b> 前复权日线（收盘）</span>
+      <span><b>佣金</b> 万3（设置 → 回测与扫描默认，可改）</span>
+      <span><b>基准</b> 沪深300</span>
+      <span><b>再平衡</b> 买入持有 + 按月</span>
+      <span><b>权重</b> 等权</span>
+      <span class="warnline"><b>⚠</b> 日线收盘，不是实时</span>
+    </footer>
+
+    <!-- ⑫ 设计说明（样板自带，方便对照实现） -->
+    <div class="notes">
+      <h3>设计要点（★1.84 样板 · 待你点头后按此实现）</h3>
+      <ol>
+        <li><b>① 一级页面</b>：与「行情 / 回测」同级，左导航第 5 位；<b>不是</b>回测的子页签。</li>
+        <li><b>② 成分唯一来源</b>：行情页「自选股 → 组」；这里是"引用"，不复制名单（否则就是第二套真源）。</li>
+        <li><b>③ 净值曲线</b>：组合 vs 基准；图例必须写清"权重/再平衡/佣金"，否则曲线会被误读。</li>
+        <li><b>④ 基准可选</b>：指数或<b>个股</b>；换基准只换对照线，<b>不改</b>组合本身。</li>
+        <li><b>⑤ 持仓表</b>：7 列与截图一致；"按行业/按市场"是同一份数据的两种分组（<b>不重算</b>）。</li>
+        <li><b>⑥ 现金是一等公民</b>：默认 0%，但永远出现在表里与环形里 —— 你的原话："有时持有现金跑赢所有组合"。</li>
+        <li><b>⑦ 权重三选一</b>：等权 / 市值 / 自定义；<b>"大票吃资金"提示</b>：按金额取整时若某票一手就很贵，给出提示（不自动替你改权重）。</li>
+        <li><b>⑧⑨ 两个环形</b>：市场 / 行业；行业缺失时如实写"未分类"，<b>不猜</b>。</li>
+        <li><b>⑩ 再平衡记录</b>：只显示软件内事件（时间 / 换手 / 成本），不接券商流水。</li>
+        <li><b>⑪ 口径常驻在页脚</b>：复权 / 佣金 / 基准 / 再平衡 / 权重，一眼看全 —— 组合最容易"藏着假设"。</li>
+        <li><b>⑫ 与参数研究共用"池"</b>：B15 完整版的"≤20 只小池"直接选这个组合（同一个 id），不再手写名单。</li>
+      </ol>
+    </div>
+  </main>
+</div>
+</body>
+</html>

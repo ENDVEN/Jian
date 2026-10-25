@@ -343,17 +343,17 @@ class JianMainWindow(QMainWindow):
 
         【踩过的坑 · 用户 2026-10-12 实测】本处原写死一张 `_BT_TAB_LABELS` 元组并按
           `tabs.currentIndex()` 取；而子页签顺序是 **M1 · 参数研究 · M2 · M3 · 运行历史**
-          （`backtest_module` 装配序）⇒ 整列**错位一位**：参数研究显示"M2 全市场筛选"、
-          M2 显示"M3 广度统计"、M3 与运行历史**越界回落"回测"**。
+          （`backtest_module` 装配序）⇒ 整列**错位一位**：参数研究显示"全市场筛选"、
+          M2 显示"广度统计"、M3 与运行历史**越界回落"回测"**。
           同一张下标表还被 `current_formula_draft` / `current_plan_api` 用来路由 ⇒
           **在 M3 上浮窗以为"本页没有方案库"，方案根本存不了**（用户："没法在 m2/m3 存方案"）。
         ⇒ 判据改成"**这个页签控件是谁**"：将来谁插入/重排页签都不会再错位（顺序无关）。
         """
         view = self.page_backtest
-        for widget, label in ((getattr(view, 'backtest_single', None), 'M1 单股回测'),
+        for widget, label in ((getattr(view, 'backtest_single', None), '单股回测'),
                               (getattr(view, 'page_sweep', None), '参数研究'),
-                              (getattr(view, 'page_scan', None), 'M2 全市场筛选'),
-                              (getattr(view, 'page_breadth', None), 'M3 广度统计'),
+                              (getattr(view, 'page_scan', None), '全市场筛选'),
+                              (getattr(view, 'page_breadth', None), '广度统计'),
                               (getattr(view, 'page_history', None), '运行历史')):
             if widget is not None and tab is widget:
                 return label
@@ -509,7 +509,7 @@ class JianMainWindow(QMainWindow):
             if panel is not None:
                 panel.refresh(keep=asset.get('id'))      # used_at 变了 ⇒ 列表"最近使用"跟着重排
         else:
-            self._hub_say('⚠ 当前页没有可载入的函数区 —— 请切到行情 / 回测（M1） / 扫描（M2·M3）页')
+            self._hub_say('⚠ 当前页没有可载入的函数区 —— 请切到行情 / 单股回测 / 全市场筛选 / 广度统计 页')
         return n
 
     def _hub_say(self, text: str) -> None:
@@ -570,7 +570,7 @@ class JianMainWindow(QMainWindow):
             page = view.page_scan if tab is view.page_scan else view.page_breadth
             br = page._strategy
             return {'kind': 'M2M3', 'noun': '筛选方案',
-                    'hint': '筛选方案 = 函数 + 粗筛阈值 + 统计范围 + 复权口径（M2 / M3 共用一份池）',
+                    'hint': '筛选方案 = 函数 + 粗筛阈值 + 统计范围 + 复权口径（全市场筛选与广度统计共用一份池）',
                     'plans': br.plans, 'plan_label': br.plan_label,
                     'load': br.load_plan, 'save': br.save, 'delete': br.delete_plan}
         if tab is getattr(view, 'page_sweep', None):

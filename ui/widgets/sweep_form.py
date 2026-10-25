@@ -166,7 +166,7 @@ class SweepForm(QWidget):
         row2 = QHBoxLayout()
         row2.setContentsMargins(0, 0, 0, 0)
         row2.setSpacing(6)
-        row2.addWidget(_step_title(2, "策略（只列 M1 已保存的配方）"), 1)
+        row2.addWidget(_step_title(2, "策略（只列「单股回测」已保存的配方）"), 1)
         # ⚠ 口径写死：本页策略来源**仍是 `data.strategy_store`**（M1 保存的配方）；浮窗只做
         #   "看 / 管函数资产"，**不含**"把某函数变成策略"（那是 M1 的活）—— 否则用户会以为
         #   能从库里直接挑一条策略来扫，那会绕过 M1 的买卖条件 / 风控 / 成交配置。

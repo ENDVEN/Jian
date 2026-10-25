@@ -6017,6 +6017,10 @@ try:
     from core.preferences import preferences as _prefs81  # noqa: E402
 
     _orig81 = dict(_prefs81.get(COMMISSION_PREF_KEY) or {})
+    # ⚠ 先**清空该键**再断言：这条验的是"没有这个偏好时回落万3"，不能读用户真实偏好
+    #   （§11.5-90：冒烟不许依赖/污染用户真实偏好；本轮实测真实文件里有 commission_um=1.5
+    #   ⇒ 老写法会红，红的是"用户设过值"而不是代码错）
+    _prefs81.set(COMMISSION_PREF_KEY, {})   # 先清空（下面 finally 会还原用户原值）
     check("★ 1.81：**不设佣金 ⇒ 回落万3**（旧行为逐位不变；`preferences` 里没有这个键时也一样）",
           abs(commission_rate_from_prefs() - DEFAULT_COMMISSION_RATE) < 1e-12)
     check("★ 1.81：单位换算**唯一**（万分之 ⇄ 小数/每边）+ 人话（0 ⇒ 免佣金）",

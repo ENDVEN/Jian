@@ -503,7 +503,7 @@ class BreadthFlow(BreadthRelationFlowMixin, BreadthPlanFlowMixin):
                 p._last_archive_id = rid
                 mark_archived(p, label)
         except Exception as e:  # noqa: BLE001 —— 存档失败绝不拖挂扫描回执
-            logger.warning('M3 自动存档失败（忽略）: %s', e)
+            logger.warning('广度统计：自动存档失败（忽略）: %s', e)
 
     def _on_failed(self, job_id: int, reason: str) -> None:
         p = self.page

@@ -158,7 +158,7 @@ def run_sweep(df, spec: SweepSpec, grid: GridPlan, interval: StudyInterval, *,
     buy_expr, sell_expr = spec.buy_expr, spec.sell_expr   # ★1.66：配置 → DSL（引擎只认表达式）
     if not buy_expr or not sell_expr:
         raise ValueError("买卖条件为空（或条件配置里没有有效条件行）⇒ 没有可回测的东西"
-                         "（先在 M1 配好买卖条件再存策略）")
+                         "（先在「单股回测」配好买卖条件再存策略）")
     if not grid.ok:
         raise ValueError(f"网格未通过闸门：{grid.rejection}")
 
@@ -172,7 +172,7 @@ def run_sweep(df, spec: SweepSpec, grid: GridPlan, interval: StudyInterval, *,
     except FormulaProgramError as e:
         raise ValueError(f"函数段编译失败：{e}") from e
     if not programs:
-        raise ValueError("策略没有可用的函数段（先在 M1 里写函数）")
+        raise ValueError("策略没有可用的函数段（先在「单股回测」里写函数）")
     base_params = parse_params_text(spec.params_text)
 
     # 碰撞检查只与"变量名集合"有关，与参数取值无关 ⇒ 循环外做一次（用基准参数）

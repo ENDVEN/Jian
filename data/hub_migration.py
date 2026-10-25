@@ -34,7 +34,7 @@ def ensure_hub_migration() -> dict:
     n_scan = _migrate_scan(store)
     store.hub_migrated = True
     store.save()
-    logger.info(f"函数总库资产收编完成：M1 策略 {n_m1} 条、M2/M3 方案 {n_scan} 条")
+    logger.info(f"函数总库资产收编完成：单股回测策略 {n_m1} 条、筛选/广度方案 {n_scan} 条")
     return {"m1": n_m1, "scan": n_scan, "migrated": True}
 
 
@@ -44,7 +44,7 @@ def _migrate_m1(store) -> int:
     try:
         m1 = StrategyStore()
     except Exception as e:                             # noqa: BLE001 —— 库坏了不拖启动
-        logger.warning(f"函数总库迁移：M1 策略库读不了，跳过（{type(e).__name__}: {e}）")
+        logger.warning(f"函数总库迁移：单股回测策略库读不了，跳过（{type(e).__name__}: {e}）")
         return 0
     changed = False
     for s in m1.data.get("strategies", []):

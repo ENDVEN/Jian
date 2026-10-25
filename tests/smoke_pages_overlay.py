@@ -6869,6 +6869,126 @@ except Exception as _e81p:  # noqa: BLE001
     check(f"★1.81 拆件/进度断言整段抛异常: {type(_e81p).__name__}: {_e81p}", False)
 
 
+
+# ==========================================
+# ★1.83 · **正式界面文案禁用内部简称**（用户 2026-10-25：M1/M2/M3 只是内部沟通简称）
+#   口径：`ui/**` + `config/*.py` + `core/**` + `data/**` + `main.py` 里，**含中文的字符串字面量**
+#        不许出现 M1 / M2 / M3（`'M1'` 这种**存档 kind 值**不带中文 ⇒ 不算）；
+#        用户可见页签名 = 单股回测 / 全市场筛选 / 广度统计。
+#   ⚠ 防复发护栏：谁再往文案里写 "M2 全市场筛选" 之类，这里立刻红。
+# ==========================================
+print("\n== ★1.83 · 界面文案禁用内部简称（M1/M2/M3）==")
+try:
+    import os as _os83
+    import re as _re83
+
+    _cjk83 = _re83.compile(r'[\u4e00-\u9fff]')
+    _m83 = _re83.compile(r'(?<![A-Za-z0-9_])M[123](?![0-9A-Za-z_])')
+    _q83 = _re83.compile(r'(["\'])((?:\\.|(?!\1).)*?)\1')
+    _quote3 = ('"' * 3, "'" * 3)
+    _bad83 = []
+    for _root83, _dirs83, _files83 in _os83.walk(_repo_root):
+        _dirs83[:] = [d for d in _dirs83 if d not in ('.git', '__pycache__', 'build',
+                                                      'dist', '.venv', 'tests', 'docs')]
+        for _f83 in _files83:
+            if not _f83.endswith('.py'):
+                continue
+            _rel83 = _os83.path.relpath(_os83.path.join(_root83, _f83), _repo_root).replace('\\', '/')
+            _src83 = open(_os83.path.join(_root83, _f83), encoding='utf-8').read()
+            _tri83 = None
+            for _i83, _line83 in enumerate(_src83.splitlines(), 1):
+                _st83 = _line83.lstrip()
+                _trip83 = next((q for q in _quote3 if _st83.startswith(q)), None)
+                if _tri83:
+                    if _trip83 == _tri83 or _tri83 in _st83:
+                        _tri83 = None
+                    continue
+                if _trip83:
+                    if _st83.count(_trip83) == 1:
+                        _tri83 = _trip83
+                    continue
+                if _st83.startswith('#'):
+                    continue
+                for _m83q in _q83.finditer(_line83):
+                    _seg83 = _m83q.group(2)
+                    if _m83.search(_seg83) and _cjk83.search(_seg83):
+                        _bad83.append(f'{_rel83}:{_i83} {_seg83[:30]}')
+    check(f"★ 1.83：**界面文案里 0 处内部简称**（M1/M2/M3 只许出现在代码标识/注释/存档 kind 值）"
+          f"—— 实测 {len(_bad83)} 处{('：' + ' / '.join(_bad83[:3])) if _bad83 else ''}"
+          , not _bad83)
+
+    from data.backtest_archive import KIND_LABELS as _KL83  # noqa: E402
+    check(f"★ 1.83：运行历史的**类型显示名**也换了（{_KL83}）—— 而存档 kind **值**仍是 M1/M2/M3"
+          "（改值历史就读不出来 ⇒ 两件事必须分开）",
+          _KL83.get('M1') == '单股回测' and _KL83.get('M2') == '全市场筛选'
+          and _KL83.get('M3') == '广度统计')
+except Exception as _e83:  # noqa: BLE001
+    check(f"★1.83 界面文案断言整段抛异常: {type(_e83).__name__}: {_e83}", False)
+
+
+
+# ==========================================
+# ★1.84 · 右栏 ≤700（纯视觉）+ 两条护栏"声明型"如实标注
+#   右栏最小需求曾是 **1485**（真凶：「研究快照」行文本单行不换行 = 1475；KPI 五张 ~1475）
+#   ⇒ 窗口 1360 仍出横向条、右侧按钮被裁。现：KPI 紧凑档（副值进 tooltip）·
+#   快照行换行 + 全文 tooltip · 表宽 710→640 · 成本卡收窄 ⇒ 实测 **677**。
+# ==========================================
+print("\n== ★1.84 · 右栏 ≤700 + 护栏声明型 ==")
+try:
+    from PyQt6.QtWidgets import QScrollArea as _QSA84  # noqa: E402
+
+    _sv84 = next(win.page_backtest.tabs.widget(_i84)
+                  for _i84 in range(win.page_backtest.tabs.count())
+                  if type(win.page_backtest.tabs.widget(_i84)).__name__ == 'ParamSweepView')
+    _sa84 = next(s for s in _sv84.findChildren(_QSA84)
+                 if s.widget() is not None
+                 and _sv84.cost_card in s.widget().findChildren(type(_sv84.cost_card)))
+    _right84 = _sa84.widget()
+    _old_sz84 = win.size()
+    win.resize(1360, 780)
+    app.processEvents()
+    _mw84 = _right84.minimumSizeHint().width()
+    _hbar84 = _sa84.horizontalScrollBar().isVisible()
+    win.resize(_old_sz84)
+    app.processEvents()
+    check(f"★ 1.84：右栏最小需求 **≤700**（实测 {_mw84}；改造前 1485）"
+          "—— 来源：快照行单行不换行 / KPI 五张 / 表宽",
+          _mw84 <= 700)
+    check("★ 1.84：1360px 窗口**不再出横向滚动条**（右侧控件不再被裁）；窄窗仍可滚到",
+          _hbar84 is False)
+    check("★ 1.84：KPI 副值**没丢**（收进 tooltip）+ 卡面只留『标签 + 值』",
+          '≥0.15' in _sv84.kpi['ic'].toolTip()
+          and '≥0.15' not in _sv84.kpi['ic'].text()
+          and _sv84.kpi['ic'].minimumWidth() == 0)
+
+    # ---- 两条护栏"声明型"：生产读取方必须为 0（真接了就改成清单）----
+    import os as _os84
+    _prod84 = []
+    for _r84, _d84, _f84 in _os84.walk(_repo_root):
+        _d84[:] = [d for d in _d84 if d not in ('.git', '__pycache__', 'build',
+                                                'dist', '.venv', 'tests', 'docs')]
+        for _n84 in _f84:
+            if not _n84.endswith('.py'):
+                continue
+            _rel84 = _os84.path.relpath(_os84.path.join(_r84, _n84), _repo_root).replace('\\', '/')
+            _t84 = open(_os84.path.join(_r84, _n84), encoding='utf-8').read()
+            # ⚠ 只看**非注释行**：注释里提到常量不算"读取方"
+            for _l84 in _t84.splitlines():
+                _st84 = _l84.strip()
+                if _st84.startswith('#'):
+                    continue
+                if 'split_columns(' in _l84 and _rel84 != 'data/lake_schema.py':
+                    _prod84.append(_rel84 + "（split_columns）")
+                if 'GAP_SEMANTICS' in _l84 and _rel84 != 'core/formula/runtime.py':
+                    _prod84.append(_rel84 + "（GAP_SEMANTICS）")
+    check(f"★ 1.84：两条护栏**如实标为『声明型 · 待接线』**（生产读取方 {len(_prod84)} 处）"
+          f"{('：' + ' / '.join(_prod84[:3])) if _prod84 else ''}"
+          " —— 真接之后把这条断言改成读取方清单，别让文档继续骗人",
+          not _prod84)
+except Exception as _e84:  # noqa: BLE001
+    check(f"★1.84 右栏/护栏断言整段抛异常: {type(_e84).__name__}: {_e84}", False)
+
+
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71
 #   现象（用户原话）："我在参数研究里面却显示 m2，我在 m2 里面显示 m3，我在 m3 里面显示在回测，
 #   这直接导致我没办法在 m2 和 m3 里面保存方案"。
@@ -6886,10 +7006,10 @@ try:
     from PyQt6.QtGui import QFontMetrics as _QFM130  # noqa: E402
 
     _mod130 = win.page_backtest
-    _cases130 = ((_mod130.backtest_single, 'M1 单股回测', 'M1'),
+    _cases130 = ((_mod130.backtest_single, '单股回测', 'M1'),
                  (_mod130.page_sweep, '参数研究', 'SWEEP'),
-                 (_mod130.page_scan, 'M2 全市场筛选', 'M2M3'),
-                 (_mod130.page_breadth, 'M3 广度统计', 'M2M3'),
+                 (_mod130.page_scan, '全市场筛选', 'M2M3'),
+                 (_mod130.page_breadth, '广度统计', 'M2M3'),
                  (_mod130.page_history, '运行历史', None))
     _saved130 = _mod130.tabs.currentIndex()
     _bad130, _draft130 = [], {}
@@ -6907,7 +7027,7 @@ try:
           f"（越界：{_bad130 or '无'}）", not _bad130)
     check("★ 1.71 / §11.5-130：**M2 与 M3 都能存方案**（都路由到 M2M3 共用池）—— "
           "旧版 M3 越界回落 ⇒ 浮窗以为本页没有方案库",
-          _draft130.get('M2 全市场筛选') and _draft130.get('M3 广度统计'))
+          _draft130.get('全市场筛选') and _draft130.get('广度统计'))
     check("★ 1.71 / §11.5-130：参数研究/运行历史**没有函数区** ⇒ 草稿如实为 None"
           "（不是「错给了别页的函数」）",
           not _draft130.get('参数研究') and not _draft130.get('运行历史'))
@@ -7797,7 +7917,7 @@ try:
     _m2_plans = win.current_plan_api()['plans']()
     _m2_ids = {f'p:{plan["id"]}' for plan in _m2_plans}
     check("★ B16 H7：同一页换子页签 ⇒ 就地刷新（标题胶囊 + 方案池一起跟着走）",
-          _panel82.lbl_ctx.text() == 'M2 全市场筛选'
+          _panel82.lbl_ctx.text() == '全市场筛选'
           and _m2_ids.issubset(set(_panel82.list._rows))
           and f'p:{_first_plan}' not in _panel82.list._rows)
     _dl_src = _pl82.Path('ui/widgets/desk_layout.py').read_text(encoding='utf-8')

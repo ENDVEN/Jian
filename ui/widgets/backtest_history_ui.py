@@ -149,7 +149,7 @@ class HistoryFilterBar(QWidget):
         lay.addWidget(title)
 
         self.cmb_kind = QComboBox()
-        self.cmb_kind.setToolTip("按类型过滤历史：M1 单股回测 / M2 全市场筛选 / M3 广度统计")
+        self.cmb_kind.setToolTip("按类型过滤历史：单股回测 / 全市场筛选 / 广度统计")
         for spec in KIND_SPECS.values():
             self.cmb_kind.addItem(spec.tab_label, spec.kind)
         self.cmb_kind.setCurrentIndex(0)

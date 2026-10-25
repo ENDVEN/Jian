@@ -108,8 +108,8 @@ class FormulaHubView(QWidget):
 
     @staticmethod
     def page_label(key: str) -> str:
-        return {'market': '行情工作台', 'backtest': '回测页（M1）',
-                'scan': '扫描页（M2/M3）'}.get(key, key)
+        return {'market': '行情工作台', 'backtest': '「单股回测」页',
+                'scan': '「全市场筛选 / 广度统计」页'}.get(key, key)
 
     def store(self):
         """资产库单例（总库/浮窗/各页共用同一份内存实例 —— formula_store 的既有纪律）。"""

@@ -26,7 +26,7 @@
   · 单文件 > 2 MB 拒存（防体积炸弹）；每标的 ≤20、总量 ≤500 滚动淘汰（防 bug 恶性堆积）。
   · `load` 只反序列化，绝不执行任何内容。
 
-【kind】记录带 `kind`（M1 单股回测 / M2 全市场筛选 / M3 广度统计，三种都已启用）：
+【kind】记录带 `kind`（单股回测 / 全市场筛选 / 广度统计，三种都已启用）：
   · M1 记录 = `meta` + `kpi` + `trades` + `equity`（旧形状，保持不变）；
   · M2/M3 记录 = **显式分组** `scope` / `condition` / `counts` + `day` / `range_start`
     （★v1.46 重做：旧版把命中数塞进 `total_trades`、命中率塞进 `win_rate` —— 一套键两种
@@ -60,7 +60,7 @@ EQUITY_MAX_POINTS = 250    # 净值抽稀上限（预览用）
 KIND_M1 = "M1"
 KIND_M2 = "M2"             # 全市场筛选
 KIND_M3 = "M3"             # 广度统计
-KIND_LABELS = {KIND_M1: "M1 单股回测", KIND_M2: "M2 全市场筛选", KIND_M3: "M3 广度统计"}
+KIND_LABELS = {KIND_M1: "单股回测", KIND_M2: "全市场筛选", KIND_M3: "广度统计"}
 
 SOURCE_AUTO = "auto"
 SOURCE_MANUAL = "manual"

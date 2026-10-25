@@ -281,8 +281,8 @@ class HubLayout:
 
         acts = QHBoxLayout()
         self.btn_send_market = QPushButton('📈 送行情页')
-        self.btn_send_backtest = QPushButton('📐 送回测页（M1）')
-        self.btn_send_scan = QPushButton('🌐 送扫描页（M2/M3）')
+        self.btn_send_backtest = QPushButton('📐 送到「单股回测」')
+        self.btn_send_scan = QPushButton('🌐 送到「全市场筛选 / 广度统计」')
         for b in (self.btn_send_market, self.btn_send_backtest, self.btn_send_scan):
             b.setStyleSheet(OUTLINE_QSS)
             acts.addWidget(b)

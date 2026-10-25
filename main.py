@@ -108,7 +108,7 @@ def main():
         from data.hub_migration import ensure_hub_migration
         _mig = ensure_hub_migration()
         if _mig.get("migrated"):
-            logging.info(f"函数总库迁移：收编 M1 {_mig['m1']} 条 / M2·M3 {_mig['scan']} 条")
+            logging.info(f"函数总库迁移：收编单股回测策略 {_mig['m1']} 条 / 筛选与广度方案 {_mig['scan']} 条")
     except Exception as _e:                            # noqa: BLE001 —— 迁移失败不拦启动（总库打开时兜底重试）
         logging.warning(f"函数总库迁移失败（总库打开时会重试）: {type(_e).__name__}: {_e}")
 

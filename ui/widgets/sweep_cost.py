@@ -336,7 +336,7 @@ def build_cost_card(page) -> QWidget:
         sp.setSingleStep(0.5)
         sp.setValue(float(_um_val))
         sp.valueChanged.connect(page._persist_cost_tiers)   # 只存**配置**，不存结果（D3 不变）
-        sp.setFixedWidth(78)
+        sp.setFixedWidth(70)      # ★1.84：78 → 70（右栏预算 ≤700）
         sp.setToolTip("第 %d 档佣金（每边、万分之）—— 万3 = 3.0\n"
                       "⚠ 只影响**成本敏感性**；本次研究本身的成交成本仍是万3（见下方说明）" % (i + 1))
         page.cost_spins.append(sp)
@@ -352,10 +352,11 @@ def build_cost_card(page) -> QWidget:
     page.btn_cost.setToolTip("只对候选表**前 10 名**重跑样本外（不跑全网格）· 可随时中断\n"
                              "跑完：候选表第 9 列出现斜率 + 结论条多一行 + 本卡下方给逐档年化")
     page.btn_cost.clicked.connect(page._run_cost)
-    page.btn_cost_follow = QPushButton("↺ 跟随基准")
+    page.btn_cost_follow = QPushButton("↺")
     page.btn_cost_follow.setStyleSheet(SUMMARY_GHOST_QSS)
     page.btn_cost_follow.setCursor(Qt.CursorShape.PointingHandCursor)
-    page.btn_cost_follow.setToolTip("把三档按**当前回测佣金**重排（万3 ⇒ 3 / 5 / 10）")
+    page.btn_cost_follow.setToolTip("跟随基准：把三档按**当前回测佣金**重排"
+                                 "（万3 ⇒ 3 / 5 / 10；只影响测算，不改研究口径）")
     page.btn_cost_follow.clicked.connect(page._follow_cost_base)
     row_tiers.addWidget(page.btn_cost_follow)
     row_tiers.addWidget(page.btn_cost)

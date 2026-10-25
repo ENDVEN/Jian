@@ -16,7 +16,7 @@
 """
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtWidgets import QLabel, QSizePolicy
 
 from ui.widgets.styles import KPI_CARD_QSS
 
@@ -36,14 +36,28 @@ def kpi_html(label: str, main: str, sub: str = "", color: str = DEFAULT_KPI_FG) 
 
 
 def make_kpi_label(label: str, main: str = "—", sub: str = "",
-                   color: str = DEFAULT_KPI_FG) -> QLabel:
+                   color: str = DEFAULT_KPI_FG, *, compact: bool = False) -> QLabel:
     """造一枚 KPI 卡控件（白底卡 + 富文本）—— 页面把它放进一行 QC…Layout 即可。"""
-    w = QLabel(kpi_html(label, main, sub, color))
+    w = QLabel(kpi_html(label, main, "" if compact else sub, color))
     w.setStyleSheet(KPI_CARD_QSS)
+    if compact:
+        # ★1.84：**紧凑档**（参数研究页专用；M2 仍走默认档，零变化）——
+        #   副值（"≥0.15 才有预测力"这类**解释**）收进 tooltip，卡面只留"标签 + 值"。
+        #   原因：副值把每张卡撑到 ~290 ⇒ 五张一行 ~1475 ⇒ 右栏必然横向滚动条。
+        #   副值**没有丢**（悬停可见），`set_kpi` 会继续把它写回 tooltip。
+        w.setProperty("kpi_compact", True)
+        w.setToolTip(sub)
+        w.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        w.setMinimumWidth(0)
     return w
 
 
 def set_kpi(w, label: str, main: str, sub: str = "", color: str = DEFAULT_KPI_FG) -> None:
     """就地更新一枚 KPI 卡（坏控件 / None ⇒ 静默跳过，绝不把页面搞崩）。"""
-    if w is not None:
-        w.setText(kpi_html(label, main, sub, color))
+    if w is None:
+        return
+    if bool(w.property("kpi_compact")):      # ★1.84：紧凑档 —— 副值进 tooltip
+        w.setText(kpi_html(label, main, "", color))
+        w.setToolTip(sub)
+        return
+    w.setText(kpi_html(label, main, sub, color))

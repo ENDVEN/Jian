@@ -112,11 +112,13 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
 
         # ★R1：KPI 小卡行（与 M2 结果区**同一实现** `kpi_card`）—— 结论条的文字是给"读"的，
         #   这排卡是给"扫一眼"的；两处数字同源（`sweep_results._set_verdict` 一处填）。
-        self.kpi = {"n": make_kpi_label("试验数", "—", "还没跑"),
-                    "is": make_kpi_label("样本内", "—"),
-                    "oos": make_kpi_label("样本外", "—"),
-                    "ic": make_kpi_label("Rank IC", "—", "≥0.15 才有预测力"),
-                    "pbo": make_kpi_label("PBO", "—", ">0.5 等于抛硬币")}
+        # ★1.84：**紧凑档** —— 副值进 tooltip，五张卡从 ~1475 收到 ~580，
+        #   右栏才可能压到 ≤700（用户 2026-10-25："右栏压到 ≤700"）。
+        self.kpi = {"n": make_kpi_label("试验数", "—", "还没跑", compact=True),
+                    "is": make_kpi_label("样本内", "—", compact=True),
+                    "oos": make_kpi_label("样本外", "—", compact=True),
+                    "ic": make_kpi_label("Rank IC", "—", "≥0.15 才有预测力", compact=True),
+                    "pbo": make_kpi_label("PBO", "—", ">0.5 等于抛硬币", compact=True)}
         kpi_row = QHBoxLayout()
         kpi_row.setContentsMargins(0, 0, 0, 0)
         kpi_row.setSpacing(8)
@@ -196,8 +198,9 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
         # ★1.79：列宽收一收（782 → 710）⇒ 窄窗更可能不用滚就看全（放不下由 `AsNeeded` 兜底）
-        for w, col in ((40, 0), (132, 1), (82, 2), (82, 3), (70, 4), (82, 5),
-                       (58, 6), (52, 7), (60, 8), (52, 9)):
+        # ★1.84 收窄（710 → 640）：右栏预算 ≤700，表是最宽的单件之一
+        for w, col in ((36, 0), (112, 1), (76, 2), (76, 3), (64, 4), (76, 5),
+                       (52, 6), (46, 7), (56, 8), (46, 9)):
             self.table.setColumnWidth(col, w)
         self.table.verticalHeader().setDefaultSectionSize(24)
         self.table.setMinimumHeight(180)

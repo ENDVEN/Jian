@@ -267,16 +267,14 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #             + 量程留白收成 `RANGE_PAD`；护栏 = 冒烟断言"本模块不许再定义任何类"。
 #          ③ 本轮踩到并记进 `§11.5-133`：rich text 与纯文本**不能混用同一套记号**（`**` vs `<b>`）；
 #             `QSpinBox` 只吃 int（float 直接抛）；抽屉里的 SpinBox 必须用 `NoWheel*`。
-#   1.82 = 三件"看得见/用得上"的修补（2026-10-23）：
-#          ① **M3 闸条可手动收起**（用户"没找到手动关闭的地方"）：「✕」+ dismissed 信号；
-#             同一批被拦项只提示一次（`breadth_ui.gate_dismissed_sig` 签名记忆），
-#             被拦项变了 / 问题消失过再出现 ⇒ 重新提示；关掉不丢信息（ⓘ 同文案 + 徽标仍在）；
-#          ② **param_sweep 腾余量 470→387**：`_build_study` / `_experiment_signature` /
-#             `_refresh_run_enabled` 搬 `ui/widgets/sweep_input.py`（mixin 共享 self，调用点不变）；
-#          ③ **成本三档进度累进**（`_on_cost_progress`：分母 = 档数 × 每档组数）；
-#          ④ 台账：`breadth_flow` 953→979 登记 · `param_sweep` 出红榜（<400 不标数字）。
+#   1.84 = 右栏压窄 + 护栏标注 + 组合立项（2026-10-25）：
+#          ① 右栏最小需求 1485→677：快照行换行 + 全文 tooltip · KPI 紧凑档（副值进 tooltip，M2 不变）·
+#             候选表 710→640 · 成本卡收窄（spins 70 / 跟随按钮改图标）；1360 窗口不出横向条。
+#          ② GAP_SEMANTICS / lake_schema 标"声明型 · 待接线"（生产读取方 0）+ 0 读取方护栏断言。
+#          ③ 新增 §7-B17「📊 组合」（一级页面 · 组合层级回测）= 用户定的最高优先级；
+#             规格 = docs/JIAN_PORTFOLIO_PLAN.md（B15 完整版的小池改为"选组合"）。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.82"
+APP_VERSION = "1.84"
 
 # ==========================================
 # 界面配置 (UI Settings)
