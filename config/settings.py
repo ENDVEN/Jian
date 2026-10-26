@@ -267,15 +267,13 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #             + 量程留白收成 `RANGE_PAD`；护栏 = 冒烟断言"本模块不许再定义任何类"。
 #          ③ 本轮踩到并记进 `§11.5-133`：rich text 与纯文本**不能混用同一套记号**（`**` vs `<b>`）；
 #             `QSpinBox` 只吃 int（float 直接抛）；抽屉里的 SpinBox 必须用 `NoWheel*`。
-#   1.85 = 🧺 组合（一级页面）P0 + P1（2026-10-26）：
-#          ① 左栏第 6 项「🧺 组合」：组合列表/空态/从自选股组导入(等权,只引用组名)/保存重载；
-#             存储 `data/portfolio_store.py`（临时文件 + os.replace 原子写；坏文件隔离）；
-#          ② 主导航改**按身份路由**（`_PAGES` + `switch_to`）⇒ 插页不再错位；
-#          ③ P1：净值曲线（组合 vs 基准，基期 1.0000，总收益/年化/最大回撤）+ 持仓表（成本=基期收盘）；
-#             内核 `core/portfolio_stats.py`（加权净值/月度再平衡/回撤/年化，纯函数）；
-#          ④ 诚实规则：缺一只就不画组合线、缺数据写"数据不足"、卡面写明**未含佣金**。
+#   1.86 = 冒烟提速 + 拖动 flaky 修复（2026-10-26，**无界面变化**）：
+#          ① `smoke_chart` 三处真实全分区检查默认 300 只子集 ⇒ 157s → 41s；
+#             `SMOKE_FULL=1` 跑全量、`SMOKE_STOP_AFTER_DRAG=1` 只跑拖动块（3s）。
+#          ② flaky 真根因：QTest.mouseMove = NoButton hover + 1px 线条差半像素点不中 ⇒
+#             合成 QMouseEvent(buttons=LeftButton) + ±1px 落点容差（5 次全失败才判红）。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.85"
+APP_VERSION = "1.86"
 
 # ==========================================
 # 界面配置 (UI Settings)

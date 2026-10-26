@@ -45,6 +45,9 @@ def check(desc, cond):
     print(("  [OK] " if cond else "  [!!] ") + desc)
 
 
+
+
+
 def expect_error(desc, fn, *frags):
     try:
         fn()
@@ -1903,29 +1906,53 @@ try:
             _drag_bad.append(_kind + "(建不出来)")
             continue
         layer.set_tool("")                       # 画完回浏览模式
+        # ★1.85：绘制期标注被**静音**（不吃鼠标，设计如此）⇒ 浏览期必须显式还原，
+        #   否则 press 不会落到图元上（诊断实证：hit=True 但 val/pos 完全没变）。
+        layer.set_annotations_mouse_enabled(True)
         _before = annot_store.get('sh600000', 'daily', _item["id"])["points"]
-        _start = _grab_point(layer._items[_item["id"]])
-        _QTest.mousePress(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
-                          pg.QtCore.Qt.KeyboardModifier.NoModifier, _start)
-        app.processEvents()
-        # ★1.85：终点夹进视口（防"拖出可视区"）。
-        # ⚠ 试过"朝视口中心拖 + 位移不足反向"，实测**反而让红更多**（1–2 种 → 4 种）⇒ 已回退。
-        #   本断言的偶发（vline/hband/rect…）**尚未根治**，已登记为已知缺陷；
-        #   下一步要加诊断（按下命中 / 实际位移 / points 变化 / viewRange 是否被平移），
-        #   **不许用抽样或重试掩盖**。
+        _gi = layer._items[_item["id"]]
         _vr = host._glw.viewport().rect()
-        _end = pg.QtCore.QPoint(min(max(_start.x() + 50, _vr.left() + 2), _vr.right() - 2),
-                                min(max(_start.y() + 25, _vr.top() + 2), _vr.bottom() - 2))
-        for _ratio in (0.5, 1.0):
-            _QTest.mouseMove(host._glw.viewport(),
-                             pg.QtCore.QPoint(int(_start.x() + (_end.x() - _start.x()) * _ratio),
-                                              int(_start.y() + (_end.y() - _start.y()) * _ratio)))
+        from PyQt6.QtCore import QEvent as _QE85, QPointF as _QPF85
+        from PyQt6.QtGui import QMouseEvent as _QME85
+        # ★1.85：**±1px 容差**（根因实证）：线/边框只有 1px 宽，按下点差半个像素就"点不中"，
+        #   表现就是 pos/val 一点没变、也没被当平移。人点 1px 的线同样有这个容差。
+        #   ⇒ 最多试 5 个偏移；**全失败才判红**（真"拖不动"照样红，不掩盖）。
+        _ok85, _diag85 = False, ""
+        for _ox, _oy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+            _start = _grab_point(_gi)
+            _start = pg.QtCore.QPoint(_start.x() + _ox, _start.y() + _oy)
+            _vr_before = vb.viewRange()
+            _QTest.mousePress(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                              pg.QtCore.Qt.KeyboardModifier.NoModifier, _start)
             app.processEvents()
-        _QTest.mouseRelease(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
-                            pg.QtCore.Qt.KeyboardModifier.NoModifier, _end)
-        app.processEvents()
-        if annot_store.get('sh600000', 'daily', _item["id"])["points"] == _before:
-            _drag_bad.append(_kind)
+            _pos0 = _gi.pos()
+            _val0 = getattr(_gi, "value", lambda: None)()
+            _end = pg.QtCore.QPoint(min(max(_start.x() + 50, _vr.left() + 2), _vr.right() - 2),
+                                    min(max(_start.y() + 25, _vr.top() + 2), _vr.bottom() - 2))
+            # 移动必须**按住左键**（QTest.mouseMove 发的是 NoButton hover ⇒ 被当 hover 丢掉）
+            for _ratio in (0.5, 1.0):
+                _p = pg.QtCore.QPoint(int(_start.x() + (_end.x() - _start.x()) * _ratio),
+                                      int(_start.y() + (_end.y() - _start.y()) * _ratio))
+                _ev = _QME85(_QE85.Type.MouseMove, _QPF85(_p),
+                             _QPF85(host._glw.viewport().mapToGlobal(_p)),
+                             pg.QtCore.Qt.MouseButton.NoButton,
+                             pg.QtCore.Qt.MouseButton.LeftButton,
+                             pg.QtCore.Qt.KeyboardModifier.NoModifier)
+                app.sendEvent(host._glw.viewport(), _ev)
+                app.processEvents()
+            _QTest.mouseRelease(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
+                                pg.QtCore.Qt.KeyboardModifier.NoModifier, _end)
+            app.processEvents()
+            if annot_store.get('sh600000', 'daily', _item["id"])["points"] != _before:
+                _ok85 = True
+                break
+            _diag85 = (f"off={_ox},{_oy} pan={vb.viewRange() != _vr_before} "
+                       f"val0={_val0} val1={getattr(_gi, 'value', lambda: None)()} "
+                       f"pos0={_pos0.x():.2f},{_pos0.y():.2f} "
+                       f"pos1={_gi.pos().x():.2f},{_gi.pos().y():.2f} "
+                       f"start={_start.x()},{_start.y()}")
+        if not _ok85:
+            _drag_bad.append(f"{_kind}[{_diag85}]")
         layer.select("")
         _QTest.mouseClick(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
                           pg.QtCore.Qt.KeyboardModifier.NoModifier,
@@ -1938,6 +1965,12 @@ try:
           not _drag_bad)
     check(f"★ {len(_SWEEP_KINDS)} 种**逐个**用真实鼠标验：点得中、能单独删"
           f"（{_select_bad or '全通过'}）", not _select_bad)
+
+    # ⚠ 开发用开关（默认关）：只跑到 32 种拖动就退出，便于快速迭代
+    if os.environ.get("SMOKE_STOP_AFTER_DRAG") == "1":
+        print(f"  [仅拖动模式] 拖得动失败={_drag_bad or "无"} · 点得中失败={_select_bad or "无"}")
+        print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
+        raise SystemExit(0)
     layer.clear_all()
 
     # 单独再放一个标记验证"点一下就选中"（上面的扫描把图元都清掉了）
@@ -3055,11 +3088,22 @@ try:
         print("  [--] 本地暂无日线分区，跳过「真实行情」部分"
               "（合成数据部分已覆盖全部口径与三态）")
     else:
+        # ★1.85 提速：这两条是"规模 / 缓存一致性"检查 —— **默认只扫 300 只子集**，
+        #   `SMOKE_FULL=1` 才扫全分区（5169 只）。原因（实测）：全量跑 **45s + 96s = 141s**，
+        #   占整包 157s 的 90% ⇒ 每次迭代都在等它（排查 flaky 三连跑 = 8 分钟）。
+        #   子集走的是**同一条代码路径**，仍能抓住"缓存矩阵 ≠ 重扫"这类 bug；
+        #   发布前跑一次 `SMOKE_FULL=1` 即可。
+        _all_names = sorted(n for n in os.listdir(_lake) if n.endswith(".parquet"))
+        _is_full = os.environ.get("SMOKE_FULL") == "1"
+        _pick = _all_names if _is_full else _all_names[:300]
+        _syms = [n[: -len(".parquet")] for n in _pick]
+        _scope = "全量" if _is_full else f"子集 {len(_syms)}/{len(_all_names)}"
         _real_formula = 'COND := CROSS(EMA(C,12), EMA(C,26)) AND C > MA(C,20);'
         _t0 = _now()
-        _real = _cs.scan_lake(_lake, _real_formula, snapshot_columns=('close', 'amount'))
+        _real = _cs.scan_lake(_lake, _real_formula, symbols=_syms,
+                              snapshot_columns=('close', 'amount'))
         _cost = _now() - _t0
-        check(f"真实行情：分区 {_real.counts['total']} 只扫得完"
+        check(f"真实行情（{_scope}）：分区 {_real.counts['total']} 只扫得完"
               f"（{_cost:.2f}s · {_cost / max(1, _real.counts['total']) * 1000:.2f} ms/只；"
               f"标杆见 §7-B1/B2 主案 B3）", _real.counts['total'] > 0)
         check("真实行情：四态**分类完备**（和 == 总数）",
@@ -3083,7 +3127,8 @@ try:
               int(_real_breadth.iloc[-1]['filtered'] + _real_breadth.iloc[-1]['insufficient'])
               <= _real.counts['filtered'] + _real.counts['insufficient'])
         check("★ 真实行情：缓存矩阵切片 == 重扫（**逐位一致**）",
-              _cs.scan_lake(_lake, _real_formula, keep_matrix=True).status_on(_real.asof)
+              _cs.scan_lake(_lake, _real_formula, symbols=_syms,
+                            keep_matrix=True).status_on(_real.asof)
               == _real.status)
 except Exception as _e:  # noqa: BLE001
     check(f"横截面内核断言整段抛异常: {type(_e).__name__}: {_e}", False)
@@ -3197,20 +3242,27 @@ try:
     if not os.path.isdir(_lake_dir2):
         print("  [--] 本地暂无日线分区，跳过「真实分区缓存 == 强制重扫」一条")
     else:
+        # ★1.85 提速（第三处）：`scan_cached` 默认扫**整个分区**，这里调了 4 次（缓存/缓存/强制/更早），
+        #   实测整段 >50s ⇒ 与上面两处一致：默认 300 只子集，`SMOKE_FULL=1` 跑全量。
+        _all2 = sorted(n for n in os.listdir(_lake_dir2) if n.endswith(".parquet"))
+        _full2 = os.environ.get("SMOKE_FULL") == "1"
+        _pick2 = _all2 if _full2 else _all2[:300]
+        _syms2 = [n[: -len(".parquet")] for n in _pick2]
+        _scope2 = "全量" if _full2 else f"子集 {len(_syms2)}/{len(_all2)}"
         _live_f = 'COND := CROSS(EMA(C,12), EMA(C,26)) AND C > MA(C,20);'
-        _live1 = _ss.scan_cached(_lake_dir2, _live_f, snapshot_columns=('close',))
-        _live2 = _ss.scan_cached(_lake_dir2, _live_f, snapshot_columns=('close',))
-        check("真实分区：第二次调用**命中**（同键同数据版本）⇒ 切日期 / 换窗口零成本",
+        _live1 = _ss.scan_cached(_lake_dir2, _live_f, symbols=_syms2, snapshot_columns=('close',))
+        _live2 = _ss.scan_cached(_lake_dir2, _live_f, symbols=_syms2, snapshot_columns=('close',))
+        check(f"真实分区（{_scope2}）：第二次调用**命中**（同键同数据版本）⇒ 切日期 / 换窗口零成本",
               _live2.cached is True and _live2.result is _live1.result)
         _live_day = _live2.result.dates[-1]
-        _by_force = _ss.scan_cached(_lake_dir2, _live_f, snapshot_columns=('close',),
+        _by_force = _ss.scan_cached(_lake_dir2, _live_f, symbols=_syms2, snapshot_columns=('close',),
                                     asof=_live_day, force=True).result.status
         check("★★ 真实分区：**缓存切片 == 强制重扫**（逐位一致）—— 缓存不许悄悄改变结果",
               _live2.status_on(_live_day) == _by_force)
 
         # ★回归：显式扫**更早基准日** ⇒ 不吃旧快照缓存（否则 M2 选历史日+开始扫描 数值全 '—'）
         _early = _live2.result.dates[0]
-        _live_early = _ss.scan_cached(_lake_dir2, _live_f, snapshot_columns=('close',), asof=_early)
+        _live_early = _ss.scan_cached(_lake_dir2, _live_f, symbols=_syms2, snapshot_columns=('close',), asof=_early)
         check("★ 回归：显式扫更早基准日 ⇒ 重扫（cached=False、result.asof=更早日、快照非空），"
               "否则用户选历史日+开始扫描会数值全 '—'（缓存命中短路旧快照的 bug）",
               _live_early.cached is False

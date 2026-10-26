@@ -1406,3 +1406,9 @@ M1/M2/M3 滞后提示的**唯一真源**，只是下载层没接上 ⇒ 出现"U
 
 - **11.5-144** 【★1.85 · 组合 P1 两坑】**① `ChartHost` 查询面是 `property`**：`chart.main_pane.plot_item` 才对，加 `()` 就 `TypeError: 'ChartPane'/'PlotItem' object is not callable`；**读签名先看有没有 `@property`**。
   【② 多标的净值的"起点"】权重**归一到 1.0**（两只各 0.5）⇒ 买入持有 2.0 / 按月 2.25；我先写 4.0/4.5 是把"每只 1.0"当起点 ⇒ **红的是我的算术**。写这类断言前，先在断言里带上实测值（`f"（{实测}）"`），能一眼看出是谁错。
+
+- **11.5-145** 【★1.85 · 测试要跑得动】**背景**：用户反馈"测试/提交耗时过长"。实测：`git status` **0.07s**、python 启动 **0.14s**、`import main` 1.83s —— **都不是瓶颈**；`smoke_chart` 157s / `overlay` 39s 才是。
+  【真凶】`smoke_chart` 里**三处真实全分区**检查：`scan_lake` 扫 5169 只（45s）、缓存 vs 强制重扫（96s）、`scan_cached` 连调 4 次（>50s）⇒ 占整包 90%+。
+  【修法】默认 **300 只子集**（同一条代码路径，仍能抓"缓存≠重扫"这类 bug），`SMOKE_FULL=1` 跑全量；另加 `SMOKE_STOP_AFTER_DRAG=1`（只跑到拖动块，3 秒）用于 flaky 迭代。
+  【flaky 真根因（两次误判后才查清）】① 诊断先被我写错（`selected_id` 在新建时就已经是它，不能当"按中"的证据）⇒ 改记 `val/pos` 才看出"图元一点没动"；② `QTest.mouseMove` 发的是 **NoButton 的 hover**，pyqtgraph 只认"按键还按着"的 move ⇒ 自合成 `QMouseEvent(buttons=LeftButton)`（在 `PyQt6.QtGui`）；③ **1px 的线差半像素就点不中** ⇒ 试 5 个 ±1px 偏移、全失败才判红（不掩盖真故障）。
+  【另一条教训】自测脚本也会污染用户数据：截图脚本调了页面 `_save_ui`（写 `portfolios_ui`）⇒ 打桩时连"UI 状态保存"一起屏蔽；否则防污染断言会红（它抓得对）。
