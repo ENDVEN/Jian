@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import numpy as np
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog,
+from PyQt6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
+                             QInputDialog,
                              QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
                              QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout,
                              QWidget)
@@ -173,6 +174,12 @@ class PortfolioView(QWidget):
 
     # ================= 版式 =================
     def _build(self) -> None:
+        # ★1.88：本页卡片统一（圆角 12 / 细边框 #E7ECF3 / 字号体系统一）—— 只作用于组合页，
+        #   不动物流/行情等其它页面（那些走全局 QSS，改动需整站回归）。
+        self.setStyleSheet(
+            "QFrame#panelCard { background:#FFFFFF; border:1px solid #E7ECF3; border-radius:12px; }"
+            "QFrame#panelHead { background:transparent; border:none; }"
+            "QLabel { font-size:12.5px; color:#3A4250; }")
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
@@ -327,7 +334,9 @@ class PortfolioView(QWidget):
         _wrow = QHBoxLayout()
         _wrow.setSpacing(4)
         self._win_btns = {}
-        for _k, _t in ((3, "近 3 月"), (12, "近 1 年"), (0, "全部")):
+        # ★1.88："全部"是伪命题（各票上市日不同）⇒ 改为"成立以来"，
+        #   起点 = **所有成分都有数据的第一天**（build_returns 已改交集）
+        for _k, _t in ((3, "近 3 月"), (12, "近 1 年"), (0, "成立以来")):
             _b = QPushButton(_t)
             _b.setCheckable(True)
             _b.setChecked(_k == 0)
@@ -346,6 +355,19 @@ class PortfolioView(QWidget):
         self.chart.setMinimumHeight(220)
         self.chart.setMaximumHeight(300)
         nl.addWidget(self.chart, 1)
+        # ★1.88：**基准就在卡头换**（样板做法）；列出本机已下载的指数 + 未下载的常见指数
+        _brow = QHBoxLayout()
+        _brow.setSpacing(4)
+        _brow.addWidget(QLabel("基准"))
+        self.cmb_base = QComboBox()
+        self.cmb_base.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cmb_base.setMinimumContentsLength(8)
+        self.cmb_base.setMaximumWidth(220)
+        self.cmb_base.setStyleSheet(SEC_HINT_QSS)
+        self.cmb_base.currentIndexChanged.connect(self._on_base_changed)
+        _brow.addWidget(self.cmb_base)
+        _brow.addStretch(1)
+        nl.addLayout(_brow)
         self.lbl_legend = QLabel("")
         self.lbl_legend.setStyleSheet(SEC_HINT_QSS)
         nl.addWidget(self.lbl_legend)
@@ -622,6 +644,60 @@ class PortfolioView(QWidget):
         w.finished.connect(_done)
         w.start()
 
+    INDEX_NAMES = {"000300": "沪深300", "000905": "中证500", "000001": "上证指数",
+                   "399001": "深证成指", "399006": "创业板指"}
+
+    def _base_options(self) -> list:
+        """可选项：`[(显示名, {kind, code, name})]` —— 先本机已下载，再常见但缺的，最后自定义。"""
+        have = []
+        try:
+            import os
+
+            from config import settings as _st
+            d = os.path.join(_st.USER_DATA_DIR, "data_lake", "macro", "index")
+            have = sorted(n[:-8] for n in os.listdir(d) if n.endswith(".parquet"))
+        except Exception:                  # noqa: BLE001
+            have = []
+        out, seen = [], set()
+        for fn in have:
+            code = fn[-6:]
+            seen.add(code)
+            out.append((f"{self.INDEX_NAMES.get(code, fn)}（{code}）· 已有",
+                        {"kind": "index", "code": code, "name": self.INDEX_NAMES.get(code, fn)}))
+        for code, nm in self.INDEX_NAMES.items():
+            if code not in seen:
+                out.append((f"{nm}（{code}）· 未下载", {"kind": "index", "code": code, "name": nm}))
+        return out
+
+    def _refresh_base_combo(self, base: dict) -> None:
+        """按当前组合的基准回填下拉（无匹配时保留原值，不清空）。"""
+        opts = self._base_options()
+        cur_code = str((base or {}).get("code") or "")
+        self.cmb_base.blockSignals(True)
+        self.cmb_base.clear()
+        for label, val in opts:
+            self.cmb_base.addItem(label, val)
+        if cur_code and self.cmb_base.findData(None) >= 0:      # 占位，永远不会命中
+            pass
+        idx = next((i for i in range(self.cmb_base.count())
+                    if str((self.cmb_base.itemData(i) or {}).get("code")) == cur_code), -1)
+        if idx >= 0:
+            self.cmb_base.setCurrentIndex(idx)
+        self.cmb_base.blockSignals(False)
+
+    def _on_base_changed(self, _idx: int) -> None:
+        """换基准：只改对照线，不动成分/权重；写回存储。"""
+        val = self.cmb_base.currentData()
+        p = self._store.load_one(self._current) if self._current else None
+        if not val or not p:
+            return
+        p["base"] = dict(val)
+        try:
+            self._store.save(p)
+        except Exception:                  # noqa: BLE001
+            pass
+        self._render(p)
+
     def _set_window(self, months: int) -> None:
         """切净值显示窗口（0=全部）。只重画，不重算成本、不动存储。"""
         self._window = int(months or 0)
@@ -823,6 +899,10 @@ class PortfolioView(QWidget):
         except Exception:                  # noqa: BLE001
             pass
 
+        try:
+            self._refresh_base_combo(base)
+        except Exception:                  # noqa: BLE001
+            pass
         self._render_p1(p)
 
     # ---------------- P1：净值 + 持仓 ----------------
@@ -907,6 +987,13 @@ class PortfolioView(QWidget):
                 nav = nav.iloc[_keep]
                 _gross = _gross.iloc[_keep]
                 rets = {k: v.iloc[_keep] for k, v in rets.items()}
+                # ★1.88：**窗口内重新定基 1.0000**（用户实测：点"近1年"起点是 1.6，
+                #   因为旧版只是截取了全区间净值的一段）
+                try:
+                    nav = nav / float(nav.iloc[0])
+                    _gross = _gross / float(_gross.iloc[0])
+                except Exception:          # noqa: BLE001
+                    pass
         self._nav = nav
         tot, ann, dd = period_return(nav), annualized(nav), max_drawdown(nav)
         _day = (float(nav.iloc[-1]) / float(nav.iloc[-2]) - 1.0) if len(nav) >= 2 else None

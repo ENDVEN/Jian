@@ -7520,6 +7520,40 @@ except Exception as _e20:  # noqa: BLE001
     check(f"★1.87 P5 断言整段抛异常: {type(_e20).__name__}: {_e20}", False)
 
 
+
+# ==========================================
+# ==========================================
+print("\n== ★1.88 组合 P6 · 窗口定基与交集 ==")
+try:
+    import pandas as _pd16  # noqa: E402
+
+    from core.portfolio_stats import build_returns as _br16
+
+    _dA = _pd16.bdate_range("2024-01-02", periods=200).strftime("%Y-%m-%d")
+    _dB = _pd16.bdate_range("2024-06-03", periods=100).strftime("%Y-%m-%d")
+    _fA = _pd16.DataFrame({"date": _dA, "close": [10 + 0.01 * i for i in range(len(_dA))]})
+    _fB = _pd16.DataFrame({"date": _dB, "close": [20 + 0.02 * i for i in range(len(_dB))]})
+    _days16, _ = _br16({"A": _fA, "B": _fB})
+    check(f"★ 1.88：多票对齐取**交集**（A 200 天 / B 100 天 ⇒ 起点 {_days16[0] if _days16 else '空'}、共 {len(_days16)} 天）—— 未上市不许当持平",
+          bool(_days16) and _days16[0] == _dB[0]
+          and 50 <= len(_days16) < len(_dA))
+
+    _pv16 = win.page_portfolio
+    _firsts = []
+    for _k16 in (0, 12, 3):
+        if getattr(_pv16, "_win_btns", None):
+            _pv16._win_btns[_k16].click()
+            app.processEvents()
+        if _pv16._nav is not None and len(_pv16._nav):
+            _firsts.append(round(float(_pv16._nav.iloc[0]), 6))
+    check(f"★ 1.88：三档窗口**首值都是 1.0000**（实测 {_firsts}）—— 旧版切窗口是从全区间截一段",
+          (not _firsts) or all(abs(v - 1.0) < 1e-9 for v in _firsts))
+    check("★ 1.88：基准可在**卡头下拉**换（不再只能进编辑框）",
+          hasattr(_pv16, "cmb_base") and _pv16.cmb_base.count() > 0)
+except Exception as _e16:  # noqa: BLE001
+    check(f"★1.88 P6 断言整段抛异常: {type(_e16).__name__}: {_e16}", False)
+
+
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71
 #   现象（用户原话）："我在参数研究里面却显示 m2，我在 m2 里面显示 m3，我在 m3 里面显示在回测，
 #   这直接导致我没办法在 m2 和 m3 里面保存方案"。

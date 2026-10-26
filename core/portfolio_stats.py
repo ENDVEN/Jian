@@ -42,15 +42,20 @@ def _frame_returns(df) -> pd.Series:
 def build_returns(frames: dict) -> tuple:
     """多只票 → `(交易日列表, {symbol: 日收益 Series})`。
 
-    · 交易日 = 各票日期的**并集**（组合要逐日可比）；
-    · 单票缺失日 ⇒ 价格 ffill（收益 0，= 停牌）；
+    ⚠★1.88 **必须用交集，不能用并集**（用户 2026-10-27 指出的口径问题）：
+      并集 + 缺失日记 0 收益 = 把"这只票还没上市"当成"持有一动不动" ⇒
+      组合净值在早期被稀释成一条**假的平滑曲线**，"全部区间"因此是个**伪命题**。
+      交集 = **所有成分都有数据的第一天**才是组合真正的起点（也是唯一诚实的起点）。
+
+    · 单票中间缺失（停牌）⇒ 用 0 收益补（这段确实没法交易，且两端都有价）；
     · 返回的 Series 已按交易日列表对齐（长度一致，便于矩阵运算）。
     """
     rets = {str(k): _frame_returns(v) for k, v in (frames or {}).items()}
     rets = {k: v for k, v in rets.items() if len(v)}
     if not rets:
         return [], {}
-    days = sorted(set().union(*(set(v.index) for v in rets.values())))
+    # 交集：**所有成分都有数据的交易日**才算组合的交易日（见上方口径说明）
+    days = sorted(set.intersection(*(set(v.index) for v in rets.values())))
     aligned = {}
     for k, v in rets.items():
         # 先按并集 reindex（缺失 = NaN ⇒ 停牌 ⇒ 用 0 收益），再 ffill 兜住"中间空档"
