@@ -305,16 +305,32 @@ class PortfolioEditDialog(QDialog):
 
     def _on_ok(self) -> None:
         members = [dict(m) for m in self._members]
-        if members:
-            # 归一（把余数误差收进第一只），再复核
-            members = normalize_weights(members, float(self.sp_cash.value()))
+        # ★1.89：**不再自动归一**。旧版先按 (100 − 现金) 把成员拉满 ⇒ 合计永远 = 100，
+        #   "差额留作现金"这条分支永远走不到（用户实测）。现在差额由用户选。
         self._members = members
         self._render_rows()
         self._refresh_total()
-        if abs(sum(float(m.get("weight") or 0) for m in members)
-               + float(self.sp_cash.value()) - 100.0) > 0.05:
-            QMessageBox.warning(self, "合计不为 100%", "请点「一键等权」或手动调平后再确定。")
-            return
+        _total = sum(float(m.get("weight") or 0) for m in members) + float(self.sp_cash.value())
+        if abs(_total - 100.0) > 0.02:
+            # ★1.89：差额**让用户选**（旧版只会警告，等于逼用户自己算）
+            _gap = round(100.0 - _total, 2)
+            if _gap > 0:
+                _box = QMessageBox(self)
+                _box.setWindowTitle("合计不足 100%")
+                _box.setText(f"当前合计 {_total:.2f}%，还差 **{_gap:.2f}%**。")
+                _box.setInformativeText("要把这 {:.2f}% 留作现金吗？".format(_gap))
+                _b_cash = _box.addButton("留作现金", QMessageBox.ButtonRole.AcceptRole)
+                _box.addButton("我再调调", QMessageBox.ButtonRole.RejectRole)
+                _box.exec()
+                if _box.clickedButton() is not _b_cash:
+                    return
+                self.sp_cash.setValue(min(100.0, float(self.sp_cash.value()) + _gap))
+                self._refresh_total()
+            else:
+                QMessageBox.warning(
+                    self, "合计超过 100%",
+                    f"当前合计 {_total:.2f}%（超出 {- _gap:.2f}%）—— 请减少权重或现金。")
+                return
         self.accept()
 
     # ---------------- 结果 ----------------

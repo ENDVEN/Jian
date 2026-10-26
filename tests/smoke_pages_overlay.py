@@ -7554,6 +7554,74 @@ except Exception as _e16:  # noqa: BLE001
     check(f"★1.88 P6 断言整段抛异常: {type(_e16).__name__}: {_e16}", False)
 
 
+
+# ==========================================
+# ★1.89 / P7：调仓记录逐票明细 · 差额留现金 · 概览上色 · 组合→自选组
+# ==========================================
+print("\n== ★1.89 组合 P7 · 调仓与现金 ==")
+try:
+    import os as _os17  # noqa: E402
+    import tempfile as _tf17  # noqa: E402
+
+    import pandas as _pd17  # noqa: E402
+
+    from core.portfolio_stats import nav_with_costs as _nwc17
+    from data.portfolio_store import new_portfolio as _np17
+    from data.watchlist_store import WatchlistStore as _WS17
+    import ui.dialogs.portfolio_edit as _pe17
+
+    _d17 = ["2024-01-02", "2024-01-03", "2024-01-31", "2024-02-01", "2024-02-29", "2024-03-01"]
+    _r17 = {"A": _pd17.Series([0, .2, 0, 0, 0, 0], index=_d17),
+            "B": _pd17.Series([0, 0, 0, .2, 0, 0], index=_d17)}
+    _res17 = _nwc17(_d17, _r17, {"A": 50.0, "B": 50.0}, 0.0, "monthly", 0.0003)
+    _tr17 = (_res17["events"][0].get("trades") or []) if _res17["events"] else []
+    _pairs17 = [(t["action"], t["symbol"]) for t in _tr17]
+    check("★ 1.89：调仓记录有**逐票增减**（实测 " + str(_pairs17) + "）",
+          bool(_tr17) and all(t["action"] in ("增持", "减持") for t in _tr17)
+          and abs(sum(abs(t["delta_pct"]) for t in _tr17) - 9.09) < 0.2)
+
+    class _SB17:
+        class ButtonRole:
+            AcceptRole = 0
+            RejectRole = 1
+        def __init__(self, *a, **k):
+            self._b = object()
+        def setWindowTitle(self, *a): pass
+        def setText(self, *a): pass
+        def setInformativeText(self, *a): pass
+        def addButton(self, *a, **k): return self._b
+        def exec(self): pass
+        def clickedButton(self): return self._b
+
+    _pe17.QMessageBox = _SB17
+    _pf17 = _np17("t", "", [{"symbol": "600300", "name": "", "weight": 30.0},
+                             {"symbol": "600326", "name": "", "weight": 30.0}])
+    _dlg17 = _pe17.PortfolioEditDialog(_pf17)
+    _dlg17.sp_cash.setValue(10.0)
+    _dlg17._on_ok()
+    _out17 = _dlg17.result_portfolio()
+    _cash17 = float(_out17["cash"])
+    _wsum17 = round(sum(m["weight"] for m in _out17["members"]), 2)
+    check("★ 1.89：合计 70% 选「留作现金」⇒ 现金 " + f"{_cash17:.2f}%"
+          + " · 成员合计 " + f"{_wsum17:.2f}%",
+          abs(_cash17 - 40.0) < 0.01)
+
+    _pv17 = win.page_portfolio
+    _pv17._set_ov(ret=-1.23, nav=0.98, day=-0.5, excess=-2.0)
+    _red = all("#C62828" in w.styleSheet() for w in _pv17.lbl_ov.values())
+    _pv17._set_ov(ret=1.23, nav=1.02, day=0.5, excess=2.0)
+    _green = all("#2E7D32" in w.styleSheet() for w in _pv17.lbl_ov.values())
+    check("★ 1.89：概览 4 卡**按数值上色**（负=红 / 正=绿）", _red and _green)
+
+    _wl17 = _WS17(_os17.path.join(_tf17.mkdtemp(), "w.json"))
+    _pv17._watchlist = lambda: _wl17
+    _pv17._store = _pe17.__dict__.get("_never", None) or _pv17._store
+    check("★ 1.89：组合页有「⇄ 生成自选股组」（组合→行情的桥，不是接口坏了）",
+          hasattr(_pv17, "btn_pub"))
+except Exception as _e17:  # noqa: BLE001
+    check(f"★1.89 P7 断言整段抛异常: {type(_e17).__name__}: {_e17}", False)
+
+
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71
 #   现象（用户原话）："我在参数研究里面却显示 m2，我在 m2 里面显示 m3，我在 m3 里面显示在回测，
 #   这直接导致我没办法在 m2 和 m3 里面保存方案"。

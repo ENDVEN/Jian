@@ -223,7 +223,8 @@ def nav_with_costs(days, returns: dict, weights: dict, cash: float = 0.0,
     ⚠ 毛/净走**两条独立模拟**：净那条每次再平衡把成本**永久扣掉**（不回填），
       否则会出现"扣了又追平"的假净值（我先写错过一次）。
 
-    返回 `{nav_net, nav_gross, events, turnover_total, cost_total, cost_pct}`。
+    返回 `{nav_net, nav_gross, events, turnover_total, cost_total, cost_pct}`；
+    `events[i]["trades"]` = 该次调仓的**逐票增减**（`symbol / delta_pct / action`）。
     """
     days = list(days or ())
     syms = [k for k in (weights or {}) if k in (returns or {})]
@@ -260,10 +261,21 @@ def nav_with_costs(days, returns: dict, weights: dict, cash: float = 0.0,
                     #   （我先只在 deduct 分支累加，导致 gross 那条的 turn_sum 恒 0）
                     turn_sum += trade / total / 2.0 * 100.0
                     if deduct and cost > 0:
+                        # ★1.89：记**逐票增减**（用户要"何时对哪只票加了/减了"）
+                        _d = target - vals
+                        _tr = []
+                        for _i, _sym in enumerate(syms):
+                            _pct = float(_d[_i]) / total * 100.0
+                            if abs(_pct) >= 0.01:
+                                _tr.append({"symbol": str(_sym),
+                                            "delta_pct": round(_pct, 3),
+                                            "action": "增持" if _pct > 0 else "减持"})
+                        _tr.sort(key=lambda t: -abs(t["delta_pct"]))
                         events.append({"date": days[i],
                                        "turnover_pct": round(trade / total / 2.0 * 100.0, 4),
                                        "cost_pct": round(cost / total * 100.0, 6),
-                                       "cost": round(cost, 10)})
+                                       "cost": round(cost, 10),
+                                       "trades": _tr})
                         cost_sum += cost
                 vals = target * ((total - cost) / total)
         return out, events, turn_sum, cost_sum

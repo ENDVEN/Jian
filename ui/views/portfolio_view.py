@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 from PyQt6.QtCore import QSize, Qt
+from ui.widgets.custom_widgets import COMBO_QSS_SMALL, NoWheelComboBox
 from PyQt6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
                              QInputDialog,
                              QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
@@ -46,6 +47,12 @@ UI_PREF_KEY = "portfolios_ui"
 # ★1.87：三条线必须**一眼分得清**（用户实测：两条线颜色几乎一样、完全不可辨别）
 #   含成本 = 深蓝实线 · 不含成本 = 青绿虚线 · 基准 = 中性灰点线（三种色相 + 三种线型）
 BASE_COLORS = {"nav": "#1565C0", "gross": "#00A38B", "base": "#9E9E9E"}
+
+
+def _OV_QSS(tone: str) -> str:
+    """概览数值的配色（正绿/负红/中性灰）——用户要求"按具体数值显示不同颜色"。"""
+    _c = {"up": "#2E7D32", "down": "#C62828"}.get(tone, "#1F2A37")
+    return f"font-size:16px;font-weight:700;color:{_c};background:transparent;"
 
 
 def _dot(title: str, color: str) -> str:
@@ -212,6 +219,15 @@ class PortfolioView(QWidget):
         self.btn_edit.setEnabled(False)
         self.btn_edit.clicked.connect(self._on_edit)
         head.addWidget(self.btn_edit)
+        # ★1.89：组合 ⇄ 自选股组 的桥（用户实测："组合建了，行情工作台看不到"）
+        self.btn_pub = QPushButton("⇄ 生成自选股组")
+        self.btn_pub.setStyleSheet(SUMMARY_GHOST_QSS)
+        self.btn_pub.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_pub.setToolTip("把当前组合的成分写进行情页的一个自选股组（同名），"
+                                "组合随即引用该组 —— 两边从此是同一批票")
+        self.btn_pub.setEnabled(False)
+        self.btn_pub.clicked.connect(self._on_publish_group)
+        head.addWidget(self.btn_pub)
         self.btn_del = QPushButton("删除")
         self.btn_del.setStyleSheet(SUMMARY_GHOST_QSS)
         self.btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -307,7 +323,7 @@ class PortfolioView(QWidget):
             _cap.setStyleSheet(SEC_HINT_QSS)
             _l.addWidget(_cap)
             _val = QLabel("—")
-            _val.setStyleSheet("font-size:16px;font-weight:700;color:#1F2A37;background:transparent;")
+            _val.setStyleSheet(_OV_QSS("neutral"))
             _card.setMinimumHeight(54)
             _l.addWidget(_val)
             self.lbl_ov[_k] = _val
@@ -346,6 +362,15 @@ class PortfolioView(QWidget):
             _wrow.addWidget(_b)
             self._win_btns[_k] = _b
         _wrow.addStretch(1)
+        # ★1.89：基准**与区间同一行**（用户：放下面不好看），并给足宽度
+        _wrow.addWidget(QLabel("基准"))
+        self.cmb_base = NoWheelComboBox()
+        self.cmb_base.setStyleSheet(COMBO_QSS_SMALL)
+        self.cmb_base.setMinimumWidth(150)
+        self.cmb_base.setMaximumWidth(240)
+        self.cmb_base.setToolTip("换基准只换对照线，不改组合成分") 
+        self.cmb_base.currentIndexChanged.connect(self._on_base_changed)
+        _wrow.addWidget(self.cmb_base, 1)
         nl.addLayout(_wrow)
         self.lbl_nav_meta = QLabel("")
         self.lbl_nav_meta.setWordWrap(True)
@@ -355,19 +380,6 @@ class PortfolioView(QWidget):
         self.chart.setMinimumHeight(220)
         self.chart.setMaximumHeight(300)
         nl.addWidget(self.chart, 1)
-        # ★1.88：**基准就在卡头换**（样板做法）；列出本机已下载的指数 + 未下载的常见指数
-        _brow = QHBoxLayout()
-        _brow.setSpacing(4)
-        _brow.addWidget(QLabel("基准"))
-        self.cmb_base = QComboBox()
-        self.cmb_base.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.cmb_base.setMinimumContentsLength(8)
-        self.cmb_base.setMaximumWidth(220)
-        self.cmb_base.setStyleSheet(SEC_HINT_QSS)
-        self.cmb_base.currentIndexChanged.connect(self._on_base_changed)
-        _brow.addWidget(self.cmb_base)
-        _brow.addStretch(1)
-        nl.addLayout(_brow)
         self.lbl_legend = QLabel("")
         self.lbl_legend.setStyleSheet(SEC_HINT_QSS)
         nl.addWidget(self.lbl_legend)
@@ -472,7 +484,7 @@ class PortfolioView(QWidget):
         rl2 = QVBoxLayout(self.card_reb)
         rl2.setContentsMargins(10, 8, 10, 10)
         rl2.setSpacing(6)
-        self.reb_head = panel_head(_dot("再平衡记录", "#8D6E63"), "只记软件内 · 按月末")
+        self.reb_head = panel_head(_dot("调仓记录", "#8D6E63"), "只记软件内 · 按月末")
         rl2.addWidget(self.reb_head)
         self.lbl_reb = QLabel("")
         self.lbl_reb.setWordWrap(True)
@@ -662,11 +674,12 @@ class PortfolioView(QWidget):
         for fn in have:
             code = fn[-6:]
             seen.add(code)
-            out.append((f"{self.INDEX_NAMES.get(code, fn)}（{code}）· 已有",
-                        {"kind": "index", "code": code, "name": self.INDEX_NAMES.get(code, fn)}))
+            # ★1.89：显示**短名**（下拉窄，长名会被截成 "sh000…"）
+            _nm = self.INDEX_NAMES.get(code)
+            out.append((_nm or code, {"kind": "index", "code": code, "name": _nm or code}))
         for code, nm in self.INDEX_NAMES.items():
             if code not in seen:
-                out.append((f"{nm}（{code}）· 未下载", {"kind": "index", "code": code, "name": nm}))
+                out.append((f"{nm}（未下载）", {"kind": "index", "code": code, "name": nm}))
         return out
 
     def _refresh_base_combo(self, base: dict) -> None:
@@ -776,6 +789,7 @@ class PortfolioView(QWidget):
             self.detail.hide()
             self.empty.show()
             self.btn_del.setEnabled(False)
+            self.btn_pub.setEnabled(False)
             self.btn_edit.setEnabled(False)
             return
         row = 0
@@ -846,6 +860,7 @@ class PortfolioView(QWidget):
         if not p:
             return
         self._current = pid
+        self.btn_pub.setEnabled(True)
         for _pid, _card in getattr(self, "_cards", {}).items():
             try:
                 _card.set_selected(_pid == pid)
@@ -922,7 +937,7 @@ class PortfolioView(QWidget):
             self.hold_head.meta_label.setText("0 只")
             self.tbl_hold.setRowCount(0)
             self.reb_head.meta_label.setText("—")
-            self.lbl_reb.setText("没有成分 ⇒ 没有换手。")
+            self.lbl_reb.setText("没有成分 ⇒ 没有调仓。")
             self._set_ov()
             return
 
@@ -1114,14 +1129,25 @@ class PortfolioView(QWidget):
         self.reb_head.meta_label.setText(f"{len(_ev)} 次 · 换手合计 {_res['turnover_total']:.1f}% · "
                                          f"成本拖累 {_res['cost_pct']:.2f}%")
         if _ev:
-            _lines = [f"{e['date']}　换手 <b>{e['turnover_pct']:.2f}%</b>　"
-                      f"成本 <b>{e['cost'] * 10000:.2f}‱</b>（占净值 {e['cost_pct']:.4f}%）"
-                      for e in _ev[-5:]]
+            _lines = []
+            for e in _ev[-5:]:
+                _parts = []
+                for _t in (e.get("trades") or [])[:2]:
+                    _c = "#2E7D32" if _t["action"] == "增持" else "#C62828"
+                    _nm = self.name_of(_t["symbol"], "") or _t["symbol"]
+                    _parts.append(f"<span style='color:{_c}'>{_t['action']} {_nm} "
+                                  f"{_t['delta_pct']:+.2f}%</span>")
+                _more = len(e.get("trades") or []) - 2
+                if _more > 0:
+                    _parts.append(f"<span style='color:#8A94A6'>等 {len(e.get('trades') or [])} 笔</span>")
+                _lines.append(f"<b>{e['date']}</b> "
+                              + ("　".join(_parts) or f"换手 {e['turnover_pct']:.2f}%")
+                              + f"　<span style='color:#9AA6B8'>成本 {e['cost'] * 10000:.2f}‱</span>")
             self.lbl_reb.setText("<br>".join(_lines)
                                  + ("<br><span style='color:#8A94A6'>只显示最近 5 次</span>"
                                     if len(_ev) > 5 else ""))
         else:
-            self.lbl_reb.setText("还没有再平衡（买入持有 · 或本月还没到月末）—— 没有换手就没有成本，这是对的。")
+            self.lbl_reb.setText("还没有调仓（买入持有 · 或本月还没到月末）—— 没有买卖就没有成本，这是对的。")
         ok = sum(1 for r in rows if r.get("data_ok"))
         _wsum = sum(float(r.get("weight") or 0) for r in rows)
         _cash = float(p.get("cash") or 0.0)
@@ -1169,7 +1195,11 @@ class PortfolioView(QWidget):
             self.tbl_hold.setItem(_cr, c, _it)
 
     def _set_ov(self, ret=None, nav=None, day=None, excess=None) -> None:
-        """概览四个数（含成本口径）；拿不到就给「—」，**不编 0**。"""
+        """概览四个数（含成本口径）；拿不到就给「—」，**不编 0**。
+
+        ★1.89：**按数值上色**（用户要求）——正=绿、负=红、等于 0=灰；
+        净值以 1.0000 为基准色（>1 绿 / <1 红）。
+        """
         vals = {"ret": ret, "nav": nav, "day": day, "excess": excess}
         for k, v in vals.items():
             w = (self.lbl_ov or {}).get(k)
@@ -1177,8 +1207,16 @@ class PortfolioView(QWidget):
                 continue
             if v is None:
                 w.setText("—")
+                w.setStyleSheet(_OV_QSS("neutral"))
                 continue
-            w.setText(f"{float(v):.4f}" if k == "nav" else self._pct(v))
+            _num = float(v)
+            if k == "nav":
+                w.setText(f"{_num:.4f}")
+                _tone = "up" if _num > 1.0 else ("down" if _num < 1.0 else "neutral")
+            else:
+                w.setText(self._pct(_num))
+                _tone = "up" if _num > 0 else ("down" if _num < 0 else "neutral")
+            w.setStyleSheet(_OV_QSS(_tone))
 
     @staticmethod
     def _fill_mix(ring, legend, data, tail: str) -> None:
@@ -1263,6 +1301,46 @@ class PortfolioView(QWidget):
             return
         self._current = str(updated.get("id") or self._current)
         self.refresh()
+
+    def _on_publish_group(self) -> None:
+        """把组合成分写进**自选股组**（同名），并让组合引用它。
+
+        【为什么需要】组合与自选股是两套模型：组合**只引用组名**，从不复制名单。
+        用户手建的组合没有来源组 ⇒ 行情页当然看不到（不是接口坏了）。
+        这个动作 = 单向"落地"：组合 → 自选组；之后组改名/移组仍按引用规则跟随。
+        """
+        p = self._store.load_one(self._current) if self._current else None
+        if not p or not (p.get("members") or []):
+            QMessageBox.information(self, "没有成分", "先在「✏ 编辑成分」里加几只票。")
+            return
+        gname = str(p.get("name") or "组合")[:12]      # 自选组名上限 12 字
+        wl = self._watchlist()
+        try:
+            if not wl.has_group(gname):
+                if not wl.create_group(gname):
+                    QMessageBox.warning(self, "建组失败", f"自选股组「{gname}」没能创建。")
+                    return
+            n = 0
+            for m in p.get("members") or []:
+                sym = str(m.get("symbol") or "")
+                if not sym:
+                    continue
+                nm = self.name_of(sym, m.get("name"))
+                if wl.contains(sym):
+                    if wl.set_group(sym, gname):
+                        n += 1
+                elif wl.add(sym, nm, gname):
+                    n += 1
+        except Exception as exc:            # noqa: BLE001
+            QMessageBox.warning(self, "写入失败", f"{type(exc).__name__}: {exc}")
+            return
+        p["source_group"] = gname
+        self._store.save(p)
+        self.refresh()
+        QMessageBox.information(
+            self, "已写入自选股组",
+            f"已把 {n} 只写进行情页的「自选股 → 分组 → {gname}」，组合现在引用该组。\n"
+            "切到「📈 市场行情」即可看到同一批票。")
 
     def _on_rename(self) -> None:
         """双击列表项 ⇒ 改名（只改名字，不动成分/权重/口径）。"""
