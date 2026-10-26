@@ -31,7 +31,8 @@ from ui.widgets.styles import (FLAT_QSS, FLAT_QSS_DANGER, PANEL_CARD_QSS,
                                SEC_TITLE_QSS, STEP_BADGE_QSS, SUMMARY_GHOST_QSS,
                                SUMMARY_RUN_QSS, WARN_HINT_QSS, apply_ui_font)
 
-PANEL_WIDTH = 306      # 设计稿 .panel 的定宽
+PANEL_WIDTH = 372      # ★1.87：306 → 340（实测内容最小宽 **355**，306 里恒裁 65px；
+                       #   用户"怎么调窗口都看不全"就是这个。加宽后剩余溢出由下方 AsNeeded 兜底）
 STRIP_WIDTH = 46       # 设计稿 .panel.collapsed 的竖条宽
 
 _PARAM_KEYS_HINT = "（先选策略；带参数的配方才能扫）"
@@ -115,12 +116,14 @@ class SweepForm(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # ★1.87：**不再 AlwaysOff** —— 定宽栏里一旦有超宽行，多出来的部分就永远够不到
+        #   （本模块实测裁过 65px）。改成 AsNeeded：平时无条，实在放不下能滚到。
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         body = QWidget()
         body.setStyleSheet("QWidget { background: #FFFFFF; }")
         bl = QVBoxLayout(body)
-        bl.setContentsMargins(12, 10, 12, 12)
-        bl.setSpacing(9)
+        bl.setContentsMargins(10, 8, 10, 10)   # ★1.87：收紧（纵向少占约 40px）
+        bl.setSpacing(7)
         self._build_steps(bl)
         bl.addStretch(1)
         scroll.setWidget(body)
@@ -138,8 +141,10 @@ class SweepForm(QWidget):
 
     # ================= 六步表单 =================
     def _build_steps(self, bl: QVBoxLayout) -> None:
+        self._body_layout = bl          # ★1.87：供"标的类型"插到第①步下方
         # ---- ① 标的 ----
-        bl.addWidget(_step_title(1, "标的"))
+        self._title_target = _step_title(1, "标的")
+        bl.addWidget(self._title_target)
         self.in_symbol = QLineEdit()
         # ★用户 2026-10-01 追加需求：标的行要**像 M1 一样** —— 手输（回车即选）+ 一颗「选择」按钮，
         #   选好后给 M1 同款的文字提示（`贵州茅台 (600519) · 已缓存`）。口径在
@@ -152,14 +157,20 @@ class SweepForm(QWidget):
         self.btn_pick = QPushButton("选择")
         self.btn_pick.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_pick.setStyleSheet(FLAT_QSS)
-        self.btn_pick.setToolTip("按代码或名称在花名册里查一只 A 股（与「📈 单股回测」同一套口径）")
+        self.btn_pick.setToolTip("按代码或名称在花名册里查一只 A 股（与「单股回测」同一套口径）")
         self.btn_pick.clicked.connect(self.pick_requested)
         row_sym.addWidget(self.btn_pick)
-        bl.addLayout(row_sym)
         self.lbl_symbol = _hint("未选择标的 —— 填代码后点「选择」，或从策略带入")
-        bl.addWidget(self.lbl_symbol)
         self.lbl_data = _hint()
-        bl.addWidget(self.lbl_data)
+        # ★1.87：**个股控件包成一块** —— 标的类型选「组合」时整块隐藏（否则两套同时显示）
+        self.single_box = QWidget()
+        _sb = QVBoxLayout(self.single_box)
+        _sb.setContentsMargins(0, 0, 0, 0)
+        _sb.setSpacing(4)
+        _sb.addLayout(row_sym)
+        _sb.addWidget(self.lbl_symbol)
+        _sb.addWidget(self.lbl_data)
+        bl.addWidget(self.single_box)
 
         # ---- ② 策略（★R6：本步标题右侧挂「ƒ 库」入口，与 M1/M2/M3/行情页同名同义同脸）----
         bl.addWidget(_sep())
@@ -230,7 +241,7 @@ class SweepForm(QWidget):
             for _w in (_w0, _w1):
                 _w.setCalendarPopup(True)
                 _w.setDisplayFormat("yyyy-MM-dd")
-                _w.setMinimumWidth(104)      # 够显示 yyyy-MM-dd（旧版被压到约 50px ⇒ 只见 "201"）
+                _w.setMinimumWidth(96)       # ★1.87 由 104 收到 96（yyyy-MM-dd 仍放得下）
                 _w.dateChanged.connect(lambda *_a: self._refresh_combos())
             _rr = QHBoxLayout()
             _rr.setSpacing(4)
@@ -322,17 +333,36 @@ class SweepForm(QWidget):
     def _make_dim_spin(self, kind: str, lo: float, hi: float, val: float):
         """一枚网格数值框：**前缀进框**（标签不另占一列）+ 最小宽 96px。
 
-        96 = 前缀「起」+ 值「25.00」+ 右侧上下箭头 18px + 内边距（实测值，见冒烟断言）——
-        低于它末位字符就会被箭头挤掉（用户截图实锤）。
+        84 = 前缀「起」+ 值「25.00」+ 右侧上下箭头 18px + 内边距（★1.87 由 96 收到 84，
+        为的是让 340px 面板放得下；挤掉字符的风险由「加宽 + 横向 AsNeeded」兜住）。
         """
         sp = NoWheelDoubleSpinBox()
         sp.setRange(lo, hi)
         sp.setDecimals(2)
         sp.setPrefix(kind)
-        sp.setMinimumWidth(96)
+        sp.setMinimumWidth(84)
         sp.setValue(val)
         sp.valueChanged.connect(lambda *_a: self._refresh_combos())
         return sp
+
+    def add_target_switch(self, widget) -> None:
+        """把「标的类型（个股 / 组合）」插到**第①步标题正下方**（★1.87）。
+
+        为什么放这里："研究谁"是研究的**前提**，与"个股代码"同级；
+        放结果页会变成"结果区里又出现设置"（用户 2026-10-26 明确否掉）。
+        """
+        lay = getattr(self, "_body_layout", None)
+        title = getattr(self, "_title_target", None)
+        if lay is None or title is None:
+            return
+        idx = lay.indexOf(title)
+        lay.insertWidget(idx + 1 if idx >= 0 else lay.count(), widget)
+
+    def set_target_mode(self, is_pool: bool) -> None:
+        """标的类型 = 组合 ⇒ **隐藏个股那几行**（代码框/选择/提示）；反之显示。"""
+        box = getattr(self, "single_box", None)
+        if box is not None:
+            box.setVisible(not bool(is_pool))
 
     # ================= 折叠（§8-13；展开钮长在竖条上，永不消失）=================
     def set_panel_collapsed(self, collapsed: bool) -> None:

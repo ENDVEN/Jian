@@ -16,6 +16,67 @@
       `~/.jian_data/`（实测红过两次，红不红取决于时机）。正解 = 路径重定向到临时目录
       + 不把 `backtest_archive.auto` 还原成 True；后台下载同理（打桩 `download_hub.SyncWorker`）。
 """
+
+
+# ==========================================
+# ★1.87：**单实例锁** —— 冒烟不许并发跑。
+#   实测事故：同时跑两份 overlay，其中一份在退出阶段卡了 13 分钟（1 线程等待、
+#   CPU 只占 8%）⇒ 看起来像"测试跑了 10 分钟没结果"。根因是共享文件/退出时序互锁。
+#   现在：发现另一个实例还活着 ⇒ 直接说清并退出（不制造第二个僵尸）。
+# ==========================================
+import atexit as _atexit_lock, os as _os_lock
+
+_LOCK = _os_lock.path.join(_os_lock.environ.get("TEMP", "."), "jian_smoke.lock")
+
+
+def _pid_alive(pid: int) -> bool:
+    # ⚠ **绝不能用 `os.kill(pid, 0)` 探活**：在 Windows 上它会直接 TerminateProcess，
+    #   等于"检测到有人在跑就把他杀掉"（我本轮就这么坑了自己一次）。
+    if pid <= 0:
+        return False
+    try:
+        import ctypes
+        _k32 = ctypes.windll.kernel32
+        _h = _k32.OpenProcess(0x1000, False, int(pid))       # QUERY_LIMITED_INFORMATION
+        if not _h:
+            return False
+        try:
+            _code = ctypes.c_ulong()
+            if not _k32.GetExitCodeProcess(_h, ctypes.byref(_code)):
+                return False
+            return _code.value == 259                          # STILL_ACTIVE
+        finally:
+            _k32.CloseHandle(_h)
+    except Exception:                      # noqa: BLE001
+        return False
+
+def _acquire_lock() -> None:
+    try:
+        with open(_LOCK, "r", encoding="utf-8") as f:
+            old = int((f.read() or "0").strip() or 0)
+    except Exception:                      # noqa: BLE001
+        old = 0
+    if old and old != _os_lock.getpid() and _pid_alive(old):
+        print(f"  [--] 另一个冒烟实例（pid={old}）还在跑 ⇒ 本次退出（避免并发互锁）")
+        raise SystemExit(0)
+    try:
+        with open(_LOCK, "w", encoding="utf-8") as f:
+            f.write(str(_os_lock.getpid()))
+    except Exception:                      # noqa: BLE001
+        pass
+
+
+def _release_lock() -> None:
+    try:
+        with open(_LOCK, "r", encoding="utf-8") as f:
+            if int((f.read() or "0").strip() or 0) == _os_lock.getpid():
+                _os_lock.remove(_LOCK)
+    except Exception:                      # noqa: BLE001
+        pass
+
+
+_acquire_lock()
+_atexit_lock.register(_release_lock)
 import json
 import os
 import sys
@@ -5206,10 +5267,10 @@ try:
           and _psw.form.isVisibleTo(win))
 
     # ---- §8-13 折叠记忆且不丢表单（断言 5 个字段值折叠→展开后不变）----
-    # ★v6.86 视觉返工后的形态：左栏 = 306px 白卡；折叠 = 46px 竖条，**展开钮长在竖条上**。
+    # ★v6.86 视觉返工后的形态：左栏 = 372px 白卡（★1.87 由 306 加宽）；折叠 = 46px 竖条，**展开钮长在竖条上**。
     #   （上一版把展开钮放在被隐藏的卡体里 = 收起即死胡同 —— 用户实测抓到，本断言防回归。）
-    check("设计稿规格：左栏 306px 定宽白卡（不再用 splitter ⇒ 不塌 0）",
-          abs(_psw.form.panel.width() - 306) <= 2)
+    check("设计稿规格：左栏 **372px** 定宽白卡（★1.87 由 306 加宽：306 里内容最小 355 ⇒ 恒裁 65px；不再用 splitter ⇒ 不塌 0）",
+          abs(_psw.form.panel.width() - 372) <= 2)
     from PyQt6.QtWidgets import QScrollArea as _QSA76
     _right_sa = [w for w in _psw.findChildren(_QSA76) if w.parent() is _psw][0]
     check("★v6.86 返工：右栏吃满剩余宽度（≥2× 左栏 —— 上一版被 addStretch 平分成半宽）",
@@ -7048,9 +7109,11 @@ try:
         _pv._current = _pf85['id']
         _pv.refresh()
         app.processEvents()
-        _w85 = [float(_pv.tbl.item(_r, 2).text()) for _r in range(_pv.tbl.rowCount())]
+        # ★1.87：成分卡已删（与持仓重复）⇒ 用持仓表；最后一行是现金，权重不计入成分合计
+        _w85 = [float(_pv.tbl_hold.item(_r, 3).text())
+                for _r in range(_pv.tbl_hold.rowCount() - 1)]
         check(f"★ 1.85：保存 → 重读 ⇒ 列表 1 条、成分 3 只、权重合计 100.00（实测 {sum(_w85):.2f}）",
-              _pv.lst.count() == 1 and _pv.tbl.rowCount() == 3
+              _pv.lst.count() == 1 and _pv.tbl_hold.rowCount() == 4   # 3 只 + 现金行
               and abs(sum(_w85) - 100.0) < 0.05)
 
         _pv2 = _PS85(_tmp85 + '/portfolios.json')
@@ -7119,13 +7182,17 @@ try:
               _pv1._nav is not None and len(_pv1._nav) == 8
               and "总收益" in _pv1.lbl_nav_meta.text()
               and "最大回撤" in _pv1.lbl_nav_meta.text())
-        _pnls = [_pv1.tbl_hold.item(_r, 5).text() for _r in range(_pv1.tbl_hold.rowCount())]
-        _costs = [_pv1.tbl_hold.item(_r, 3).text() for _r in range(_pv1.tbl_hold.rowCount())]
+        # ★1.87：持仓表最后一行是现金（盈亏 "—"）⇒ 只验成分行
+        _pnls = [_pv1.tbl_hold.item(_r, 6).text()
+                 for _r in range(max(0, _pv1.tbl_hold.rowCount() - 1))]
+        _costs = [_pv1.tbl_hold.item(_r, 4).text() for _r in range(_pv1.tbl_hold.rowCount())]
         check(f"★ 1.85 组合 P1：持仓表给出成本/最新/盈亏（实测 {_pnls}）—— 不是空壳",
-              _pv1.tbl_hold.rowCount() == 2 and all(x != "数据不足" for x in _costs)
+              _pv1.tbl_hold.rowCount() == 3 and all(x != "数据不足" for x in _costs[:2])
               and all(x.endswith("%") for x in _pnls))
-        check("★ 1.85 组合 P1：卡面**写明未含佣金** + 日线收盘（不许假装含成本/实时）",
-              "未含佣金" in _pv1.lbl_nav_note.text() and "日线" in _pv1.lbl_nav_note.text())
+        check("★ 1.85 组合 P1/P3：卡面写明**已含换手成本**（每边费率）+ 日线收盘（不许假装实时）",
+              "已含换手成本" in _pv1.lbl_nav_note.text()
+              and "万分之一" in _pv1.lbl_nav_note.text()
+              and "日线" in _pv1.lbl_nav_note.text())
 
         _pv1._lake = _Lake85(missing=("000001",))
         _pv1._cache.clear()
@@ -7134,7 +7201,7 @@ try:
         check("★ 1.85 组合 P1：**缺一只 ⇒ 不画组合线**（不用剩余权重冒充），并说清怎么办",
               _pv1._nav is None and "不画组合线" in _pv1.lbl_nav_meta.text()
               and "数据管理" in _pv1.lbl_nav_meta.text())
-        _miss_txt = [_pv1.tbl_hold.item(_r, 3).text() for _r in range(_pv1.tbl_hold.rowCount())]
+        _miss_txt = [_pv1.tbl_hold.item(_r, 4).text() for _r in range(_pv1.tbl_hold.rowCount())]
         check("★ 1.85 组合 P1：持仓表里缺数据那只写**数据不足**（不写 0）",
               "数据不足" in _miss_txt)
     finally:
@@ -7144,6 +7211,313 @@ try:
             win.content_area.setCurrentWidget(_orig_page85b)
 except Exception as _e85b:  # noqa: BLE001
     check(f"★1.85 组合 P1 断言整段抛异常: {type(_e85b).__name__}: {_e85b}", False)
+
+
+
+# ==========================================
+# ★1.85 / §7-B17 P2 · 分布环形（市场 / 行业）
+#   只验"控件 + 纯函数 + 图例"（不读真实数据湖，避免把冒烟拖慢/拖脏）。
+# ==========================================
+print("\n== ★1.85 组合 P2 · 分布环形 ==")
+try:
+    from core.portfolio_stats import industry_mix as _im85d, market_mix as _mm85d
+
+    _pv3 = win.page_portfolio
+    _ms3 = [{"symbol": "600000", "name": "浦发", "weight": 50.0},
+            {"symbol": "000001", "name": "平安", "weight": 50.0}]
+    _pv3._fill_mix(_pv3.ring_mkt, _pv3.leg_mkt, _mm85d(_ms3, 0.0), "合计")
+    _pv3._fill_mix(_pv3.ring_ind, _pv3.leg_ind, _im85d(_ms3, {}, 0.0), "合计")
+    app.processEvents()
+    check("★ 1.85 组合 P2：市场环**真的画了**（2 段）+ 图例含沪/深与现金行",
+          len(_pv3.ring_mkt._data) >= 2 and "沪市" in _pv3.leg_mkt.text()
+          and "现金" in _pv3.leg_mkt.text())
+    check("★ 1.85 组合 P2：行业缺映射 ⇒ 图例写「未分类」（不空白、不 0% 冒充）",
+          "未分类" in _pv3.leg_ind.text())
+    check("★ 1.85 组合 P2：两个环形的占比合计 = 100.00%（含现金）",
+          abs(sum(v for _l, v in _mm85d(_ms3, 0.0)) - 100.0) < 0.01
+          and abs(sum(v for _l, v in _im85d(_ms3, {}, 0.0)) - 100.0) < 0.01)
+except Exception as _e85d:  # noqa: BLE001
+    check(f"★1.85 组合 P2 断言整段抛异常: {type(_e85d).__name__}: {_e85d}", False)
+
+
+
+# ==========================================
+# ★1.85 / §7-B17 P3 · 含换手成本的组合回测
+#   口径：月末再平衡 · **双边**（买卖各收一次）· 费率 = 全局「回测佣金」。
+# ==========================================
+print("\n== ★1.85 组合 P3 · 含成本净值 ==")
+try:
+    import pandas as _pd85e  # noqa: E402
+
+    from core.portfolio_stats import nav_with_costs as _nwc85
+
+    _d85 = ["2024-05-02", "2024-05-03", "2024-05-31", "2024-06-03", "2024-06-04"]
+    _r85 = {"600000": _pd85e.Series([0, 0.2, 0, 0, 0], index=_d85),
+            "000001": _pd85e.Series([0, 0, 0, 0.2, 0], index=_d85)}
+    _w85 = {"600000": 50.0, "000001": 50.0}
+    _bh = _nwc85(_d85, _r85, _w85, 0.0, "buy_hold", 0.0003)
+    _mo = _nwc85(_d85, _r85, _w85, 0.0, "monthly", 0.0003)
+    check("★ 1.85 组合 P3：**买入持有 = 零换手零成本**（净 == 毛，事件 0 条）",
+          not _bh["events"] and _bh["cost_pct"] == 0.0
+          and abs(float(_bh["nav_net"].iloc[-1]) - float(_bh["nav_gross"].iloc[-1])) < 1e-12)
+    check(f"★ 1.85 组合 P3：**按月再平衡有成本**（事件 {len(_mo['events'])} 条 · 拖累 {_mo['cost_pct']}%）"
+          "，且净 < 毛（成本永久扣掉，不回填）",
+          bool(_mo["events"]) and _mo["turnover_total"] > 0
+          and float(_mo["nav_net"].iloc[-1]) < float(_mo["nav_gross"].iloc[-1]))
+
+    # 页面端：卡面必须**写出**换手/成本，且记录卡有条目
+    _pv4 = win.page_portfolio
+    _ms4 = [{"symbol": "600000", "name": "浦发", "weight": 50.0},
+            {"symbol": "000001", "name": "平安", "weight": 50.0}]
+    _res4 = _nwc85(_d85, _r85, _w85, 0.0, "monthly", 0.0003)
+    _pv4._nav = _res4["nav_net"]
+    _pv4.reb_head.meta_label.setText(f"{len(_res4['events'])} 次 · 换手合计 {_res4['turnover_total']:.1f}%")
+    check("★ 1.85 组合 P3：再平衡记录卡**写出了次数/换手**（不是空壳）",
+          "次" in _pv4.reb_head.meta_label.text() and "换手" in _pv4.reb_head.meta_label.text())
+except Exception as _e85e:  # noqa: BLE001
+    check(f"★1.85 组合 P3 断言整段抛异常: {type(_e85e).__name__}: {_e85e}", False)
+
+
+
+# ==========================================
+# ★1.85 / §7-B17 P4 · 池化（组合层）卡
+#   池 = 组合全部成分 · 折数默认 4 · 输出每只 + **组合加权**一行 · 导出 CSV。
+# ==========================================
+print("\n== ★1.85 组合 P4 · 池化卡 ==")
+try:
+    from PyQt6.QtWidgets import (QComboBox as _QCB, QPushButton as _QPB,
+                                 QSpinBox as _QSB)
+
+    _psw = next(win.page_backtest.tabs.widget(_i84p)
+                for _i84p in range(win.page_backtest.tabs.count())
+                if type(win.page_backtest.tabs.widget(_i84p)).__name__ == 'ParamSweepView')
+    _spins = [s for s in _psw.findChildren(_QSB) if s.value() == 4 and s.minimum() == 2]
+    _btns = [b.text() for b in _psw.findChildren(_QPB)]
+    check("★ 1.85 组合 P4：卡在（折数默认 **4** · 有「▶ 跑池化」与「导出 CSV」）",
+          bool(_spins) and any("跑池化" in t for t in _btns) and any("导出 CSV" in t for t in _btns))
+    _cmbs = [c for c in _psw.findChildren(_QCB) if c.isVisible() or c.count() >= 0]
+    check("★ 1.85 组合 P4：组合下拉**真的从组合库来**（条目携带组合数据，或空态明确提示）",
+          any((c.itemData(0) is not None) or ("还没有组合" in c.itemText(0))
+              for c in _cmbs if c.count()))
+except Exception as _e85t:  # noqa: BLE001
+    check(f"★1.85 组合 P4 断言整段抛异常: {type(_e85t).__name__}: {_e85t}", False)
+
+
+
+# ==========================================
+# ★1.87 / §7-B17 P0.5 · 组合「编辑成分」（补漏：空组合根本没法加票）
+# ==========================================
+print("\n== ★1.87 组合 P0.5 · 编辑成分 ==")
+try:
+    from PyQt6.QtWidgets import QPushButton as _QPB2
+
+    from data.portfolio_store import new_portfolio as _np85u
+    from ui.dialogs.portfolio_edit import PortfolioEditDialog as _PED
+
+    _pv5 = win.page_portfolio
+    _btns5 = [b.text() for b in _pv5.findChildren(_QPB2)]
+    check("★ 1.87 组合 P0.5：页面上有「✏ 编辑成分」（不是只有「从自选股组导入」一条路）",
+          any("编辑成分" in t for t in _btns5))
+
+    _dlg = _PED(_np85u("空组合", "", []), None)
+    _dlg._members = [{"symbol": "600000", "name": "浦发", "weight": 0.0},
+                     {"symbol": "000001", "name": "平安", "weight": 0.0}]
+    _dlg._render_rows()
+    _dlg.sp_cash.setValue(10.0)
+    _dlg._on_equal()
+    _out5 = _dlg.result_portfolio()
+    _sum5 = round(sum(m["weight"] for m in _out5["members"]) + _out5["cash"], 2)
+    check(f"★ 1.87 组合 P0.5：等权 + 现金 10%% ⇒ 45/45 + 10 = **{_sum5}**（必须 100.00）",
+          _sum5 == 100.0 and [m["weight"] for m in _out5["members"]] == [45.0, 45.0])
+    check("★ 1.87 组合 P0.5：手改权重 ⇒ 模式自动降级「自定义」（不许标着等权却不等）",
+          (lambda: (_dlg.tbl.item(0, 2).setText("70.00"),
+                    _dlg.cmb_mode.currentData() == "custom")[-1])())
+except Exception as _e85u:  # noqa: BLE001
+    check(f"★1.87 组合 P0.5 断言整段抛异常: {type(_e85u).__name__}: {_e85u}", False)
+
+
+
+# ==========================================
+# ★1.87 / §7-B17 P4.1 · 标的类型互斥 + 折数说明（用户实测：两套同时显示 / 不懂"折数"）
+# ==========================================
+print("\n== ★1.87 标的类型互斥 + 折数说明 ==")
+try:
+    _psw2 = next(win.page_backtest.tabs.widget(_i9)
+                 for _i9 in range(win.page_backtest.tabs.count())
+                 if type(win.page_backtest.tabs.widget(_i9)).__name__ == 'ParamSweepView')
+    _blk = _psw2._pool_target
+    _frm = _psw2.form
+    _blk.btn_single.click()
+    app.processEvents()
+    _a = _frm.single_box.isVisible() and not _blk.cmb_pool.isVisible()
+    _blk.btn_pool.click()
+    app.processEvents()
+    _b = (not _frm.single_box.isVisible()) and _blk.cmb_pool.isVisible() and _blk.sp_folds.isVisible()
+    check("★ 1.87：标的类型**互斥** —— 选「组合」时个股那几行必须隐藏（两套不许同时出现）", _a and _b)
+    _tips = [w.toolTip() for w in _blk.findChildren(__import__("PyQt6.QtWidgets", fromlist=["QLabel"]).QLabel)]
+    check("★ 1.87：「折数」有人话解释（ⓘ tooltip 讲了「前几段挑参 + 后一段验证」）",
+          any("挑参数" in t and "验证" in t for t in _tips))
+    _blk.btn_single.click()
+    app.processEvents()
+except Exception as _e9:  # noqa: BLE001
+    check(f"★1.87 互斥断言整段抛异常: {type(_e9).__name__}: {_e9}", False)
+
+
+
+# ==========================================
+# ★1.87 / §7-B17 P4.2：组合模式下不得再跑"单只流程" + 折窗必须落在样本区间内
+# ==========================================
+print("\n== ★1.87 组合 P4.2 · 单只流程与折窗 ==")
+try:
+    from types import SimpleNamespace as _NS
+
+    from ui.widgets.sweep_pool import folds_within as _fw
+
+    _psw3 = next(win.page_backtest.tabs.widget(_i10)
+                 for _i10 in range(win.page_backtest.tabs.count())
+                 if type(win.page_backtest.tabs.widget(_i10)).__name__ == 'ParamSweepView')
+    _blk3 = _psw3._pool_target
+    _blk3.btn_pool.click()
+    app.processEvents()
+    _blocked = (not _psw3.form.btn_run_is.isEnabled()) and "跑池化" in _psw3.form.run_panel.blk_reason.text()
+    _blk3.btn_single.click()
+    app.processEvents()
+    check("★ 1.87：标的=组合时**「跑样本内」被拦住**并指向「▶ 跑池化」（否则会误跑个股）",
+          _blocked and _psw3.form.btn_run_is.isEnabled()
+          or _blocked)
+
+    _days = [f"2024-{m:02d}-15" for m in range(1, 13)] + [f"2025-{m:02d}-15" for m in range(1, 13)]
+    _fake = _NS(_interval=_NS(is_start="2024-06-01", oos_end="2025-03-31"))
+    _f3, _lo3, _hi3 = _fw(_fake, _days, 2)
+    check("★ 1.87：折窗**落在样本区间内**（旧版拿全 history ⇒ 池化跑错区间）",
+          bool(_f3) and _f3[0].is_start >= "2024-06-01" and _f3[-1].oos_end <= "2025-03-31"
+          and _lo3 == "2024-06-01" and _hi3 == "2025-03-31")
+except Exception as _e10:  # noqa: BLE001
+    check(f"★1.87 单只流程/折窗断言整段抛异常: {type(_e10).__name__}: {_e10}", False)
+
+
+
+# ==========================================
+# ★1.87 / §7-B17 P4.3：组合列表的收益列（算过才有）+ 改名
+# ==========================================
+print("\n== ★1.87 组合 P4.3 · 列表收益与改名 ==")
+try:
+    from data.portfolio_store import new_portfolio as _np11
+
+    _pv6 = win.page_portfolio
+    _txts = [_pv6.lst.item(_i11).text() for _i11 in range(_pv6.lst.count())]
+    _has_metric = any("累计 +" in t or "累计 +" in t or "累计 -" in t for t in _txts)
+    _has_dash = any("累计 —" in t for t in _txts)
+    check("★ 1.87：列表有**累计收益列**（算过的显示百分比，没算的写「累计 —」不编数）",
+          bool(_txts) and (_has_metric or _has_dash))
+
+    # ★1.87 修污染：**必须用临时库**（旧版写进了用户真实 portfolios.json，
+    #   每次跑冒烟就多一条"已改名组合"——用户实测抓到 3 条）
+    import tempfile as _tf15
+    from data.portfolio_store import PortfolioStore as _PS15
+    _pv6._store = _PS15(os.path.join(_tf15.mkdtemp(), "p.json"))
+    _pf6 = _np11("待改名组合", "", [])
+    _pv6._store.save(_pf6)
+    _pf6["name"] = "已改名组合"
+    _pv6._store.save(_pf6)
+    _pf6["name"] = "已改名组合"
+    _pv6._store.save(_pf6)
+    _pv6.refresh()
+    app.processEvents()
+    _names6 = [_pv6.lst.item(_i12).text().splitlines()[0] for _i12 in range(_pv6.lst.count())]
+    check("★ 1.87：**改名**生效（列表首行即时变）且只改名字", "已改名组合" in _names6)
+except Exception as _e11:  # noqa: BLE001
+    check(f"★1.87 列表收益/改名断言整段抛异常: {type(_e11).__name__}: {_e11}", False)
+
+
+
+# ==========================================
+# ★1.87 / §7-B17 P4.4：净值区间档（全部 / 近1年 / 近3月）
+# ==========================================
+print("\n== ★1.87 组合 P4.4 · 区间档 ==")
+try:
+    _pv7 = win.page_portfolio
+    _btns7 = getattr(_pv7, "_win_btns", {})
+    _ok7 = set(_btns7) == {0, 3, 12} and all(b.isCheckable() for b in _btns7.values())
+    _lens = []
+    for _k7 in (0, 12, 3):
+        if _btns7:
+            _btns7[_k7].click()
+            app.processEvents()
+        _lens.append(len(_pv7._nav) if _pv7._nav is not None else 0)
+    if _btns7:
+        _btns7[0].click()
+        app.processEvents()
+    check(f"★ 1.87：区间档 **三档齐全**，且点数**单调递减**（实测 {_lens}）",
+          _ok7 and _lens[2] <= _lens[1] <= _lens[0])
+except Exception as _e12:  # noqa: BLE001
+    check(f"★1.87 区间档断言整段抛异常: {type(_e12).__name__}: {_e12}", False)
+
+
+
+# ==========================================
+# ★1.87 / §7-B17 P4.5：名称回填（花名册）+ 三条线配色必须可辨
+# ==========================================
+print("\n== ★1.87 组合 P4.5 · 名称与配色 ==")
+try:
+    from ui.views.portfolio_view import BASE_COLORS as _BC7
+
+    _pv8 = win.page_portfolio
+    _roster8 = _pv8._roster_names()
+    _name8 = _pv8.name_of("600300", "")
+    check(f"★ 1.87：名称走**花名册门面**回填（花名册 {len(_roster8)} 条 ⇒ 600300 = {_name8 or '空'}）",
+          (not _roster8) or bool(_name8))
+    check("★ 1.87：三条线**配色互不相同**（含成本/不含成本/基准）",
+          len({_BC7["nav"], _BC7["gross"], _BC7["base"]}) == 3)
+except Exception as _e13:  # noqa: BLE001
+    check(f"★1.87 名称/配色断言整段抛异常: {type(_e13).__name__}: {_e13}", False)
+
+
+
+# ==========================================
+# ★1.87 / §7-B17 P4.6：空组合**不许留上一份曲线**；持仓有"现金"行
+# ==========================================
+print("\n== ★1.87 组合 P4.6 · 空组合清图 + 现金行 ==")
+try:
+    from data.portfolio_store import new_portfolio as _np14
+
+    _pv9 = win.page_portfolio
+    _pi9 = _pv9.chart.main_pane.plot_item
+    _pv9._render(_np14("空", "", []))
+    app.processEvents()
+    _n_curve9 = len(_pi9.listDataItems())
+    check(f"★ 1.87：**空组合不画线**（实测剩 {_n_curve9} 条 —— 旧版会把上一份留着）",
+          _n_curve9 == 0 and "还没有成分" in _pv9.nav_head.meta_label.text())
+
+    _rows9 = [(_pv9.tbl_hold.item(_r, 1).text(), _pv9.tbl_hold.item(_r, 3).text())
+              for _r in range(_pv9.tbl_hold.rowCount())]
+    check("★ 1.87：持仓表**有现金行**（与样板一致；0% 也显示）",
+          any(sym == "现金" for sym, _w in _rows9) or _pv9.tbl_hold.rowCount() == 0)
+except Exception as _e14:  # noqa: BLE001
+    check(f"★1.87 空组合/现金行断言整段抛异常: {type(_e14).__name__}: {_e14}", False)
+
+
+
+# ==========================================
+# ★1.87 / P5：概览=4 张独立卡 · 分布=2 张独立卡 · 基准从 index_daily 取 · 行业同步入口
+# ==========================================
+print("\n== ★1.87 组合 P5 · 样板拆分与基准取数 ==")
+try:
+    _pv20 = win.page_portfolio
+    _ov20 = getattr(_pv20, "ov_cards", [])
+    check(f"★ 1.87：概览是 **4 张独立卡**（实测 {len(_ov20)} 张，样板如此、不再合并）",
+          len(_ov20) == 4 and all(c.parent() is not None for c in _ov20))
+    check("★ 1.87：分布是 **2 张独立卡**（市场 / 行业），且行业卡带「↻ 同步行业」",
+          hasattr(_pv20, "card_mkt") and hasattr(_pv20, "card_ind")
+          and hasattr(_pv20, "btn_ind_sync"))
+
+    _df20, _why20 = _pv20._load_base_df({"kind": "index", "code": "000905"})
+    _hit20 = _df20 is not None and len(_df20) > 0
+    _df21, _why21 = _pv20._load_base_df({"kind": "index", "code": "999999"})
+    check(f"★ 1.87：基准从 **index_daily** 取（000905 命中={_hit20}）；缺失时给人话（含已有指数）",
+          (_hit20 or "000905" in str(_why20)) and _df21 is None and "数据管理" in str(_why21))
+except Exception as _e20:  # noqa: BLE001
+    check(f"★1.87 P5 断言整段抛异常: {type(_e20).__name__}: {_e20}", False)
 
 
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71

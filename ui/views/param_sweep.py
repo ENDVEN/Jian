@@ -43,6 +43,7 @@ from ui.widgets.sweep_snap_card import (SweepSnapshotsMixin,  # ★R5b：研究�
                                         build_snapshot_card)
 from ui.widgets.sweep_form import SweepForm
 from ui.widgets.sweep_cost import SweepCostMixin, build_cost_card   # ★1.79：成交成本卡
+from ui.widgets.sweep_pool import build_result_card, build_target_block  # ★1.87：池化（设置进左栏 / 结果留右栏）
 from ui.widgets.sweep_results import SweepResultsMixin   # ★R0 拆件：结果装配与渲染
 from ui.workers import JobGuard, ParamSweepWorker
 
@@ -90,6 +91,10 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
         self.form = SweepForm()
+        self._pool_worker = None
+        # ★1.87：**标的类型（个股 / 组合）属于研究设置第①步**，插在"标的"标题下方
+        self._pool_target = build_target_block(self)
+        self.form.add_target_switch(self._pool_target)
         root.addWidget(self.form)   # ★不加 stretch —— 上一版它与结果区 1:1 平分剩余宽度（右栏半宽的根因）
         # ★R6 / §7-B16 H6：**函数总库入口**（第 5 个 —— 与 M1/M2/M3/行情页同名同义同脸）。
         #   单击只唤浮窗（页面内悬浮、宿主 = 本页，1.63 H7 口径 ⇒ **不新建第二套浮窗**）。
@@ -212,6 +217,8 @@ class ParamSweepView(SweepInputMixin, SweepRegimesMixin, SweepSnapshotsMixin,
         rl.addWidget(self.table_card, 1)     # ★R4-c：竖向余量归候选表（图已封顶）
         #   （结果就是那张表的「成本斜率」列 + 结论条一行）
         rl.addWidget(build_cost_card(self))
+        self._pool_card = build_result_card(self)   # ★1.87：结果区**只放结果**
+        rl.addWidget(self._pool_card)
         rl.addWidget(build_snapshot_card(self))   # ★R5b ⑨ 研究快照卡（列表 + 回看/置顶/删除）
 
         scroll.setWidget(right)

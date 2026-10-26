@@ -762,6 +762,70 @@ class FuturesImportWorker(QThread):
             self.error.emit(str(e))
 
 
+class PoolSweepWorker(QThread):
+    """组合池化：逐只 × 逐折跑 `run_sweep`（★1.85 / §7-B17 P4）。
+
+    ⚠ 只做"调度 + 取数"，口径全在 `core.portfolio_sweep.aggregate`（纯函数、有断言）。
+    ⚠ 每折的样本内/样本外由调用方给（扩张窗口），**本类不自己切**（避免两处口径）。
+    """
+
+    progress = pyqtSignal(int, int, str)
+    finished = pyqtSignal(object)      # {symbol: [{ic, ret}, ...]}（缺数据的票 = []）
+    failed = pyqtSignal(str)
+
+    def __init__(self, spec, grid, members, folds, commission=None, parent=None):
+        super().__init__(parent)
+        self._spec = spec
+        self._grid = grid
+        self._members = list(members or [])
+        self._folds = list(folds or [])
+        self._commission = commission
+
+    def run(self):                     # noqa: C901 —— 逐只逐折，逻辑直白
+        try:
+            import numpy as _np
+
+            from core.param_sweep import run_sweep
+            from core.sweep_plan import StudyInterval
+            from core.sweep_stats import rank_ic
+            from data.market_db import DataLakeManager
+
+            lake = DataLakeManager()
+            total = max(1, len(self._members) * len(self._folds))
+            done, out = 0, {}
+            for sym, _w in self._members:
+                df = lake.load_data("kline_daily", str(sym))
+                if df is None or not len(df):
+                    out[str(sym)] = []          # 缺数据 ⇒ 空（界面写"数据不足"，不补 0）
+                    done += len(self._folds)
+                    self.progress.emit(done, total, f"{sym}：本机无日线，跳过")
+                    continue
+                recs = []
+                for fold in self._folds:
+                    iv = StudyInterval(fold.is_start, fold.is_end, fold.oos_start, fold.oos_end)
+                    oc = run_sweep(df, self._spec, self._grid, iv, stage="both",
+                                   commission_rate=self._commission)
+                    is_a, oos_a = [], []
+                    for o in oc.completed.values():
+                        if o.is_returns is None or o.oos_returns is None or not len(o.is_returns):
+                            continue
+                        is_a.append(float(_np.mean(o.is_returns)) * 244.0)
+                        oos_a.append(float(_np.mean(o.oos_returns)) * 244.0)
+                    if len(is_a) >= 3:
+                        ic = float(rank_ic(_np.asarray(is_a), _np.asarray(oos_a)))
+                        top = _np.argsort(_np.asarray(is_a))[::-1][:max(1, min(5, len(is_a)))]
+                        ret = float(_np.median(_np.asarray(oos_a)[top]))
+                    else:
+                        ic, ret = None, None
+                    recs.append({"ic": ic, "ret": ret})
+                    done += 1
+                    self.progress.emit(done, total, f"{sym} · 第 {fold.index}/{len(self._folds)} 折")
+                out[str(sym)] = recs
+            self.finished.emit(out)
+        except Exception as exc:           # noqa: BLE001 —— 绝不穿透 QThread
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
 class JobGuard:
     """竞态守卫（§9-O5）：**只接受最新一次任务的结果**，迟到的旧回包一律丢弃。
 

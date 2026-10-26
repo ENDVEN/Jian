@@ -130,6 +130,13 @@ class SweepInputMixin:
         tooltip 同句（一句话：**闸门的拒绝必须落在用户正在看的地方**）。
         """
         self._invalidate_if_changed()        # ★1.66：网格/区间变了 ⇒ 上一轮结果作废
+        # ★1.87：标的类型 = 组合 ⇒ **单只流程不适用**（否则会拿上一只个股去跑，结果对不上）
+        _blk = getattr(self, "_pool_target", None)
+        if _blk is not None and _blk.is_pool_mode():
+            self.form.set_run_blocked("标的类型是「组合」⇒ 请点左栏「▶ 跑池化」；"
+                                      "「跑样本内/外」只用于个股。")
+            self.form.set_oos_enabled(False)
+            return
         _dims, err = self.form.grid_dims()
         why = str(err or "")
         if not why:

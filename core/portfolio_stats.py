@@ -157,3 +157,120 @@ def today_str() -> str:
 
 __all__ = ["build_returns", "nav_series", "holdings_rows", "max_drawdown", "annualized",
            "period_return", "TRADING_DAYS_PER_YEAR", "today_str"]
+
+
+#: 市场归属（按代码前缀；**这是展示口径，不参与任何收益计算**）
+MARKET_LABELS = (("sh", "沪市"), ("sz", "深市"), ("bj", "北交所"), ("other", "其他"))
+
+
+def market_of(symbol: str) -> str:
+    """代码 → 市场键（沪 6 / 深 0 或 3 / 北 4 或 8 / 其余 other）。
+
+    ⚠ 只按**代码段**判，不查数据源：指数、ETF 也照此归类（ETF 多在 51/15 段 ⇒ 归"沪/深"，与行情页一致）。
+    """
+    s = str(symbol or "").strip()
+    if not s:
+        return "other"
+    c = s[0]
+    if c in ("6", "5"):          # 6=沪股 · 5=沪市基金/ETF（510300 这类）
+        return "sh"
+    if c in ("0", "3", "1"):     # 0/3=深股 · 1=深市基金/ETF（159xxx）
+        return "sz"
+    if c in ("4", "8"):
+        return "bj"
+    return "other"
+
+
+def market_mix(members, cash: float = 0.0) -> list:
+    """市场分布：`[(label, pct)]`（按权重求和；现金单独一项，0% 也保留 —— 用户要"看得见现金"）。"""
+    agg = {}
+    for m in (members or []):
+        key = market_of(m.get("symbol"))
+        agg[key] = agg.get(key, 0.0) + float(m.get("weight") or 0.0)
+    out = [(label, agg.get(key, 0.0)) for key, label in MARKET_LABELS]
+    out.append(("现金", max(0.0, float(cash or 0.0))))
+    return out
+
+
+def industry_mix(members, industry_map: dict = None, cash: float = 0.0) -> list:
+    """行业分布：`[(行业名, pct)]`，**找不到行业 ⇒ 「未分类」**（不猜、不丢）。"""
+    agg = {}
+    for m in (members or []):
+        name = str((industry_map or {}).get(str(m.get("symbol"))) or "").strip() or "未分类"
+        agg[name] = agg.get(name, 0.0) + float(m.get("weight") or 0.0)
+    out = sorted(agg.items(), key=lambda kv: -kv[1])
+    out.append(("现金", max(0.0, float(cash or 0.0))))
+    return out
+
+
+__all__ += ["MARKET_LABELS", "market_of", "market_mix", "industry_mix"]
+
+
+def nav_with_costs(days, returns: dict, weights: dict, cash: float = 0.0,
+                   rebalance: str = "monthly", rate: float = 0.0003) -> dict:
+    """**含换手成本**的净值 + 每次再平衡的明细（纯函数）。
+
+    成本模型（用户 2026-10-26 口径：**双边、每次再平衡按成交额收**）：
+      · 目标权重 `w`（已按 `1 − 现金比` 归一）；
+      · 月末把各票市值拉回 `w × 总市值`：**成交额 = Σ|目标市值 − 当前市值|**（买卖两侧都算）；
+      · **成本 = 成交额 × 每边费率**（`rate` 就是"每边"的费率，双边已含在 Σ|Δ| 里）。
+
+    ⚠ 毛/净走**两条独立模拟**：净那条每次再平衡把成本**永久扣掉**（不回填），
+      否则会出现"扣了又追平"的假净值（我先写错过一次）。
+
+    返回 `{nav_net, nav_gross, events, turnover_total, cost_total, cost_pct}`。
+    """
+    days = list(days or ())
+    syms = [k for k in (weights or {}) if k in (returns or {})]
+    empty = {"nav_net": pd.Series(dtype=float), "nav_gross": pd.Series(dtype=float),
+             "events": [], "turnover_total": 0.0, "cost_total": 0.0, "cost_pct": 0.0}
+    if not days or not syms:
+        return empty
+    w = np.array([max(0.0, float(weights[k])) for k in syms], dtype=float)
+    tot = w.sum()
+    if tot <= 0:
+        return empty
+    w = w / tot * (1.0 - float(cash or 0.0) / 100.0)
+    R = np.vstack([np.asarray(returns[k], dtype=float) for k in syms])
+    n = len(days)
+    resets = _month_end_mask(days) if str(rebalance) == "monthly" else np.zeros(n, dtype=bool)
+    cash_v = float(cash or 0.0) / 100.0
+    fee = float(rate or 0.0)
+
+    def _sim(deduct: bool):
+        vals = w.copy()
+        out = []
+        events, turn_sum, cost_sum = [], 0.0, 0.0
+        for i in range(n):
+            if i > 0:
+                vals = vals * (1.0 + R[:, i])
+            total = float(vals.sum() + cash_v)
+            out.append(total)
+            if resets[i] and i != n - 1 and total > 0:
+                target = w * total
+                trade = float(np.abs(target - vals).sum())
+                cost = trade * fee if deduct else 0.0
+                if trade > 1e-12:
+                    # ⚠ 换手额与"扣不扣成本"无关 ⇒ **两条模拟都要累计**
+                    #   （我先只在 deduct 分支累加，导致 gross 那条的 turn_sum 恒 0）
+                    turn_sum += trade / total / 2.0 * 100.0
+                    if deduct and cost > 0:
+                        events.append({"date": days[i],
+                                       "turnover_pct": round(trade / total / 2.0 * 100.0, 4),
+                                       "cost_pct": round(cost / total * 100.0, 6),
+                                       "cost": round(cost, 10)})
+                        cost_sum += cost
+                vals = target * ((total - cost) / total)
+        return out, events, turn_sum, cost_sum
+
+    gross_vals, _e_g, turn_sum, _c_g = _sim(False)
+    net_vals, events, _t_n, cost_sum = _sim(True)
+    nav_gross = pd.Series(gross_vals, index=days, dtype=float)
+    nav_net = pd.Series(net_vals, index=days, dtype=float)
+    g_end = float(nav_gross.iloc[-1])
+    return {"nav_net": nav_net, "nav_gross": nav_gross, "events": events,
+            "turnover_total": round(turn_sum, 4), "cost_total": round(cost_sum, 10),
+            "cost_pct": round((1.0 - float(nav_net.iloc[-1]) / g_end) * 100.0, 4) if g_end else 0.0}
+
+
+__all__ += ["nav_with_costs"]

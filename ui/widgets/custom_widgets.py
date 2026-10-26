@@ -73,7 +73,18 @@ class _NoWheelMixin:
 
 
 class NoWheelComboBox(_NoWheelMixin, QComboBox):
-    pass
+    """下拉框（无滚轮误触）。
+
+    ★1.87：**不许按最长条目决定最小宽**。旧版默认策略是 `AdjustToContents`，
+    长条目（如策略名）会把最小宽顶到 **642px** ⇒ 在 306px 定宽的研究设置栏里
+    被**永久裁掉**（横向滚动又是关的，用户"怎么调窗口都看不全"，实测超出 65px）。
+    改为"按 10 个字符的最小长度"，放不下就省略（悬停仍可看全文）。
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.setMinimumContentsLength(10)
 
 
 class NoWheelDoubleSpinBox(_NoWheelMixin, QDoubleSpinBox):

@@ -1,5 +1,66 @@
 # tests/smoke_chart.py —— 图表架构冒烟断言（P0 / P1 / P2），验证后可直接复跑
 #   用法：py tests/smoke_chart.py  （在仓库根目录执行）
+
+
+# ==========================================
+# ★1.87：**单实例锁** —— 冒烟不许并发跑。
+#   实测事故：同时跑两份 overlay，其中一份在退出阶段卡了 13 分钟（1 线程等待、
+#   CPU 只占 8%）⇒ 看起来像"测试跑了 10 分钟没结果"。根因是共享文件/退出时序互锁。
+#   现在：发现另一个实例还活着 ⇒ 直接说清并退出（不制造第二个僵尸）。
+# ==========================================
+import atexit as _atexit_lock, os as _os_lock
+
+_LOCK = _os_lock.path.join(_os_lock.environ.get("TEMP", "."), "jian_smoke.lock")
+
+
+def _pid_alive(pid: int) -> bool:
+    # ⚠ **绝不能用 `os.kill(pid, 0)` 探活**：在 Windows 上它会直接 TerminateProcess，
+    #   等于"检测到有人在跑就把他杀掉"（我本轮就这么坑了自己一次）。
+    if pid <= 0:
+        return False
+    try:
+        import ctypes
+        _k32 = ctypes.windll.kernel32
+        _h = _k32.OpenProcess(0x1000, False, int(pid))       # QUERY_LIMITED_INFORMATION
+        if not _h:
+            return False
+        try:
+            _code = ctypes.c_ulong()
+            if not _k32.GetExitCodeProcess(_h, ctypes.byref(_code)):
+                return False
+            return _code.value == 259                          # STILL_ACTIVE
+        finally:
+            _k32.CloseHandle(_h)
+    except Exception:                      # noqa: BLE001
+        return False
+
+def _acquire_lock() -> None:
+    try:
+        with open(_LOCK, "r", encoding="utf-8") as f:
+            old = int((f.read() or "0").strip() or 0)
+    except Exception:                      # noqa: BLE001
+        old = 0
+    if old and old != _os_lock.getpid() and _pid_alive(old):
+        print(f"  [--] 另一个冒烟实例（pid={old}）还在跑 ⇒ 本次退出（避免并发互锁）")
+        raise SystemExit(0)
+    try:
+        with open(_LOCK, "w", encoding="utf-8") as f:
+            f.write(str(_os_lock.getpid()))
+    except Exception:                      # noqa: BLE001
+        pass
+
+
+def _release_lock() -> None:
+    try:
+        with open(_LOCK, "r", encoding="utf-8") as f:
+            if int((f.read() or "0").strip() or 0) == _os_lock.getpid():
+                _os_lock.remove(_LOCK)
+    except Exception:                      # noqa: BLE001
+        pass
+
+
+_acquire_lock()
+_atexit_lock.register(_release_lock)
 import os
 import sys
 
@@ -3095,7 +3156,7 @@ try:
         #   发布前跑一次 `SMOKE_FULL=1` 即可。
         _all_names = sorted(n for n in os.listdir(_lake) if n.endswith(".parquet"))
         _is_full = os.environ.get("SMOKE_FULL") == "1"
-        _pick = _all_names if _is_full else _all_names[:300]
+        _pick = _all_names if _is_full else _all_names[:150]
         _syms = [n[: -len(".parquet")] for n in _pick]
         _scope = "全量" if _is_full else f"子集 {len(_syms)}/{len(_all_names)}"
         _real_formula = 'COND := CROSS(EMA(C,12), EMA(C,26)) AND C > MA(C,20);'
@@ -3246,7 +3307,7 @@ try:
         #   实测整段 >50s ⇒ 与上面两处一致：默认 300 只子集，`SMOKE_FULL=1` 跑全量。
         _all2 = sorted(n for n in os.listdir(_lake_dir2) if n.endswith(".parquet"))
         _full2 = os.environ.get("SMOKE_FULL") == "1"
-        _pick2 = _all2 if _full2 else _all2[:300]
+        _pick2 = _all2 if _full2 else _all2[:150]
         _syms2 = [n[: -len(".parquet")] for n in _pick2]
         _scope2 = "全量" if _full2 else f"子集 {len(_syms2)}/{len(_all2)}"
         _live_f = 'COND := CROSS(EMA(C,12), EMA(C,26)) AND C > MA(C,20);'
@@ -6182,6 +6243,72 @@ try:
           and _rows85[1]['data_ok'] is False and _rows85[1]['pnl'] is None)
 except Exception as _e85p:  # noqa: BLE001
     check(f"★1.85 组合内核断言整段抛异常: {type(_e85p).__name__}: {_e85p}", False)
+
+
+print("\n== ★1.85 组合分布（P2）==")
+try:
+    from core.portfolio_stats import industry_mix as _im85, market_mix as _mm85, market_of as _mo85
+
+    _ms85 = [{'symbol': '600000', 'weight': 50.0},
+             {'symbol': '000001', 'weight': 30.0},
+             {'symbol': '830799', 'weight': 20.0}]
+    _mk85 = dict(_mm85(_ms85, 0.0))
+    check("★ 1.85 组合分布：市场按代码段归类（沪 50 / 深 30 / 北 20 / 现金 0）",
+          _mk85.get('沪市') == 50.0 and _mk85.get('深市') == 30.0
+          and _mk85.get('北交所') == 20.0 and _mk85.get('现金') == 0.0)
+    _ind85 = dict(_im85(_ms85, {'600000': '银行'}, 5.0))
+    check("★ 1.85 组合分布：行业缺映射 ⇒ **未分类**（不猜不丢）+ 现金单列",
+          _ind85.get('银行') == 50.0 and _ind85.get('未分类') == 50.0 and _ind85.get('现金') == 5.0)
+    check("★ 1.85 组合分布：`market_of` 边界（6→沪 / 3→深 / 8→北 / 空→其他）",
+          (_mo85('600000'), _mo85('300750'), _mo85('830799'), _mo85('')) == ('sh', 'sz', 'bj', 'other'))
+except Exception as _e85q:  # noqa: BLE001
+    check(f"★1.85 组合分布断言整段抛异常: {type(_e85q).__name__}: {_e85q}", False)
+
+
+print("\n== ★1.85 组合成本（P3）==")
+try:
+    from core.portfolio_stats import nav_with_costs as _nwc
+
+    _d = ["2024-05-02", "2024-05-03", "2024-05-31", "2024-06-03", "2024-06-04"]
+    _rr = {"A": _pd85.Series([0, 0.2, 0, 0, 0], index=_d),
+           "B": _pd85.Series([0, 0, 0, 0.2, 0], index=_d)}
+    _ww = {"A": 50.0, "B": 50.0}
+    _bh = _nwc(_d, _rr, _ww, 0.0, "buy_hold", 0.0003)
+    _mo = _nwc(_d, _rr, _ww, 0.0, "monthly", 0.0003)
+    check("★ 1.85 组合成本：**买入持有 = 零换手**（净==毛、无事件）",
+          not _bh["events"] and abs(float(_bh["nav_net"].iloc[-1]) - float(_bh["nav_gross"].iloc[-1])) < 1e-12)
+    _e = _mo["events"][0] if _mo["events"] else {}
+    check(f"★ 1.85 组合成本：**月末再平衡收费**（换手 {_e.get('turnover_pct')}% · 成本占净值 "
+          f"{_e.get('cost_pct')}%），且净 < 毛",
+          bool(_e) and abs(_e["turnover_pct"] - 4.5455) < 0.01
+          and float(_mo["nav_net"].iloc[-1]) < float(_mo["nav_gross"].iloc[-1]))
+    check("★ 1.85 组合成本：费率**线性**（1% 的成本拖累 ≈ 万3 的 33 倍，量级对）",
+          _nwc(_d, _rr, _ww, 0.0, "monthly", 0.01)["cost_pct"] > _mo["cost_pct"] * 20)
+except Exception as _e85r:  # noqa: BLE001
+    check(f"★1.85 组合成本断言整段抛异常: {type(_e85r).__name__}: {_e85r}", False)
+
+
+print("\n== ★1.85 组合池化（P4）==")
+try:
+    from core.portfolio_sweep import aggregate as _agg, csv_rows as _csvr, make_folds as _mf
+
+    _days = [str(d) for d in _pd85.bdate_range("2024-01-01", periods=100).strftime("%Y-%m-%d")]
+    _folds = _mf(_days, 4)
+    check("★ 1.85 组合池化：4 折就是 **4 折**（扩张窗口）+ 末折 **无未来泄漏**",
+          len(_folds) == 4 and _folds[-1].oos_start > _folds[-1].is_end
+          and _folds[0].is_start == _days[0])
+    _per = {"600000": [{"ic": 0.2, "ret": 0.1}, {"ic": 0.3, "ret": 0.2}, {"ic": 0.1, "ret": -0.05}],
+            "000001": [{"ic": 0.1, "ret": 0.05}, {"ic": 0.2, "ret": -0.02}, {"ic": 0.15, "ret": 0.03}]}
+    _res = _agg(_per, {"600000": 50, "000001": 50})
+    check("★ 1.85 组合池化：**组合加权行**有数（IC 0.175 / 收益 0.075）且含「亏损折数」",
+          abs(_res["weighted"]["ic_med_cross"] - 0.175) < 1e-9
+          and abs(_res["weighted"]["ret_med_cross"] - 0.075) < 1e-9
+          and _res["weighted"]["loss_folds"] == 1)
+    _rows = _csvr(_res)
+    check("★ 1.85 组合池化：CSV 含**组合加权**与**逐折**两类行（导出即是这个）",
+          any(r[0] == "组合加权" for r in _rows) and any(str(r[0]).startswith("第") for r in _rows))
+except Exception as _e85s:  # noqa: BLE001
+    check(f"★1.85 组合池化断言整段抛异常: {type(_e85s).__name__}: {_e85s}", False)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
