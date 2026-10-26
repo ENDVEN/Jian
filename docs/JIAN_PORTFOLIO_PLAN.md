@@ -101,7 +101,7 @@ Portfolio:
 |---|---|
 | 一级导航 + 页面壳 | `ui/main_window.py`（导航表）+ 新 `ui/views/portfolio_view.py` |
 | 组合存储 | 新 `data/portfolio_store.py`（JSON，`~/.jian_data/portfolios/`） |
-| 成分来源 | `ui/widgets/desk_watch.py` / 自选股存储（**只读复用，不动它**） |
+| **成分来源** | **`data/watchlist_store.WatchlistStore`（只读门面）**：`groups()` / `entries_in(group)` / `symbols_in(group)` / `names_map()` / `group_counts()`。⚠ `ui/widgets/desk_watch.py` 只是**行情页的 UI 行为层**（刷新/增删/移组），**P0 不碰它**。约束：`DEFAULT_GROUP`（未分组落点）/ `MAX_ITEMS=300` / `MAX_GROUPS=50` / 组名 ≤12 字 |
 | 净值/持仓计算 | 新 `core/portfolio_stats.py`（纯函数：日收益加权、再平衡、回撤） |
 | 图表 | `ui/widgets/chart_host.py`（唯一落点，不另起炉灶） |
 | 环形图 | 复用 pyqtgraph（`BarGraphItem` 已有；环形需新画法 ⇒ 记一条 §11.5 坑） |
@@ -152,9 +152,78 @@ Portfolio:
 2. **`ui/views/portfolio_view.py`（新）**：三级布局壳（列表 / 主区 / 右栏）；P0 只放"列表 + 空态 + 导入按钮"，
    图与表用**占位卡**（绝不装假数据）。
 3. **`ui/main_window.py`**：导航加第 7 项「📊 组合」，**按身份路由**（禁按下标，§11.5-130）。
-4. **导入**：读行情页自选股组（**只读，不复制名单**）→ 选组 → 生成组合（权重默认等权）。
+4. **导入**：`WatchlistStore.groups()` 列组 → `entries_in(group)` 取成分（**只读，不复制名单**）→ 生成组合（权重默认等权）；**组改名/移组后组合自动跟着变**（因为存的是"组名 + 只读引用"，不是快照）；组被删 ⇒ 组合页如实显示「来源组已不存在」，**不静默清空**。
 5. **偏好**：`portfolios_ui`（上次选中 id / 区间档）——**必须进冒烟抹平名单**（§11.5-90）。
 6. **断言（overlay，5 条）**：① 导航第 7 项存在且按身份切换；② 新建 → 保存 → 重载后组合数与成分一致；
    ③ 成分与自选股组**逐项相等**（唯一来源）；④ 空态**不显示**假净值；⑤ 960px 下页面**无横向滚动条**。
 
 **P0 边界（不做）**：净值曲线/持仓表真实数据（P1）· 环形分布（P2）· 组合回测（P3）· 池化对接（P4）。
+
+## 十二、施工思路（★1.84 · **动工前先读这节**；代码未动）
+
+### A. 模块组成（实测，不是估计）
+
+| 层 | 规模 | 组合页会用到什么 |
+|---|---|---|
+| `ui/views/` | 14 个 | 新 `portfolio_view.py`；参照 `breadth_view.py`（状态壳）+ `param_sweep.py`（分栏） |
+| `ui/widgets/` | **91 个** | 复用 `panel_card` / `panel_head`（卡片骨架）· `kpi_card`（概览）· `chart_host.ChartHost`+`ChartPane`（净值图）· `styles`（唯一颜色出口）· `summary_chip`（区间档胶囊） |
+| `data/` | 30 个 | **`watchlist_store.WatchlistStore`（成分唯一来源，只读）** · `industry_store`（行业分布）· `market_db`（日线）· 新 `portfolio_store.py` |
+| `core/` | 16 个 | `backtest`（引擎/佣金口径）· `preferences`（偏好）· `utils`（年化/格式） |
+| 导航 | `main_window` 侧栏 200px | 8 项（0 资金与表现 · 1 交易流水 · 2 深度复盘 · 3 市场行情 · 4 市场回测 · 5 函数库 · 6 数据管理 · 7 设置） |
+
+### B. **P0-0 前置改造（必须先做）**：主导航从"下标路由"改成"身份路由"
+
+**现状（实测）**：`main_window` 里是 `_PAGE_INDEX = {"market": 3, "backtest": 4, "hub": 5, "data": 6, "settings": 7}`
++ `btn.clicked.connect(lambda: content_area.setCurrentIndex(N))` + 角标点击也写死 `setCurrentIndex(6)`。
+
+**风险**：插入「组合」必然让 `数据管理/设置` 的 index 漂移 ⇒ **静默错页**（本项目 §11.5-130 在 M1–M3 子页签上已经翻过这个车）。
+
+**做法**：
+1. `_PAGES = {"market": self.page_market, ...}`（**存 widget 不存下标**）；
+2. `switch_to(key)` 改 `self.content_area.setCurrentWidget(self._PAGES[key])`；
+3. 导航按钮一律 `clicked.connect(lambda: self.switch_to('portfolio'))`；
+4. 角标那处 `setCurrentIndex(6)` 改 `switch_to("data")`；
+5. 断言：**逐 key 遍历 `_PAGES`，切过去后 `contentArea.currentWidget() is 该页`**（插页后仍全过）。
+
+### C. P0 数据层：`data/portfolio_store.py`（新）
+
+- 落盘 `~/.jian_data/portfolios/index.json`（组合元数据）+ 每条一个 `pf-<id>.json`（或单文件，二选一，**P0 用单文件**更简单）；
+- 字段：`id / name / source_group / members[{symbol, weight}] / cash / base / rebalance / created_at / schema_version`；
+- **不存成分快照**：只存 `source_group` + 只读引用 ⇒ 组改名/移组自动跟随（这是"唯一来源"的落地）；
+- 写入用 **临时文件 + `os.replace`**（断电不半写）；`schema_version` 预留迁移；
+- API：`list() / load(id) / save(pf) / delete(id) / members_of(pf, watchlist)`（后者把"组"解析成成分，**只读**）。
+
+### D. P0 页面：`ui/views/portfolio_view.py`（新，P0 只做四件）
+
+1. **组合列表**（左）：名称 + 净收益/日/累计列（P0 数字先显示 `—`，**绝不造假**）+ 新建/重命名/删除；
+2. **空态**（中）：一个主按钮「↻ 从自选股组导入」（没有组合时不摆空表）；
+3. **导入**：`WatchlistStore.groups()` 选组 → `entries_in(group)` 取成分 → 等权（合计 100%、现金 0）+ 基准沪深300；
+4. **保存/重载**：关掉软件再打开还在；**来源组已删除** ⇒ 列表行标「来源组已不存在」，点进去如实说明，**不静默清空**。
+
+**布局**：`QGridLayout` 三栏（列表 300 / 主区 / 右栏 330）；P0 右栏只放"组合设置摘要（权重/现金/基准/再平衡）"，图表用**占位卡**（不画假线）。断点按 §十 的 1440/1200/1000/820。
+
+### E. P1–P4 的数据流（每期只加一层，不动上层）
+
+| 期 | 数据流 | 落点 |
+|---|---|---|
+| **P1 净值/持仓** | `WatchlistStore.symbols_in(group)` → `market_db` 前复权日线 → 按权重合成日收益 → 净值曲线（基期 1.0000）· 持仓表（权重/成本/最新/盈亏） | 新 `core/portfolio_stats.py`（**纯函数**：加权日收益、再平衡、回撤）+ `ChartHost` |
+| **P2 分布** | 成分 → `industry_store.industry_map` → 市场/行业占比（缺失 → "未分类"） | 环形图（自绘 `QPainter`，**记一条 §11.5 坑**） |
+| **P3 组合回测** | 同上 + `core/backtest`（同一引擎、**同一佣金**）⇒ 年化/回撤/换手；再平衡=买入持有/按月 | `core/portfolio_stats` + 复用 `sweep_stats` 的年化 |
+| **P4 接 B15** | 参数研究"小池" = 组合 id ⇒ `run_sweep` 逐只跑、按组合权重汇总 | `core/param_sweep` + `ui/views/param_sweep`（只加"选组合"入口） |
+
+### F. 验收断言（P0，7 条）
+
+1. 导航：逐 key 遍历 `_PAGES` ⇒ 切到的就是该页（**插页不错位**）；
+2. 新建 → 保存 → **重载后**组合数与成分一致；
+3. 成分与 `entries_in(group)` **逐项相等**（唯一来源）；
+4. 空态**不显示**假净值/假收益（只显示 `—` 或空态文案）；
+5. 960px 窗口**无横向滚动条**；
+6. 组被删 ⇒ 行标「来源组已不存在」，**不静默清空**；
+7. 偏好只存"上次选中 id / 区间档"（`portfolios_ui`，**进冒烟抹平名单**）。
+
+### G. 动工时需要你点头的 4 个细则（都有默认值）
+
+1. **"按月"再平衡**：月末**最后一个交易日**收盘（默认）；还是每月 1 号？
+2. **现金**：不参与再平衡（固定占比，默认）；还是要"再平衡时按目标现金比例补回"？
+3. **基准个股**：用该股前复权日线收益（默认）；还是用指数（若是指数代码）？
+4. **组合净值基期**：首个有数据的交易日 = **1.0000**（默认）。

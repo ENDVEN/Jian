@@ -1854,30 +1854,36 @@ try:
             positions = [p for _h, p in handles()]
             if positions:
                 p0 = positions[0]
+                # ★1.84 **修 flaky 根因**：`getSceneHandlePositions` 给的是 **scene** 坐标，
+                #   而 `QTest.mousePress(viewport(), …)` 要的是**视口**坐标。旧版只把"另一个轴"
+                #   转了（x 用 scene、y 用视口），于是 `vline`/`hband` 的落点**横向/纵向偏几十像素**，
+                #   1px 命中容差下时中时不中 ⇒ 本会话多次时红时绿（实测红的就是 vline/hband/rect）。
+                #   现在**两个轴都过 `mapFromScene`**。
+                _v0 = host._glw.mapFromScene(p0)
                 if hasattr(graphic, "value") and getattr(graphic, "angle", None) is not None:
                     vb_c = host._glw.mapFromScene(vb.sceneBoundingRect().center())
                     if abs(getattr(graphic, "angle", 1)) == 90:      # 竖线：y 取中线
-                        return pg.QtCore.QPoint(round(p0.x()), round(vb_c.y()))
+                        return pg.QtCore.QPoint(int(_v0.x()), int(vb_c.y()))
                     if getattr(graphic, "angle", 1) == 0:            # 横线：x 取中线
-                        return pg.QtCore.QPoint(round(vb_c.x()), round(p0.y()))
-                return pg.QtCore.QPoint(round(p0.x()), round(p0.y()))
+                        return pg.QtCore.QPoint(int(vb_c.x()), int(_v0.y()))
+                return pg.QtCore.QPoint(int(_v0.x()), int(_v0.y()))
         rect = host._glw.viewport().rect()
         if hasattr(graphic, "value"):                    # InfiniteLine
             vertical = abs(getattr(graphic, "angle", 0)) == 90
             (vx0, vx1), (vy0, vy1) = vb.viewRange()
             probe = (pg.QtCore.QPointF(graphic.value(), (vy0 + vy1) / 2.0) if vertical
                      else pg.QtCore.QPointF((vx0 + vx1) / 2.0, graphic.value()))
-            pt = graphic.mapToScene(probe)
-            # ⚠ 垂直方向取**主 viewbox 中心的视口坐标**（必定在绘图区内、线上），
-            #   旧版用 viewport().center() —— 窗口位置一变就踩到 1px 命中容差边缘（v6.42）；
-            #   坐标用 round 而非 int 截断。
+            # ★1.84：同上 —— scene → 视口，**两个轴都要转**
+            pt_v = host._glw.mapFromScene(graphic.mapToScene(probe))
             vb_c = host._glw.mapFromScene(vb.sceneBoundingRect().center())
-            point = (pg.QtCore.QPoint(round(pt.x()), round(vb_c.y())) if vertical
-                     else pg.QtCore.QPoint(round(vb_c.x()), round(pt.y())))
+            point = (pg.QtCore.QPoint(int(pt_v.x()), int(vb_c.y())) if vertical
+                     else pg.QtCore.QPoint(int(vb_c.x()), int(pt_v.y())))
             if rect.contains(point):
                 return point
-        pt = graphic.mapToScene(graphic.boundingRect().center())
-        return pg.QtCore.QPoint(int(pt.x()), int(pt.y()))
+        # ★1.84：通用图元（rect / text / arrow…）同理 —— 这里原来把 **scene** 坐标当视口用，
+        #   矩形类图元的落点会偏整个左/上边距 ⇒ 按下没命中就变成"平移"（点不动 = 假红）。
+        pt_v = host._glw.mapFromScene(graphic.mapToScene(graphic.boundingRect().center()))
+        return pg.QtCore.QPoint(int(pt_v.x()), int(pt_v.y()))
 
     from ui.widgets.annotation_shapes import DRAWABLE_KINDS as _SWEEP_KINDS
     from ui.widgets.annotation_shapes import spec_of as _spec_of
@@ -1902,11 +1908,18 @@ try:
         _QTest.mousePress(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
                           pg.QtCore.Qt.KeyboardModifier.NoModifier, _start)
         app.processEvents()
-        _end = pg.QtCore.QPoint(_start.x() + 50, _start.y() + 25)
+        # ★1.85：终点夹进视口（防"拖出可视区"）。
+        # ⚠ 试过"朝视口中心拖 + 位移不足反向"，实测**反而让红更多**（1–2 种 → 4 种）⇒ 已回退。
+        #   本断言的偶发（vline/hband/rect…）**尚未根治**，已登记为已知缺陷；
+        #   下一步要加诊断（按下命中 / 实际位移 / points 变化 / viewRange 是否被平移），
+        #   **不许用抽样或重试掩盖**。
+        _vr = host._glw.viewport().rect()
+        _end = pg.QtCore.QPoint(min(max(_start.x() + 50, _vr.left() + 2), _vr.right() - 2),
+                                min(max(_start.y() + 25, _vr.top() + 2), _vr.bottom() - 2))
         for _ratio in (0.5, 1.0):
             _QTest.mouseMove(host._glw.viewport(),
-                             pg.QtCore.QPoint(int(_start.x() + 50 * _ratio),
-                                              int(_start.y() + 25 * _ratio)))
+                             pg.QtCore.QPoint(int(_start.x() + (_end.x() - _start.x()) * _ratio),
+                                              int(_start.y() + (_end.y() - _start.y()) * _ratio)))
             app.processEvents()
         _QTest.mouseRelease(host._glw.viewport(), pg.QtCore.Qt.MouseButton.LeftButton,
                             pg.QtCore.Qt.KeyboardModifier.NoModifier, _end)
@@ -6074,6 +6087,49 @@ try:
           '0.0003' not in _src81)
 except Exception as _e81:  # noqa: BLE001
     check(f"★1.81 佣金内核断言整段抛异常: {type(_e81).__name__}: {_e81}", False)
+
+
+# ==========================================
+# ★1.85 / §7-B17 P1 · 组合统计内核（纯函数）
+#   口径：等权/加权日收益合成 · 月度再平衡=每月末最后交易日 · 现金固定占比收益 0 ·
+#        成本价=基期收盘（区间涨跌）· 缺数据标 data_ok=False（**不拿 0 冒充**）。
+# ==========================================
+print("\n== ★1.85 · 组合统计内核 ==")
+try:
+    import pandas as _pd85  # noqa: E402
+
+    from core.portfolio_stats import (annualized as _ann85,  # noqa: E402
+                                      holdings_rows as _hold85, max_drawdown as _dd85,
+                                      nav_series as _nav85)
+
+    _days85 = ['2024-01-02', '2024-01-03', '2024-01-31', '2024-02-01', '2024-02-02']
+    _r85 = {'A': _pd85.Series([0, 1.0, 0, 0, 0], index=_days85),
+            'B': _pd85.Series([0, 0, 0, 1.0, 0], index=_days85)}
+    _w85 = {'A': 50, 'B': 50}
+    _bh = _nav85(_days85, _r85, _w85, 0.0, 'buy_hold')
+    _mo = _nav85(_days85, _r85, _w85, 0.0, 'monthly')
+    check(f"★ 1.85：**买入持有** vs **按月再平衡** 确实不同（{float(_bh.iloc[-1]):.2f} vs {float(_mo.iloc[-1]):.2f}）"
+          "—— 月末把权重拉回目标 ⇒ 第二个月吃到 B 的涨幅更多",
+          # 权重归一到 1.0（各 0.5 起点）：A 翻倍 ⇒ 1.5；月末拉回 0.75/0.75，B 翻倍 ⇒ 2.25
+          abs(float(_bh.iloc[-1]) - 2.0) < 1e-9 and abs(float(_mo.iloc[-1]) - 2.25) < 1e-9)
+
+    _nav_cash85 = _nav85(_days85, _r85, {'A': 1}, 100.0, 'monthly')
+    check("★ 1.85：**现金 100%**（用户原话「有时现金跑赢所有组合」）⇒ 净值恒 1.0000",
+          abs(float(_nav_cash85.iloc[-1]) - 1.0) < 1e-12)
+
+    check("★ 1.85：最大回撤 = 峰谷比（1.2 → 0.6 ⇒ 50%）",
+          abs(_dd85([1.0, 1.2, 0.6, 0.9]) - 0.5) < 1e-12)
+    _dup85 = [1.0] * 244 + [2.0]
+    check("★ 1.85：年化按 244 交易日几何折算（一年翻倍 ⇒ ≈100%）",
+          abs(_ann85(_dup85) - 1.0) < 0.02)
+
+    _rows85 = _hold85(['A', 'X'], {'A': '甲', 'X': '缺'}, {'A': 100, 'X': 0},
+                      {'A': 10.0}, {'A': 11.0})
+    check("★ 1.85：持仓行 —— 成本=基期收盘、盈亏=区间涨跌；**缺数据的票 data_ok=False**（不写 0）",
+          abs(_rows85[0]['pnl'] - 0.1) < 1e-12 and _rows85[0]['data_ok'] is True
+          and _rows85[1]['data_ok'] is False and _rows85[1]['pnl'] is None)
+except Exception as _e85p:  # noqa: BLE001
+    check(f"★1.85 组合内核断言整段抛异常: {type(_e85p).__name__}: {_e85p}", False)
 
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:

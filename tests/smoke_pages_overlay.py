@@ -5694,7 +5694,7 @@ from config import settings  # noqa: E402
 #   两级都不满足才 FAIL（真污染仍然抓得住）。
 _AFTER_LIB = _real_lib_fingerprint()
 _OUR_KEYS = ("desk_ui", "scan_ui", "breadth_ui", "review_ui", "download_prefs", "hub_ui",
-             "sweep_ui", "backtest_prefs")
+             "sweep_ui", "backtest_prefs", "portfolios_ui")
 for _name in ("annotations.json", "formula_library.json", "watchlist.json",
               "backtest_strategies.json", "preferences.json", "trade_calendar.json",
               "scan_strategies.json", "industry_map.json", "backtest_results",
@@ -6989,6 +6989,163 @@ except Exception as _e84:  # noqa: BLE001
     check(f"★1.84 右栏/护栏断言整段抛异常: {type(_e84).__name__}: {_e84}", False)
 
 
+
+# ==========================================
+# ★1.85 / §7-B17 P0 · 组合页（一级页面 + 从自选股组导入 + 保存/重载）
+#   口径（用户 2026-10-26 已拍板）：成分**唯一来源** = 行情页自选股组（只读引用，不复制名单）·
+#   权重默认等权（可选市值/自定义）· 现金默认 0% · 基准默认沪深300 · 再平衡 买入持有+按月 ·
+#   成本走全局「回测佣金」· 只显示软件内再平衡。
+#   ⚠ 打桩：`view._store` 换成临时目录（**绝不写用户真实组合文件**）、`view._watchlist` 换成假门面。
+# ==========================================
+print("\n== ★1.85 / §7-B17 P0 · 组合页 ==")
+try:
+    import tempfile as _tf85
+    from data.portfolio_store import PortfolioStore as _PS85
+    from data.portfolio_store import members_from_entries as _mfe85
+
+    _pv = win.page_portfolio
+    _orig_page85 = win.content_area.currentWidget()      # ★ 结束时还原（别把后续断言带到设置页）
+    check("★ 1.85：主导航有「🧺 组合」且**按身份**切得到（`_PAGES['portfolio']`）",
+          hasattr(win, 'btn_portfolio') and win._PAGES.get('portfolio') is _pv
+          and (win.switch_to('portfolio'), win.content_area.currentWidget() is _pv)[1])
+
+    _keys85 = list(win._PAGES)
+    _bad85 = []
+    for _k85 in _keys85:
+        win.switch_to(_k85)
+        if win.content_area.currentWidget() is not win._PAGES[_k85]:
+            _bad85.append(_k85)
+    check(f"★ 1.85：**逐 key 遍历 {len(_keys85)} 个页面**都能切到（插页不再错位：{_bad85 or '全通过'}）",
+          not _bad85 and len(_keys85) >= 9)
+
+    _tmp85 = _tf85.mkdtemp()
+    _orig_store85, _orig_wl85 = _pv._store, _pv._watchlist
+    _pv._store = _PS85(_tmp85 + '/portfolios.json')
+    _members85 = _mfe85([{'symbol': '600000', 'name': '浦发银行'},
+                         {'symbol': '000001', 'name': '平安银行'},
+                         {'symbol': '510300', 'name': '沪深300ETF'}])
+
+    class _WL85:
+        def groups(self):
+            return ['核心持仓', '观察']
+
+        def entries_in(self, group):
+            return ([{'symbol': '600000', 'name': '浦发银行'},
+                     {'symbol': '000001', 'name': '平安银行'},
+                     {'symbol': '510300', 'name': '沪深300ETF'}] if group == '核心持仓' else [])
+
+    _pv._watchlist = lambda: _WL85()
+    try:
+        _pv._current = ''
+        _pv.refresh()
+        check("★ 1.85：空态**不摆假数**（列表 0 行 · 明细隐藏 · 空态文案出现）",
+              _pv.lst.count() == 0 and _pv.detail.isHidden() and not _pv.empty.isHidden()
+              and '还没有组合' in _pv.lbl_empty.text())
+
+        from data.portfolio_store import new_portfolio as _np85
+        _pf85 = _np85('核心持仓组合', '核心持仓', _members85)
+        assert _pv._store.save(_pf85)
+        _pv._current = _pf85['id']
+        _pv.refresh()
+        app.processEvents()
+        _w85 = [float(_pv.tbl.item(_r, 2).text()) for _r in range(_pv.tbl.rowCount())]
+        check(f"★ 1.85：保存 → 重读 ⇒ 列表 1 条、成分 3 只、权重合计 100.00（实测 {sum(_w85):.2f}）",
+              _pv.lst.count() == 1 and _pv.tbl.rowCount() == 3
+              and abs(sum(_w85) - 100.0) < 0.05)
+
+        _pv2 = _PS85(_tmp85 + '/portfolios.json')
+        _rel85 = _pv2.list()
+        check("★ 1.85：**关掉再打开还在**（新 store 实例重读同一文件，成分一致）",
+              len(_rel85) == 1 and [m['symbol'] for m in _rel85[0]['members']]
+              == [m['symbol'] for m in _members85])
+
+        check("★ 1.85：来源组**已不存在** ⇒ 行上如实标「已不存在」+ 明细出警告（**不静默清空**）",
+              (lambda: (_pv._watchlist.__setattr__ if False else None,
+                        _pv._watchlist.__dict__.update() if False else None,
+                        setattr(_pv, '_watchlist', lambda: type('W', (), {
+                            'groups': lambda self: ['观察'],
+                            'entries_in': lambda self, g: []})()),
+                        _pv.refresh(), app.processEvents(),
+                        '已不存在' in _pv.lst.item(0).text()
+                        and not _pv.lbl_warn.isHidden())[-1])())
+    finally:
+        _pv._store, _pv._watchlist = _orig_store85, _orig_wl85
+        _pv._current = ''
+        _pv.refresh()
+        if _orig_page85 is not None:
+            win.content_area.setCurrentWidget(_orig_page85)   # ★ 还原当前页
+except Exception as _e85:  # noqa: BLE001
+    check(f"★1.85 组合页断言整段抛异常: {type(_e85).__name__}: {_e85}", False)
+
+
+
+# ==========================================
+# ★1.85 / §7-B17 P1 · 组合净值 + 持仓（页面端到端）
+#   ⚠ 打桩：`_pv._lake.load_data` 换成假日线（绝不读真湖）；结束时成对还原 + 还原当前页。
+# ==========================================
+print("\n== ★1.85 组合 P1 · 净值 + 持仓 ==")
+try:
+    import pandas as _pd85b  # noqa: E402
+
+    from data.portfolio_store import new_portfolio as _np85b  # noqa: E402
+
+    _pv1 = win.page_portfolio
+    _orig_page85b = win.content_area.currentWidget()
+    _orig_lake85 = _pv1._lake
+
+    def _mk85(sym, mult):
+        days = [f"2024-03-{d:02d}" for d in range(1, 9)]
+        return _pd85b.DataFrame({"date": days,
+                                 "close": [10.0 * (1 + mult * i / 10.0) for i in range(len(days))]})
+
+    class _Lake85:
+        def __init__(self, missing=()):
+            self._missing = set(missing)
+
+        def load_data(self, zone, sym):
+            if str(sym) in self._missing:
+                return None
+            return _mk85(sym, 1.0 if sym != "000001" else 2.0)
+
+    _m_all = [{"symbol": "600000", "name": "浦发", "weight": 50.0},
+              {"symbol": "000001", "name": "平安", "weight": 50.0}]
+    _pf_all = _np85b("两票组合", "组", _m_all)
+    _pf_miss = _np85b("缺一只", "组", _m_all)
+    try:
+        _pv1._lake = _Lake85()
+        _pv1._render(_pf_all)
+        app.processEvents()
+        check("★ 1.85 组合 P1：**净值算出来了**（有数据 ⇒ 画线 + 总收益/年化/回撤同屏）",
+              _pv1._nav is not None and len(_pv1._nav) == 8
+              and "总收益" in _pv1.lbl_nav_meta.text()
+              and "最大回撤" in _pv1.lbl_nav_meta.text())
+        _pnls = [_pv1.tbl_hold.item(_r, 5).text() for _r in range(_pv1.tbl_hold.rowCount())]
+        _costs = [_pv1.tbl_hold.item(_r, 3).text() for _r in range(_pv1.tbl_hold.rowCount())]
+        check(f"★ 1.85 组合 P1：持仓表给出成本/最新/盈亏（实测 {_pnls}）—— 不是空壳",
+              _pv1.tbl_hold.rowCount() == 2 and all(x != "数据不足" for x in _costs)
+              and all(x.endswith("%") for x in _pnls))
+        check("★ 1.85 组合 P1：卡面**写明未含佣金** + 日线收盘（不许假装含成本/实时）",
+              "未含佣金" in _pv1.lbl_nav_note.text() and "日线" in _pv1.lbl_nav_note.text())
+
+        _pv1._lake = _Lake85(missing=("000001",))
+        _pv1._cache.clear()
+        _pv1._render(_pf_miss)
+        app.processEvents()
+        check("★ 1.85 组合 P1：**缺一只 ⇒ 不画组合线**（不用剩余权重冒充），并说清怎么办",
+              _pv1._nav is None and "不画组合线" in _pv1.lbl_nav_meta.text()
+              and "数据管理" in _pv1.lbl_nav_meta.text())
+        _miss_txt = [_pv1.tbl_hold.item(_r, 3).text() for _r in range(_pv1.tbl_hold.rowCount())]
+        check("★ 1.85 组合 P1：持仓表里缺数据那只写**数据不足**（不写 0）",
+              "数据不足" in _miss_txt)
+    finally:
+        _pv1._lake = _orig_lake85
+        _pv1._cache.clear()
+        if _orig_page85b is not None:
+            win.content_area.setCurrentWidget(_orig_page85b)
+except Exception as _e85b:  # noqa: BLE001
+    check(f"★1.85 组合 P1 断言整段抛异常: {type(_e85b).__name__}: {_e85b}", False)
+
+
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71
 #   现象（用户原话）："我在参数研究里面却显示 m2，我在 m2 里面显示 m3，我在 m3 里面显示在回测，
 #   这直接导致我没办法在 m2 和 m3 里面保存方案"。
@@ -7591,11 +7748,12 @@ try:
     from data.hub_migration import ensure_hub_migration as _ehm82  # noqa: E402
     from ui.widgets.hub_editor import FormulaAssetEditor as _FormulaAssetEditor  # noqa: E402
 
-    # ---- ① 导航：插队在回测与数据管理之间；data/settings 顺移 6/7（S2-0 已同步改）----
-    check("★ B16：左轨「ƒ 函数库」= 内容栈 index 5，data/settings 顺移 6/7（运行期实测）",
-          win.content_area.indexOf(win.page_hub) == 5
-          and win.content_area.indexOf(win.page_data) == 6
-          and win.content_area.indexOf(win.page_settings) == 7)
+    # ---- ① 导航：**按身份**（★1.85 P0-0 起不认 index —— 插页不会再错位）----
+    check("★ B16 + ★1.85：`hub/data/settings` 都**按身份**能切到（不再写死 index；插页不错位）",
+          win.content_area.indexOf(win.page_hub) >= 0
+          and (win.switch_to('hub'), win.content_area.currentWidget() is win.page_hub)[1]
+          and (win.switch_to('data'), win.content_area.currentWidget() is win.page_data)[1]
+          and (win.switch_to('settings'), win.content_area.currentWidget() is win.page_settings)[1])
     check("★ B16：`switch_to('hub')` 认它 + 导航按钮存在",
           hasattr(win, 'btn_hub')
           and (win.switch_to('hub'), win.content_area.currentWidget() is win.page_hub)[1])
@@ -8027,10 +8185,11 @@ try:
     check("★ S2-0：设置页进了内容栈 + 导航可切 + `switch_to('settings')` 认它（★1.59 起设置顺移 index 7）",
           'self.content_area.addWidget(self.page_settings)' in _mws73
           and 'self.btn_settings.clicked.connect' in _mws73
-          and '"settings": 7' in _mws73)
-    check("★ S2-0：主窗口已挂上设置页（真实装配，不只是源码里有）",
+          and '"settings": self.page_settings' in _mws73)
+    check("★ S2-0：主窗口已挂上设置页（真实装配）+ `switch_to('settings')` 认它（★1.85 起按身份）",
           hasattr(win, 'page_settings') and hasattr(win, 'btn_settings')
-          and win.content_area.indexOf(win.page_settings) == 7)
+          and win.content_area.indexOf(win.page_settings) >= 0
+          and (win.switch_to('settings'), win.content_area.currentWidget() is win.page_settings)[1])
 
     # ---- ② 唯一真源：页面不许自己描述设置项 / 不许自己读写偏好（§9-D 落点唯一）----
     check("★ S2-0：设置页**只渲染注册表**（源码里既无 `preferences`、也无 item 字面量）",

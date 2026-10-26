@@ -27,6 +27,7 @@ from ui.views.records import RecordsView
 from ui.views.review import ReviewView
 from ui.views.trading_desk import TradingDeskView
 from ui.views.backtest_module import BacktestModule
+from ui.views.portfolio_view import PortfolioView   # ★1.85 / §7-B17 P0：组合页（一级）
 from ui.views.data_manager import DataManagerView
 from ui.views.formula_hub import FormulaHubView   # ★1.61 / §7-B16：函数总库（左轨第 6 项）
 from ui.widgets.formula_hub_panel import (HUB_PANEL_GAP_RIGHT, HUB_PANEL_MIN_H,
@@ -101,6 +102,8 @@ class JianMainWindow(QMainWindow):
         self.btn_review = QPushButton("💡 深度复盘")
         self.btn_market = QPushButton("📈 市场行情")
         self.btn_backtest = QPushButton("📐 市场回测")
+        # ★1.85 / §7-B17：**🧺 组合**（一级页面 —— 用户 2026-10-25："与市场回测/行情同级"）
+        self.btn_portfolio = QPushButton("🧺 组合")
         # ★1.61 / §7-B16：「ƒ 函数库」插队（用户拍板的落位 = 回测与数据管理之间）——
         #   它是函数资产的"中立的家"；设置页"最下方固定"的口径不受影响（仍加在 addStretch 之后）。
         self.btn_hub = QPushButton("ƒ 函数库")
@@ -111,7 +114,7 @@ class JianMainWindow(QMainWindow):
         self.btn_data = QPushButton("🗄 数据管理")
         
         for btn in [self.btn_overview, self.btn_records, self.btn_review, self.btn_market,
-                    self.btn_backtest, self.btn_hub, self.btn_data]:
+                    self.btn_backtest, self.btn_portfolio, self.btn_hub, self.btn_data]:
             btn.setProperty("class", "NavBtn")
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
@@ -138,6 +141,8 @@ class JianMainWindow(QMainWindow):
         # ⚠ 属性名仍叫 page_market（导航第 4 页的历史名字），实现已换成 P8 的行情工作台
         self.page_market = TradingDeskView(self)
         self.page_backtest = BacktestModule(self)
+        # ★1.85 / §7-B17 P0：组合页（列表 + 空态 + 从自选股组导入 + 保存/重载）
+        self.page_portfolio = PortfolioView(self)
         # ★1.61 / §7-B16：函数总库页（A 管理台：列表 + 详情 ⇄ 编辑器；只管资产不管运行）
         self.page_hub = FormulaHubView(self)
         self.page_data = DataManagerView(self)
@@ -149,9 +154,16 @@ class JianMainWindow(QMainWindow):
         self.content_area.addWidget(self.page_review) 
         self.content_area.addWidget(self.page_market)
         self.content_area.addWidget(self.page_backtest)
+        self.content_area.addWidget(self.page_portfolio)   # ← 组合（P0）
         self.content_area.addWidget(self.page_hub)           # ← index 5（ƒ 函数库）
         self.content_area.addWidget(self.page_data)          # ← index 6
-        self.content_area.addWidget(self.page_settings)      # ← index 7（设置）
+        self.content_area.addWidget(self.page_settings)      # ← 设置
+        # ★1.85（P0-0）：**键 → 页面控件**（唯一路由表；插页只加一行，不动别人）
+        self._PAGES = {"overview": self.page_overview, "records": self.page_records,
+                       "review": self.page_review, "market": self.page_market,
+                       "backtest": self.page_backtest, "portfolio": self.page_portfolio,
+                       "hub": self.page_hub, "data": self.page_data,
+                       "settings": self.page_settings}
         
         main_layout.addWidget(sidebar)
         # --- 右侧 = 内容栈 + 底部下载条（下载条只在有任务时出现，平时零高度）---
@@ -186,17 +198,19 @@ class JianMainWindow(QMainWindow):
         self.nav_badge.installEventFilter(self)    # 点击 ⇒ 切页 + 开队列面板
         self.downloads.activity_changed.connect(self._on_download_activity)
         
-        self.btn_overview.clicked.connect(lambda: self.content_area.setCurrentIndex(0))
-        self.btn_records.clicked.connect(lambda: self.content_area.setCurrentIndex(1))
-        self.btn_review.clicked.connect(lambda: self.content_area.setCurrentIndex(2))
-        self.btn_market.clicked.connect(lambda: self.content_area.setCurrentIndex(3))
-        self.btn_backtest.clicked.connect(lambda: self.content_area.setCurrentIndex(4))
-        self.btn_hub.clicked.connect(lambda: self.content_area.setCurrentIndex(5))
+        # ★1.85（P0-0）：一律按**键**切页（旧版写死下标 ⇒ 插页必错位）
+        self.btn_overview.clicked.connect(lambda: self.switch_to("overview"))
+        self.btn_records.clicked.connect(lambda: self.switch_to("records"))
+        self.btn_review.clicked.connect(lambda: self.switch_to("review"))
+        self.btn_market.clicked.connect(lambda: self.switch_to("market"))
+        self.btn_backtest.clicked.connect(lambda: self.switch_to("backtest"))
+        self.btn_portfolio.clicked.connect(lambda: self.switch_to("portfolio"))
+        self.btn_hub.clicked.connect(lambda: self.switch_to("hub"))
         # ★1.61 / §7-B16：统一浮窗的「📚 本页方案」区跟着**当前页 / 当前子页签**走
         self.content_area.currentChanged.connect(self._on_page_changed)
         self.page_backtest.tabs.currentChanged.connect(self._on_page_changed)
-        self.btn_data.clicked.connect(lambda: self.content_area.setCurrentIndex(6))
-        self.btn_settings.clicked.connect(lambda: self.content_area.setCurrentIndex(7))
+        self.btn_data.clicked.connect(lambda: self.switch_to("data"))
+        self.btn_settings.clicked.connect(lambda: self.switch_to("settings"))
         
         self.render_all_data()
         self.check_for_updates()
@@ -249,13 +263,15 @@ class JianMainWindow(QMainWindow):
     # 主窗口本来就是"组件装配与事件分发"的地方（§3），由它当唯一的传话筒最干净：
     #   行情页 ──send_formula_to_backtest──▶ 主窗口 ──▶ 回测页.load_formula_from_external()
     #   回测页 ──send_formula_to_market────▶ 主窗口 ──▶ 行情页.receive_formula()
-    _PAGE_INDEX = {"market": 3, "backtest": 4, "hub": 5, "data": 6, "settings": 7}
+    # ★1.85（P0-0）：**按身份路由**，不再按下标 —— 插页不会错位（§11.5-130 同族）。
+    #   旧版 `_PAGE_INDEX = {"market": 3, …}` 一旦插入新页，数据管理/设置就**静默错页**。
+    _PAGES = {}          # 键 → **页面控件**（在 `__init__` 里装满）
 
     def switch_to(self, key: str) -> None:
-        """按名字切页（互送后直接把用户带到目标页，省得他自己找）。"""
-        index = self._PAGE_INDEX.get(str(key))
-        if index is not None:
-            self.content_area.setCurrentIndex(index)
+        """按名字切页（互送后直接把用户带到目标页）—— ★1.85：**按控件身份**，不按下标。"""
+        w = self._PAGES.get(str(key))
+        if w is not None:
+            self.content_area.setCurrentWidget(w)
 
     # ==========================================
     # 后台下载（v1.43 · §7-B11）：队列属主窗口，界面只是它的三个视图
@@ -623,7 +639,7 @@ class JianMainWindow(QMainWindow):
         if obj is self.btn_data and event.type() == event.Type.Resize:
             self._place_badge()
         elif obj is self.nav_badge and event.type() == event.Type.MouseButtonPress:
-            self.content_area.setCurrentIndex(6)
+            self.switch_to("data")
             self.btn_data.setChecked(True)
             self.show_download_queue()
             return True                           # 吞掉：点角标不该只切页不开面板
