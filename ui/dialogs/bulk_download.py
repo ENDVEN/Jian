@@ -106,9 +106,10 @@ class BulkDownloadDialog(QDialog):
         title.setStyleSheet("font-size: 17px; font-weight: bold; color: #1F2430;")
         root.addWidget(title)
 
-        warn = QLabel("⚠️ 全市场下载会持续很久（默认间隔下约 50 分钟）。"
-                      "建议在网络空闲时段执行。提交后任务在后台跑：界面照常可用，"
-                      "随时可「停止本任务」——已下载的部分会保留，下次自动跳过。")
+        warn = QLabel("⚠️ 全市场下载会持续很久——<b>按当前的「下载间隔」算</b>："
+                      "全 A 约 5000 只，间隔 0.4 秒就是 30 分钟以上（并发不加总速度，"
+                      "只让单个等待重叠）。建议在网络空闲时段执行。提交后任务在后台跑："
+                      "界面照常可用，随时可「停止本任务」——已下载的部分会保留，下次自动跳过。")
         warn.setWordWrap(True)
         warn.setStyleSheet("font-size: 12px; color: #E65100; background: #FFF8E1; "
                            "border: 1px solid #FFE082; border-radius: 6px; padding: 8px 10px;")

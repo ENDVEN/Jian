@@ -195,8 +195,27 @@ class SyncWorker(QThread):
     def cancel(self):
         self._cancel = True
 
+    def _log_throughput(self, done: int, total: int) -> None:
+        """★1.92 / F：**实测吞吐**（每 100 只记一行）—— 回答"到底哪里慢"。
+
+        为什么要它：`estimate_seconds` 只能给理论值（N × interval）。真实环境还有
+        源的响应延迟、重试、限流降档；只有实测 `只/秒` 能证明"瓶颈是不是只在间隔"。
+        """
+        if not done or done % 100:
+            return
+        t0 = getattr(self, "_t0", None)
+        if not t0:
+            return
+        dt = max(1e-9, time.monotonic() - t0)
+        rate = done / dt
+        eta = (total - done) / rate if rate > 0 else 0.0
+        logger.info("[吞吐] %d/%d 只 · 已用 %.1fs · 实测 %.2f 只/秒 · 按实测剩余约 %.0fs",
+                    done, total, dt, rate, eta)
+
     def run(self):
         service = MarketSyncService()
+        # ★v1.92 / F：吞吐计时的起点（只用于日志，不改任何调度）
+        self._t0 = time.monotonic()
         # ★v1.45：日历一次取，inject 与 spot 共用（保证“每批只取一次”，§7-E5）
         calendar = _load_calendar_safely()
         policy = inject_expected_latest(self._policy, calendar=calendar)
@@ -213,6 +232,16 @@ class SyncWorker(QThread):
             self._run_pool(service, policy, stats)
         else:
             self._run_serial(service, policy, stats)
+        # ★1.92 / F：收尾一行"实测账"（只/秒 + 当时的 interval/K）—— 下次再问"为什么慢"先看这行
+        try:
+            _dt = max(1e-9, time.monotonic() - self._t0)
+            _n = len(stats.get("symbols_attempted") or [])
+            stats["elapsed_s"] = round(_dt, 2)
+            stats["per_sec"] = round(_n / _dt, 3)
+            logger.info("[吞吐] 收尾：%d 只 / %.1fs = %.2f 只/秒（interval %.2fs · K=%s）",
+                        _n, _dt, stats["per_sec"], policy.interval, policy.concurrency)
+        except Exception as e:                 # noqa: BLE001 —— 日志不许影响收尾
+            logger.debug("吞吐收尾日志失败: %s", e)
         self.finished.emit(stats)
 
     # ---- ★v1.45：全市场快照上下文（一次取、跨只复用；不满足安全前提 ⇒ None）----
@@ -268,6 +297,7 @@ class SyncWorker(QThread):
                 break
 
             self.progress.emit(index, total, symbol)
+            self._log_throughput(index, total)      # ★1.92 / F
             result = service.refresh_one(
                 symbol, zone=self._zone, force_full=self._force_full,
                 min_date=self._min_date, policy=policy, **self._spot_kwargs(symbol))
@@ -355,6 +385,7 @@ class SyncWorker(QThread):
                         stats.update(aborted=True, aborted_by=trip_by)
                         stop.set()               # 任一线程达阈 ⇒ 全体收手
             self.progress.emit(d, total, symbol)
+            self._log_throughput(d, total)          # ★1.92 / F（锁外，别占着锁写日志）
             if fail_reason is not None:
                 self.failed.emit(symbol, fail_reason)
 

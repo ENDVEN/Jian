@@ -4388,6 +4388,13 @@ try:
     from ui.download_hub import download_policy_from_prefs as _dpf66
     from ui.download_hub import DownloadHub as _DH66
 
+    # ★1.91 测试卫生：`download_policy_from_prefs` 在**东财退避中**会把档位自动降到
+    #   1.2s / K=1（v6.74 B 档，正确行为）⇒ 本机若刚好有持久化的冷却（例如刚做过联网探针），
+    #   下面几条"逐项读全局 / 越界夹取 / submit 吃全局"的**精确值**断言会全红。
+    #   这里先复位，让本段只测"读偏好"这一件事（§11.5-148③ 同族）。
+    from data import em_throttle as _thr66
+    _thr66.reset()
+
     _orig_ms66 = _uw66.MarketSyncService
     _orig_cal66 = _uw66.load_or_fetch
     _uw66.load_or_fetch = lambda *a, **k: None   # 不联网、不写真实日历缓存
@@ -4471,11 +4478,12 @@ try:
     check("★ 1.78：concurrency 越界夹进 [1, MAX]（MAX=8：9→8、0→1）—— 上限只有一处常量",
           _dpf66(_P66({"concurrency": 9})).concurrency == MAX_DOWNLOAD_CONCURRENCY == 8
           and _dpf66(_P66({"concurrency": 0})).concurrency == 1)
-    # ★1.78（用户 2026-10-16 要求"等待可预期"）：ETA 必须**含并发**且**不许算出 0 秒**
+    # ★1.92 / A（用户 2026-10-29）：**ETA 不许再除以并发** —— 聚合请求率由 `RateGovernor`
+    #   钉死在 1/interval（全局排槽），K 只藏延迟。旧断言"K 越大越快"正是那个错误预期的来源。
     from data.sync_service import estimate_seconds as _est66
-    check("★ 1.78：ETA 估算**除以并发**（K=1 与 K=4 差约 4 倍：原来完全没算并发 ⇒ K=3 时高估 3 倍）",
-          _est66(400, _TP66(interval=1.0, jitter=0.0, concurrency=1), stale_count=400) > 4
-          * _est66(400, _TP66(interval=1.0, jitter=0.0, concurrency=4), stale_count=400) - 10)
+    check("★ 1.92 / A：ETA **不随并发 K 变**（K=1 与 K=4 结果相同 = N × interval）",
+          _est66(400, _TP66(interval=1.0, jitter=0.0, concurrency=1), stale_count=400) == 400
+          and _est66(400, _TP66(interval=1.0, jitter=0.0, concurrency=4), stale_count=400) == 400)
     check("★ 1.78：ETA **不许算出 0 秒**（interval=0 的激进档也给『每条请求的网络地板』）",
           _est66(10, _TP66(interval=0.0, jitter=0.0, concurrency=4), stale_count=10) >= 1)
     check("★ 1.78：『已新鲜』的只数**不发请求 ⇒ 零耗时**（stale_count=0 ⇒ 0 秒，不再『永远 50 分钟』）",

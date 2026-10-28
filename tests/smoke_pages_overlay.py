@@ -7887,6 +7887,63 @@ except Exception as _e91b:  # noqa: BLE001
     check(f"★1.91 P11 断言整段抛异常: {type(_e91b).__name__}: {_e91b}", False)
 
 
+# ==========================================
+# ★1.92 / A+B+F：下载耗时三件 —— ETA 说真话 · 死票不重试 · 实测吞吐
+# ==========================================
+print("\n== ★1.92 下载耗时：ETA 说真话 / 死票不重试 / 实测吞吐 ==")
+try:
+    import pandas as _pd92
+
+    import data.akshare_feed as _af92
+    from data.sync_service import MarketSyncService as _MSS92
+    from data.sync_service import ThrottlePolicy as _TP92
+    from data.sync_service import ZONE_KLINE as _ZK92
+    from data.sync_service import estimate_seconds as _est92
+
+    check("★ 1.92 / A：ETA **不随并发 K 变**（聚合速率被 RateGovernor 钉在 1/interval）",
+          _est92(400, _TP92(interval=1.0, jitter=0.0, concurrency=1), stale_count=400) == 400
+          and _est92(400, _TP92(interval=1.0, jitter=0.0, concurrency=7), stale_count=400) == 400)
+    check("★ 1.92 / A：全 A 量级照实说（5000 只 × 0.4s = 2000 秒，不再是五分钟）",
+          abs(_est92(5000, _TP92(interval=0.4, jitter=0.0, concurrency=7),
+                     stale_count=5000) - 2000) <= 1)
+
+    _af92.note_fetch_error("boom")
+    _err92 = _af92.last_fetch_error()
+    check("★ 1.92 / B：取数错误记在**线程本地**、读完即清（并发池各线程互不串）",
+          _err92 == "boom" and _af92.last_fetch_error() == "")
+
+    class _Svc92(_MSS92):
+        def __init__(self, err=""):
+            super().__init__()
+            self.calls = 0
+            self._err = err
+
+        def _fetch(self, symbol, zone, start, period=None):      # noqa: N802
+            self.calls += 1
+            _af92.note_fetch_error(self._err)
+            return _pd92.DataFrame()
+
+    _s92a = _Svc92("")
+    _r92a = _s92a.refresh_one("600000", zone=_ZK92, force_full=True,
+                              policy=_TP92(interval=0.0, jitter=0.0, max_retries=3),
+                              sleep_fn=lambda *_a, **_k: None)
+    check("★ 1.92 / B：源**正常返回空**（退市/停牌/代码错）⇒ 只发 1 次请求，不再白等 1+2+4 秒",
+          _s92a.calls == 1 and _r92a.get("ok") is False)
+
+    _s92b = _Svc92("RemoteDisconnected")
+    _s92b.refresh_one("600000", zone=_ZK92, force_full=True,
+                      policy=_TP92(interval=0.0, jitter=0.0, max_retries=3),
+                      sleep_fn=lambda *_a, **_k: None)
+    check("★ 1.92 / B：**真报错**仍然重试（4 次尝试不删）—— 别把网络抖动当死票",
+          _s92b.calls == 4)
+
+    _w92 = _read90("ui/workers.py")
+    check("★ 1.92 / F：吞吐日志在位（每 100 只一行 `[吞吐]` + 收尾实测算账 per_sec）",
+          "_log_throughput" in _w92 and "[吞吐]" in _w92 and "per_sec" in _w92)
+except Exception as _e93:  # noqa: BLE001
+    check(f"★1.92 下载耗时断言整段抛异常: {type(_e93).__name__}: {_e93}", False)
+
+
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71
 #   现象（用户原话）："我在参数研究里面却显示 m2，我在 m2 里面显示 m3，我在 m3 里面显示在回测，
 #   这直接导致我没办法在 m2 和 m3 里面保存方案"。

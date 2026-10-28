@@ -279,7 +279,7 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          ② flaky 真根因：QTest.mouseMove = NoButton hover + 1px 线条差半像素点不中 ⇒
 #             合成 QMouseEvent(buttons=LeftButton) + ±1px 落点容差（5 次全失败才判红）。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.91"
+APP_VERSION = "1.92"
 
 # ==========================================
 # 界面配置 (UI Settings)

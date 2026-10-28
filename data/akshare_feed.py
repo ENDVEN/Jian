@@ -2,11 +2,35 @@
 import akshare as ak
 import pandas as pd
 import logging
+import threading
 import time
 from datetime import datetime
 
 from core.utils import MINUTE_PERIODS, normalize_period
 from data import em_market
+
+# ==========================================
+# ★1.92：**「源报错」与「源没有这只票」必须分得开**
+#   上层（`refresh_one`）只有分得开，才知道要不要退避重试：
+#     · 报错（连不上 / TLS / 被 RST）⇒ 值得重试；
+#     · 源正常返回但空表（退市 / 长期停牌 / 代码错）⇒ 重试 4 次只是白等 7 秒（全 A 几百只就是半小时）。
+#   本函数把"最后一次取数到底有没有报错"记在**线程本地**（并发池各线程互不串），
+#   由上层读完即清（`clear=True`），绝不跨标的残留。
+# ==========================================
+_TL = threading.local()
+
+
+def note_fetch_error(msg: str = "") -> None:
+    """本线程记一次取数错误（空串 = 源正常返回）。"""
+    _TL.err = str(msg or "")
+
+
+def last_fetch_error(clear: bool = True) -> str:
+    """本线程**最后一次**日线取数的错误文本；空串 = 源正常返回但没数据（或没出错）。"""
+    err = str(getattr(_TL, "err", "") or "")
+    if clear:
+        _TL.err = ""
+    return err
 
 # ★v6.69：东财 `push2` 的**两条取数通道**（分页全市场列表 / 批量报价）已整块搬到
 #   `data/em_market.py`（§11.7：本文件再长就该分文件），退避闸门在 `data/em_throttle.py`。
@@ -535,6 +559,7 @@ class AkShareFeed:
         """
         if not end_date: end_date = datetime.now().strftime("%Y%m%d")
         logging.info(f"开始拉取 A股 {symbol} 日线数据 (adjust={adjust or 'none'})...")
+        note_fetch_error("")                     # ★1.92：每只票单独记，不跨标的残留
 
         # 1) 主源：新浪 (需带市场前缀)
         #   ⚠ ★1.70 / §11.5-124：**别在这里补 `timeout=`** —— `ak.stock_zh_a_daily` 的签名里没有
@@ -550,13 +575,17 @@ class AkShareFeed:
                     return AkShareFeed._normalize_ohlcv(df, KLINE_CN_RENAME, symbol)
             except Exception as e:
                 logging.warning(f"A股日线新浪源失败 [{sina_symbol}]: {e}")
+                note_fetch_error(f"新浪源: {e}")   # ★1.92：真报错 ⇒ 上层值得重试
 
         # 2) 兜底：东财 (覆盖北交所与新浪暂未支持的标的)
         em_df = AkShareFeed._fetch_a_share_via_em(symbol, start_date, end_date, adjust=adjust)
         if not em_df.empty:
+            note_fetch_error("")                   # 兜底成功 ⇒ 清掉主源那笔错误
             return AkShareFeed._normalize_ohlcv(em_df, KLINE_CN_RENAME, symbol)
 
         logging.error(f"A股日线拉取失败: {symbol} (主源与兜底源均未返回数据)")
+        # ⚠ 这里**不动** error：两源都"正常返回空" ⇒ 保持空串（= 真的没有这只票），
+        #   上层据此**不重试**；只有真的抛过错才留下错误文本。
         return pd.DataFrame()
 
     @staticmethod

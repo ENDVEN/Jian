@@ -37,7 +37,7 @@ import pandas as pd
 
 from core.utils import MINUTE_DEPTH_DAYS, MINUTE_PERIODS, normalize_period
 from data.akshare_feed import (ADJUST_NONE, ADJUST_QFQ, DAILY_KEEP_COLUMNS,
-                               AkShareFeed)
+                               AkShareFeed, last_fetch_error)
 from data.market_db import DataLakeManager
 # ★v6.72：代理指纹的**定义**已搬 `data/net_env.py`（`em_market` 传输层也要用，反向 import 会成环）；
 #   这里只是把同一个对象再导出 ⇒ 老调用点与断言零改动。
@@ -540,7 +540,18 @@ class MarketSyncService:
                 new = pd.DataFrame()
                 last_err = str(e)
                 last_reason = _classify_error(e)
+            # ★1.92 / B：读一次"数据源到底有没有报错"（读完即清，绝不跨标的残留）
+            try:
+                _src_err = last_fetch_error()
+            except Exception:                  # noqa: BLE001
+                _src_err = ""
             if not new.empty:
+                break
+            # ★1.92 / B：**源正常返回空表 = 这只票真的没有**（退市 / 长期停牌 / 代码错）⇒ **不重试**。
+            #   旧版一律重试 `max_retries+1` 次（退避 1+2+4 秒）⇒ 全 A 里几百只死票白等十几分钟；
+            #   用户 2026-10-29 的原话："从零和补全一样慢，到底哪里慢" —— 这是尾巴上的大头之一。
+            if not _src_err and not last_reason:
+                logger.debug("源正常返回但无数据（不重试，省退避时间）: %s", symbol)
                 break
             if attempt < attempts - 1:
                 sleep_fn(policy.backoff_base * (2 ** attempt))
@@ -794,18 +805,25 @@ def estimate_seconds(count: int, policy: ThrottlePolicy, stale_count: int = None
     界面也永远显示"约 50 分钟"（**等于把用户劝退**，§7-E5 实测复核）。
     未给定时保持旧语义：结果视为**上限**（调用方应据此说"最多约…"）。
 
-    ★1.78 修正两条（用户 2026-10-16 实测"半小时"后要求"等待可预期"）：
-    ① **并发要除进去**：并发池让 N 个请求的"等待"彼此重叠（聚合请求率不变）⇒ 旧版
-       `n × interval` 在 K=3 时把耗时**高估约 3 倍**，用户按它安排时间会被误导；
+    ★1.92 修正（用户 2026-10-29 实测："全 A 从零与补全耗时几乎一样，都是三十多分钟，到底哪里慢"）：
+    ① **不许除以并发 K**（v1.78 那条已作废）：聚合请求率由 `RateGovernor` 钉死在 `1/interval`
+       ⇒ 总时长 ≈ `N × interval`，K 只影响"尾巴"。旧公式在 K=7 时把 34.5 分钟算成 5.7 分钟，
+       弹窗写"最多约 6 分钟"，用户按它安排时间 ⇒ 必然觉得"怎么这么慢"。
     ② **给每条请求留网络地板**：`interval=0`（激进档）时旧版算出 0 秒 ⇒ 说"约 0 秒"等于骗人；
        每条请求至少 `~0.25s` 的网络往返 + 解析，故取下限。
     ⚠ 仍是**粗略**：不含重试/熔断/限流降档的影响（那些只会更慢）⇒ 界面文案一律用"约"。
+    真要贴近实测，看 `ui/workers` 的 `[吞吐]` 日志（每 100 只记一次实测只/秒）。
     """
     n = count if stale_count is None else max(0, int(stale_count))
-    k = max(1, int(getattr(policy, "concurrency", 1) or 1))
     per = max(float(getattr(policy, "interval", 0.0) or 0.0), MIN_PER_REQUEST_SECONDS) \
         * (1 + float(getattr(policy, "jitter", 0.0) or 0.0) / 2)
-    return int(n / k * per + 0.999)
+    # ★1.92 / A（用户 2026-10-29 实测："全A从零和补全耗时几乎一样，30 多分钟"）：
+    #   **不许再除以并发 K**。聚合请求率由 `ui.workers.RateGovernor` 钉死在 1/interval
+    #   （`_next = start + duration` ⇒ 全局串行排槽），K 只把"单只往返"藏进别人的等待里，
+    #   收益上限约 2×、且只在该延迟 > interval×K 时才体现。
+    #   旧公式 `n / k * per` 在 K=7 时把 34.5 分钟算成 5.7 分钟 —— 弹窗写"最多约 6 分钟"，
+    #   用户按它安排时间，必然觉得"下载如此之慢"。宁可说得保守，也不许再骗一次。
+    return int(n * per + 0.999)
 
 
 def format_duration(seconds) -> str:
