@@ -2895,6 +2895,10 @@ try:
                 return False
 
         _sflow4.IndustryMapWorker = _StubIndWorker
+        # ★1.91 测试卫生：这条断言验的是"分批"本身，与冷却无关 —— 但 `_maybe_fetch_industry`
+        #   在冷却期会**一个请求都不打**（v6.69 的正确行为）。本包里更早的下载类断言可能刚记过一次
+        #   失败 ⇒ 冷却还活着 ⇒ 这里会假红，且随整包变慢而"时红时绿"。⇒ 断言前先复位。
+        _sflow4.em_throttle.reset()
         preferences.set('industry_fetch', {'next_page': 1, 'pages_total': 0})
         # ⚠ 单例 `path` 默认指向**用户真实库** ⇒ 必须换到临时文件，否则下面的断言会把
         #   假行业写进用户的 industry_map.json（本轮就被"防污染自检"当场抓到 ✓ 这是它该干的活）。
@@ -7835,6 +7839,52 @@ try:
     check("★ 1.90 空记录 ⇒ 列表不画任何行（提示交给卡片说明，不造假行）", _cl92.count() == 0)
 except Exception as _e92:  # noqa: BLE001
     check(f"★1.90 P10 断言整段抛异常: {type(_e92).__name__}: {_e92}", False)
+
+
+# ==========================================
+# ★1.91 / P11：行业覆盖率 —— **按池补**（1~3 个请求），报"本组合 N/M 只"
+#   旧版走全市场分页（每批 3 页、按代码升序）⇒ 300 只的组合要十几轮，体感"永远补不满"（§11.5-106）。
+# ==========================================
+print("\n== ★1.91 组合 P11 · 行业按池补 ==")
+try:
+    import ui.workers as _wk91
+
+    _orig_fe91 = _wk91.fetch_enrich_map
+    _wk91.fetch_enrich_map = lambda _syms: {
+        "600000": {"industry": "银行Ⅱ"},
+        "000001": {"industry": "银行Ⅱ"},
+        "600326": {"industry": ""},
+    }
+    try:
+        _w91 = _wk91.IndustryPoolWorker(["600000", "000001", "600326"])
+        _got91 = {}
+        _w91.finished.connect(lambda r: _got91.update(r or {}))
+        _w91.run()                       # 直接跑：不起线程、不联网
+    finally:
+        _wk91.fetch_enrich_map = _orig_fe91
+    check("★ 1.91 按池补行业：拿到 2/3，缺的**点名**（东财没给就不瞎猜）",
+          (_got91.get("map") or {}).get("600000") == "银行Ⅱ"
+          and _got91.get("missed") == ["600326"] and not _got91.get("error"))
+
+    _orig2_91 = _wk91.fetch_enrich_map
+    _wk91.fetch_enrich_map = lambda _s: {}
+    try:
+        _w92 = _wk91.IndustryPoolWorker(["600000"])
+        _g2_91 = {}
+        _w92.finished.connect(lambda r: _g2_91.update(r or {}))
+        _w92.run()
+    finally:
+        _wk91.fetch_enrich_map = _orig2_91
+    check("★ 1.91 源完全没回 ⇒ 说成「网络/频控/未登录」，**不许**说成「这几只没行业」",
+          bool(_g2_91.get("error")) and "没有返回" in str(_g2_91.get("error")))
+
+    _src91b = _read90("ui/views/portfolio_view.py")
+    check("★ 1.91 组合页「↻ 同步行业」改走**按池批量**（不再翻全市场分页）",
+          "IndustryPoolWorker" in _src91b and "IndustryMapWorker" not in _src91b)
+    check("★ 1.91 行业卡报的是**本组合覆盖率**（N/M 只），不是全库条数",
+          "只有行业" in _src91b and "库内行业" not in _src91b)
+except Exception as _e91b:  # noqa: BLE001
+    check(f"★1.91 P11 断言整段抛异常: {type(_e91b).__name__}: {_e91b}", False)
 
 
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71

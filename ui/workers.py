@@ -44,7 +44,7 @@ from data.market_db import DataLakeManager
 from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
-                               fetch_industry_page, is_daily_bar_settled,
+                               fetch_enrich_map, fetch_industry_page, is_daily_bar_settled,
                                network_self_check, short_fetch_reason, spot_valuation_map)
 from data.trade_calendar import (latest_settled_trading_day, load_or_fetch,
                                  previous_trading_day)
@@ -497,6 +497,40 @@ class IndustryMapWorker(QThread):
             logger.warning(f"行业映射后台拉取失败: {e}")
             data = None
         self.finished.emit(data or None)
+
+
+class IndustryPoolWorker(QThread):
+    """★1.91：**按池**补行业（组合页用）—— 走 `fetch_enrich_map()`（`ulist`，100 只/请求）。
+
+    【为什么不走分页通道】`IndustryMapWorker` 是"全市场按代码序翻页"（~56 页、每批几页）⇒
+      一个 300 只的组合要等十几轮才轮到它关心的票（§11.5-106：按代码升序补齐会制造"什么都没抓到"的错觉）。
+      按标的批量取 = **1~3 个请求**把池子一次补满。
+
+    回包 `{"map": {symbol: 行业}, "missed": [没拿到的], "error": ""}`；失败也是同一形状（绝不无回包）。
+    """
+    finished = pyqtSignal(object)
+
+    def __init__(self, symbols, parent=None):
+        super().__init__(parent)
+        self._symbols = [str(s).strip() for s in (symbols or []) if str(s).strip()]
+
+    def run(self):
+        mp, err = {}, ""
+        try:
+            raw = fetch_enrich_map(self._symbols)
+            for sym, rec in (raw or {}).items():
+                name = str((rec or {}).get("industry") or "").strip()
+                if name and name != "-":
+                    mp[str(sym)] = name
+            # ⚠ 门面会**吞掉**网络错误回 `{}` ⇒ 这里必须把"一个都没回"翻译成人话，
+            #   否则界面会误报成"东财没给这几只（停牌/退市）"—— 那是把网络问题说成数据问题。
+            if not raw and self._symbols:
+                err = "行情源没有返回数据（网络 / 频控 / 未登录）"
+        except Exception as e:            # noqa: BLE001 —— 异常绝不穿透 QThread
+            logger.warning("按池补行业失败: %s", e)
+            err = f"{type(e).__name__}: {e}"
+        missed = [s for s in self._symbols if s not in mp]
+        self.finished.emit({"map": mp, "missed": missed, "error": err})
 
 
 class NetSelfCheckWorker(QThread):

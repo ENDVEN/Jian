@@ -383,7 +383,9 @@ class PortfolioView(QWidget):
         self.btn_ind_sync = QPushButton("↻ 同步行业")
         self.btn_ind_sync.setStyleSheet(SUMMARY_GHOST_QSS)
         self.btn_ind_sync.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ind_sync.setToolTip("从东财分批拉「代码→行业」（每批几页，可重复点直到覆盖）")
+        self.btn_ind_sync.setToolTip(
+            "按当前组合的成分补行业：按标的批量取（100 只/请求）⇒ 通常 1~3 个请求补满；"
+            "东财没给的票会点名，不会瞎猜")
         self.btn_ind_sync.clicked.connect(self._on_sync_industry)
         _irow.addWidget(self.btn_ind_sync, 0)
         _il.addLayout(_irow)
@@ -566,47 +568,97 @@ class PortfolioView(QWidget):
         except Exception:                  # noqa: BLE001
             pass
 
+    @staticmethod
+    def _em_logged_in() -> bool:
+        """东财是否已登录（只读凭据状态，不发请求）。判据坏了按"未登录"处理。"""
+        try:
+            from data import em_auth
+            return bool(em_auth.is_logged_in())
+        except Exception:                  # noqa: BLE001
+            return False
+
+    def _goto_em_login(self) -> None:
+        """跳去设置页的「账号」组（东财登录的唯一入口）。失败不打扰。"""
+        try:
+            self.main_win.switch_to("settings")
+            self.main_win.page_settings.open_group("account")
+        except Exception:                  # noqa: BLE001
+            pass
+
+    def _current_members(self) -> list:
+        """当前显示的组合的成分（优先渲染态，其次存储）。"""
+        p = self._pf_cur or (self._store.load_one(self._current) if self._current else None)
+        return [str(m.get("symbol")) for m in ((p or {}).get("members") or []) if str(m.get("symbol") or "")]
+
     def _on_sync_industry(self) -> None:
-        """从东财**分批**拉「代码→行业」并合并进 `industry_store`（可重复点，断点续抓）。"""
+        """**按当前组合的成分**补行业（★1.91）。
+
+        【为什么改】旧版走全市场分页（每批 3 页 ≈300 只、**按代码升序**）⇒ 一个 300 只的组合
+        要十几轮才轮到它关心的票（§11.5-106 的真实教训），用户体感就是"永远补不满"。
+        现在按标的批量取（`fetch_enrich_map`，100 只/请求）⇒ **1~3 个请求**把本组合一次补满；
+        库里其它标的照旧保留（`merge` 只增不减）。全市场分页那条路仍留给 M2/M3（它们要全市场）。
+        """
         w0 = getattr(self, "_ind_worker", None)
         if w0 is not None and w0.isRunning():
             return
+        members = self._current_members()
+        if not members:
+            QMessageBox.information(
+                self, "先选一个组合",
+                "行业是按当前组合的成分补的 —— 先在左侧点一个组合（或先给它加几只票）。\n"
+                "（全市场补行业在「市场回测 → 全市场筛选」里，那边才是整市场扫。）")
+            return
+        # 未登录东财 ⇒ 匿名档**常被整段 RST**（§11.5-99）⇒ 先说清楚并给一条出路，
+        #   别让用户点完只看到"没取到"（他修不好，也不该由他猜）。
+        if not self._em_logged_in():
+            _box = QMessageBox(self)
+            _box.setWindowTitle("东财未登录")
+            _box.setText("现在<b>没有登录东财</b>，匿名访问经常被整段拒绝（行业/估值都取不到）。")
+            _box.setInformativeText("登录只需粘贴一次浏览器 Cookie（不用账号密码），之后一直有效。")
+            _b_go = _box.addButton("去设置登录", QMessageBox.ButtonRole.AcceptRole)
+            _box.addButton("先试一次", QMessageBox.ButtonRole.RejectRole)
+            _box.exec()
+            if _box.clickedButton() is _b_go:
+                self._goto_em_login()
+                return
         from data.industry_store import get_industry_store
-        from ui.workers import IndustryMapWorker
-        page = int(getattr(self, "_ind_page", 1) or 1)
-        w = IndustryMapWorker(page_start=page, pages=3, parent=self)
+        from ui.workers import IndustryPoolWorker
+        w = IndustryPoolWorker(members, parent=self)
         self._ind_worker = w
         self.btn_ind_sync.setEnabled(False)
-        self.lbl_ind_note.setText(f"正在拉行业（第 {page} 页起，共 3 页）…")
+        self.lbl_ind_note.setText(f"正在补行业（{len(members)} 只 · 按标的批量取）…")
 
         def _done(res) -> None:
             self.btn_ind_sync.setEnabled(True)
-            store = get_industry_store()
-            if not res:
-                self.lbl_ind_note.setText("行业同步失败（网络/频控）—— 稍后再点一次；已有映射不会丢。")
-                return
+            res = res or {}
             mp = res.get("map") or {}
-            # ★1.90：合并失败 / worker 带 error 都必须**出声** —— 旧版 `except: pass` 会让
-            #   "拉到 0 条"和"拉到了但没存盘"长得一模一样（用户只能反复点）。
-            _saved, _why = True, ""
+            store = get_industry_store()
+            _saved, _why = True, "详见日志。"
             try:
                 _saved = bool(store.merge(mp)) if mp else True
             except Exception as exc:       # noqa: BLE001
                 _saved, _why = False, f"{type(exc).__name__}: {exc}"
             if not _saved:
                 self.lbl_ind_note.setText(
-                    f"抓到 {len(mp)} 条但没写进磁盘（{_why or '磁盘写入被拒'}）—— "
-                    "已有映射不会丢，稍后再点一次。")
+                    f"抓到 {len(mp)} 条但没写进磁盘（{_why}）—— 已有映射不会丢，稍后再点一次。")
                 return
             _err = str(res.get("error") or "").strip()
-            if _err and not mp:
-                self.lbl_ind_note.setText(f"这一批没取到（{_err}）—— 已有映射不会丢，稍后再点一次。")
-                return
-            done = bool(res.get("done"))
-            self._ind_page = 1 if done else page + int(res.get("pages_done") or 0)
-            self.lbl_ind_note.setText(
-                f"本次 {len(mp)} 条 · 库内合计 {store.coverage()} 条"
-                + ("（已到最后一页，再点从头扫）" if done else "（再点继续下一页）"))
+            # 匿名访问东财常被整段 RST（§11.5-99）⇒ 必须给一条**用户能执行**的出路，不只报错
+            _hint = ("—— 东财对匿名访问常直接拒连：去「⚙ 设置 → 东财账号」登录后再点一次"
+                     if any(k in _err for k in ("RemoteDisconnected", "Proxy", "RST",
+                                                "Connection", "timed out")) else
+                     "—— 稍后再点一次")
+            miss = list(res.get("missed") or [])
+            if not mp and _err:
+                self.lbl_ind_note.setText(f"这次没取到（{_err}）{_hint}；已有映射不会丢。")
+            elif miss:
+                _nm = "、".join(miss[:4]) + ("…" if len(miss) > 4 else "")
+                self.lbl_ind_note.setText(
+                    f"本组合 {len(mp)}/{len(members)} 只有行业 · 缺 {len(miss)} 只（{_nm}）"
+                    " —— 东财没给这几只（停牌/退市/非 A 股），**不瞎猜**")
+            else:
+                self.lbl_ind_note.setText(
+                    f"本组合 {len(mp)}/{len(members)} 只都有行业了 · 库内共 {store.coverage()} 条")
             if self._pf_cur is not None:
                 self._render(self._pf_cur)
 
@@ -944,13 +996,20 @@ class PortfolioView(QWidget):
         self._fill_mix(self.ring_mkt, self.leg_mkt, market_mix(members, _cash), "合计")
         self._fill_mix(self.ring_ind, self.leg_ind, industry_mix(members, _imap, _cash), "合计")
         try:
-            _n_ind = len(_imap)
-            if _n_ind == 0:
-                self.lbl_ind_note.setText("行业映射是空的 ⇒ 点「↻ 同步行业」分批拉取（可重复点）。")
-            else:
-                _miss = [m for m in members if not _imap.get(str(m.get("symbol")))]
+            # ★1.91：讲**本组合的覆盖率**（旧版只报"库内 N 条"，用户看不出自己缺几只）
+            _miss = [str(m.get("symbol")) for m in members if not _imap.get(str(m.get("symbol")))]
+            _have = len(members) - len(_miss)
+            if not _imap:
                 self.lbl_ind_note.setText(
-                    f"库内行业 {_n_ind} 条" + (f" · 本组合缺 {len(_miss)} 只的行业" if _miss else ""))
+                    f"本组合 0/{len(members)} 只有行业 ⇒ 点「↻ 同步行业」（按本组合补，1~3 个请求）")
+            elif _miss:
+                _nm = "、".join(_miss[:3]) + ("…" if len(_miss) > 3 else "")
+                self.lbl_ind_note.setText(
+                    f"本组合 {_have}/{len(members)} 只有行业 · 缺 {len(_miss)} 只（{_nm}）"
+                    + ("" if self._em_logged_in() else " · 未登录东财（匿名档常被拒）"))
+            else:
+                self.lbl_ind_note.setText(
+                    f"本组合 {_have}/{len(members)} 只有行业 · 库内共 {len(_imap)} 条")
         except Exception:                  # noqa: BLE001
             pass
 
