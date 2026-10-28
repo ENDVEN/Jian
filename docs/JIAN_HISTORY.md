@@ -1221,3 +1221,24 @@ RULES 21 行 / PLAYBOOK 29 行 / HISTORY 9 行），直接把 `smoke_pages_overl
 三道可信度闸门（累计单调 / 首值≈首个 d / 表起点早于本地首日）任一不过 ⇒ 退回不复权并在卡面标注分界日，
 **不猜**。另：ETF 名单 1714 只 + LOF 359 只（各 1 个请求）；`volume` 实测为"股"（close×volume≈amount，
 禁 ×100）；货币 ETF 19 只默认排除（价格恒 ~100、收益靠份额折算）。
+
+---
+
+## ★1.93 · 架构与性能评估方案（文档轮 · 2026-10-29）
+
+**动因**：用户 2026-10-29 要求"以资深架构师视角看架构 / 文档编排 / 启动速度 / 目录归类"。
+本轮**只出方案、不改代码**，产出 `docs/JIAN_ARCH_PERF_PLAN.md`。
+
+**实测（本机，2026-10-29）**：启动 **4.05s** = Qt 0.04 + import 1.36 + 构造 **2.48** + 首绘 0.16；
+导入硬成本 pandas 0.54 / akshare 0.41 / pyqtgraph 0.18。构造期 cProfile 热点：
+`getsize` 1.69 · parquet 1.18 · `readiness._footer_last_date` 0.55（2,673 次）· `iterrows` 15,055 次 ·
+`strptime` 26,391 次 · `portfolio_view.__init__` 0.47（含 `_save_ui` 写盘 0.37）。
+
+**四个判断**：① 启动最大的浪费是**9 个页面全在 `__init__` 建好**（首屏只用 1 个）⇒ 惰性建页可省 1.5~2.0s；
+② 测试形态是最大结构债（2 个脚本 **14,389 行 = 22%** 代码量、无 unit/CI）；③ 文档 740k 字符、RULES 97.8k 临界、
+HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规范，仅 `models/`、`samples/` 像遗留物。
+
+**P0 清单（下一轮做）**：惰性建页（`_PAGE_FACTORIES` + `page_*` property + 只读 `_PAGES`；已核实全仓 0 处下标路由、
+132 处外部引用经 property 语义不变）· `roster_names` 向量化 · 日历批量转换 · footer LRU(mtime+size) ·
+新增 `scripts/probe_startup.py` 当同一把尺子。验收一律用**行为断言**（已建页面集合 / stat 调用数 / 逐位一致），
+不用墙钟（会 flaky）。
