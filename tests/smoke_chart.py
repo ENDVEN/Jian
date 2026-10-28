@@ -6193,8 +6193,10 @@ try:
     check("★ 1.81：参数研究**默认跟随**（`run_sweep(commission_rate=None)`），显式档位仍可覆盖",
           _insp81.signature(_rs81).parameters['commission_rate'].default is None)
     _src81 = ''
+    # ★1.90：组合页/组合内核也纳入（旧名单漏掉它们 ⇒ `portfolio_stats` 里留着一份硬编码 0.0003）
     for _f81 in ('ui/workers.py', 'ui/views/backtest.py', 'ui/widgets/sweep_results.py',
-                 'core/param_sweep.py'):
+                 'core/param_sweep.py', 'ui/views/portfolio_view.py',
+                 'core/portfolio_stats.py'):
         _src81 += open(_f81, encoding='utf-8').read()
     check("★ 1.81：**调用点里不许再写死费率**（`0.0003` 只准出现在 `core/backtest.py` 常量与其 docstring）",
           '0.0003' not in _src81)

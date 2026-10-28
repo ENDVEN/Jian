@@ -12,8 +12,11 @@
   ③ **成本价 = 组合基期那天的收盘价**（相当于按目标权重"模拟买入"），
      所以"盈亏" = 最新/成本 − 1，含义是**区间涨跌**，不是券商的持仓成本（那是账本，不是这里）。
 
-【为什么"停牌/缺数据"要 ffill 而不是丢日期】
-  组合净值必须**逐日可比**；某只票当天没成交（停牌）⇒ 价格沿用上一日（收益 0），这才是真实组合的行为。
+【交易日口径（★1.90 如实写明，别信旧描述）】
+  组合的交易日 = **所有成分都有数据的日子（交集）** —— 某只票还没上市的那段不算"持有一动不动"，
+  否则早期会被稀释成一条假平滑曲线（用户 2026-10-27 实测指出）。
+  ⇒ 副作用（必须知道）：**某只票中间停牌的那一天，整天不进组合** —— 其它票那天的涨跌也不会被计入。
+     这是交集口径的代价；真要逐日 ffill 需要"并集 + 按标的自身序列前值填充"，属另一套口径，未采用。
   但**整只票没有任何数据**时**不许**当 0 收益：`holdings_rows` 会标 `data_ok=False`，界面写"数据不足"（§10-4）。
 """
 from __future__ import annotations
@@ -47,8 +50,9 @@ def build_returns(frames: dict) -> tuple:
       组合净值在早期被稀释成一条**假的平滑曲线**，"全部区间"因此是个**伪命题**。
       交集 = **所有成分都有数据的第一天**才是组合真正的起点（也是唯一诚实的起点）。
 
-    · 单票中间缺失（停牌）⇒ 用 0 收益补（这段确实没法交易，且两端都有价）；
     · 返回的 Series 已按交易日列表对齐（长度一致，便于矩阵运算）。
+    · ⚠ `days` 是交集 ⇒ 这里的 `reindex` **不产生 NaN**（某只票缺的日子整列都不在 `days` 里）。
+      旧版这里写了两行 `fillna(0.0)` 并声称"停牌用 ffill"，实际一次都不会触发（死代码，★1.90 已删）。
     """
     rets = {str(k): _frame_returns(v) for k, v in (frames or {}).items()}
     rets = {k: v for k, v in rets.items() if len(v)}
@@ -56,11 +60,7 @@ def build_returns(frames: dict) -> tuple:
         return [], {}
     # 交集：**所有成分都有数据的交易日**才算组合的交易日（见上方口径说明）
     days = sorted(set.intersection(*(set(v.index) for v in rets.values())))
-    aligned = {}
-    for k, v in rets.items():
-        # 先按并集 reindex（缺失 = NaN ⇒ 停牌 ⇒ 用 0 收益），再 ffill 兜住"中间空档"
-        aligned[k] = v.reindex(days).fillna(0.0)
-        aligned[k] = aligned[k].fillna(0.0)
+    aligned = {k: v.reindex(days) for k, v in rets.items()}
     return days, aligned
 
 
@@ -77,7 +77,11 @@ def _month_end_mask(days) -> np.ndarray:
 
 def nav_series(days, returns: dict, weights: dict, cash: float = 0.0,
                rebalance: str = "monthly") -> pd.Series:
-    """按权重合成净值（基期 1.0000）。
+    """**不含成本**的加权净值（基期 1.0000）—— 口径对照用。
+
+    ⚠ 生产路径走 `nav_with_costs`（页面要"含换手成本"的两条线）；本函数只给
+      「无成本基准」的对照与冒烟断言用（`tests/smoke_chart.py` 的组合段）。
+      两套实现的**权重归一/再平衡规则必须逐位一致**，改一处必须同步另一处。
 
     :param weights: `{symbol: 权重百分数}`（合计应与 `100 - cash` 一致；这里**会归一**，不静默取整）
     :param rebalance: `'buy_hold'`（权重自由漂移）或 `'monthly'`（每月末拉回目标）
@@ -208,17 +212,65 @@ def industry_mix(members, industry_map: dict = None, cash: float = 0.0) -> list:
     return out
 
 
-__all__ += ["MARKET_LABELS", "market_of", "market_mix", "industry_mix"]
+def market_caps(frames: dict) -> tuple:
+    """`({symbol: 流通市值(元)}, [缺市值的 symbol])` —— 市值 = **最新收盘 × 最新流通股本**。
+
+    ★1.90：用户选了「市值权重」就必须**真算**（旧版只弹"暂未接入"，等于没有这一档）。
+    `outstanding_share`（流通股本/股）由新浪源提供、`data/lake_schema.py` 已登记为 optional；
+    **东财兜底源不给这一列** ⇒ 该只票进 `missing`、界面如实标「数据不足」，**绝不当 0**
+    （当 0 就等于把它从组合里静默抹掉，权重会被其它票吃掉）。
+    """
+    caps, missing = {}, []
+    for s, df in (frames or {}).items():
+        try:
+            if df is None or not len(df) or "outstanding_share" not in getattr(df, "columns", ()):
+                missing.append(str(s))
+                continue
+            d = df.dropna(subset=["close", "outstanding_share"])
+            if not len(d):
+                missing.append(str(s))
+                continue
+            cap = float(d["close"].iloc[-1]) * float(d["outstanding_share"].iloc[-1])
+            if not (cap > 0):
+                missing.append(str(s))
+                continue
+            caps[str(s)] = cap
+        except Exception:                  # noqa: BLE001 —— 单只坏数据不许拖垮整表
+            missing.append(str(s))
+    return caps, missing
+
+
+def cap_weights(caps: dict, order, cash: float = 0.0) -> dict:
+    """按**流通市值**分配权重（合计 = `100 − 现金`；余数补第一只，两位小数对得上）。
+
+    `order` = 组合成分顺序（决定"余数补谁"和输出顺序）；缺市值的票**不出现在结果里**
+    （调用方负责把它们记为 0 并告知用户 —— 不许偷偷按剩下的重新归一冒充整个组合）。
+    """
+    syms = [str(s) for s in (order or [])
+            if str(s) in (caps or {}) and float((caps or {}).get(str(s)) or 0) > 0]
+    if not syms:
+        return {}
+    total = sum(float(caps[s]) for s in syms)
+    target = max(0.0, 100.0 - float(cash or 0.0))
+    out = {s: round(float(caps[s]) / total * target, 2) for s in syms}
+    out[syms[0]] = round(target - sum(v for k, v in out.items() if k != syms[0]), 2)
+    return out
+
+
+__all__ += ["MARKET_LABELS", "market_of", "market_mix", "industry_mix",
+            "market_caps", "cap_weights"]
 
 
 def nav_with_costs(days, returns: dict, weights: dict, cash: float = 0.0,
-                   rebalance: str = "monthly", rate: float = 0.0003) -> dict:
+                   rebalance: str = "monthly", rate: float = None) -> dict:
     """**含换手成本**的净值 + 每次再平衡的明细（纯函数）。
 
     成本模型（用户 2026-10-26 口径：**双边、每次再平衡按成交额收**）：
       · 目标权重 `w`（已按 `1 − 现金比` 归一）；
       · 月末把各票市值拉回 `w × 总市值`：**成交额 = Σ|目标市值 − 当前市值|**（买卖两侧都算）；
-      · **成本 = 成交额 × 每边费率**（`rate` 就是"每边"的费率，双边已含在 Σ|Δ| 里）。
+      · **成本 = 成交额 × 每边费率**（`rate` 就是"每边"的费率，双边已含在 Σ|Δ| 里）；
+        `rate=None` ⇒ **跟随全局「回测佣金」**（§1.81 唯一口径，页面就是这么调的），
+        显式传值可覆盖（成本敏感性研究用固定档）。
 
     ⚠ 毛/净走**两条独立模拟**：净那条每次再平衡把成本**永久扣掉**（不回填），
       否则会出现"扣了又追平"的假净值（我先写错过一次）。
@@ -241,7 +293,12 @@ def nav_with_costs(days, returns: dict, weights: dict, cash: float = 0.0,
     n = len(days)
     resets = _month_end_mask(days) if str(rebalance) == "monthly" else np.zeros(n, dtype=bool)
     cash_v = float(cash or 0.0) / 100.0
-    fee = float(rate or 0.0)
+    if rate is None:
+        # ★1.90 / §1.81：**不写死费率数字** —— 缺省跟随设置里的「回测佣金」（延迟导入，避免 core 环依赖）
+        from core.backtest import commission_rate_from_prefs as _rate_now
+        fee = float(_rate_now() or 0.0)
+    else:
+        fee = float(rate or 0.0)
 
     def _sim(deduct: bool):
         vals = w.copy()

@@ -7330,7 +7330,7 @@ try:
     check(f"★ 1.87 组合 P0.5：等权 + 现金 10%% ⇒ 45/45 + 10 = **{_sum5}**（必须 100.00）",
           _sum5 == 100.0 and [m["weight"] for m in _out5["members"]] == [45.0, 45.0])
     check("★ 1.87 组合 P0.5：手改权重 ⇒ 模式自动降级「自定义」（不许标着等权却不等）",
-          (lambda: (_dlg.tbl.item(0, 2).setText("70.00"),
+          (lambda: (_dlg.tbl.item(0, 3).setText("70.00"),      # ★1.90：可编辑列 = 「新权重 %」
                     _dlg.cmb_mode.currentData() == "custom")[-1])())
 except Exception as _e85u:  # noqa: BLE001
     check(f"★1.87 组合 P0.5 断言整段抛异常: {type(_e85u).__name__}: {_e85u}", False)
@@ -7438,18 +7438,21 @@ print("\n== ★1.87 组合 P4.4 · 区间档 ==")
 try:
     _pv7 = win.page_portfolio
     _btns7 = getattr(_pv7, "_win_btns", {})
-    _ok7 = set(_btns7) == {0, 3, 12} and all(b.isCheckable() for b in _btns7.values())
-    _lens = []
-    for _k7 in (0, 12, 3):
+    # ★1.90：区间从三档扩到五档（今年以来 / 自组合建立）
+    _ok7 = (set(_btns7) == {"3m", "1y", "ytd", "all", "since"}
+            and all(b.isCheckable() for b in _btns7.values()))
+    _lens = {}
+    for _k7 in ("3m", "1y", "ytd", "all", "since"):
         if _btns7:
             _btns7[_k7].click()
             app.processEvents()
-        _lens.append(len(_pv7._nav) if _pv7._nav is not None else 0)
+        _lens[_k7] = len(_pv7._nav) if _pv7._nav is not None else 0
     if _btns7:
-        _btns7[0].click()
+        _btns7["all"].click()
         app.processEvents()
-    check(f"★ 1.87：区间档 **三档齐全**，且点数**单调递减**（实测 {_lens}）",
-          _ok7 and _lens[2] <= _lens[1] <= _lens[0])
+    check(f"★ 1.87：区间档 **五档齐全**，且区间越短点数越少（实测 {_lens}）",
+          _ok7 and _lens["3m"] <= _lens["1y"] <= _lens["all"]
+          and _lens["ytd"] <= _lens["all"] and _lens["since"] <= _lens["all"])
 except Exception as _e12:  # noqa: BLE001
     check(f"★1.87 区间档断言整段抛异常: {type(_e12).__name__}: {_e12}", False)
 
@@ -7540,13 +7543,15 @@ try:
 
     _pv16 = win.page_portfolio
     _firsts = []
-    for _k16 in (0, 12, 3):
-        if getattr(_pv16, "_win_btns", None):
+    _keys16 = ("3m", "1y", "ytd", "all", "since")      # ★1.90：区间档扩到 5 个
+    for _k16 in _keys16:
+        if getattr(_pv16, "_win_btns", None) and _k16 in _pv16._win_btns:
             _pv16._win_btns[_k16].click()
             app.processEvents()
         if _pv16._nav is not None and len(_pv16._nav):
             _firsts.append(round(float(_pv16._nav.iloc[0]), 6))
-    check(f"★ 1.88：三档窗口**首值都是 1.0000**（实测 {_firsts}）—— 旧版切窗口是从全区间截一段",
+    check(f"★ 1.88：各档区间**首值都是 1.0000**（实测 {len(_firsts)} 档 {_firsts}）"
+          "—— 旧版切窗口是从全区间截一段",
           (not _firsts) or all(abs(v - 1.0) < 1e-9 for v in _firsts))
     check("★ 1.88：基准可在**卡头下拉**换（不再只能进编辑框）",
           hasattr(_pv16, "cmb_base") and _pv16.cmb_base.count() > 0)
@@ -7602,9 +7607,9 @@ try:
     _out17 = _dlg17.result_portfolio()
     _cash17 = float(_out17["cash"])
     _wsum17 = round(sum(m["weight"] for m in _out17["members"]), 2)
-    check("★ 1.89：合计 70% 选「留作现金」⇒ 现金 " + f"{_cash17:.2f}%"
-          + " · 成员合计 " + f"{_wsum17:.2f}%",
-          abs(_cash17 - 40.0) < 0.01)
+    check("★ 1.90：合计 70% ⇒ 点「确定」**自动**把差额计入现金（现金 " + f"{_cash17:.2f}%"
+          + " · 成员合计 " + f"{_wsum17:.2f}%），不用用户自己算",
+          abs(_cash17 - 40.0) < 0.01 and abs(_wsum17 - 60.0) < 0.01)
 
     _pv17 = win.page_portfolio
     _pv17._set_ov(ret=-1.23, nav=0.98, day=-0.5, excess=-2.0)
@@ -7620,6 +7625,216 @@ try:
           hasattr(_pv17, "btn_pub"))
 except Exception as _e17:  # noqa: BLE001
     check(f"★1.89 P7 断言整段抛异常: {type(_e17).__name__}: {_e17}", False)
+
+
+# ==========================================
+# ★1.90 / P8：基准**只保留指数/行业指数** · 基准缺日不填 0 · 文案与缓存的三处纪律
+#   用户 2026-10-28 实测：基准下拉里出现 899050 / 000009 / 000688 这类**裸代码**，
+#   "严重影响使用体验" ⇒ 显示名一律取 INDEX_PRESETS，认不出的不列，个股不进基准。
+# ==========================================
+print("\n== ★1.90 组合 P8 · 基准只留指数 / 缺日不填 0 ==")
+try:
+    import inspect as _insp90
+    import re as _re90
+
+    _root90 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _pv90 = win.page_portfolio
+
+    def _read90(rel):
+        with open(os.path.join(_root90, rel), encoding='utf-8') as _f90:
+            return _f90.read()
+
+    _src90 = _read90("ui/views/portfolio_view.py")
+    _src90e = _read90("ui/dialogs/portfolio_edit.py")
+    _opts90 = _pv90._base_options()
+    _labels90 = [str(t) for t, _v in _opts90]
+    _vals90 = [v for _t, v in _opts90]
+    check(f"★ 1.90：基准下拉**只有指数/行业指数**（{len(_opts90)} 项 · 全部 kind=index · 无裸代码）",
+          bool(_opts90) and all(str(v.get("kind")) == "index" for v in _vals90)
+          and not any(_re90.fullmatch(r"\d{6}", t) for t in _labels90)
+          and not any(t.strip().isdigit() for t in _labels90))
+    check(f"★ 1.90：显示名是**中文指数名**（沪深300 在列 / 北证50 不再是 899050）—— 前 4 项 {_labels90[:4]}",
+          any("沪深300" in t for t in _labels90)
+          and not any(t.startswith("899050") for t in _labels90)
+          and all(t.strip() for t in _labels90))
+    _first_undl90 = next((i for i, t in enumerate(_labels90) if t.endswith("（未下载）")), len(_labels90))
+    check("★ 1.90：**已下载的排在前面**（未下载的带「（未下载）」并在后段）",
+          all(not t.endswith("（未下载）") for t in _labels90[:_first_undl90])
+          and all(t.endswith("（未下载）") for t in _labels90[_first_undl90:]))
+    check("★ 1.90：基准缺的交易日**不再当 0 收益**（旧版 `{d: 0.0 for d in nav.index}` 会画出假平线）",
+          "{d: 0.0 for d in nav.index}" not in _src90 and "_bs.notna()" in _src90
+          and "np.nan" in _src90)
+    from ui.views.portfolio_view import _weight_label as _wl90
+    check("★ 1.90：`cap` 档标签 = **流通市值（编辑时快照）**（已真接，不再写「未接入」）",
+          "流通市值" in _wl90("cap") and "未接入" not in _wl90("cap")
+          and _wl90("equal") == "等权")
+    _bad90 = [_f for _f, _src in (("ui/views/portfolio_view.py", _src90),
+                                 ("ui/dialogs/portfolio_edit.py", _src90e))
+              for _ln in _src.splitlines()
+              if "**" in _ln and any(_k in _ln for _k in ("setText", "setToolTip", "setWindowTitle",
+                                                         "setInformativeText", "QLabel("))]
+    check(f"★ 1.90：用户可见文案里**不再有 markdown `**`**（QLabel/QMessageBox 不认）—— {_bad90}",
+          not _bad90)
+    _pv90._frames(["600000"])
+    _k90 = list(_pv90._cache.keys())[-1] if _pv90._cache else ()
+    check("★ 1.90：日线缓存键**带文件 mtime**（补下载后曲线自动更新，不用重启/换页）",
+          bool(_k90) and isinstance(_k90[0], tuple) and isinstance(_k90[0][1], float))
+    check("★ 1.90：来源组与组合快照不一致时**有提示**（不静默跟随、也不静默忽略）",
+          "symbols_in(" in _src90 and "不会自动改组合" in _src90)
+    from core.portfolio_stats import nav_with_costs as _nwc90
+    check("★ 1.90：组合成本的费率**缺省跟随全局设置**（`rate=None`，不再写死 0.0003）",
+          _insp90.signature(_nwc90).parameters["rate"].default is None
+          and "0.0003" not in _read90("core/portfolio_stats.py"))
+except Exception as _e90:  # noqa: BLE001
+    check(f"★1.90 P8 断言整段抛异常: {type(_e90).__name__}: {_e90}", False)
+
+
+# ==========================================
+# ★1.90 / P9：市值权重**真算** · 差额自动进现金 · 编辑页"原→新→变化" · 调仓记录接手动改成分
+#   用户 2026-10-28 实测三连问：① 选市值还弹"暂未接入"；② 80% 时确定是灰的、连提示都没有；
+#   ③ 随便改成分，调仓记录全是空的。
+# ==========================================
+print("\n== ★1.90 组合 P9 · 市值权重 / 差额进现金 / 变更对照 ==")
+try:
+    import pandas as _pd91
+
+    import ui.dialogs.portfolio_edit as _pe91
+    from core.portfolio_stats import cap_weights as _cw91
+    from core.portfolio_stats import market_caps as _mc91
+    from data.portfolio_store import append_change as _ac91
+    from data.portfolio_store import diff_members as _dm91
+    from data.portfolio_store import new_portfolio as _np91
+
+    _dfA91 = _pd91.DataFrame({"date": ["2026-10-20", "2026-10-27"],
+                              "close": [10.0, 20.0], "outstanding_share": [1e8, 1e8]})
+    _dfB91 = _pd91.DataFrame({"date": ["2026-10-20", "2026-10-27"],
+                              "close": [10.0, 10.0], "outstanding_share": [3e8, 3e8]})
+    _dfC91 = _pd91.DataFrame({"date": ["2026-10-27"], "close": [5.0]})   # 没有流通股本列
+    _caps91, _miss91 = _mc91({"A": _dfA91, "B": _dfB91, "C": _dfC91})
+    check("★ 1.90 市值 = 最新收盘 × 流通股本（A=20×1e8 · B=10×3e8）；缺 `outstanding_share` 的 C 记「数据不足」",
+          abs(_caps91.get("A", 0) - 2e9) < 1 and abs(_caps91.get("B", 0) - 3e9) < 1
+          and _miss91 == ["C"])
+    _w91 = _cw91(_caps91, ["A", "B"], 10.0)
+    check(f"★ 1.90 按市值比例分配（A={_w91.get('A')}% · B={_w91.get('B')}%，合计 90%）",
+          abs(float(_w91.get("A") or 0) - 36.0) < 0.02
+          and abs(float(_w91.get("B") or 0) - 54.0) < 0.02)
+
+    class _SB91:
+        @staticmethod
+        def information(*_a, **_k):
+            return None
+
+        @staticmethod
+        def warning(*_a, **_k):
+            return None
+
+    _qmb91 = _pe91.QMessageBox
+    _pe91.QMessageBox = _SB91
+    try:
+        _pf91 = _np91("T", "", [{"symbol": "A", "name": "甲", "weight": 50.0},
+                                {"symbol": "B", "name": "乙", "weight": 50.0}])
+        _d91 = _pe91.PortfolioEditDialog(_pf91, None,
+                                         cap_provider=lambda _s: (_caps91, _miss91))
+        _d91.sp_cash.setValue(10.0)
+        _d91.cmb_mode.setCurrentIndex(_d91.cmb_mode.findData("cap"))
+        _d91._on_mode(0)
+        _out91 = _d91.result_portfolio()
+        _wA91 = next(m["weight"] for m in _out91["members"] if m["symbol"] == "A")
+        check(f"★ 1.90 选「流通市值」**真的重算权重**（A={_wA91}%，不再弹『暂未接入』）",
+              abs(float(_wA91) - 36.0) < 0.05 and str(_out91.get("weight_mode")) == "cap")
+        check("★ 1.90 编辑框有**原权重 / 新权重 / 变化** 三列对照",
+              _d91.tbl.columnCount() == 6
+              and "原权重" in str(_d91.tbl.horizontalHeaderItem(2).text())
+              and "新权重" in str(_d91.tbl.horizontalHeaderItem(3).text())
+              and str(_d91.tbl.horizontalHeaderItem(4).text()) == "变化")
+        _d91.tbl.item(0, 3).setText("45.00")
+        _dtxt91 = _d91.tbl.item(0, 4).text()
+        check(f"★ 1.90 改完当场显示『变了几个点』（实测「{_dtxt91}」）",
+              ("▲" in _dtxt91) or ("▼" in _dtxt91))
+        _d91._members.pop()
+        _d91._render_rows()
+        check("★ 1.90 删掉的票在摘要里**点名**（表里已经没有它了）",
+              "删除" in _d91.lbl_diff.text())
+    finally:
+        _pe91.QMessageBox = _qmb91
+
+    _d91c = _dm91([{"symbol": "A", "weight": 40.0}], 10.0,
+                  [{"symbol": "A", "weight": 45.0}, {"symbol": "B", "weight": 45.0}], 10.0)
+    check("★ 1.90 差异识别：改权重 + 新增同时记上（现金没动就不算变更项）",
+          len(_d91c["moved"]) == 1 and abs(_d91c["moved"][0]["delta"] - 5.0) < 1e-9
+          and len(_d91c["added"]) == 1 and bool(_d91c["has_change"]))
+    _pf91b = _np91("T2", "", [])
+    for _i91 in range(80):
+        _ac91(_pf91b, {"at": f"10-{_i91 % 28 + 1:02d}", "kind": "edit"})
+    check("★ 1.90 调仓记录**永久保存**（80 条一条不丢，不设上限）",
+          len(_pf91b["changes"]) == 80)
+
+    _pv91 = win.page_portfolio
+    _prev91 = _pv91._pf_cur
+    _pf91c = _np91("H", "", [])
+    _ac91(_pf91c, {"at": "10-28 21:00", "kind": "edit",
+                   "added": [{"symbol": "600000", "name": "浦发", "weight": 100.0}],
+                   "removed": [], "moved": [], "cash_before": 0.0, "cash_after": 0.0})
+    _pv91._render_p1(_pf91c)
+    check("★ 1.90 调仓记录：**手动改成分也进这张卡**（旧版只记月末再平衡 ⇒ 永远是空的）",
+          "手动改成分" in _pv91.reb_head.meta_label.text()
+          and ("浦发" in _pv91.reb_list.all_text() or "600000" in _pv91.reb_list.all_text()))
+    _line91 = _pv91._change_line({"at": "10-28 21:00",
+                                  "moved": [{"symbol": "600320", "name": "振华重工",
+                                             "before": 30.0, "after": 35.0, "delta": 5.0}],
+                                  "added": [], "removed": [],
+                                  "cash_before": 10.0, "cash_after": 10.0})
+    check("★ 1.90 变更行写清『原来多少 → 现在多少（几个点）』",
+          "30.00→35.00" in _line91 and "+5.00" in _line91)
+    _pv91._pf_cur = _prev91
+except Exception as _e91:  # noqa: BLE001
+    check(f"★1.90 P9 断言整段抛异常: {type(_e91).__name__}: {_e91}", False)
+
+
+# ==========================================
+# ★1.90 / P10：净值区间 5 档（今年以来 / 自组合建立）· 调仓记录控件化 + 永久保存
+# ==========================================
+print("\n== ★1.90 组合 P10 · 区间 5 档 / 调仓记录控件化 ==")
+try:
+    from ui.widgets.portfolio_changes import ChangeList as _CL92
+
+    _pv92 = win.page_portfolio
+    _keys92 = tuple(_pv92._win_btns.keys())
+    _texts92 = [b.text() for b in _pv92._win_btns.values()]
+    check(f"★ 1.90 净值区间 5 档（实测 {_texts92}）",
+          _keys92 == ("3m", "1y", "ytd", "all", "since")
+          and any("今年以来" in t for t in _texts92)
+          and any("自组合建立" in t for t in _texts92))
+
+    _days92 = ["2024-12-30", "2025-01-02", "2026-03-02", "2026-10-23"]
+    _pv92._range = "ytd"
+    _cut92, _ = _pv92._range_cut({"created_at": "2026-01-05 10:00:00"}, _days92)
+    check("★ 1.90「今年以来」= **当年 1 月 1 日**（不是「往前推 12 个月」）", _cut92 == "2026-01-01")
+    _pv92._range = "since"
+    _cut93, _n93 = _pv92._range_cut({"created_at": "2026-03-05 09:00:00"}, _days92)
+    check("★ 1.90「自组合建立」= 组合**创建日**", _cut93 == "2026-03-05" and not _n93)
+    _cut94, _n94 = _pv92._range_cut({"created_at": "2020-01-05 10:00:00"}, _days92)
+    check("★ 1.90 创建日早于本机数据起点 ⇒ 按数据起点画并**说明**（不静默）",
+          _cut94 == "" and "早于" in _n94)
+    _pv92._range = "all"
+
+    _cl92 = _CL92()
+    _cl92.set_records([
+        {"at": "10-28 19:52", "tag": "", "items": [
+            {"badge": "增持", "kind": "buy", "name": "振华重工", "symbol": "600320",
+             "main": "30.00% > 35.00%", "sub": "变化 +5.00"}],
+         "note": "现金 10.00% > 15.00%"},
+        {"at": "10-20 09:00", "tag": "再平衡", "items": [
+            {"badge": "减持", "kind": "sell", "name": "西藏天路", "symbol": "600326",
+             "main": "调整 2.00%", "sub": "月末再平衡"}], "note": ""}])
+    _txt92 = _cl92.all_text()
+    check("★ 1.90 调仓记录控件化：每笔一行（标签 / 名称 / 代码 / 原来>现在 / 变化都在）",
+          _cl92.count() == 2 and "增持" in _txt92 and "振华重工" in _txt92
+          and "600320" in _txt92 and "30.00% > 35.00%" in _txt92 and "+5.00" in _txt92)
+    _cl92.set_records([])
+    check("★ 1.90 空记录 ⇒ 列表不画任何行（提示交给卡片说明，不造假行）", _cl92.count() == 0)
+except Exception as _e92:  # noqa: BLE001
+    check(f"★1.90 P10 断言整段抛异常: {type(_e92).__name__}: {_e92}", False)
 
 
 # §11.5-130 · 回测模块子页签：**别按下标路由**（用户 2026-10-12 实测）—— ★1.71

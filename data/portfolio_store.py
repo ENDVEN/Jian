@@ -31,7 +31,7 @@ SCHEMA_VERSION = 1
 
 #: 权重模式（用户 2026-10-26 拍板：**等权默认**，但必须给"市值/自定义"）
 WEIGHT_MODES = ("equal", "cap", "custom")
-WEIGHT_LABELS = {"equal": "等权", "cap": "市值", "custom": "自定义"}
+WEIGHT_LABELS = {"equal": "等权", "cap": "流通市值", "custom": "自定义"}
 
 #: 再平衡（用户拍板：**买入持有 + 按月**）
 REBALANCE_MODES = ("buy_hold", "monthly")
@@ -62,8 +62,53 @@ def new_portfolio(name: str = "", source_group: str = "", members=None,
         "base": dict(DEFAULT_BASE),
         "rebalance": DEFAULT_REBALANCE,
         "created_at": _now(),
+        # ★1.90：**成分变更史**（谁在什么时候把哪只票从 X% 改到 Y%）—— 「调仓记录」卡读它。
+        #   与"月末再平衡"是两件事：这里记**用户手动改的**，再平衡记**回测口径算出来的**。
+        "changes": [],
         "schema_version": SCHEMA_VERSION,
     }
+
+
+# ★1.90（用户 2026-10-28）：**调仓记录永久保存，不设上限** —— 只有删组合才消失。
+#   列表渲染侧靠 `ChangeList` 限高 + 滚动，不靠丢数据来解决"太长"（§11.5-137）。
+
+
+def diff_members(before, before_cash: float, after, after_cash: float) -> dict:
+    """比较两份成分表 → `{added, removed, moved, cash_before, cash_after, has_change}`。
+
+    · `added`   = 新加的票（带 weight）· `removed` = 删掉的票（带原 weight）
+    · `moved`   = **权重变了**的票（`before` / `after` / `delta`）
+    · 没变化 ⇒ `has_change=False`（调用方据此**不写记录**，别造空账）
+    """
+    _b = {str(m.get("symbol")): m for m in (before or []) if str(m.get("symbol") or "").strip()}
+    _a = {str(m.get("symbol")): m for m in (after or []) if str(m.get("symbol") or "").strip()}
+    added, removed, moved = [], [], []
+    for s, m in _a.items():
+        if s not in _b:
+            added.append({"symbol": s, "name": str(m.get("name") or ""),
+                          "weight": round(float(m.get("weight") or 0.0), 2)})
+            continue
+        w0 = round(float(_b[s].get("weight") or 0.0), 2)
+        w1 = round(float(m.get("weight") or 0.0), 2)
+        if abs(w1 - w0) >= 0.005:
+            moved.append({"symbol": s, "name": str(m.get("name") or ""),
+                          "before": w0, "after": w1, "delta": round(w1 - w0, 2)})
+    for s, m in _b.items():
+        if s not in _a:
+            removed.append({"symbol": s, "name": str(m.get("name") or ""),
+                            "weight": round(float(m.get("weight") or 0.0), 2)})
+    c0, c1 = round(float(before_cash or 0.0), 2), round(float(after_cash or 0.0), 2)
+    return {"added": added, "removed": removed, "moved": moved,
+            "cash_before": c0, "cash_after": c1,
+            "has_change": bool(added or removed or moved or abs(c1 - c0) >= 0.005)}
+
+
+def append_change(portfolio: dict, entry: dict) -> dict:
+    """把一次成分变更**追加**进 `changes`（**不截断** —— 用户要求永久保存），返回该组合。"""
+    rows = list(portfolio.get("changes") or [])
+    rows.append(dict(entry))
+    portfolio["changes"] = rows
+    return portfolio
 
 
 def members_from_entries(entries, mode: str = DEFAULT_WEIGHT_MODE) -> list:
@@ -194,6 +239,8 @@ class PortfolioStore:
                            "weight": round(float(m.get("weight") or 0.0), 2)}
                           for m in (out.get("members") or []) if str(m.get("symbol") or "").strip()]
         out["cash"] = round(max(0.0, min(100.0, float(out.get("cash") or 0.0))), 2)
+        # ★1.90/1.92：成分变更史（只认 dict；坏项跳过自己，不拖垮整库；**不截断**）
+        out["changes"] = [dict(c) for c in (p.get("changes") or []) if isinstance(c, dict)]
         return out
 
     def _quarantine(self) -> None:
@@ -206,5 +253,6 @@ class PortfolioStore:
 
 
 __all__ = ["PortfolioStore", "new_portfolio", "members_from_entries", "normalize_weights",
+           "diff_members", "append_change",
            "WEIGHT_MODES", "WEIGHT_LABELS", "REBALANCE_MODES", "REBALANCE_LABELS",
            "DEFAULT_BASE", "DEFAULT_WEIGHT_MODE", "DEFAULT_REBALANCE", "SCHEMA_VERSION"]

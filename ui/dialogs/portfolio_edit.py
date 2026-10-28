@@ -5,23 +5,27 @@
 （"麟平组合 0 只"就是这么来的）。导入是"整组搬"，本对话框是"逐只调"，两者互补。
 
 【口径（不许静默改数）】
-  · 权重合计 + 现金 **必须 = 100.00%**，差一点就拦下并给出「一键归一」；
+  · 权重合计 + 现金 **超过 100% 拦下**；**不足 100% 的差额点「确定」自动计入现金**（★1.90，
+    旧版把「确定」直接禁用 ⇒ 用户只能自己拿计算器凑，他实测 80% 时连提示都没有）；
   · 「等权」= `(100 − 现金) / n`（余数补第一个，保证 100.00）；
-  · **市值权重**目前只做"占位"：本机没有市值快照 ⇒ 选它会**明确说明**"按等权占位，市值接入后生效"，
-    绝不假装算过（§10-4）；
+  · **市值权重 = 流通市值**（★1.90 真接）：最新收盘 × 最新流通股本（`outstanding_share`）；
+    缺这一列的票记「数据不足」并**点名**，权重记 0 让用户手补 —— 绝不按剩下的重新归一冒充整个组合；
+  · 表格三列对照 **原权重 / 新权重 / 变化**（`▲ +x.xx` / `▼ -x.xx` / `＋ 新增`），
+    删掉的票在上方摘要里点名（否则"改了什么都不记得"）；
   · 改完只在"确定"时写回，取消零副作用。
 """
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QComboBox, QDialog, QDoubleSpinBox, QHBoxLayout, QHeaderView,
                              QLineEdit, QSizePolicy,
                              QInputDialog, QLabel, QMessageBox, QPushButton,
                              QTableWidget, QTableWidgetItem, QVBoxLayout)
 
-from core.portfolio_stats import market_of
+from core.portfolio_stats import cap_weights, market_of
 from data.portfolio_store import (DEFAULT_BASE, REBALANCE_LABELS, WEIGHT_LABELS,
-                                  normalize_weights)
+                                  diff_members, normalize_weights)
 from data.watchlist_store import WatchlistStore
 
 _QSS = (
@@ -41,13 +45,18 @@ _BTN_P = ("QPushButton { background:#1976D2; color:white; border:none; border-ra
 class PortfolioEditDialog(QDialog):
     """编辑一个组合的成分与权重（返回**新的** portfolio 字典，不改入参）。"""
 
-    def __init__(self, portfolio: dict, parent=None, name_lookup=None):
+    def __init__(self, portfolio: dict, parent=None, name_lookup=None, cap_provider=None):
         super().__init__(parent)
         self._pf = dict(portfolio)
         self._lookup = name_lookup        # 外部注入的"代码→名称"（组合页给的是花名册门面）
+        self._cap_provider = cap_provider  # ★1.90：`symbols -> ({symbol: 流通市值}, [缺失])`（组合页注入）
         self._members = [dict(m) for m in (portfolio.get("members") or [])]
+        # ★1.90：打开时的**原始快照** —— 表格要显示"原来多少 → 现在多少"（用户 2026-10-28 要求）
+        self._orig_members = [dict(m) for m in (portfolio.get("members") or [])]
+        self._orig_cash = float(portfolio.get("cash") or 0.0)
+        self._orig_mode = str(portfolio.get("weight_mode") or "equal")
         self.setWindowTitle(f"编辑成分 · {portfolio.get('name') or '组合'}")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(660)
         self.setStyleSheet(_QSS)
         self._build()
         self._fill()
@@ -58,7 +67,8 @@ class PortfolioEditDialog(QDialog):
         lay.setContentsMargins(14, 12, 14, 12)
         lay.setSpacing(9)
 
-        tip = QLabel("加/减标的、改权重。**合计（含现金）必须 = 100.00%**；改完点「确定」才生效。")
+        tip = QLabel("加/减标的、改权重。<b>合计（含现金）超过 100% 会被拦下；"
+                     "不足 100% 的差额，点「确定」时自动计入现金</b>（不用自己算）。")
         tip.setWordWrap(True)
         lay.addWidget(tip)
 
@@ -86,8 +96,9 @@ class PortfolioEditDialog(QDialog):
         row.addWidget(self.cmb_mode)
         lay.addLayout(row)
 
-        self.tbl = QTableWidget(0, 4)
-        self.tbl.setHorizontalHeaderLabels(["代码", "名称", "权重 %", "市场"])
+        # ★1.90：**原权重 / 新权重 / 变化** 三列并排 —— 用户要一眼看清"之前多少、现在多少、变了几个点"
+        self.tbl = QTableWidget(0, 6)
+        self.tbl.setHorizontalHeaderLabels(["代码", "名称", "原权重 %", "新权重 %", "变化", "市场"])
         self.tbl.verticalHeader().setVisible(False)
         self.tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         # ★1.87：**表格必须吃满宽度**（否则窗口拉大后右侧一大片空白，用户实测）
@@ -95,11 +106,17 @@ class PortfolioEditDialog(QDialog):
         _h = self.tbl.horizontalHeader()
         _h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         _h.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        _h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        _h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        for _c in (2, 3, 4, 5):
+            _h.setSectionResizeMode(_c, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.tbl.itemChanged.connect(self._on_item_changed)
         lay.addWidget(self.tbl, 1)
+
+        # 变更摘要（删除的票不在表里了，必须在这里点名，否则"改了什么都不记得"）
+        self.lbl_diff = QLabel("")
+        self.lbl_diff.setWordWrap(True)
+        self.lbl_diff.setStyleSheet("font-size:12px;color:#5A6577;")
+        lay.addWidget(self.lbl_diff)
 
         row2 = QHBoxLayout()
         row2.setSpacing(6)
@@ -108,7 +125,7 @@ class PortfolioEditDialog(QDialog):
         self.sp_cash.setRange(0.0, 100.0)
         self.sp_cash.setDecimals(2)
         self.sp_cash.setSuffix(" %")
-        self.sp_cash.valueChanged.connect(self._refresh_total)
+        self.sp_cash.valueChanged.connect(self._on_cash_changed)
         row2.addWidget(self.sp_cash)
         self.lbl_total = QLabel("")
         self.lbl_total.setWordWrap(True)
@@ -196,21 +213,42 @@ class PortfolioEditDialog(QDialog):
         self._render_rows()
         self._refresh_total()
 
+    def _diff(self) -> dict:
+        """与"打开时"相比的差异（表里显示"原权重 → 新权重 → 变化"，删掉的票走摘要行）。"""
+        return diff_members(self._orig_members, self._orig_cash,
+                            self._members, float(self.sp_cash.value()))
+
     def _render_rows(self) -> None:
         self.tbl.blockSignals(True)
         self.tbl.setRowCount(len(self._members))
         _nm = self._names()          # ★1.87：名称列必须走这里（否则手工加的票永远空着）
+        _d = self._diff()
+        _added = {str(x.get("symbol")) for x in _d["added"]}
+        _orig_w = {str(x.get("symbol")): float(x.get("weight") or 0.0)
+                   for x in self._orig_members}
         for r, m in enumerate(self._members):
             _sym = str(m.get("symbol") or "")
+            _w = float(m.get("weight") or 0.0)
+            if _sym in _added:
+                _orig_txt, _delta_txt, _tone = "—（新增）", "＋ 新增", "#1976D2"
+            else:
+                _o = round(float(_orig_w.get(_sym, 0.0)), 2)
+                _dv = round(_w - _o, 2)
+                _orig_txt = f"{_o:.2f}"
+                _tone = "#2E7D32" if _dv > 0 else ("#C62828" if _dv < 0 else "#8A94A6")
+                _delta_txt = (f"▲ +{_dv:.2f}" if _dv > 0
+                              else (f"▼ {_dv:.2f}" if _dv < 0 else "—"))
             for c, txt in enumerate([_sym, str(m.get("name") or _nm.get(_sym) or ""),
-                                     f"{float(m.get('weight') or 0):.2f}",
+                                     _orig_txt, f"{_w:.2f}", _delta_txt,
                                      {"sh": "沪", "sz": "深", "bj": "北", "other": "其他"}
                                      .get(market_of(m.get("symbol")), "其他")]):
                 it = QTableWidgetItem(txt)
-                if c >= 2:
+                if c >= 2 and c != 5:
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                if c in (0, 1, 3):
+                if c != 3:                       # 只有「新权重」可编辑
                     it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if c == 4:
+                    it.setForeground(QColor(_tone))
                 self.tbl.setItem(r, c, it)
         self.tbl.blockSignals(False)
         # 反写名字（只补空值；不覆盖用户已有名称）
@@ -219,18 +257,59 @@ class PortfolioEditDialog(QDialog):
                 n = _nm.get(str(m.get("symbol") or ""))
                 if n:
                     m["name"] = n
+        self._refresh_diff(_d)
+
+    def _refresh_diff(self, d: dict = None) -> None:
+        """变更摘要：改权重 N 只 · 新增 · **删除的票要在这里点名**（它们已不在表里）· 现金变化。"""
+        d = d if d is not None else self._diff()
+        if not d.get("has_change"):
+            self.lbl_diff.setText("与打开时相比还没有改动。")
+            return
+        _bits = []
+        if d["moved"]:
+            _bits.append(f"改权重 {len(d['moved'])} 只")
+        if d["added"]:
+            _bits.append(f"新增 {len(d['added'])} 只")
+        if d["removed"]:
+            _bits.append(f"删除 {len(d['removed'])} 只")
+        if abs(float(d["cash_after"]) - float(d["cash_before"])) >= 0.005:
+            _bits.append(f"现金 {d['cash_before']:.2f}% → {d['cash_after']:.2f}%")
+        _rm = "、".join(f"{x['symbol']}（原 {x['weight']:.2f}%）" for x in d["removed"])
+        self.lbl_diff.setText("本次变更：" + " · ".join(_bits) + (f"　｜　删除：{_rm}" if _rm else ""))
 
     def _refresh_total(self) -> None:
         total = sum(float(m.get("weight") or 0.0) for m in self._members) + float(self.sp_cash.value())
-        ok = abs(total - 100.0) < 0.05
-        self.lbl_total.setText(
-            f"合计（含现金）<b>{total:.2f}%</b>" + ("　✓" if ok else "　⚠ 必须 = 100.00%"))
-        self.lbl_total.setStyleSheet("font-size:12.5px;color:%s;" % ("#2E7D32" if ok else "#C62828"))
-        self.btn_ok.setEnabled(ok and bool(self._members))
+        if not self._members:
+            self.lbl_total.setText("还没有成分 —— 先「＋ 添加代码」")
+            self.lbl_total.setStyleSheet("font-size:12.5px;color:#C62828;")
+            self.btn_ok.setEnabled(False)
+            return
+        _gap = round(100.0 - total, 2)
+        if _gap > 0.05:
+            # ★1.90（用户 2026-10-28）：**差额不用自己算** —— 写明"点确定就自动进现金"
+            _cash_new = min(100.0, round(float(self.sp_cash.value()) + _gap, 2))
+            self.lbl_total.setText(
+                f"合计（含现金）<b>{total:.2f}%</b>　·　还差 <b>{_gap:.2f}%</b>"
+                f" ⇒ 点「确定」自动计入现金（现金 {float(self.sp_cash.value()):.2f}% → {_cash_new:.2f}%）")
+            self.lbl_total.setStyleSheet("font-size:12.5px;color:#B26A00;")
+            self.btn_ok.setEnabled(True)
+        elif _gap < -0.05:
+            self.lbl_total.setText(
+                f"合计（含现金）<b>{total:.2f}%</b>　·　⚠ 超出 {- _gap:.2f}%，请减少权重或现金")
+            self.lbl_total.setStyleSheet("font-size:12.5px;color:#C62828;")
+            self.btn_ok.setEnabled(False)
+        else:
+            self.lbl_total.setText(f"合计（含现金）<b>{total:.2f}%</b>　✓")
+            self.lbl_total.setStyleSheet("font-size:12.5px;color:#2E7D32;")
+            self.btn_ok.setEnabled(True)
 
     # ---------------- 交互 ----------------
+    def _on_cash_changed(self) -> None:
+        self._refresh_total()
+        self._refresh_diff()
+
     def _on_item_changed(self, item) -> None:
-        if item is None or item.column() != 2:
+        if item is None or item.column() != 3:      # ★1.90：可编辑列变成「新权重 %」
             return
         try:
             val = max(0.0, float(str(item.text()).replace("%", "").strip() or 0))
@@ -242,19 +321,55 @@ class PortfolioEditDialog(QDialog):
             self.cmb_mode.blockSignals(True)
             self.cmb_mode.setCurrentIndex(self.cmb_mode.findData("custom"))
             self.cmb_mode.blockSignals(False)
+        self._render_rows()
         self._refresh_total()
+
+    def _revert_mode(self) -> None:
+        """市值档用不了时退回原模式（**不假装**已经按市值算过）。"""
+        _back = self._orig_mode if self._orig_mode in ("equal", "custom") else "custom"
+        self.cmb_mode.blockSignals(True)
+        self.cmb_mode.setCurrentIndex(self.cmb_mode.findData(_back))
+        self.cmb_mode.blockSignals(False)
 
     def _on_mode(self, _idx) -> None:
         mode = self.cmb_mode.currentData()
         if mode == "cap":
-            QMessageBox.information(
-                self, "市值权重暂未接入",
-                "本机还没有市值快照 ⇒ 先按**等权占位**，市值接入（P2）后生效。\n"
-                "口径不假装：这一档现在不会替你「按市值算」。")
-            self._on_equal()
-            self.cmb_mode.blockSignals(True)
-            self.cmb_mode.setCurrentIndex(self.cmb_mode.findData("custom"))
-            self.cmb_mode.blockSignals(False)
+            # ★1.90：**真算**（旧版只弹"暂未接入"）。市值 = 最新收盘 × 最新流通股本。
+            _syms = [str(m.get("symbol") or "") for m in self._members if str(m.get("symbol") or "")]
+            if not _syms:
+                QMessageBox.information(self, "先加成分", "空组合没法按市值分配 —— 先「＋ 添加代码」。")
+                self._revert_mode()
+                return
+            if not callable(self._cap_provider):
+                QMessageBox.warning(self, "市值权重用不了",
+                                    "这个入口没接上行情数据 —— 请从「组合」页打开「✏ 编辑成分」。")
+                self._revert_mode()
+                return
+            try:
+                caps, miss = self._cap_provider(_syms)
+            except Exception as exc:           # noqa: BLE001
+                QMessageBox.warning(self, "取市值失败", f"{type(exc).__name__}: {exc}")
+                self._revert_mode()
+                return
+            _w = cap_weights(caps, _syms, float(self.sp_cash.value()))
+            if not _w:
+                QMessageBox.information(
+                    self, "这几只都没有流通股本",
+                    "本机日线里缺 `流通股本` 这一列（东财兜底源不给它）⇒ 没法算市值。\n"
+                    "换个数据源重新下载后再选这一档；现在先按自定义权重。")
+                self._revert_mode()
+                return
+            for m in self._members:
+                m["weight"] = round(float(_w.get(str(m.get("symbol") or ""), 0.0)), 2)
+            self._render_rows()
+            self._refresh_total()
+            if miss:
+                _nm = self._names()
+                _txt = "、".join(f"{s}（{_nm.get(s) or '—'}）" for s in miss[:5])
+                QMessageBox.information(
+                    self, f"{len(miss)} 只缺流通股本",
+                    f"{_txt}\n\n这几只**没有**市值数据 ⇒ 权重暂记 0%，"
+                    "请手工补权重，或补数据后再选一次。其余票已按流通市值分配。")
             return
         if mode == "equal":
             self._on_equal()
@@ -282,13 +397,23 @@ class PortfolioEditDialog(QDialog):
             QMessageBox.information(self, "已经在了", f"{code} 已在这个组合里。")
             return
         name = str(self._names().get(code) or "")
-        # TODO(市值 P2)：`weight_mode='cap'` 的**真实实现**要接市值数据源
-        #   （`engine` 的 spot 估值/东财快照）。现在选「市值」只作占位并明确提示，
-        #   **绝不拿假市值算权重**。接线点：本文件 `_on_mode()` + `data/portfolio_store.WEIGHT_MODES`。
+        # ★1.90：市值权重已接（`_on_mode('cap')` 走 `cap_provider`）；新票权重先给"剩下的"，
+        #   用户可再点「市值」档重算，或手改成自定义。
         # 新票权重先给"剩下的"，再由用户/等权调整
         used = sum(float(m.get("weight") or 0.0) for m in self._members)
         rest = max(0.0, 100.0 - float(self.sp_cash.value()) - used)
         self._members.append({"symbol": code, "name": name, "weight": round(rest, 2)})
+        self._after_members_changed()
+
+    def _after_members_changed(self) -> None:
+        """增/删成分之后：**等权模式就重新均分**。
+
+        ★1.90：旧版增删后只是重画 ⇒ 标着「等权」却变成 33/33/34 或 66%（用户无从判断哪份是真的）。
+        「自定义」模式保持用户手填的数不动（那是他的意图）。
+        """
+        if str(self.cmb_mode.currentData() or "") == "equal":
+            self._on_equal()
+            return
         self._render_rows()
         self._refresh_total()
 
@@ -300,37 +425,30 @@ class PortfolioEditDialog(QDialog):
         for r in rows:
             if 0 <= r < len(self._members):
                 self._members.pop(r)
-        self._render_rows()
-        self._refresh_total()
+        self._after_members_changed()
 
     def _on_ok(self) -> None:
         members = [dict(m) for m in self._members]
-        # ★1.89：**不再自动归一**。旧版先按 (100 − 现金) 把成员拉满 ⇒ 合计永远 = 100，
-        #   "差额留作现金"这条分支永远走不到（用户实测）。现在差额由用户选。
+        if not members:
+            QMessageBox.information(self, "还没有成分", "至少加一只票，或点「取消」。")
+            return
         self._members = members
-        self._render_rows()
-        self._refresh_total()
         _total = sum(float(m.get("weight") or 0) for m in members) + float(self.sp_cash.value())
-        if abs(_total - 100.0) > 0.02:
-            # ★1.89：差额**让用户选**（旧版只会警告，等于逼用户自己算）
-            _gap = round(100.0 - _total, 2)
-            if _gap > 0:
-                _box = QMessageBox(self)
-                _box.setWindowTitle("合计不足 100%")
-                _box.setText(f"当前合计 {_total:.2f}%，还差 **{_gap:.2f}%**。")
-                _box.setInformativeText("要把这 {:.2f}% 留作现金吗？".format(_gap))
-                _b_cash = _box.addButton("留作现金", QMessageBox.ButtonRole.AcceptRole)
-                _box.addButton("我再调调", QMessageBox.ButtonRole.RejectRole)
-                _box.exec()
-                if _box.clickedButton() is not _b_cash:
-                    return
-                self.sp_cash.setValue(min(100.0, float(self.sp_cash.value()) + _gap))
-                self._refresh_total()
-            else:
-                QMessageBox.warning(
-                    self, "合计超过 100%",
-                    f"当前合计 {_total:.2f}%（超出 {- _gap:.2f}%）—— 请减少权重或现金。")
-                return
+        # ★1.90（用户 2026-10-28）：旧版这里**根本走不到** —— `_refresh_total` 在合计≠100 时
+        #   直接把「确定」禁用了（他实测：80% 时按钮是灰的，没有任何提示）。现在：
+        #   · 不足 100% ⇒ **自动把差额计入现金**（提示语已写在合计行里，不用用户拿计算器）；
+        #   · 超过 100% ⇒ 拦下并说清超出多少（按钮此时本来就是灰的，这里再兜一道）。
+        _gap = round(100.0 - _total, 2)
+        if _gap < -0.05:
+            QMessageBox.warning(self, "合计超过 100%",
+                                f"当前合计 {_total:.2f}%（超出 {- _gap:.2f}%）—— 请减少权重或现金。")
+            return
+        if _gap > 0.005:
+            self.sp_cash.blockSignals(True)
+            self.sp_cash.setValue(min(100.0, round(float(self.sp_cash.value()) + _gap, 2)))
+            self.sp_cash.blockSignals(False)
+            self._render_rows()
+            self._refresh_total()
         self.accept()
 
     # ---------------- 结果 ----------------

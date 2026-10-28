@@ -72,6 +72,17 @@ class DataLakeManager:
             logger.error(f"数据湖落盘失败 [{zone}/{filename}]: {e}")
             return False
 
+    def file_mtime(self, zone: str, filename: str) -> float:
+        """某分区文件的最后修改时间（秒）；不存在 / 未注册分区 ⇒ `0.0`。
+
+        ★1.90：给"**按文件新鲜度失效**"的页面缓存用（组合页补下载日线后必须自动生效，
+        否则用户回来看还是旧曲线，以为下载没成功）。只 stat、不读数据行。
+        """
+        try:
+            return float(os.path.getmtime(self._get_filepath(zone, filename)))
+        except Exception:                     # noqa: BLE001 —— 未注册/不存在都当"没有"
+            return 0.0
+
     def load_data(self, zone: str, filename: str) -> pd.DataFrame:
         """通用极速加载接口"""
         filepath = self._get_filepath(zone, filename)
