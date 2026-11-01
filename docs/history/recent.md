@@ -220,3 +220,31 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
 （APP 版本 1.89 / 主线仍写 B15 / 行数 1350 / "待决 1.90 提交"…）随本次重写归位；
 `§11.5-106` 确认**无正文**（记入 `docs/STATUS.md` §5 已知债）。
 
+---
+
+## ★1.95 · 发布前硬化：异常兜底 + README 门面 + 截图（2026-11-02 提交）
+
+**动因**：作者要在 **1.100 之前结束 1.0 大版本**，要求先做一次"能不能真拿出去给人用"的彻查。
+
+**查出的真问题（实测）**
+
+| 项 | 结论 |
+|---|---|
+| **未捕获异常 = 闪退** | 离屏对照实验：槽里 `raise ValueError`，**不装** `excepthook` ⇒ 进程 **fastfail（RC 0xC0000409）**，日志无栈；**装了** ⇒ 事件循环继续（`app.exec()` 返回 0）。而 `main.py` 当时**没装**。⇒ 任何 UI 漏网异常都会让用户看到"软件自己关了"。 |
+| **公开仓库无门面** | GitHub API 实测 `private:false` 但 `README on main: 404`、`license: null`、`releases:0` —— README/LICENSE 都在未推送的 1.94 里。 |
+| 首次运行 | 全新用户目录实测：**3.65s** 开窗、5 个文件、**9 个页面逐一切换 0 失败**、无阻塞联网。 |
+| 隐私 | 家目录/邮箱/手机/长数字 **0 命中**；历史 331 个文件 **0** 个 xlsx/db/png；`samples/` 只提交过 README。 |
+| 依赖 | 35 项锁定版本在 PyPI 全部存在；代码里 9 个第三方顶层包全部已声明。 |
+| 其它 | 15 处 `except: pass` 逐个看过，均不在数据丢失路径；`SingleSyncWorker.run` 是 18 个 worker 中唯一无 try（低风险）。 |
+
+**改了什么**
+
+1. `main.py` 新增 `_install_excepthook()`（`QApplication` 建好后立即装）：异常写日志（含完整栈）+ 弹一次可关闭提示
+   （3 秒内连环异常只弹一次，离屏环境只记日志），并挂 `threading.excepthook`。
+2. 两份冒烟脚本装同款 `_fastfail_guard`：打印栈 + **记一条失败** + 继续跑 ⇒ 那个"固定点硬崩"变成可见失败。
+3. README 门面：徽章 · **离屏渲染截图**（`docs/assets/market.png` / `portfolio.png`，用**合成组合 + 公开 K 线**，
+   `WA_DontShowOnScreen` + 真实字体引擎，避免 offscreen 插件的中文豆腐块）· 系统要求统一为
+   **Windows 10/11 + Python 3.12+**（旧 README 写 3.10+ 与 SETUP 不一致）· 项目状态与 Issues 入口 · `Copyright (C) 2026 ENDVEN`。
+
+**验证**：`smoke_chart` **1076/0** · `smoke_pages_overlay` **1236/0**（装 guard 后仍全绿）。
+

@@ -2,6 +2,8 @@
 import sys
 import logging
 import os
+import time
+import traceback
 import pyqtgraph as pg  
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
@@ -40,6 +42,62 @@ def _attach_log_file() -> None:
         logging.info(f"日志已落文件（轮转 5MB×3）: {os.path.join(log_dir, 'app.log')}")
     except Exception as e:                                # noqa: BLE001 —— 落盘失败不该拦启动
         logging.warning(f"日志落文件失败（只影响排障，不影响使用）: {type(e).__name__}: {e}")
+
+
+def _install_excepthook() -> None:
+    """★1.95：**未捕获异常不许让进程消失**（发布前硬化，2026-11-02 实测）。
+
+    【为什么必须装】离屏对照实验：槽函数里 `raise ValueError`，**不装** excepthook 时
+      PyQt 走 `qFatal` ⇒ 进程 **fastfail（RC 0xC0000409）**，用户只看到"软件自己关了"，
+      `app.log` 里连栈都没有；**装上**之后异常被兜住、事件循环继续（实测 `app.exec()` 返回 0）。
+      这也是冒烟脚本那个"固定点硬崩"的同一个机制（断言在 Qt 槽里抛出）。
+
+    【口径】① 一律记日志（含完整栈）；② 弹一次可关闭的提示（3 秒内连环异常只弹一次，
+      避免刷屏）；③ **绝不在异常里再抛**（弹窗失败就只留日志）；④ 离屏/无界面环境只记日志。
+    """
+    state = {"last": 0.0, "busy": False}
+
+    def _hook(exc_type, exc_value, exc_tb):
+        try:
+            logging.error("未捕获异常（界面继续运行，已记日志）",
+                          exc_info=(exc_type, exc_value, exc_tb))
+        except Exception:                       # noqa: BLE001 —— 记日志失败也不许再炸
+            pass
+        if state["busy"]:
+            return
+        if time.monotonic() - state["last"] < 3.0:
+            return
+        state["last"] = time.monotonic()
+        state["busy"] = True
+        try:
+            if str(os.environ.get("QT_QPA_PLATFORM", "")).lower() == "offscreen":
+                return                          # 无界面环境不弹窗（只记日志）
+            from PyQt6.QtWidgets import QMessageBox
+
+            box = QMessageBox()
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("刚才有一步出错了（程序没退出）")
+            box.setText("这一步操作出错了，已经记进日志；其余功能可以继续使用。")
+            box.setInformativeText(f"{exc_type.__name__}: {exc_value}")
+            box.setDetailedText("".join(
+                traceback.format_exception(exc_type, exc_value, exc_tb))[-4000:])
+            box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            box.exec()
+        except Exception:                       # noqa: BLE001 —— 弹窗失败只影响提示
+            pass
+        finally:
+            state["busy"] = False
+
+    sys.excepthook = _hook
+    try:                                        # 非 Qt 线程（极少）也兜一层
+        import threading
+
+        def _thread_hook(args):
+            _hook(args.exc_type, args.exc_value, args.exc_traceback)
+
+        threading.excepthook = _thread_hook
+    except Exception:                           # noqa: BLE001
+        pass
 
 
 def setup_env():
@@ -87,6 +145,8 @@ def main():
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.RoundPreferFloor)
     app = QApplication(sys.argv)
+    # ★1.95：**最早**装兜底（越早越好：建窗前后任何槽里漏出来的异常都不许闪退）
+    _install_excepthook()
 
     # ★1.69 / §10-15：全站字体**在应用层钉一次**（唯一出口）—— 必须在建窗 / 建页**之前**。
     # 【为什么不能只"在窗口根 setFont"】页内大量 QSS 只写 `font-size`，字体族靠**继承**，

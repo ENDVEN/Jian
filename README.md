@@ -2,6 +2,22 @@
 
 > 桌面端（PyQt6）· 本地优先 · 数据不上云。期货交割单复盘 + A 股行情 / 回测 / 组合，一个程序里两条互不干扰的链路。
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](#安装与运行)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](#安装与运行)
+
+---
+
+## 截图
+
+![行情工作台](docs/assets/market.png)
+
+<sub>行情工作台：日线 / 分钟线 · 自选股分组 · 指标与公式叠加 · 画线与标注 · 数据体检</sub>
+
+![组合](docs/assets/portfolio.png)
+
+<sub>组合：净值曲线（5 档区间）· 持仓与分布 · 调仓记录（演示数据：三只权重股）</sub>
+
 ---
 
 ## 这是什么
@@ -32,7 +48,8 @@
 
 ## 安装与运行
 
-需要 **Python 3.10+**（开发环境为 3.12，Windows）。
+**系统要求：Windows 10 / 11（64 位）· Python 3.12+**。
+（程序用到 Windows 的 Cookie / 代理读取接口，macOS / Linux 目前**未适配**；Python 3.12 是实测验证过的版本，更低版本未验证。）
 
 ```bash
 git clone <repo-url> && cd Jian
@@ -61,9 +78,19 @@ python main.py                       # 首次启动会在 ~/.jian_data/ 建数�
 
 ---
 
+## 项目状态与反馈
+
+- 当前处于 **1.x 稳定线**，即将进入 **1.100** 里程碑；功能按迭代发布，每条版本都有冒烟断言。
+- 遇到问题或有需求：请到 [Issues](https://github.com/ENDVEN/Jian/issues) 提，附上 `~/.jian_data/logs/app.log` 里对应时间段的片段（**日志不含 Cookie 等凭据**）。
+- 版本变更记录：`docs/history/recent.md`（最近几版）· `docs/history/changelog-1.md`（更早）。
+
+---
+
 ## 许可证
 
 **GNU General Public License v3.0**（全文见仓库根目录 [`LICENSE`](LICENSE)）。
+
+Copyright (C) 2026 ENDVEN
 
 - 你可以自由使用、修改、再分发；**再分发必须同样以 GPLv3 开源**，并保留版权与免责声明。
 - 本项目使用 **PyQt6**（GPLv3 / 商业双许可），因此整体以 GPLv3 发布。

@@ -13,6 +13,8 @@ verified: auto
 
 | 文件 | 一句话 | 顶层符号 | 行数 |
 |---|---|---|---|
+| `_tmp_shots.py` | 离屏渲染 README 截图（**合成组合 + 公开行情**，不含任何个人数据）。 | 1 | 92 |
+| `_tmp_size_probe.py` | 诊断：窗口拉大后，内容区/页面/图表真正多宽（判断右边缘被裁是不是布局没跟上）。 | 0 | 29 |
 | `config/__init__.py` | — | 0 | 0 |
 | `config/settings.py` | — | 0 | 332 |
 | `core/__init__.py` | — | 0 | 0 |
@@ -70,15 +72,15 @@ verified: auto
 | `data/trade_calendar.py` | A 股交易日历获取件（v6.45 / §7-B10 · 用户拍板引入真交易日历）。 | 8 | 111 |
 | `data/watchlist_change.py` | 自选分组的「组合当日涨跌」（§7-B8 R3）—— **零 Qt**：纯函数 + 一层带 TTL 的快照缓存。 | 7 | 155 |
 | `data/watchlist_store.py` | 自选股（Watchlist）—— 用户关心的标的清单，JSON 原子写（§7-B3 P8）。 | 5 | 340 |
-| `main.py` | — | 3 | 109 |
+| `main.py` | — | 4 | 160 |
 | `models/__init__.py` | — | 0 | 0 |
 | `models/trade.py` | — | 1 | 103 |
 | `scripts/analyze_index_regimes.py` | 上证指数切块 · 离线脚本（§7-B15 SW-2 · 方案书 §11 决议 3）。 | 1 | 73 |
 | `scripts/check_docs.py` | 文档契约自检（秒级、不依赖 Qt）：写完/搬完文档跑一次。 | 8 | 88 |
 | `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 3 | 69 |
 | `scripts/sync_roster.py` | — | 2 | 37 |
-| `tests/smoke_chart.py` | — | 9 | 5686 |
-| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 30 | 8703 |
+| `tests/smoke_chart.py` | — | 10 | 5696 |
+| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 31 | 8713 |
 | `ui/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/bulk_download.py` | 批量预下载弹窗 (v5.8 · §7-A3)。 | 2 | 524 |
@@ -206,4 +208,4 @@ verified: auto
 | `ui/widgets/yearly_review.py` | — | 1 | 124 |
 | `ui/workers.py` | 共享的后台工作线程 (QThread Workers) —— v5.8。 | 22 | 898 |
 
-> 共 192 个 .py 文件。
+> 共 194 个 .py 文件。

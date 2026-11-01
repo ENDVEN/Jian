@@ -142,6 +142,21 @@ def check(desc, cond):
     print(("  [OK] " if cond else "  [!!] ") + desc)
 
 
+# ★1.95：**Qt 槽里的未捕获异常会让进程直接 fastfail**（RC 0xC0000409，表现为"跑到一半没了"）。
+#   装上 excepthook 后：打印完整栈 + 记一条失败 + 继续跑 ⇒ 崩溃变成**可见失败**
+#   （这就是 §11.5-102 "固定点硬崩"的同一机制）。
+def _fastfail_guard(_t, _v, _tb):
+    import sys as _sys
+    import traceback as _tr
+    _tr.print_exception(_t, _v, _tb)
+    check("[Guard] 槽内未捕获异常（原本会让进程直接消失）: %s: %s" % (_t.__name__, _v), False)
+
+
+import sys as _sys_guard
+
+_sys_guard.excepthook = _fastfail_guard
+
+
 # ==========================================
 # 打桩 ①：模态对话框（不点就会永久卡住）
 # ==========================================
