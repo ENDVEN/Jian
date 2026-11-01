@@ -6,7 +6,7 @@
 （样本内段 → 样本外段），给参数研究的"区间预设"下拉与切块时间轴用
 （方案书 §3 步4 / §4 图①；默认预设 = 震荡→震荡，§11 决议 4）。
 
-口径（与 docs/JIAN_SWEEP_PLAN.md 同源，改动必须两边同步）：
+口径（与 docs/plans/done/SWEEP.md 同源，改动必须两边同步）：
 - **切块算法（透明、可复现，§8-14）**：滚动 window 日涨跌幅 r = close/close.shift(window)−1；
   r ≥ up_thr ⇒ up，r ≤ down_thr ⇒ down，其余 ⇒ sideways；前 window 天无窗口 ⇒ 不标记；
   同状态连续日合并成段，**短于 min_len 的毛刺整段丢弃**（诚实：不成段就不进预设）。

@@ -67,7 +67,7 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          （core/data 不许指名 UI 按钮）+ M2/M3 摘要条常驻 btn_sync + 两页
 #          _drop_stale_result 作废旧结果（ScanResult/BreadthResult.clear）+
 #          "已有结果"分支绝不调 set_empty + 坏文件补「去数据管理」入口；
-#          同批把 JIAN_RULES.md 从 99.1k 瘦身回 96.8k。smoke 817 / 566。
+#          同批把 docs/RULES.md 从 99.1k 瘦身回 96.8k。smoke 817 / 566。
 #   1.42 = §10-9 还清「数值控件宽度」：用户实测「间隔(秒) 预设 0.6 但只看得见 0」——
 #          弹窗把控件钉死在 64px，原生上下箭头占掉 18~22px 后文本区只剩 ~30px。
 #          收成 custom_widgets.SPIN_MIN_WIDTH(72) + double_spin()/int_spin() 唯一工厂
@@ -227,7 +227,7 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #             柱**默认占比、可切家数**）；行数布局按**焦点模式**阈值（1~3 等分 / **4~6 焦点+迷你** /
 #             7~12 两列 / >12 折叠）；三道闸阈值默认 **<5% / >30%** 且**必须可调、不许写死 + 必须有引导**；
 #          ③ 产出：`design/1.72-m3-multi-plan-ui/`（6 页设计稿 + README + `_check.py` 自检，
-#             全部标注"设计稿 · 未实现"与"示意数据"）+ `docs/JIAN_M3_MULTI_PLAN.md`（方案推进表：
+#             全部标注"设计稿 · 未实现"与"示意数据"）+ `docs/plans/done/M3-MULTI.md`（方案推进表：
 #             期 0~4 的实现清单 / 测试要点 / 断言清单 / 引导文案 / 未决项）；
 #          ④ 一条关键统计结论（决定"什么条件配什么图"）：**"每天几百上千只命中"的条件不能当事件统计**
 #             —— 命中家数 ≠ 事件数（同日全市场同向 ⇒ 伪重复，n 虚高约千倍、p 值失去意义）；
@@ -279,7 +279,7 @@ APP_NAME = "Jian - 专业交易复盘系统"
 #          ② flaky 真根因：QTest.mouseMove = NoButton hover + 1px 线条差半像素点不中 ⇒
 #             合成 QMouseEvent(buttons=LeftButton) + ±1px 落点容差（5 次全失败才判红）。
 # ⚠ 必须与仓库根目录 version.json 保持同步：自动更新以二者比对为准（见 core/updater.py）
-APP_VERSION = "1.93"
+APP_VERSION = "1.94"
 
 # ==========================================
 # 界面配置 (UI Settings)

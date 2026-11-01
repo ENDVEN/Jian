@@ -45,3 +45,10 @@ samples/*
 # .qoder/repowiki 是 AI 自动生成的文档库，包含 77+ 个 Markdown 文件
 # 这些文档仅供本地参考，不应提交到版本控制系统
 .qoder/repowiki/
+
+# === 个人数据（2026-11-02 开源准备）===
+# 真实交割单/函数样例**只在本机** (~/.jian_data/samples/)，绝不入库；
+# 仓库里的 samples/ 只留 README 说明 —— 这里必须是"整目录忽略 + 放行 README"，
+# 只按扩展名忽略会漏（.md/.csv/.json 都可能带真实数据）。
+samples/*
+!samples/README.md

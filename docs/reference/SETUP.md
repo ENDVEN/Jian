@@ -1,4 +1,12 @@
-# Jian 换机迁移手册（`docs/JIAN_SETUP.md`）
+---
+status: reference
+topic: 换机 / 重装迁移手册
+read_when: 换电脑或重装环境
+skip_if: 日常开发
+verified: 2026-11-02
+---
+
+# Jian 换机迁移手册（`docs/reference/SETUP.md`）
 
 > 用途：把 Jian 完整搬到另一台电脑（新笔记本 / 重装系统）。随 `1.68`（2026-10-04）落地，预检记录见 §5。
 > **隐私铁律（§10-6）：用户数据只走 U 盘 / 局域网，绝不上传网盘或任何公共远端。**
@@ -18,23 +26,22 @@
    冒烟 990/0 + 主窗口能起。原先写「3.13+」是白挡掉 3.11/3.12 用户，已下调；
    Windows 下统一用 `py` 启动器）；
 3. 仓库根目录执行 `py -m pip install -r requirements.txt`
-   （PyQt6 / pyqtgraph / pandas / numpy / pyarrow / akshare / openpyxl）；
-4. **换机 / 要求与他人逐位一致**时，改用 `py -m pip install -r requirements.lock.txt`
-   （精确版本锁 = 本机实测全绿那一套，含全部传递依赖）。
+   （**唯一依赖清单**：7 个直接依赖 + 28 个传递依赖，全部 `==` 精确锁定 = 本机实测全绿那一套；
+   换机与他人逐位一致就靠它 —— **2026-11-02 起不再有第二份 lock 文件**）。
 
-> 两份文件都**只写 ASCII 注释**：pip 在 Windows 上先按 cp936（GBK）解码 requirements 文件，
+> 该文件**只写 ASCII 注释**：pip 在 Windows 上先按 cp936（GBK）解码 requirements 文件，
 > 中文注释的字节序列一旦不合法就直接抛 `UnicodeDecodeError`，连安装都起不来。
 > 中文说明一律放本文档。
 
-## 1.1 依赖版本策略（为什么每个包都有上界）
+## 1.1 依赖版本策略（为什么全部精确锁定）
 
 **Jian 是交付给人跑的应用，不是给别人 import 的库**，所以 `requirements.txt` 里每一项都是
-「下界 + 上界」而不是只写下界。上界买的不是保守，是**复现性**：pip 默认装最新匹配版本，
-不钉上界就会出现「我这儿能跑、你那儿不能跑」且无从复现的故障。
+**精确版本（`==`）**。锁定买的不是保守，是**复现性**：pip 默认装最新匹配版本，
+不钉死就会出现「我这儿能跑、你那儿不能跑」且无从复现的故障。
 
-**上界不是永远不动**，而是走「升级窗口」，且必须过闸：
+**锁定版本不是永远不动**，而是走「升级窗口」，且必须过闸：
 
-1. 抬上界（或删上界）→ 装 → 跑两份冒烟；
+1. 升级版本 → 装 → 跑两份冒烟；
 2. `tests/smoke_chart.py` 基准 **990 通过 / 0 失败**、`tests/smoke_pages_overlay.py` 全绿才放行；
 3. 把结果记进下表，不绿就退回原上界。
 
@@ -53,8 +60,8 @@
 Copy-on-Write 默认开启（链式赋值静默失效）、默认 `str` dtype（`object` 判定失效）、
 时间单位由 `ns` 改为推断 `us`。要跨需单独做一轮迁移（先升 2.3 清干净 FutureWarning 再上 3.0）。
 
-**其它上界的口径**：`PyQt6<7` / `pyqtgraph<0.15` / `numpy<3` / `pyarrow<26` / `akshare<2` /
-`openpyxl<4` —— 均为「下一个大版本可能有 breaking change」的护栏，抬之前按上面的窗口走一遍。
+**升级时的参考边界**（旧「上界」口径，现为精确锁定）：`PyQt6<7` / `pyqtgraph<0.15` / `numpy<3` /
+`pyarrow<26` / `akshare<2` / `openpyxl<4` —— 下一个大版本可能有 breaking change，跨过去要按上面的窗口走一遍。
 
 ## 2. 拷数据（老机器 → U 盘 → 新机器）
 

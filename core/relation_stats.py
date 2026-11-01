@@ -14,7 +14,7 @@
     `independent_event_positions()`。
 
 【设计稿与方案书】`design/1.72-m3-multi-plan-ui/e-选图规则.html`（这一页就是它的可视化）·
-  `docs/JIAN_M3_MULTI_PLAN.md` §1/§3 期 0。
+  `docs/plans/done/M3-MULTI.md` §1/§3 期 0。
 """
 from __future__ import annotations
 

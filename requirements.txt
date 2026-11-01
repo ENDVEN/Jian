@@ -1,29 +1,47 @@
-# Jian - Professional Trading Review System
+# Jian runtime dependencies -- SINGLE source of truth (2026-11-02).
+# Merged from the old requirements.txt (ranges) + requirements.lock.txt (pins):
+# every entry is now exact-pinned to the set that passed both smoke suites on Python 3.12.
 #
-# Dependency policy: this is an APPLICATION (not a library), so every entry has
-# both a lower and an UPPER bound. The upper bound buys reproducibility: pip
-# installs the newest matching version, so without it users get a different
-# major version depending on the day they install.
-#
-# Upper bounds are not frozen forever: tests/smoke_chart.py (990 assertions) and
-# tests/smoke_pages_overlay.py are the gate for every upgrade window - bump, run
-# the smoke, raise the bound only if all green.
-#
-# BLOCKED: pandas 3.x. Measured 2026-10-04 on pandas 3.0.6 -> smoke_chart
-# 980 passed / 1 failed, smoke_pages_overlay 918 passed (62 assertions never
-# ran); the data-lake scan path silently returns an empty result. Cause is
-# major-version semantics: Copy-on-Write on by default, dedicated str dtype,
-# datetime unit inference (ns -> us). Crossing needs its own migration round.
-#
-# For exact reproduction use requirements.lock.txt.
-# Rationale (in Chinese) and upgrade log: docs/JIAN_SETUP.md
-#
-# NOTE: pip on Windows decodes this file as cp936 (GBK) before falling back to
-# UTF-8, so non-ASCII comments can break the install. Keep this file ASCII-only.
-PyQt6>=6.5,<7
-pyqtgraph>=0.13.3,<0.15
-pandas>=2.2,<3
-numpy>=1.26,<3
-pyarrow>=12,<26
-akshare>=1.12,<2
-openpyxl>=3.1,<4
+# ASCII ONLY: on Windows pip decodes this file with cp936 before UTF-8; any non-ASCII
+# byte can raise UnicodeDecodeError and the install dies before it starts.
+# Upgrade procedure: bump version -> install -> run both smoke suites -> commit.
+# Regenerate: py -m pip freeze > requirements.txt  (only after both suites are green)
+
+# --- direct dependencies ---
+PyQt6==6.11.0
+pyqtgraph==0.14.0
+pandas==2.3.3
+numpy==2.5.3
+pyarrow==25.0.1
+akshare==1.19.1
+openpyxl==3.1.5
+
+# --- transitive dependencies (pinned) ---
+PyQt6-Qt6==6.11.2
+PyQt6_sip==13.12.0
+beautifulsoup4==4.15.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.2
+colorama==0.4.6
+curl_cffi==0.16.3
+decorator==5.3.1
+et_xmlfile==2.0.0
+html5lib==1.1
+idna==3.20
+jsonpath==0.82.2
+lxml==6.1.3
+mini-racer==0.14.1
+pycparser==3.0
+python-dateutil==2.9.0.post0
+pytz==2025.2
+requests==2.34.2
+six==1.16.0
+soupsieve==2.10
+tabulate==0.10.0
+tqdm==4.70.1
+typing_extensions==4.16.0
+tzdata==2026.5
+urllib3==2.8.0
+webencodings==0.5.1
+xlrd==2.0.2

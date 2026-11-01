@@ -1,7 +1,7 @@
 """
 GitHub 风格「每日净额日历热力图」(Dashboard · C1)。
 
-【与复盘页月历的区别 —— 勿混淆，见 JIAN_RULES.md §7-C1】
+【与复盘页月历的区别 —— 勿混淆，见 docs/RULES.md §7-C1】
   · 复盘页月历 `ui/views/review.py`      : 单月 6×7，服务"某月哪天做了什么"，可点选交易；
   · 本控件 `ui/widgets/calendar_heatmap.py`: 整年 53×7，服务"这一年交易节奏与盈亏分布长什么样"。
 

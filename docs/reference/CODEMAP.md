@@ -1,15 +1,23 @@
-# Jian 代码地图（`docs/JIAN_CODEMAP.md`）
+---
+status: reference
+topic: 逐文件职责地图
+read_when: 找某个文件是干什么的
+skip_if: 已知文件位置
+verified: 2026-11-02
+---
 
-> **本册是什么**：`JIAN_RULES.md` §4 的**逐文件目录树**（每层每个文件干什么、纪律落在哪一行），
+# Jian 代码地图（`docs/reference/CODEMAP.md`）
+
+> **本册是什么**：`docs/RULES.md` §4 的**逐文件目录树**（每层每个文件干什么、纪律落在哪一行），
 > v6.50 按 §10-14「先搬走，再写新内容」从主文件搬出 —— 它是**查阅型**内容（只在"我要改 X 在哪个
 > 文件 / 这个公共件是干嘛的"时才需要），却占了主文件 ≈19% 的字符。
 >
-> **怎么用**：先看 `JIAN_RULES.md` §4 的**顶层骨架**判断"东西在哪一层"，再来这里定位到具体文件。
-> **大文件红黑榜（≥400 行）与体积纪律仍留在 `JIAN_RULES.md` §4** —— 行数只存那一处。
+> **怎么用**：先看 `docs/RULES.md` §4 的**顶层骨架**判断"东西在哪一层"，再来这里定位到具体文件。
+> **大文件红黑榜（≥400 行）与体积纪律仍留在 `docs/RULES.md` §4** —— 行数只存那一处。
 >
 > ⚠ 行数口径 = **非空行**；只有 ≥400 行的文件才标数字（v6.16 用户拍板）。
 > ⚠ 本册随代码同步更新，**别在这里写"现状数字"以外的结论**（结论归 §5 / §10）。
-> ⚠ **下面树里的行数是"历史值"，可能滞后 —— 一律以 `JIAN_RULES.md` §4 体积红榜为准**（§10-14：行数只存那一处）。
+> ⚠ **下面树里的行数是"历史值"，可能滞后 —— 一律以 `docs/RULES.md` §4 体积红榜为准**（§10-14：行数只存那一处）。
 
 ---
 
@@ -19,7 +27,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 ├── requirements.txt     #     PyQt6 / pyqtgraph / pandas / numpy / pyarrow / akshare / openpyxl
 ├── version.json         #     ⚠ 发布物：`settings.UPDATE_CHECK_URL` 直链指向**仓库根的这个文件**
 │                        #      → **禁止移动/改名**（挪走 = 自动更新静默失效）；须与 APP_VERSION 同步(§9-A)
-├── JIAN_RULES.md        #     本文件（唯一权威记忆，**故意**留在根目录：打开仓库第一眼就要看见）
+├── docs/RULES.md        #     本文件（唯一权威记忆，**故意**留在根目录：打开仓库第一眼就要看见）
 ├── .gitignore           #     忽略 __pycache__ / screenshots / *.db / samples/* / 实例* 等隐私
 ├── scripts/             # 【运维脚本：只给人手动敲命令，**不进 app import 图**】
 │   ├── sync_roster.py   #     ★1.70 花名册同步**薄壳**（逻辑在 `data/roster_sync.py`，与 app 内一键同步同一门面）
@@ -33,7 +41,7 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   │                    #        + **成交真实性(§7-B5)** + **§7-B8 R7/R8（副图换序 / 纵轴固定左槽）**
 │   │                    #        + **§7-B8 R1 自选分组（分类语义 / 删组不删股）**
 │   │                    #        + **v6.43 轴外基准日就近落位 / 缺文件诚实化 / 成分股选列回归钉**
-│   │                    #        + §9-V 数据源护栏（非正价 / 量纲接缝）断言（**条数见 `JIAN_RULES.md` §11.7**）
+│   │                    #        + §9-V 数据源护栏（非正价 / 量纲接缝）断言（**条数见 `docs/RULES.md` §11.7**）
 │   │                    #       `py tests/smoke_chart.py`（在仓库根执行）
 │   │                    #       ⚠ 两脚本开头**自设 UTF-8 stdout**（v6.21）—— Windows GBK 控制台
 │   │                    #        下带 `↔`/`⇒` 的 print 会抛 UnicodeEncodeError，表现为
@@ -57,11 +65,11 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 │   └── 1.46-run-history-ui/  # ★§7-B12 P8：🗂 运行历史重做样板（M1/M2/M3 三套分型；
 │                             #   可交互 index.html：切 kind / 拖"窗口宽度"看动作行换行）
 ├── docs/                # 【文档归档：给"未来的我"读；app 不 import，人看】（v6.32 分层重构新增）
-│   ├── JIAN_HISTORY.md       # 时间线：版本叙事（v5.1→v6.32）+ §8 完整 changelog（**历史数字冻结**）
-│   ├── JIAN_PLAYBOOK.md      # §11.5「最容易踩的坑」全量清单（**编号不变**）
-│   ├── JIAN_ARCHIVE.md       # 已完结的 6 份主案（§7-B3…B9）+ 旧审计发现（§9 版本子节）+ §11.6 历史块
-│   ├── JIAN_SWEEP_PLAN.md    # §7-B15 参数稳健性研究 · 实现级方案书（设计 v3 已定案）
-│   └── JIAN_CLEANUP.md       # ★1.59 新增：§7-B14 大扫除台账（触发判据 / 清单 / 分批与证据）
+│   ├── docs/history/README.md       # 时间线：版本叙事（v5.1→v6.32）+ §8 完整 changelog（**历史数字冻结**）
+│   ├── docs/playbook/INDEX.md      # §11.5「最容易踩的坑」全量清单（**编号不变**）
+│   ├── docs/archive/README.md       # 已完结的 6 份主案（§7-B3…B9）+ 旧审计发现（§9 版本子节）+ §11.6 历史块
+│   ├── docs/plans/done/SWEEP.md    # §7-B15 参数稳健性研究 · 实现级方案书（设计 v3 已定案）
+│   └── docs/plans/done/CLEANUP.md       # ★1.59 新增：§7-B14 大扫除台账（触发判据 / 清单 / 分批与证据）
 ├── config/
 │   └── settings.py      #     全局常量：APP_NAME、APP_VERSION=1.28(跟随 git，与 version.json 同步)、颜色、
 │                        #      INITIAL_CAPITAL=1e6、USER_DATA_DIR=~/.jian_data、UPDATE_CHECK_URL
@@ -475,9 +483,9 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 ```
 
 
-## 我要改 X，该动哪个文件（v6.70 从 `JIAN_RULES.md` §11.4 搬入 · 全表，含纪律与断言位置）
+## 我要改 X，该动哪个文件（v6.70 从 `docs/RULES.md` §11.4 搬入 · 全表，含纪律与断言位置）
 
-> `JIAN_RULES.md` §11.4 只留「一句话版」速查；**要改哪、纪律钉在哪、哪个断言守着**看这张全表。
+> `docs/RULES.md` §11.4 只留「一句话版」速查；**要改哪、纪律钉在哪、哪个断言守着**看这张全表。
 > 逐文件「谁干什么」见本文件上面的目录树。
 
 ---
@@ -529,12 +537,12 @@ Jian/                    # 【v6.14 文件归置】根目录只留"门面"：入
 | M2/M3 新子页 | **均已落地**：M2 = `ui/views/scan_view.py`（164 行）+ `ui/widgets/scan_layout|flow|result.py`（★v6.86 起**第 3 页签**）；M3 = `ui/views/breadth_view.py`（197 行）+ `ui/widgets/breadth_layout|flow|result|chart.py`（★第 4 页签）。**共用** `core/cross_section` / `data/scan_store`（含 ⚡增量）/ `ui/workers.CrossSectionWorker` · ★1.83 **子页签名 = 单股回测 / 全市场筛选 / 广度统计**（禁用内部简称 M1/M2/M3；**kind 值** `'M1'` 等是落盘数据，**不许改**；冒烟有 0 处扫描护栏） |
 | 🧪 参数研究页（B15 MVP） | 页面 = **`ui/views/param_sweep.py`**（**583 行**⚠ §4 已登记拆法；子页签 index 1，M1/M2 之间——用户定）。左栏表单 = `ui/widgets/sweep_form.py`（**394 行**：306px 定宽白卡 + 46px 折叠竖条 + 步号徽标，★v6.86 视觉返工后形态）；图表 = `ui/widgets/sweep_chart.py`（时间轴/散点/热力图/分布 + 图例 chips）；编排（两段流程 / 红线①确认闸 / 统计装配 / 存快照）在页面。**依赖**：`core/sweep_plan`（网格闸门）→ `core/param_sweep`（逐组回测）→ `core/sweep_stats`（IC/邻域/PBO 唯一真源）→ `data/sweep_archive`（快照 + OOS 计数器）；切块 = `core/index_regimes` + 缓存 `index_regimes.json`。**改统计口径 → `core/sweep_stats` 一处**；改网格护栏 → `sweep_plan`；worker = `ui/workers.ParamSweepWorker`（stage 两段式） · ★1.79 **成交成本卡 = `ui/widgets/sweep_cost.py`**（300：口径 + **三档佣金可调且记住** + 「▶ 跑成本敏感性」（跑时按钮灭、状态行报"第 k/3 档"）+ 逐档年化结果区；成本逻辑 `_run_cost` / `_on_cost_finished` / `set_cost_sensitivity` / `top_candidate_keys` 也在这） · ★1.79 **快照 A/B 对比 = `ui/widgets/sweep_compare.py`**（152：`compare_snapshots` 纯函数 + 并排视图；**只读**不重跑；禁词 `COMPARE_FORBIDDEN` 守红线②） · ★1.81 **回测佣金唯一口径** = `core/backtest.commission_rate_from_prefs()`（设置项 `backtest.commission_um`，`where=backtest_prefs.commission_um`；M1 摘要条 / 参数研究结论条 / 运行历史 / 存档 `commission` 字段 / 成本卡三档默认全走它） · ★1.82 **三档进度累进**（`sweep_cost._on_cost_progress`，分母=档数×每档组数） · `param_sweep` **470→387**：`_build_study` / `_experiment_signature` / `_refresh_run_enabled` 已搬 `sweep_input.py`（源码级断言要看两件） |
 | M3 广度页（折线 / 指数副图 / 增量 / 重算） | 页面 = `ui/views/breadth_view.py`（状态 + 同名薄壳）。**版式** `breadth_layout.py`（ƒ/🎚 两卡**直接复用 `scan_layout`**；`BreadthDisplayPane` = 平滑/占比/指数）；**流程** `breadth_flow.py`（`_start_worker` 统一入口：`force` / `incremental` 两开关；`_ensure_index` 指数补拉链）；**图表** ★1.73 起 = `breadth_rows.py`（`BreadthRowsChart`：**每统计项一行**（柱 + 均线）+ 底部指数副图 + ★1.76 三视图（多行小图 / 事件对齐 / 关系卡）+ ★1.77 色带；`breadth_chart.py` 只剩"显示选项目录"常量 —— **别在页面手写 addPlot/setTicks**）。**⚡增量的矩阵续接在 `data/scan_store.py`**（`find_base` + `merge_tail`），改它必跑 `smoke_chart` 的「STEP 5」段 · ★1.82 **闸条可手动收起**（`gate_hint.GateHintBar.btn_close` = ✕ → `dismissed` 信号 → `breadth_flow.on_gate_dismissed`；记忆 = `breadth_ui.gate_dismissed_sig`，被拦项变了/消失后再出现会重提） |
-| 🧺 **组合页**（★1.84 立项 · ★1.85 **P0+P1 已落地** · 一级页面） | 规格 = **`docs/JIAN_PORTFOLIO_PLAN.md`**：页面 `ui/views/portfolio_view.py`（待建）· 存储 `data/portfolio_store.py` · 统计 `core/portfolio_stats.py` · **成分来源 = 行情页自选股组（只读复用）** · 图表走 `chart_host` · 佣金走 1.81 全局口径 · B15 池化改为"选组合" · ★1.85 P0 实建：`data/portfolio_store.py`（原子写/只存组名引用）· `ui/views/portfolio_view.py`（列表/空态/导入/保存重载；净值与持仓留 P1）· `main_window` 主导航改**按身份路由**（`_PAGES` + `switch_to`） · ★1.85 **P1**：`core/portfolio_stats.py`（加权净值/月度再平衡/回撤/年化，纯函数）· 净值卡（`ChartHost`，组合 vs 基准）· 持仓表（成本=基期收盘）· **缺一只就不画线**（不用剩余权重冒充） |
+| 🧺 **组合页**（★1.84 立项 · ★1.85 **P0+P1 已落地** · 一级页面） | 规格 = **`docs/plans/done/PORTFOLIO.md`**：页面 `ui/views/portfolio_view.py`（待建）· 存储 `data/portfolio_store.py` · 统计 `core/portfolio_stats.py` · **成分来源 = 行情页自选股组（只读复用）** · 图表走 `chart_host` · 佣金走 1.81 全局口径 · B15 池化改为"选组合" · ★1.85 P0 实建：`data/portfolio_store.py`（原子写/只存组名引用）· `ui/views/portfolio_view.py`（列表/空态/导入/保存重载；净值与持仓留 P1）· `main_window` 主导航改**按身份路由**（`_PAGES` + `switch_to`） · ★1.85 **P1**：`core/portfolio_stats.py`（加权净值/月度再平衡/回撤/年化，纯函数）· 净值卡（`ChartHost`，组合 vs 基准）· 持仓表（成本=基期收盘）· **缺一只就不画线**（不用剩余权重冒充） |
 | 就绪度体检 / 更新到最新（M2/M3 共用） | 内核 = **`data/readiness.py`**（`probe_readiness` 只读 footer 四分类 + `latest` + `summary_line`/`gap_preview`/`detail_text` + **v6.47 `format_stale`** 滞后文案；**别在页面另写“有没有数据”的判断**）；线程 = `ui/workers.py:ReadinessWorker`（第 8 个）/ `CalendarWorker`（第 9 个，滞后判据）；编排 = **`ui/widgets/readiness_flow.py:ReadinessFlow`**（两页共用：自动体检、**v6.47 一键「⬆ 更新到最新」`update_latest` 与“补齐缺失”合并（整批当前范围增量，共用 `_launch_sync`；`fill_missing` 保留但退位次级）**、`start_calendar_fetch` 挂日历→`trading_target`、滞后用 `trading_days_between`、M2 `_calibrate_asof_date` 抬升上限+`lbl_asof_hint` 回显、**回调绑定各自 scope** —— 改它必跑 `smoke_pages_overlay` 的「STEP 6」段）；成分股失败文案唯一出口 = `constituent_failure_text()`；「全市场扫描就绪」预设 = `bulk_download._apply_scan_ready_preset` |
 | 全市场筛选页（M2） | `ui/views/scan_view.py`（状态 + 同名薄壳）。**版式** `scan_layout.py`（阈值⇄控件的**唯一换算处**在 `ScanFilterPane`，界面亿元/% ⇄ 内核元/小数）；**流程** `scan_flow.py`（范围解析 / 后台扫描 / 切日期零成本）；**渲染** `scan_result.py`（KPI 三态 + 结果表） |
 | 改摘要条 chip / 摘要条动作按钮（★1.64 收编） | **chip = `ui/widgets/summary_chip.py`**（`CHIP_STATES` / `chip_qss()` / `build_chip()` / `set_chip_state()` —— 唯一来源）；**主操作 = `styles.SUMMARY_RUN_QSS`**、**次级 = `styles.SUMMARY_GHOST_QSS`**。⚠ M1/M2/M3 **一律引用**：不许再在页面里 `setStyleSheet(CHIP_QSS_ON)`（恒绿假状态）或自写一份蓝色实心按钮（`smoke_pages_overlay` §1.65 有**源码级**断言钉住）。行情页工具行那族 chip（`desk_chips` + MRU 规则）**不在收编范围**（形状用途不同） |
 | M2/M3 的**配置抽屉与摘要条胶囊**（★1.64） | 抽屉卡 = `ScanFormulaPane`(fn) / `ScanFilterPane`(filter) / `BreadthDisplayPane`(display) / **`ScanScopePane`(scope，「🌐 统计范围」，M2/M3 **共用同一张卡类**)**；胶囊点开 = `p.open_pane(key)`（再点同一个 = 收起），**高亮**由 `scan_flow.sync_chip_states()` / `breadth_flow.sync_chip_states()` 写（页面 `open_pane` 调用）。⚠ 范围组（统计范围 / 指数 / N 只）**从 L1 搬进了抽屉**，但控件仍是**页面属性**（`p.cb_scope` / `p.cb_index` / `p.lbl_scope`）—— 联动逻辑与断言**不许改属性名** |
-| 🧪 参数研究**翻新 R0–R7**（★1.66/1.67 收官） | **结案记 = `docs/JIAN_ARCHIVE.md`「一、§7-B15 翻新 R0–R7」**（R0 拆件 `sweep_results.py` → R1 统一件 `kpi_card.py`/`sweep_parts.py` → R2 左栏三级预设 → R3 时间轴重做 `sweep_regimes.py` → R4 四视图 → R5 候选表+快照卡 → R6「ƒ 库」入口 → R7 合并区间）。⚠ 功能口径仍在 `docs/JIAN_SWEEP_PLAN.md`（本件只管"做到什么样/怎么做"） |
+| 🧪 参数研究**翻新 R0–R7**（★1.66/1.67 收官） | **结案记 = `docs/archive/README.md`「一、§7-B15 翻新 R0–R7」**（R0 拆件 `sweep_results.py` → R1 统一件 `kpi_card.py`/`sweep_parts.py` → R2 左栏三级预设 → R3 时间轴重做 `sweep_regimes.py` → R4 四视图 → R5 候选表+快照卡 → R6「ƒ 库」入口 → R7 合并区间）。⚠ 功能口径仍在 `docs/plans/done/SWEEP.md`（本件只管"做到什么样/怎么做"） |
 | 买卖条件**配置 → DSL 表达式**（★1.66） | **唯一真源 = `core/conditions.py`**（纯计算，零 Qt / 零 IO）：`build_condition_expression`（规则→算子，原长在 `ui/widgets/condition_gate.py`）/`row_expression`/`gate_expression`（组逻辑 all/any/atleast）/`gate_rows`。**两种形状都认**：新 `{logic,n,conditions:[…]}` 与旧单条件 `{variable,rule,value}`；已是表达式字符串则原样透传。⚠ 凡"从存档读条件再跑回测"的地方（§7-B15 参数研究）**必须**调它 —— 旧版把配置 dict 直递 `BacktestEngine.run` ⇒ `KeyError: 0` / `无法识别的字符 '{'`，**每组必挂**（页面还先 `str()` 了一道）。界面 `ConditionGate.expression()` 已改为调本件（不留第二份映射，§11.5-11） |
 | 结果区「K线买卖点」的**公式叠层**（★1.65） | ⚠ **M1 不喂策略函数的绘图 IR**：`ui/views/backtest.py::_render_result` / `_render_kline` 一律 `draws=[]`。理由 = **跨量纲**：策略函数是买卖条件，其 IR（`STICKLINE` 状态柱）用的是函数自己的量纲，一旦被 `overlay_extent` 并进 K 线 y 量程就把价格压成一条线（用户实测"比例失调无法查看" ⇒ "请让这个函数不要显示"）。**公式叠层归行情页**（那里才是看函数的地方）；结果区自身能力保留（`backtest_result._paint_overlays`），**没有叠层时「显示公式叠层」开关自动隐藏**。冒烟改为**直喂** `view.result.render_kline(..., draws=...)` 保住 §7-B3/B4 验收，另加"页面不再喂"的断言 |
 | M2 结果区 KPI（★1.64） | **盒子** = `styles.KPI_CARD_QSS`（白底小卡）；**文案与值色** = `scan_result.kpi_card_html()`（富文本：灰标签 + 17px 彩值 + 灰副值，一个 QLabel 搞定）+ `_KPI_SPEC`（只留值色与提示）。⚠ **M3 没有 KPI 行**（用户口径：只重塑工具栏，结果区原样） |

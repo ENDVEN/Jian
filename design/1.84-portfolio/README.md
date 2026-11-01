@@ -56,4 +56,4 @@
 ## 4. 待办
 
 P0 骨架 + 自选股组导入 → P1 净值与持仓 → P2 分布/状态栏 → P3 组合回测 → P4 接 B15 池化。
-完整规格见 `docs/JIAN_PORTFOLIO_PLAN.md`（口径已拍板 2026-10-26）。
+完整规格见 `docs/plans/done/PORTFOLIO.md`（口径已拍板 2026-10-26）。

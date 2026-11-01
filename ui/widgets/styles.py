@@ -167,7 +167,7 @@ def apply_app_palette(app) -> None:
 
 
 # ==========================================
-# 数值控件统一视觉契约 (v5.6 · 详见 JIAN_RULES.md §10-9)
+# 数值控件统一视觉契约 (v5.6 · 详见 docs/RULES.md §10-9)
 # ==========================================
 # 【为什么是空串 = 沿用原生】QSpinBox / QDoubleSpinBox 属于 Qt「复合控件」：
 # 一旦只给控件本体写 QSS（例：`QDoubleSpinBox { padding…; border-radius… }`）

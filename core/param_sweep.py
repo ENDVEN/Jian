@@ -5,7 +5,7 @@
 零 Qt —— UI 经 `ui/workers.ParamSweepWorker` 调 `run_sweep`（线程壳只做调度与
 信号转发，照 `CrossSectionWorker` 范式；口径全在本模块，冒烟可直接验证）。
 
-口径（与 docs/JIAN_SWEEP_PLAN.md 同源，改动必须两边同步）：
+口径（与 docs/plans/done/SWEEP.md 同源，改动必须两边同步）：
 - **复用 M1 唯一管线**：函数段 `execute_programs` 合并变量列 → `BacktestEngine().run(...)`
   —— 与 M1 现场运行（ui/widgets/backtest_flow）同一套；fill / risk / trigger_tick /
   commission **全参透传**（v3.1 勘误②）。**参数固定时与 M1 同参单跑逐位一致**
