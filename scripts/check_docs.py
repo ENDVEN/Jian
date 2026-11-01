@@ -17,6 +17,20 @@ import os
 import re
 import sys
 
+def _force_utf8_stdout() -> None:
+    """★2.02：**不依赖环境**地把 stdout 钉成 UTF-8。
+
+    为什么：CI（windows-latest）控制台默认 cp1252，脚本里一句中文 print 就会
+    `UnicodeEncodeError` ⇒ 退出码 1，看起来像"检查没通过"，其实是编码事故。
+    这里用 `reconfigure` 兜底；老解释器没有该方法就跳过（不抛）。
+    """
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:                      # noqa: BLE001 —— 兜底失败不影响主流程
+        pass
+
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RULES_LIMIT = 100_000
 
@@ -89,6 +103,7 @@ def check_module_index():
 
 
 def main() -> int:
+    _force_utf8_stdout()
     rows = []
     fm = check_front_matter()
     rows.append(('front-matter', not fm, '%d 个文件缺 status' % len(fm) if fm else 'OK'))

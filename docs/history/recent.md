@@ -265,3 +265,22 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
    `scripts/gen_codemap.py --check` · `scripts/check_docs.py`。**不跑两份冒烟**（空数据机器有 8 条已知环境性失败，
    会把红绿变成环境问题）；冒烟仍是发布前的本地必跑项。
 
+---
+
+## ★2.01 · 测试基建问题立项（纯文档，2026-11-02）
+
+**触发**：2.0 发布时 overlay 连续两次 `0xC0000409`，第三次通过后进程又**不退出**（见 §11.5-150）。
+
+**如实记录（关键：根因未确认）**
+
+| 现象 | 证据 |
+|---|---|
+| fastfail | RC `-1073740791`；三次运行 崩/崩/通过；两次都停在同一行数 |
+| 不是断言红 | 无失败行输出，进程直接消失 |
+| 不是 Python 异常 | 1.95 起装有 `_fastfail_guard`；且 QThread 探针证明 hook 能兜住两类异常 ⇒ 本次是 C++ 层 abort |
+| 不是"崩点=最后一行" | stdout 重定向是块缓冲，最后一行可能只是缓冲区边界 |
+| 跑完不退出 | 打印 `1236/0` 后 CPU 83s、占住输出文件；`taskkill` 报"无实例"、`Stop-Process` 无效，`.NET Kill` 有效 |
+
+**产出**：`docs/plans/active/TEST-HARNESS.md`（S1–S6 排查步骤 + 验收：连跑 10 次 0 崩 0 挂死）、
+`docs/playbook/process.md` §11.5-150、`docs/playbook/INDEX.md` 一行、`docs/STATUS.md` §5 债。
+

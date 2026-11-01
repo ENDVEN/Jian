@@ -90,6 +90,7 @@ verified: 2026-11-02
 | 147 | ★1.90 · 工具链 | process.md |
 | 148 | ★1.91 · 组合页「行业同步」三条同族坑 | data.md |
 | 149 | ★1.92 · 下载耗时的三笔账 | data.md |
+| 150 | ★2.01 · 冒烟 fastfail / 跑完不退出（根因未确认） | process.md |
 | 1–70 | 早期一句话条目（按序号；51–70 与 RULES 重复，以 RULES 为准） | legacy-1-70.md |
 | 94 / 95 · 98 / 99 | 已结案，正文在 `docs/archive/3-update-blocks.md` | — |
 

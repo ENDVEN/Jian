@@ -80,7 +80,7 @@ python main.py                       # 首次启动会在 ~/.jian_data/ 建数�
 
 ## 项目状态与反馈
 
-- **1.0 里程碑已收官**（复盘 + 行情 / 回测 / 组合全链路可用），当前 **2.0**，后续按 2.x 迭代；每条版本都有冒烟断言。
+- **1.0 里程碑已收官**（复盘 + 行情 / 回测 / 组合全链路可用），当前 **2.0**，后续按 **2.0x 递增**（2.01 / 2.02 …）；每条版本都有冒烟断言。
 - 遇到问题或有需求：请到 [Issues](https://github.com/ENDVEN/Jian/issues) 提，附上 `~/.jian_data/logs/app.log` 里对应时间段的片段（**日志不含 Cookie 等凭据**）。
 - 版本变更记录：`docs/history/recent.md`（最近几版）· `docs/history/changelog-1.md`（更早）。
 

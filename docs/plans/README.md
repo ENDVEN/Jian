@@ -23,6 +23,7 @@ verified: 2026-11-02
 |---|---|---|
 | [`active/ETF-LOF.md`](active/ETF-LOF.md) | 场内 ETF/LOF 接入：`etf_daily` 独立分区 · 基金代码路由 · 名册分表 · **本地等比前复权补跳空** · 不进 A 股扫描/广度 | **未实现**（方案已拍板） |
 | [`active/ARCH-PERF.md`](active/ARCH-PERF.md) | 架构与启动性能：4.05s → ≤2.2s 的 P0 四件 + 测试分层 + 文档分卷 | **未实现**（P0 待开工） |
+| [`active/TEST-HARNESS.md`](active/TEST-HARNESS.md) | 测试基建：overlay 偶发 fastfail（`0xC0000409`）与"跑完不退出"的根因排查（**结论未定**） | **待开工**（专项一轮） |
 
 ---
 

@@ -20,6 +20,12 @@ jobs:
     name: 静态检查
     runs-on: windows-latest
     timeout-minutes: 10
+    env:
+      # ★2.02：windows-latest 的控制台默认是 **cp1252**，Python 打中文会直接
+      #   UnicodeEncodeError（实测：`gen_codemap.py --check` 打印"一致"即崩，退出码 1）。
+      #   这两个环境变量把 stdio 钉成 UTF-8 —— 比在每个 print 上做兜底更稳。
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
     steps:
       - uses: actions/checkout@v4
 

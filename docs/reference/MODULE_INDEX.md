@@ -13,7 +13,6 @@ verified: auto
 
 | 文件 | 一句话 | 顶层符号 | 行数 |
 |---|---|---|---|
-| `_tmp_p1_verify.py` | P1 验证：① SingleSyncWorker 异常兜底回包 ② main.py 启动链路（splash 不拦启动）。 | 1 | 47 |
 | `config/__init__.py` | — | 0 | 0 |
 | `config/settings.py` | — | 0 | 332 |
 | `core/__init__.py` | — | 0 | 0 |
@@ -75,8 +74,8 @@ verified: auto
 | `models/__init__.py` | — | 0 | 0 |
 | `models/trade.py` | — | 1 | 103 |
 | `scripts/analyze_index_regimes.py` | 上证指数切块 · 离线脚本（§7-B15 SW-2 · 方案书 §11 决议 3）。 | 1 | 73 |
-| `scripts/check_docs.py` | 文档契约自检（秒级、不依赖 Qt）：写完/搬完文档跑一次。 | 8 | 88 |
-| `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 3 | 69 |
+| `scripts/check_docs.py` | 文档契约自检（秒级、不依赖 Qt）：写完/搬完文档跑一次。 | 9 | 100 |
+| `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 4 | 81 |
 | `scripts/sync_roster.py` | — | 2 | 37 |
 | `tests/smoke_chart.py` | — | 10 | 5696 |
 | `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 31 | 8713 |
@@ -207,4 +206,4 @@ verified: auto
 | `ui/widgets/yearly_review.py` | — | 1 | 124 |
 | `ui/workers.py` | 共享的后台工作线程 (QThread Workers) —— v5.8。 | 22 | 912 |
 
-> 共 193 个 .py 文件。
+> 共 192 个 .py 文件。
