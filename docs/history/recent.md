@@ -248,3 +248,20 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
 
 **验证**：`smoke_chart` **1076/0** · `smoke_pages_overlay` **1236/0**（装 guard 后仍全绿）。
 
+---
+
+## ★2.0 · 1.0 收官 + P1 清理（2026-11-02 提交）
+
+**背景**：作者在 1.100 之前决定**结束 1.0 大版本**，把后续都算作"优化与提升"，并从 **2.0** 重新起版本号。
+
+**本版四件（无业务逻辑改动）**
+
+1. `SingleSyncWorker.run` 补 try —— 18 个 QThread 里**唯一没有兜底**的一个。失败时发**同形状**回包
+   （`ok=False, reason="error", message=...`），调用方按普通失败提示，不会再出现"整程序消失"。
+2. **启动占位**（`main.py::_make_splash`）：冷启动构造期 1.7s 内不再白屏；只显示"正在加载页面与数据…"，
+   **不编进度条**；窗口 `show()` 后 `splash.finish(window)`；创建失败只记一条日志、绝不拦启动。
+3. 删除 `docs/assets/overview.png`（空界面，README 只放好看的两张）。
+4. **CI**：`.github/workflows/ci.yml` 只跑**零依赖、确定性**的三步 —— 全仓 `compileall` ·
+   `scripts/gen_codemap.py --check` · `scripts/check_docs.py`。**不跑两份冒烟**（空数据机器有 8 条已知环境性失败，
+   会把红绿变成环境问题）；冒烟仍是发布前的本地必跑项。
+

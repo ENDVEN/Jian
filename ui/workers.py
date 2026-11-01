@@ -461,10 +461,24 @@ class SingleSyncWorker(QThread):
     def run(self):
         # ★v1.40/§7-E5：单只同步同样吃"日历感知新鲜度" —— 盘中点同步不再白跑一次请求
         # （日线的今天那根要 15:05 才定稿，此前拉回来也只会被定稿守卫裁掉）。
-        result = MarketSyncService().refresh_one(
-            self._symbol, zone=self._zone, force_full=self._force_full,
-            min_date=self._min_date, policy=inject_expected_latest(self._policy),
-            period=self._period)
+        #
+        # ★2.0：**兜底**。它是 18 个 worker 里唯一原先没有 try 的 —— 槽里漏出异常会被 PyQt
+        #   判为未捕获 ⇒ `qFatal`（进程 fastfail，§11.5-149 同族）。失败就发一条**同形状**的回包，
+        #   调用方按 reason='error' 正常安抚用户，而不是整程序消失。
+        try:
+            result = MarketSyncService().refresh_one(
+                self._symbol, zone=self._zone, force_full=self._force_full,
+                min_date=self._min_date, policy=inject_expected_latest(self._policy),
+                period=self._period)
+        except Exception as e:                    # noqa: BLE001 —— 异常绝不穿透 QThread
+            logger.warning("单只同步失败 %s: %s", self._symbol, e)
+            result = {
+                "ok": False, "symbol": self._symbol, "zone": self._zone,
+                "key": self._symbol, "period": self._period or "",
+                "rows": 0, "added": 0, "skipped": False, "reason": "error",
+                "first": None, "last": None, "rescaled": False,
+                "message": f"同步失败：{type(e).__name__}: {e}",
+            }
         self.finished.emit(result)
 
 

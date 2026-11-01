@@ -100,6 +100,54 @@ def _install_excepthook() -> None:
         pass
 
 
+def _make_splash(app):
+    """★2.0：启动占位（**只为遮住 3~4 秒白屏**，不承载任何逻辑）。
+
+    【为什么要它】实测冷启动 3.6s（构造期 1.9s：9 个页面都在 `__init__` 里建），
+      期间窗口还没 show ⇒ 用户双击后什么都看不到，容易以为没启动、再点一次。
+    ⚠ 只显示"正在加载"，**不报进度**（没有真实进度就别编）；失败就返回 None，绝不拦启动。
+    """
+    try:
+        from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
+        from PyQt6.QtWidgets import QSplashScreen
+
+        pm = QPixmap(560, 240)
+        pm.fill(QColor("#FFFFFF"))
+        painter = QPainter(pm)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(QColor("#1F2A37"))
+            title_font = QFont()
+            title_font.setFamilies(["Microsoft YaHei UI", "Noto Sans SC", "Source Han Sans SC"])
+            title_font.setPixelSize(30)
+            title_font.setBold(True)
+            painter.setFont(title_font)
+            painter.drawText(pm.rect().adjusted(36, 54, -36, 0),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                             settings.APP_NAME.split(" - ")[0])
+            painter.setPen(QColor("#5A6577"))
+            sub_font = QFont()
+            sub_font.setFamilies(["Microsoft YaHei UI", "Noto Sans SC", "Source Han Sans SC"])
+            sub_font.setPixelSize(15)
+            painter.setFont(sub_font)
+            painter.drawText(pm.rect().adjusted(36, 108, -36, 0),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                             f"v{settings.APP_VERSION} · 正在加载页面与数据…")
+            painter.setPen(QColor("#D7DEE8"))
+            painter.drawLine(36, 214, 524, 214)
+        finally:
+            painter.end()
+
+        splash = QSplashScreen(pm)
+        splash.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        splash.show()
+        app.processEvents()
+        return splash
+    except Exception as e:                        # noqa: BLE001 —— 占位失败不影响启动
+        logging.warning("启动占位创建失败（不影响使用）: %s: %s", type(e).__name__, e)
+        return None
+
+
 def setup_env():
     """初始化运行环境、全局配置和日志"""
     logging.basicConfig(
@@ -173,13 +221,17 @@ def main():
         logging.warning(f"函数总库迁移失败（总库打开时会重试）: {type(_e).__name__}: {_e}")
 
     logging.info(f"正在启动 {settings.APP_NAME} v{settings.APP_VERSION}...")
+    splash = _make_splash(app)
+    t_win = time.perf_counter()
     window = JianMainWindow()
+    logging.info("主窗口构造完成：%.2fs", time.perf_counter() - t_win)
     # ★1.69 / §10-15：字体自检**挪到窗口构造之后**，并把窗口传进去 ——
     #   传 widget 才报得准"界面**实际**用上哪一款"；旧版对新造的 QFont 取 QFontInfo，
     #   报的是"字体栈**会**解析成谁"，于是出现过"日志说开源字体、界面其实跑在雅黑上"。
     logging.info(ui_font_status(window))
     window.show()
-    
+    if splash is not None:
+        splash.finish(window)            # ★2.0：窗口出来后再撤占位，避免"闪一下又没了"
     sys.exit(app.exec())
 
 if __name__ == "__main__":

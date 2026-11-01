@@ -13,8 +13,7 @@ verified: auto
 
 | 文件 | 一句话 | 顶层符号 | 行数 |
 |---|---|---|---|
-| `_tmp_shots.py` | 离屏渲染 README 截图（**合成组合 + 公开行情**，不含任何个人数据）。 | 1 | 92 |
-| `_tmp_size_probe.py` | 诊断：窗口拉大后，内容区/页面/图表真正多宽（判断右边缘被裁是不是布局没跟上）。 | 0 | 29 |
+| `_tmp_p1_verify.py` | P1 验证：① SingleSyncWorker 异常兜底回包 ② main.py 启动链路（splash 不拦启动）。 | 1 | 47 |
 | `config/__init__.py` | — | 0 | 0 |
 | `config/settings.py` | — | 0 | 332 |
 | `core/__init__.py` | — | 0 | 0 |
@@ -72,7 +71,7 @@ verified: auto
 | `data/trade_calendar.py` | A 股交易日历获取件（v6.45 / §7-B10 · 用户拍板引入真交易日历）。 | 8 | 111 |
 | `data/watchlist_change.py` | 自选分组的「组合当日涨跌」（§7-B8 R3）—— **零 Qt**：纯函数 + 一层带 TTL 的快照缓存。 | 7 | 155 |
 | `data/watchlist_store.py` | 自选股（Watchlist）—— 用户关心的标的清单，JSON 原子写（§7-B3 P8）。 | 5 | 340 |
-| `main.py` | — | 4 | 160 |
+| `main.py` | — | 5 | 208 |
 | `models/__init__.py` | — | 0 | 0 |
 | `models/trade.py` | — | 1 | 103 |
 | `scripts/analyze_index_regimes.py` | 上证指数切块 · 离线脚本（§7-B15 SW-2 · 方案书 §11 决议 3）。 | 1 | 73 |
@@ -206,6 +205,6 @@ verified: auto
 | `ui/widgets/watch_row_delegate.py` | 自选清单的**行绘制**（v6.24 · §7-B8 R15 / 2b 余项）：`名称 · 代码（右对齐）· 涨跌列`。 | 3 | 115 |
 | `ui/widgets/watch_sort_list.py` | 自选清单的**拖拽排序列表**（v6.24 · §7-B8 R15）—— 用"三道闸"防误触。 | 1 | 70 |
 | `ui/widgets/yearly_review.py` | — | 1 | 124 |
-| `ui/workers.py` | 共享的后台工作线程 (QThread Workers) —— v5.8。 | 22 | 898 |
+| `ui/workers.py` | 共享的后台工作线程 (QThread Workers) —— v5.8。 | 22 | 912 |
 
-> 共 194 个 .py 文件。
+> 共 193 个 .py 文件。

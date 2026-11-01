@@ -1,0 +1,42 @@
+name: CI
+
+# 只做"确定性、零依赖"的检查：不需要 pip install，几十秒跑完。
+# 为什么不在 CI 跑两份冒烟：
+#   · 它们会真的打开 ~/.jian_data（空数据机器上有 8 条已知环境性失败，见 docs/reference/SETUP.md）；
+#   · 依赖 PyQt6 + 2000 只行情，既慢又易受网络/频控影响，红绿不由代码决定。
+# 冒烟仍是发布前**本地必跑**（docs/AGENTS.md）。等 CI 数据种子方案定了再把它加进来。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: 静态检查
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 全仓语法编译
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Recurse -Filter *.py |
+                   Where-Object { $_.FullName -notmatch '\\design\\|\\__pycache__\\' }
+          python -m compileall -q $($files.FullName)
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: 模块清单是否与代码一致
+        run: python scripts/gen_codemap.py --check
+
+      - name: 文档契约（front-matter / 计划登记 / 链接 / 体积）
+        run: python scripts/check_docs.py

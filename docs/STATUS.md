@@ -17,10 +17,10 @@ verified: 2026-11-02
 
 | 项 | 值 |
 |---|---|
-| 版本 | **1.95**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
-| HEAD | 本版提交（`git log -1`）· `1.95 发布前硬化 异常兜底 README门面 截图` |
+| 版本 | **2.0**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
+| HEAD | 本版提交（`git log -1`）· `2.0 1.0收官 启动占位 同步兜底 CI` |
 | 推送 | ✅ `main == origin/main`（已推送） |
-| 最近三版 | `1.95` 发布前硬化（excepthook / README 门面 / 截图）· `1.94` 文档分层 + 开源准备 + 依赖合并 · `1.93` 架构与性能评估 |
+| 最近三版 | `2.0` 1.0 收官（启动占位 / 同步兜底 / CI）· `1.95` 发布前硬化（异常兜底 / README 门面 / 截图）· `1.94` 文档分层 + 开源准备 + 依赖合并 |
 
 ---
 
