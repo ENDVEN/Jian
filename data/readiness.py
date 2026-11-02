@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -185,13 +186,12 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
         if should_stop is not None and k % chunk == 0 and should_stop():
             raise ReadinessCancelled(f'体检已取消（已查 {k}/{len(symbols)} 只）')
         path = os.path.join(zone_dir, f'{sym}.parquet')
-        if not os.path.exists(path):
-            report.missing.append(sym)
-        else:
-            try:
-                pf = pq.ParquetFile(path)
-                rows = int(pf.metadata.num_rows)
-                last = _footer_last_date(pf)
+        try:
+            entry = _footer_cached(path)      # 坏文件也在这里抛 ⇒ 下面统一记 unreadable
+            if entry is None:
+                report.missing.append(sym)
+            else:
+                last, rows = entry
                 if last is not None:
                     if latest is None or last > latest:
                         latest = last
@@ -203,9 +203,9 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
                     report.partial[sym] = rows
                 else:
                     report.ready.append(sym)
-            except Exception as e:  # noqa: BLE001 —— 坏文件进问题清单，不废整轮
-                logger.warning(f"就绪度体检：文件打不开 [{sym}]: {e}")
-                report.unreadable[sym] = str(e)
+        except Exception as e:  # noqa: BLE001 —— 坏文件进问题清单，不废整轮
+            logger.warning(f"就绪度体检：文件打不开 [{sym}]: {e}")
+            report.unreadable[sym] = str(e)
         if progress is not None and (k % chunk == chunk - 1 or k == len(symbols) - 1):
             progress(k + 1, len(symbols), sym)
 
@@ -214,6 +214,34 @@ def probe_readiness(zone_dir: str, symbols, min_bars: int = None,
     report.last_by_symbol = last_by_symbol
     report.elapsed_ms = (time.perf_counter() - t0) * 1000
     return report
+
+
+# ★2.03 / ARCH-PERF P0-4：footer 结果 LRU（键含 path/size/mtime_ns）。
+#   启动期实测 `_footer_last_date` 被调 2,673 次、每次都重新打开 parquet；
+#   文件没变就直接复用。补下载 ⇒ mtime 变 ⇒ 自动失效（与组合页缓存同款纪律）。
+_FOOTER_CACHE: OrderedDict[tuple[str, int, int], tuple] = OrderedDict()
+_FOOTER_CACHE_MAX = 4096
+
+
+def _footer_cached(path: str):
+    """返回 `(last_date, rows)`；文件不存在 → `None`（调用方记 missing）。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (os.path.abspath(path), int(st.st_mtime_ns), int(st.st_size))
+    hit = _FOOTER_CACHE.get(key)
+    if hit is not None:
+        _FOOTER_CACHE.move_to_end(key)
+        return hit
+    pf = pq.ParquetFile(path)
+    rows = int(pf.metadata.num_rows)
+    last = _footer_last_date(pf)
+    _FOOTER_CACHE[key] = (last, rows)
+    _FOOTER_CACHE.move_to_end(key)
+    while len(_FOOTER_CACHE) > _FOOTER_CACHE_MAX:
+        _FOOTER_CACHE.popitem(last=False)
+    return last, rows
 
 
 def _footer_last_date(pf: pq.ParquetFile):

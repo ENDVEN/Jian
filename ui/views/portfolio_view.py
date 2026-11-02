@@ -82,6 +82,7 @@ class PortfolioView(QWidget):
         self._range = "all"       # 3m / 1y / ytd / all / since
         self._pf_cur = None       # 当前渲染的组合（切窗口时重画用）
         self._names_cache = None  # 花名册（代码→名称），懒加载
+        self._wl_fallback = None  # ★2.03：行情页未建时的自选股真源（懒建，别反复读盘）
         self._nav = None          # 最近一次算出的净值（Series）—— 断言与调试都读它
         self._build()
         self._load_ui()
@@ -804,9 +805,21 @@ class PortfolioView(QWidget):
 
     # ================= 数据 =================
     def _watchlist(self):
-        """成分来源（只读门面）—— 从行情页拿，**不自己建第二份**。"""
-        page = getattr(self.main_win, "page_market", None)
-        return getattr(page, "watchlist", None) if page is not None else None
+        """成分来源（只读门面）—— 从行情页拿，**不自己建第二份**。
+
+        ★2.03 / ARCH-PERF P0-1：**不许为了取自选股而把行情页建出来**。
+        页面已建 ⇒ 用它那份（历史口径不变）；没建 ⇒ 直接读唯一真源 `WatchlistStore`
+        （自选本来就落这个 JSON，不在页面对象里）。
+        """
+        peek = getattr(self.main_win, "page_if_built", None)
+        page = peek("market") if callable(peek) else getattr(self.main_win, "page_market", None)
+        wl = getattr(page, "watchlist", None) if page is not None else None
+        if wl is not None:
+            return wl
+        if self._wl_fallback is None:
+            from data.watchlist_store import WatchlistStore
+            self._wl_fallback = WatchlistStore()
+        return self._wl_fallback
 
     def refresh(self) -> None:
         """重读存储 + 重建列表（选中项尽量保持）。"""

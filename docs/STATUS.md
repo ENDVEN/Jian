@@ -17,24 +17,24 @@ verified: 2026-11-02
 
 | 项 | 值 |
 |---|---|
-| 版本 | **2.02**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
-| HEAD | 本版提交（`git log -1`）· `2.02 测试基建 fastfail 根因修复 文档` |
-| 推送 | ⬜ **已提交、未推送**（2026-11-03 用户只要求提交） |
-| 工作区 | ✅ 2.02 提交时干净；随后开始 **ARCH-PERF P0 四件**（未提交、未 bump） |
-| 最近三版 | `2.02` 测试基建 fastfail 根因修复（QThread 被 GC）· `2.01` 测试基建问题立项 · `2.0` 1.0 收官（启动占位 / 同步兜底 / CI） |
+| 版本 | **2.03**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
+| HEAD | 本版提交（`git log -1`）· `2.03 启动优化P0 惰性建页 缓存探针` |
+| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **2 个提交**：2.02 / 2.03） |
+| 工作区 | ✅ 干净（2.03 提交后；`scripts/probe_startup.py` 已入库） |
+| 最近三版 | `2.03` 启动优化 P0（惰性建页 / 三种缓存 / 探针）· `2.02` 测试基建 fastfail 根因修复 · `2.01` 测试基建问题立项 |
 
 ---
 
-## 2. 冒烟基线（最近一次全绿，2026-10-29）
+## 2. 冒烟基线（最近一次全绿，2026-11-03）
 
 | 命令 | 结果 |
 |---|---|
-| `python -u tests/smoke_chart.py` | **1076 / 0** |
-| `python -u tests/smoke_pages_overlay.py` | **1239 / 0**（2026-11-03 连跑 10 次全绿，最长 49.1s） |
+| `python -u tests/smoke_chart.py` | **1080 / 0**（+4 条 P0 内核断言） |
+| `python -u tests/smoke_pages_overlay.py` | **1244 / 0**（+5 条惰性建页断言） |
 
 > ⚠ **已知假红**：本机有下载在跑时（数据湖 parquet 的 mtime 每几秒变），两条"缓存命中"断言必红（§11.5-79）。**先停下载再跑**。
 > ✅ **fastfail 已收口**（2026-11-03）：根因 = `ReadinessFlow.start()` 覆盖 `self._probe` 时旧 `ReadinessWorker` 仍在运行 ⇒ 引用归零 ⇒ QThread 析构 ⇒ `0xC0000409`。修法见 `plans/active/TEST-HARNESS.md` §4；连跑 10/10 通过。
-> ⚠ **退出挂死未复现**（修复后 10 次都没出现）：退出路径已加存活线程清单 + 30s watchdog（卡住 ⇒ `RC=4` + 全线程栈），复现时按 `TEST-HARNESS.md` §7 收口。
+> ✅ **退出挂死已复现并收口**（2026-11-03）：退出时仍有 **2 个 `ScanWorker`**；`os._exit` 卡在 `ExitProcess`、主线程持 GIL（watchdog 也跑不起来）⇒ 冒烟改 `TerminateProcess` 硬退出；带 2 个存活线程仍 **57s 正常返回**。线程来源另立。
 
 ---
 
@@ -43,8 +43,8 @@ verified: 2026-11-02
 | 任务 | 方案书 | 状态 | 一句话 |
 |---|---|---|---|
 | **场内基金 ETF/LOF 接入** | `docs/plans/active/ETF-LOF.md` | **未实现**，方案已拍板 | 只做场内 ETF/LOF；`etf_daily` 独立分区；用新浪分红表**本地等比前复权**补跳空；不进 A 股扫描/广度 |
-| **架构与性能（启动）优化** | `docs/plans/active/ARCH-PERF.md` | **未实现**，方案已出 | 启动实测 4.05s；9 个页面全在 `__init__` 建好；P0 四件目标 ≤2.2s |
-| **测试基建** | `docs/plans/active/TEST-HARNESS.md` | **进行中**（2.02 已提交） | fastfail 已定位并修复（10/10 绿）；"跑完不退出"未复现，退出路径已加 watchdog + 线程清单 |
+| **架构与性能（启动）优化** | `docs/plans/active/ARCH-PERF.md` | **P0 已完成**（2.03）· P1/P2 未做 | 构造 3.6s→0.27s；已建页面 9→1；真机探针 **2.145s**（目标 ≤2.2s） |
+| **测试基建** | `docs/plans/active/TEST-HARNESS.md` | **进行中**（2.02 已提交） | fastfail 10/10 绿；挂死已复现并收口（存活 QThread + `ExitProcess` 死锁 ⇒ 硬退出）；2 个 ScanWorker 来源另立 |
 
 ---
 
@@ -54,19 +54,25 @@ verified: 2026-11-02
 - 已做：行缓冲 / `faulthandler` / 全局超时 / 退出 watchdog / 线程清单 / fastfail 根因修复 / 3 条新断言；
 - 剩：**观察"跑完不退出"是否复现**（复现 ⇒ 按 `TEST-HARNESS.md` §7 收口）；确认后再定 CI 冒烟子集（当前 CI 只跑静态检查）。
 
-### P1 · 启动优化四件（≈0.9 轮）
-1. **惰性建页**：`ui/main_window.py` 9 个页面改工厂 + `page_*` property + 只读 `_PAGES`（已核实全仓 0 处下标路由、132 处外部引用语义不变）；
-2. **roster 向量化**：`core/engine.py` 去掉 `iterrows`（15,055 次 → 一次）；
-3. **日历批量**：`data/trade_calendar.py` 日期解析（`strptime` 26,391 次）；
-4. **footer LRU**：`data/readiness.py` 用 `(path,size,mtime_ns)` 做键（2,673 次 footer 解析）；
-5. 新增 `scripts/probe_startup.py` 当"同一把尺子"。
+### 已完成（2.03）
+- **启动优化 P0 四件**：惰性建页 / roster 向量化 / 日历批量 / footer LRU + `probe_startup.py`；
+  行为断言 9 条（chart +4、overlay +5）；实测 3.6s → 0.27s、9 → 1 页、真机探针 **2.145s**。
+- **测试基建 S1–S6**（2.02）：fastfail 根因修复 + 挂死改硬退出；仅剩"2 个 ScanWorker 来源"（测试侧）。
 
-**验收用行为断言**（已建页面集合 / `os.stat` 调用数 / 逐位一致），**不用墙钟**（会 flaky）。目标 4.05s → ≤2.2s。
+### P0 · 下一件：ETF/LOF 接入（≈1.5 轮）
+- `docs/plans/active/ETF-LOF.md` §5 的 **P1-1 … P1-8**：分区/schema → 基金取数 → 名册独立表 →
+  下载入口 → 组合接入 → 数据管理分区名 → 本地等比前复权 → 10 条断言 + 文档。
+- 前置已具备：A 股日历复用、`load_daily` 统一出口、组合页已接 `load_daily`。
+
+### P1 · 启动优化第二批（ARCH-PERF P1，≈0.5 轮）
+1. `data/akshare_feed.py` 顶层 `import akshare` → 惰性（启动省 ~0.4s）；
+2. `ui/views/portfolio_view.py` `refresh()` 延迟到首次可见 + `_save_ui` 300ms 防抖；
+3. `data/market_db.py` `get_lake()` 单例（去掉每次 `new` + `makedirs`）。
 
 ### 之后
-- **ETF/LOF P1-1…P1-8**（`docs/plans/active/ETF-LOF.md` §5，≈1.5 轮）；
-- **测试分层**（unit / integration / ui_smoke）；
-- B13 深色主题（需先定范围）· 多组合对比（用户未提）。
+- **测试分层**（unit / integration / ui_smoke）+ CI 冒烟子集（先定"CI 数据种子"）；
+- **B17 组合剩余**：行业覆盖率（`industry_map` 302/5169 ≈5.8%）· 多组合对比（用户未提）；
+- **B13 外观/深色主题**（需先定范围）· B12「修回历史」待拍板。
 
 ---
 
@@ -76,10 +82,9 @@ verified: 2026-11-02
 |---|---|---|
 | 测试形态 | `tests/` **2 个脚本 14.4k 行**；无 unit / 无 pytest。overlay 的 `0xC0000409` **已随 2.02 修复**（`ReadinessFlow` 旧线程被 GC）；"跑完不退出"未复现（`plans/active/TEST-HARNESS.md`） | 反馈 ~1–3 分钟；失败靠行眼找 |
 | 视图层 | `ui/` 37,388 行（57%）· `widgets/` **94 个平铺** · ≥800 行文件 **11 个** | 改动要读多处 |
-| 启动 | **4.05s** = import 1.36 + 构造 2.48 + 首绘 0.16 | 见 §4 P0 |
-| 文档 | 总计 **740k 字符**（RULES 97.8k · ARCHIVE 242k · HISTORY 173k · PLAYBOOK 87k · CODEMAP 61k） | 见 §7 |
+| 启动 | P0 后构造 **0.27s**、已建页 **1/9**、真机探针 **2.145s**（旧基线 4.05s = import 1.36 + 构造 2.48 + 首绘 0.16） | 见 §4 P1（首次切页有一次性 0.3~0.5s） |
+| 文档 | 总计约 700k 字符（RULES **87.6k** · ARCHIVE 242k · HISTORY · PLAYBOOK · CODEMAP） | 见 §7 |
 | 目录 | `models/`（103 行）与 core 并列；`samples/` 是用户样例数据 | 归类瑕疵，不影响功能 |
-| 文档 | `§11.5-106` **已有正文**（2026-11-03 核对：在 `docs/RULES.md` §11.5，内容 = 按代码升序补齐的覆盖错觉） | 原"无正文"记录作废，无需补写 |
 
 ---
 

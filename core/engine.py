@@ -129,12 +129,15 @@ class DataEngine:
             return {}
         if df is None or df.empty or 'symbol' not in df.columns:
             return {}
-        out = {}
-        for _, row in df.iterrows():
-            symbol = str(row.get('symbol') or '').strip()
-            if symbol:
-                out[symbol] = str(row.get('name') or '').strip()
-        return out
+        # ★2.03 / ARCH-PERF P0-2：**向量化**（旧版 `iterrows` 每次取名字都全表遍历，
+        #   启动期实测 15,055 次）。语义：symbol 去空白后非空才入表；name 缺/NaN ⇒ ''。
+        sym = df['symbol'].astype('string').str.strip()
+        if 'name' in df.columns:
+            name = df['name'].astype('string').fillna('').str.strip()
+        else:
+            name = pd.Series('', index=df.index, dtype='string')
+        mask = sym.notna() & sym.ne('')
+        return dict(zip(sym[mask].tolist(), name[mask].tolist()))
 
     def confirm_coverage_gap(self, account: str, month: str):
         """用户确认某月为"有意跳过"，此后不再重复提醒"""

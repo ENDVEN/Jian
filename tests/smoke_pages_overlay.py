@@ -364,6 +364,30 @@ _rflow0.CalendarWorker = _StubCalendarWorker   # 两页起日历线程也不联�
 
 app = QApplication.instance() or QApplication([])
 win = JianMainWindow()
+
+# ★2.03 / ARCH-PERF P0-1：惰性建页（**必须**在任何 page_* 访问之前断言）
+check("★ 2.03 惰性建页：构造后只建首屏（overview），内容栈只有 1 页",
+      set(win._built_pages) == {"overview"} and win.content_area.count() == 1)
+check("★ 2.03 惰性建页：`list(win._PAGES)` 只出键、不建页（遍历不会把 9 页全建回来）",
+      list(win._PAGES) == ["overview", "records", "review", "market", "backtest",
+                           "portfolio", "hub", "data", "settings"]
+      and set(win._built_pages) == {"overview"})
+_pf = win.page_portfolio
+check("★ 2.03 惰性建页：访问 `page_portfolio` 才建（内容栈 +1，且与路由表同一对象）",
+      _pf is win._PAGES['portfolio'] and set(win._built_pages) == {"overview", "portfolio"}
+      and win.content_area.count() == 2)
+try:
+    win._PAGES['hub'] = None
+    _ro = False
+except TypeError:
+    _ro = True
+check("★ 2.03 惰性建页：`_PAGES` 是只读映射（赋值当场 TypeError，不会静默改路由）", _ro)
+win.switch_to('hub')
+check("★ 2.03 惰性建页：`switch_to('hub')` 建页并切过去（导航不因惰性而坏）",
+      win.content_area.currentWidget() is win.page_hub
+      and set(win._built_pages) == {"overview", "portfolio", "hub"})
+win.switch_to('overview')
+
 view = win.page_backtest.single_view
 
 # ==========================================
@@ -822,7 +846,7 @@ check("互送：段数一致", sent == 2)
 check("回测页①函数区已收到函数文本（目标不随行）",
       bt.segments.texts() == [MACD_SEG, MA_SEG])
 check("回测页参数框已同步", bt.txt_params.text() == "L1=5")
-check("互送后自动切到回测页", win.content_area.currentIndex() == 4)
+check("互送后自动切到回测页", win.content_area.currentWidget() is win.page_backtest)
 check("送来的函数被自动检测（不是静默塞进去）",
       bt.lbl_detect.text() and "未检测" not in bt.lbl_detect.text())
 
@@ -840,7 +864,7 @@ check("互送：回测页 → 行情页 段数一致", back == 1)
 check("行情页已切换并按「主图」接收（回测侧没有窗格信息）",
       len(mkt._formula_segments) == 1 and mkt._formula_segments[0][1] == 'main'
       and mkt._formula_params_text == "N1=9")
-check("互送后自动切到行情页", win.content_area.currentIndex() == 3)
+check("互送后自动切到行情页", win.content_area.currentWidget() is win.page_market)
 check("回执说明了来源", "回测页" in mkt.lbl_formula_status.text())
 
 # —— 统一浮窗（★1.61 / §7-B16）：列表 / 详情 / 载入 ——
@@ -9008,10 +9032,10 @@ try:
     _side73 = win.btn_settings.parentWidget().layout()
     check("★ S2-0：运行期实测 —— 左轨**最后一个控件**就是 `⚙ 设置`（真在底部，不只是源码写着）",
           _side73.itemAt(_side73.count() - 1).widget() is win.btn_settings)
-    check("★ S2-0：设置页进了内容栈 + 导航可切 + `switch_to('settings')` 认它（★1.59 起设置顺移 index 7）",
-          'self.content_area.addWidget(self.page_settings)' in _mws73
+    check("★ S2-0：设置页有**惰性工厂** + 导航可切 + `switch_to('settings')` 认它（★2.03 惰性建页）",
+          '"settings": lambda win: SettingsView(win)' in _mws73
           and 'self.btn_settings.clicked.connect' in _mws73
-          and '"settings": self.page_settings' in _mws73)
+          and '_PAGE_ORDER' in _mws73)
     check("★ S2-0：主窗口已挂上设置页（真实装配）+ `switch_to('settings')` 认它（★1.85 起按身份）",
           hasattr(win, 'page_settings') and hasattr(win, 'btn_settings')
           and win.content_area.indexOf(win.page_settings) >= 0
@@ -9795,6 +9819,22 @@ def _describe_threads(tag: str) -> None:
             pass
 
 
+def _hard_exit(code: int) -> None:
+    """硬退出：Windows 走 `TerminateProcess`，**绕开 ExitProcess / DLL detach**。
+
+    【为什么不用 os._exit（2026-11-03 实测）】退出时还有 2 个 `ScanWorker` 在跑 ⇒
+    `os._exit()` 卡在 `ExitProcess`，而且主线程持着 GIL ⇒ watchdog 线程也跑不起来
+    （30s 后仍未退出，只能 .NET Kill）。`TerminateProcess` 不跑 DLL detach，立即结束。
+    """
+    try:
+        import ctypes
+        ctypes.windll.kernel32.TerminateProcess(
+            ctypes.windll.kernel32.GetCurrentProcess(), int(code))
+    except Exception:  # noqa: BLE001 —— 非 Windows / 调用失败 ⇒ 退回 os._exit
+        pass
+    os._exit(int(code))
+
+
 def _arm_exit_watchdog(seconds: float = 30.0) -> None:
     """退出路径 watchdog：卡住就打印全线程栈并以 4 退出（把"挂死"变成可见失败）。"""
     def _fire():
@@ -9808,7 +9848,7 @@ def _arm_exit_watchdog(seconds: float = 30.0) -> None:
                      .encode("utf-8", "replace"))
         except Exception:  # noqa: BLE001
             pass
-        os._exit(4)
+        _hard_exit(4)
 
     _t = _threading.Timer(seconds, _fire)
     _t.daemon = True
@@ -9816,6 +9856,18 @@ def _arm_exit_watchdog(seconds: float = 30.0) -> None:
 
 
 _faulthandler.cancel_dump_traceback_later()
+
+# ★2.03：收掉测试自己起的扫描线程（它们不参与断言；带着跑会让退出路径变慢甚至挂死）。
+#   `ScanWorker.cancel()` 只置取消位，最多等 2s —— 不为收尾把整包拖长。
+try:
+    for _pg in (win.page_backtest.page_scan, win.page_backtest.page_breadth):
+        _wk = getattr(_pg, '_worker', None)
+        if _wk is not None and _wk.isRunning():
+            _wk.cancel()
+            _wk.wait(2000)
+except Exception as _e_wk:  # noqa: BLE001 —— 收尾失败不影响断言结果
+    print(f"  [说明] 收尾扫描线程失败（不影响断言）: {type(_e_wk).__name__}: {_e_wk}")
+
 _arm_exit_watchdog(30.0)
 _describe_threads("退出前的存活线程")
 # ★2.02 / S2 附注：**已知噪音**，不是断言失败 —— Windows 上 pyqtgraph + os._exit
@@ -9824,5 +9876,4 @@ _describe_threads("退出前的存活线程")
 #   正常收尾时关掉 faulthandler 免刷日志；watchdog 触发时会自己 enable 回来留栈。
 _faulthandler.disable()
 sys.stdout.flush()
-os._exit(1 if BAD else 0)
-sys.exit(1 if BAD else 0)
+_hard_exit(1 if BAD else 0)

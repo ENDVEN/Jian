@@ -241,3 +241,10 @@ verified: 2026-11-02
   【③ 负向断言的样本会被自己的注释引爆（§11.5-101 复犯）】我加了 `"{d: 0.0 for d in nav.index}" not in 源码` 这条护栏，转头把**旧版写法原样写进注释**当解释 ⇒ 断言当场红。**规矩**：写"不许出现 X"的源码级断言时，**解释里也不许出现 X 的字面量**（写"旧版把每天先塞一个 0 收益"），否则修护栏的人先被护栏绊倒。
   【同批教训】缓存键不带"数据新鲜度"= 补下载后看不到变化：`_frames` 只按 symbols 缓存 ⇒ 用户在数据管理补完日线回来，曲线还是旧的（以为没下载成功）。**修法** = 键里带 `file_mtime`（`DataLakeManager.file_mtime`，只 stat 不读行），留最近几批防无限长。**通用判据**：凡"读盘 + 缓存"的页面，缓存键必须包含**能让数据变旧的东西**（文件 mtime / 数据版本）。
 
+
+- **11.5-151** 【★2.03 · ARCH-PERF P0：**惰性建页三坑**】
+  【① 下标断言必红】页面不再按装配顺序进 `QStackedWidget`，index 变成"建页顺序" ⇒ 旧断言 `content_area.currentIndex() == 3` 会指到别的页。**一律按身份**：`currentWidget() is win.page_market`（§11.5-130 同族）。
+  【② 构造期 `getattr(main_win, "page_x")` 会强制建页】组合页取自选股时用 `getattr(main_win, "page_market")` ⇒ 一建组合页就把行情页带出来（实测 1 页变 3 页）。只想"看一眼"的跨页引用走 `main_win.page_if_built(key)`；拿不到就退回底层真源（这里是 `WatchlistStore`），**不要为了取值把 UI 建出来**。
+  【③ 刷新函数也会把页面全建回来】`render_all_data()` 旧版直接写 `self.page_overview / page_records / page_review` ⇒ 每建一页都触发全量建页。改成只遍历 `_built_pages`，页面首次建好时再调一次。
+  【判据】`list(_PAGES)` 只出键；`_PAGES[key]` / `.get(key)` 才建页；`_built_pages` 是"已建"的唯一真源；`_PAGES` 赋值必须 `TypeError`（只读）。
+  【验收（行为）】构造后 `_built_pages == {'overview'}` 且 `content_area.count() == 1`；访问一页 +1；遍历 9 个键仍能逐页切到。

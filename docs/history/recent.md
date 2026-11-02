@@ -315,3 +315,32 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
 `tests/smoke_{chart,pages_overlay}.py`（S1/S2/S5 + 3 条新断言）、
 `docs/plans/active/TEST-HARNESS.md`、`docs/playbook/process.md` §11.5-150。
 
+
+## ★2.03 · 启动优化 P0（2026-11-03 提交）
+
+**目标**：ARCH-PERF P0 四件 —— 启动 4.05s → ≤2.2s，**不改 UI 行为**。
+
+**改了什么**
+1. **惰性建页**（`ui/main_window.py`）：`_PAGE_FACTORIES` + `page_*` property + 只读 `_PageMap`；
+   构造期只建首屏 `overview`，其余页首次访问/切换才建。子页签信号在**建页时**接线，
+   数据页建好后**立刻** `render_all_data()`（切过去不能是空白）。
+2. **roster 向量化**（`core/engine.py`）：去 `iterrows`，一次 `astype('string').str.strip()` + `zip`。
+3. **日历批量**（`data/trade_calendar.py`）：`to_dates()` 一次 `pd.to_datetime` + 内存缓存按
+   `(mtime_ns,size)` 失效；逐位对比 200 个日期一致。
+4. **footer LRU**（`data/readiness.py`）：`_footer_cached()` 键 `(path,size,mtime_ns)`、LRU 4096；
+   同文件二次 **0 次**重开 parquet，补下载 mtime 变则自动失效。
+5. **探针**（`scripts/probe_startup.py`）：import / construct / paint 三段 + 已建页面数。
+6. **连带修复**：`PortfolioView._watchlist()` 不再 `getattr(main_win,"page_market")`（会把行情页
+   建出来）⇒ 走 `page_if_built()` + `WatchlistStore` 兜底；`render_all_data()` 只刷已建页；
+   两条 `currentIndex()==3/4` 断言改成按控件身份。
+7. **冒烟退出**：2.02 的"跑完不退出"在后台复现（2 个 `ScanWorker` 存活 ⇒ `os._exit` 卡
+   `ExitProcess` + 主线程持 GIL）⇒ 改 `TerminateProcess` 硬退出（只用于测试脚本）。
+
+**断言**：`smoke_chart` **1080/0**（+4）· `smoke_pages_overlay` **1244/0**（+5）。
+
+**实测（同一把尺子）**：构造 **3.6s → 0.27s**；已建页面 **9 → 1**；
+真机探针总耗时 **2.145s**（import 1.31 + 构造 0.27 + 首绘 0.49），目标 ≤2.2s 达标。
+
+**产出**：`ui/main_window.py` · `ui/views/portfolio_view.py` · `core/engine.py` ·
+`data/{trade_calendar,readiness}.py` · `scripts/probe_startup.py` · 两份冒烟 ·
+`docs/plans/active/ARCH-PERF.md` · `docs/playbook/ui.md` §11.5-151。

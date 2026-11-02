@@ -6342,6 +6342,84 @@ try:
 except Exception as _e85s:  # noqa: BLE001
     check(f"★1.85 组合池化断言整段抛异常: {type(_e85s).__name__}: {_e85s}", False)
 
+# ==========================================
+# ★2.03 / ARCH-PERF P0：内核三件的行为断言
+#   ① roster 不再 iterrows；② 日历批量 == 逐条；③ footer LRU 命中不重开 parquet。
+# ==========================================
+print("\n== ★2.03 · ARCH-PERF P0（roster / 日历 / footer）==")
+try:
+    import tempfile as _tf23
+
+    from core.engine import DataEngine as _DE23
+    from data import readiness as _rd23
+    from data.trade_calendar import _to_date as _td23, to_dates as _tds23
+
+    # ---- P0-2：roster_names 去 iterrows ----
+    _df23 = pd.DataFrame({'symbol': ['600000', ' 000001 ', None, ''],
+                          'name': ['浦发银行', '平安银行', None, 'x']})
+
+    class _DB23:
+        def load_roster(self):
+            return _df23
+
+    class _Eng23:
+        db = _DB23()
+
+    _orig_iter23 = pd.DataFrame.iterrows
+    _cnt23 = {'n': 0}
+
+    def _iter23(self):
+        _cnt23['n'] += 1
+        return _orig_iter23(self)
+
+    pd.DataFrame.iterrows = _iter23
+    try:
+        _rn23 = _DE23.roster_names(_Eng23())
+    finally:
+        pd.DataFrame.iterrows = _orig_iter23
+    check("★ 2.03 P0-2：`roster_names()` 不再调用 `iterrows`，结果仍对（去空白 / 空代码不入表）",
+          _cnt23['n'] == 0 and _rn23.get('600000') == '浦发银行'
+          and _rn23.get('000001') == '平安银行' and len(_rn23) == 2)
+
+    # ---- P0-3：批量日期与逐条逐位一致 ----
+    _days23 = [str(d.date()) for d in pd.bdate_range('2024-01-01', periods=200)]
+    _mixed23 = _days23[:100] + ['', '坏日期', None, '2024-13-01'] + _days23[100:]
+    check("★ 2.03 P0-3：`to_dates()` 与逐条 `_to_date()` **逐位一致**（含空 / 非法）",
+          _tds23(_mixed23) == [_td23(v) for v in _mixed23])
+
+    # ---- P0-4：footer LRU（同文件第二次不再打开 parquet）----
+    _tmp23 = _tf23.mkdtemp(prefix='jian_footer_')
+    _p23 = os.path.join(_tmp23, '600000.parquet')
+    pd.DataFrame({'date': pd.to_datetime(['2024-01-02', '2024-01-03', '2024-01-04']),
+                  'close': [1.0, 2.0, 3.0]}).to_parquet(_p23, index=False)
+    _orig_pf23 = _rd23.pq.ParquetFile
+    _open23 = {'n': 0}
+
+    def _pf23(*a, **k):
+        _open23['n'] += 1
+        return _orig_pf23(*a, **k)
+
+    _rd23._FOOTER_CACHE.clear()
+    _rd23.pq.ParquetFile = _pf23
+    try:
+        _r1_23 = _rd23.probe_readiness(_tmp23, ['600000'])
+        _n1_23 = _open23['n']
+        _r2_23 = _rd23.probe_readiness(_tmp23, ['600000'])
+        _n2_23 = _open23['n']
+        _st23 = os.stat(_p23)
+        os.utime(_p23, ns=(_st23.st_atime_ns, _st23.st_mtime_ns + 1_000_000_000))
+        _rd23.probe_readiness(_tmp23, ['600000'])
+        _n3_23 = _open23['n']
+    finally:
+        _rd23.pq.ParquetFile = _orig_pf23
+        _rd23._FOOTER_CACHE.clear()
+    check("★ 2.03 P0-4：footer 按 `(path,size,mtime_ns)` 缓存（同文件第二次 **0 次** 重开 parquet）",
+          _n1_23 == 1 and _n2_23 == 1 and _r2_23.latest == _r1_23.latest)
+    check("★ 2.03 P0-4：文件 mtime 一变缓存自动失效（补下载后必须重读，不许读旧数）",
+          _n3_23 == 2)
+except Exception as _e23:  # noqa: BLE001
+    check(f"★2.03 P0 断言整段抛异常: {type(_e23).__name__}: {_e23}", False)
+
 print(f"\n===== 通过 {len(OK)} · 失败 {len(BAD)} =====")
 for b in BAD:
     print("  FAIL:", b)
@@ -6386,6 +6464,21 @@ def _describe_threads(tag: str) -> None:
             pass
 
 
+def _hard_exit(code: int) -> None:
+    """硬退出：Windows 走 `TerminateProcess`，绕开 ExitProcess / DLL detach。
+
+    与 overlay 同款：退出时若有 QThread 还在跑，`os._exit()` 会卡在 `ExitProcess`，
+    且主线程持 GIL ⇒ watchdog 也跑不起来。`TerminateProcess` 立即结束。
+    """
+    try:
+        import ctypes
+        ctypes.windll.kernel32.TerminateProcess(
+            ctypes.windll.kernel32.GetCurrentProcess(), int(code))
+    except Exception:  # noqa: BLE001 —— 非 Windows / 调用失败 ⇒ 退回 os._exit
+        pass
+    os._exit(int(code))
+
+
 def _arm_exit_watchdog(seconds: float = 30.0) -> None:
     """退出路径 watchdog：卡住就打印全线程栈并以 4 退出。"""
     def _fire():
@@ -6399,7 +6492,7 @@ def _arm_exit_watchdog(seconds: float = 30.0) -> None:
                      .encode("utf-8", "replace"))
         except Exception:  # noqa: BLE001
             pass
-        os._exit(4)
+        _hard_exit(4)
 
     _t = _threading.Timer(seconds, _fire)
     _t.daemon = True
@@ -6414,4 +6507,4 @@ _describe_threads("退出前的存活线程")
 #   正常收尾关掉 faulthandler 免刷日志；watchdog 触发时会自己 enable 回来留栈。
 _faulthandler.disable()
 sys.stdout.flush()
-os._exit(1 if BAD else 0)
+_hard_exit(1 if BAD else 0)

@@ -91,6 +91,7 @@ verified: 2026-11-02
 | 148 | ★1.91 · 组合页「行业同步」三条同族坑 | data.md |
 | 149 | ★1.92 · 下载耗时的三笔账 | data.md |
 | 150 | ★2.01/2.02 · 冒烟 fastfail（运行中 QThread 被 GC，已修）/ 退出挂死（未复现） | process.md |
+| 151 | ★2.03 · 惰性建页三坑（下标断言 / getattr 建页 / 刷新建页） | ui.md |
 | 1–70 | 早期一句话条目（按序号；51–70 与 RULES 重复，以 RULES 为准） | legacy-1-70.md |
 | 94 / 95 · 98 / 99 | 已结案，正文在 `docs/archive/3-update-blocks.md` | — |
 

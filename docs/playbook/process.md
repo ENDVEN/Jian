@@ -400,4 +400,6 @@ verified: 2026-11-02
   【验收】连跑 **10/10** 通过（`1239/0`，最长 49.1s）；退出路径加存活线程清单 + 30s watchdog（卡住 ⇒ `RC=4` + 全线程栈）。
   【已知噪音】Windows 上 `pyqtgraph` + `os._exit()` 会在 DLL 卸载期报一次 access violation（退出码仍 0；
   只建 `pg.PlotWidget` 即可复现）—— 正常收尾前 `faulthandler.disable()` 静音，别当失败。
-  仍**未确认**的是"跑完不退出"的独立成因（修复后 10 次未复现）。详见 `docs/plans/active/TEST-HARNESS.md`。
+  【挂死（2026-11-03 复现）】退出时仍有 2 个 `ScanWorker` ⇒ `os._exit()` 卡在 `ExitProcess`，
+  主线程持 GIL ⇒ 30s watchdog 也跑不起来。**修法**：冒烟脚本用 `TerminateProcess` 硬退出
+  （不跑 DLL detach），带 2 个存活线程也能 57s 正常返回。线程来源另立。详见 `docs/plans/active/TEST-HARNESS.md`。

@@ -20,6 +20,8 @@ import logging
 import os
 from datetime import date as _date, datetime
 
+import pandas as pd
+
 from config import settings
 from data.akshare_feed import AkShareFeed
 from data.sync_service import is_daily_bar_settled
@@ -29,7 +31,7 @@ logger = logging.getLogger(__name__)
 CALENDAR_PATH = os.path.join(settings.USER_DATA_DIR, "trade_calendar.json")
 
 __all__ = ["load_or_fetch", "latest_settled_trading_day", "previous_trading_day",
-           "trading_days_between"]
+           "trading_days_between", "to_dates"]
 
 
 def _to_date(value) -> _date | None:
@@ -39,15 +41,41 @@ def _to_date(value) -> _date | None:
         return None
 
 
+def to_dates(values) -> list[_date | None]:
+    """**批量**版 `_to_date`（★2.03 / ARCH-PERF P0-3）。
+
+    旧版逐条 `strptime`（启动期实测 26,391 次）；这里一次 `pd.to_datetime`。
+    口径与逐条版**逐位一致**：只取前 10 字符、只认 `YYYY-MM-DD`、非法 → None。
+    """
+    # ⚠ 不能写 `values or []`：传进来可能是 pandas Series（`or` 会触发真值歧义）
+    seq = [str(v).strip()[:10] for v in ([] if values is None else values)]
+    if not seq:
+        return []
+    parsed = pd.to_datetime(pd.Series(seq, dtype='object'),
+                            format="%Y-%m-%d", errors="coerce")
+    return [None if pd.isna(x) else x.date() for x in parsed]
+
+
+# 解析结果的内存缓存：键 = (mtime_ns, size)。文件没变就不重复解析（启动期最大头）。
+_CACHE: dict[str, tuple[tuple[int, int], list[_date]]] = {}
+
+
 def _read_cache(path: str) -> list[_date]:
     """读缓存日历（升序 date 列表）；缺失 / 损坏一律回落空列表（不抛）。"""
-    if not os.path.exists(path):
+    try:
+        st = os.stat(path)
+    except OSError:
         return []
+    key = (int(st.st_mtime_ns), int(st.st_size))
+    hit = _CACHE.get(path)
+    if hit is not None and hit[0] == key:
+        return list(hit[1])                 # 命中：零 JSON 解析、零 strptime
     try:
         with open(path, encoding="utf-8") as f:
             loaded = json.load(f)
-        dates = [_to_date(d) for d in loaded.get("dates", [])]
-        return sorted(d for d in dates if d is not None)
+        dates = sorted(d for d in to_dates(loaded.get("dates", [])) if d is not None)
+        _CACHE[path] = (key, dates)
+        return list(dates)
     except (OSError, ValueError) as e:  # noqa: BLE001
         logger.warning(f"交易日历缓存读取失败，忽略: {e}")
         return []
@@ -91,7 +119,8 @@ def load_or_fetch(fetch_fn=None, now: datetime = None, cache_path: str = CALENDA
         return cached or None                # ② 回吐旧缓存 / ③ 无缓存则 None
     dates: list[_date] = []
     if df is not None and not getattr(df, "empty", True) and "date" in df.columns:
-        dates = sorted(d for d in (_to_date(x) for x in df["date"]) if d is not None)
+        # ★2.03 / P0-3：批量解析（旧版逐条 strptime）
+        dates = sorted(d for d in to_dates(df["date"]) if d is not None)
     if dates:
         _write_cache(dates, cache_path)
         return dates

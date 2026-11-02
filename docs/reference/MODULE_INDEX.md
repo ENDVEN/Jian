@@ -21,7 +21,7 @@ verified: auto
 | `core/conditions.py` | 买卖条件配置 → DSL 表达式（**唯一真源**，§7-B15 SW-3 补）。 | 4 | 90 |
 | `core/cross_section.py` | M2 全市场横截面筛选 / M3 广度统计 —— 纯计算内核（§7-B1/B2 主案 · D2 / D5） | 20 | 758 |
 | `core/database.py` | — | 1 | 435 |
-| `core/engine.py` | — | 1 | 166 |
+| `core/engine.py` | — | 1 | 169 |
 | `core/formula/__init__.py` | 通达信(优先)/Pine 兼容 公式引擎。 | 3 | 41 |
 | `core/formula/draw.py` | 公式绘图的契约层（IR）—— 引擎侧唯一「绘图语义」定义处（§7-B3 B① · P1）。 | 6 | 143 |
 | `core/formula/parser.py` | 通达信(兼容类 Pine)公式方言的 语法分析器 (Parser)。 | 10 | 180 |
@@ -59,7 +59,7 @@ verified: auto
 | `data/market_db.py` | — | 2 | 208 |
 | `data/net_env.py` | 行情取数的**网络环境策略**（★v6.72）—— **地址族**与**代理指纹**两件事的唯一出处。 | 11 | 175 |
 | `data/portfolio_store.py` | 🧺 组合的**存储层**（★1.85 / §7-B17 P0）。 | 7 | 216 |
-| `data/readiness.py` | 就绪度体检（§7-B1/B2 主案 D6-1 · v6.39）—— 扫描之前，先告诉用户 | 5 | 204 |
+| `data/readiness.py` | 就绪度体检（§7-B1/B2 主案 D6-1 · v6.39）—— 扫描之前，先告诉用户 | 6 | 228 |
 | `data/roster_sync.py` | 花名册同步的**唯一入口**（app 内一键按钮 / 运维脚本共用 · ★1.70 / §11.5-125）。 | 1 | 46 |
 | `data/scan_store.py` | M2 / M3 的**会话内存缓存**（§7-B1/B2 主案 D3 · v6.35） | 14 | 406 |
 | `data/scan_strategy_store.py` | M2/M3「筛选方案」本地持久化 (JSON，位于用户数据目录，物理隔离不随代码分发)。 | 2 | 90 |
@@ -67,7 +67,7 @@ verified: auto
 | `data/strategy_store.py` | 回测策略本地持久化 (JSON, 位于用户数据目录，物理隔离不随代码分发)。 | 8 | 183 |
 | `data/sweep_archive.py` | 参数研究快照存档（§7-B15 SW-4）· 照抄 `data/backtest_archive.py` 范式。 | 6 | 281 |
 | `data/sync_service.py` | 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。 | 23 | 868 |
-| `data/trade_calendar.py` | A 股交易日历获取件（v6.45 / §7-B10 · 用户拍板引入真交易日历）。 | 8 | 111 |
+| `data/trade_calendar.py` | A 股交易日历获取件（v6.45 / §7-B10 · 用户拍板引入真交易日历）。 | 9 | 134 |
 | `data/watchlist_change.py` | 自选分组的「组合当日涨跌」（§7-B8 R3）—— **零 Qt**：纯函数 + 一层带 TTL 的快照缓存。 | 7 | 155 |
 | `data/watchlist_store.py` | 自选股（Watchlist）—— 用户关心的标的清单，JSON 原子写（§7-B3 P8）。 | 5 | 340 |
 | `main.py` | — | 5 | 208 |
@@ -76,9 +76,10 @@ verified: auto
 | `scripts/analyze_index_regimes.py` | 上证指数切块 · 离线脚本（§7-B15 SW-2 · 方案书 §11 决议 3）。 | 1 | 73 |
 | `scripts/check_docs.py` | 文档契约自检（秒级、不依赖 Qt）：写完/搬完文档跑一次。 | 9 | 100 |
 | `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 4 | 81 |
+| `scripts/probe_startup.py` | 启动耗时探针（★2.03 / ARCH-PERF P0-5）—— **同一把尺子**，不参与运行。 | 1 | 63 |
 | `scripts/sync_roster.py` | — | 2 | 37 |
-| `tests/smoke_chart.py` | — | 13 | 5758 |
-| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 34 | 8858 |
+| `tests/smoke_chart.py` | — | 14 | 5836 |
+| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 35 | 8902 |
 | `ui/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/bulk_download.py` | 批量预下载弹窗 (v5.8 · §7-A3)。 | 2 | 524 |
@@ -93,7 +94,7 @@ verified: auto
 | `ui/dialogs/watchlist_picker.py` | 从自选股里挑选 → 批量移入某个分组（§7-B8 R2 的**第二种添加入口**）。 | 1 | 98 |
 | `ui/download_hub.py` | 全局后台下载调度器 (v1.43 · §7-B11) —— 把"下载任务"的归属从**弹窗**搬到**主窗口**。 | 2 | 429 |
 | `ui/download_jobs.py` | 下载任务的"数据与判据"件（★v6.70 / §4 体积债：从 `ui/download_hub.py` 拆出）。 | 3 | 168 |
-| `ui/main_window.py` | — | 1 | 812 |
+| `ui/main_window.py` | — | 2 | 921 |
 | `ui/settings_registry.py` | 设置项的**唯一真源**（★v6.73 / §7-B13 · S2 路径表 **S2-0**）。 | 35 | 567 |
 | `ui/views/__init__.py` | — | 0 | 0 |
 | `ui/views/backtest.py` | 📐 市场回测 视图 —— 策略工作台（UI 1.22 = 「样板 A」：摘要条 + 右侧遮罩抽屉 + 结果吃满）。 | 2 | 966 |
@@ -104,7 +105,7 @@ verified: auto
 | `ui/views/data_manager.py` | 🗄 数据管理 (v5.8 · §7-A3；v5.10 UX 加固；v5.11 勾选重设计) | 2 | 537 |
 | `ui/views/formula_hub.py` | ƒ 函数总库 —— 页面本体（★1.61 / §7-B16 · 方案书 `docs/plans/done/HUB.md`）。 | 1 | 115 |
 | `ui/views/param_sweep.py` | 🧪 参数研究 —— 页面装配（§7-B15 SW-5/6/7 · 薄壳 · ★v6.86 视觉返工版）。 | 1 | 397 |
-| `ui/views/portfolio_view.py` | 🧺 组合页（★1.85 / §7-B17 · **P0 已交付 + P1 净值/持仓**）。 | 2 | 1463 |
+| `ui/views/portfolio_view.py` | 🧺 组合页（★1.85 / §7-B17 · **P0 已交付 + P1 净值/持仓**）。 | 2 | 1475 |
 | `ui/views/records.py` | — | 1 | 346 |
 | `ui/views/review.py` | 🧭 复盘工作台（ReviewView）—— §9-U 版式收口 + §9-L 拆分（1.25）。 | 1 | 173 |
 | `ui/views/scan_view.py` | 🌐 M2「全市场筛选」—— 页面本体（§7-B1/B2 主案 STEP 4）。 | 1 | 215 |
@@ -206,4 +207,4 @@ verified: auto
 | `ui/widgets/yearly_review.py` | — | 1 | 124 |
 | `ui/workers.py` | 共享的后台工作线程 (QThread Workers) —— v5.8。 | 22 | 912 |
 
-> 共 192 个 .py 文件。
+> 共 193 个 .py 文件。

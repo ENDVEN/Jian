@@ -1,5 +1,6 @@
 # ui/main_window.py
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
                              QVBoxLayout, QPushButton, QFrame, QStackedWidget,
@@ -48,6 +49,65 @@ logger = logging.getLogger(__name__)
 # ★1.61 / §7-B16 护栏6：函数总库浮窗的界面态偏好键（唯一真源 = `core.preferences.DEFAULTS`）。
 #   内容 = {"offset": [dx, dy], "open": bool, "asset_id": str}；**只存界面态，不存函数内容**。
 HUB_UI_KEY = 'hub_ui'
+
+# ★2.03 / ARCH-PERF P0-1：**页面路由表与惰性工厂**
+#   构造期只建首屏（overview）；其余页首次切到/首次被访问才建。
+#   顺序 = 旧版 `content_area.addWidget(...)` 的顺序（保持索引语义不变）。
+_PAGE_ORDER = ("overview", "records", "review", "market", "backtest",
+               "portfolio", "hub", "data", "settings")
+
+_PAGE_FACTORIES = {
+    "overview": lambda win: DashboardView(win),
+    "records": lambda win: RecordsView(win),
+    "review": lambda win: ReviewView(win),
+    # ⚠ 属性/键仍叫 market（导航第 4 页的历史名字），实现是 P8 行情工作台
+    "market": lambda win: TradingDeskView(win),
+    "backtest": lambda win: BacktestModule(win),
+    "portfolio": lambda win: PortfolioView(win),
+    "hub": lambda win: FormulaHubView(win),
+    "data": lambda win: DataManagerView(win),
+    "settings": lambda win: SettingsView(win),
+}
+
+# 页面 → 人话名（`_page_label` 用；只在页面**已建**时查，不因取名而建页）
+_PAGE_LABELS = {
+    "overview": "资金与表现", "records": "交易流水", "review": "深度复盘",
+    "market": "市场行情", "backtest": "市场回测", "portfolio": "组合",
+    "hub": "ƒ 函数库", "data": "数据管理", "settings": "设置",
+}
+
+
+class _PageMap(Mapping):
+    """只读路由表：**遍历只出键**，取值才建页（★2.03 / ARCH-PERF P0-1）。
+
+    为什么不用普通 dict：`dict.values()/items()` 会在构造期把页面全建回来，惰性建页
+    就白做了。这里 `__iter__` 只出键、`__getitem__` 才 `_ensure_page()`。
+    ⚠ `items()` / `values()` 仍是标准 Mapping 语义（会建页），只给"确实要全部"的调用方。
+    """
+
+    def __init__(self, win):
+        self._win = win
+
+    def __getitem__(self, key):
+        key = str(key)
+        if key not in _PAGE_ORDER:
+            raise KeyError(key)
+        return self._win._ensure_page(key)
+
+    def __iter__(self):
+        return iter(_PAGE_ORDER)
+
+    def __len__(self):
+        return len(_PAGE_ORDER)
+
+    def __contains__(self, key):
+        return str(key) in _PAGE_ORDER
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
 
 class JianMainWindow(QMainWindow):
@@ -131,39 +191,16 @@ class JianMainWindow(QMainWindow):
         sidebar_layout.addStretch()
         sidebar_layout.addWidget(self.btn_settings)
         
-        # --- 右侧主内容栈构建 ---
+        # --- 右侧主内容栈：**惰性建页**（★2.03 / ARCH-PERF P0-1）---
+        #   构造期只建首屏（overview，与旧版 currentIndex=0 一致）；其余 8 页首次切到
+        #   或被访问时才建 —— 冷启动省 1.5~2.0s。对外仍是 `win.page_xxx`（property，
+        #   语义不变）；`_PAGES` 是只读映射：`list(_PAGES)` 只出键、不建页。
         self.content_area = QStackedWidget()
         self.content_area.setContentsMargins(20, 20, 20, 20)
-        
-        self.page_overview = DashboardView(self)
-        self.page_records = RecordsView(self)
-        self.page_review = ReviewView(self) 
-        # ⚠ 属性名仍叫 page_market（导航第 4 页的历史名字），实现已换成 P8 的行情工作台
-        self.page_market = TradingDeskView(self)
-        self.page_backtest = BacktestModule(self)
-        # ★1.85 / §7-B17 P0：组合页（列表 + 空态 + 从自选股组导入 + 保存/重载）
-        self.page_portfolio = PortfolioView(self)
-        # ★1.61 / §7-B16：函数总库页（A 管理台：列表 + 详情 ⇄ 编辑器；只管资产不管运行）
-        self.page_hub = FormulaHubView(self)
-        self.page_data = DataManagerView(self)
-        # ★v6.73 / §7-B13 S2-0：设置页（S2「系统设置双栏」）—— **只渲染注册表**，页面不写设置项
-        self.page_settings = SettingsView(self)
-        
-        self.content_area.addWidget(self.page_overview)
-        self.content_area.addWidget(self.page_records)
-        self.content_area.addWidget(self.page_review) 
-        self.content_area.addWidget(self.page_market)
-        self.content_area.addWidget(self.page_backtest)
-        self.content_area.addWidget(self.page_portfolio)   # ← 组合（P0）
-        self.content_area.addWidget(self.page_hub)           # ← index 5（ƒ 函数库）
-        self.content_area.addWidget(self.page_data)          # ← index 6
-        self.content_area.addWidget(self.page_settings)      # ← 设置
-        # ★1.85（P0-0）：**键 → 页面控件**（唯一路由表；插页只加一行，不动别人）
-        self._PAGES = {"overview": self.page_overview, "records": self.page_records,
-                       "review": self.page_review, "market": self.page_market,
-                       "backtest": self.page_backtest, "portfolio": self.page_portfolio,
-                       "hub": self.page_hub, "data": self.page_data,
-                       "settings": self.page_settings}
+        self._built_pages = {}
+        self._page_building = set()
+        self._PAGES = _PageMap(self)
+        self._ensure_page("overview")
         
         main_layout.addWidget(sidebar)
         # --- 右侧 = 内容栈 + 底部下载条（下载条只在有任务时出现，平时零高度）---
@@ -207,12 +244,12 @@ class JianMainWindow(QMainWindow):
         self.btn_portfolio.clicked.connect(lambda: self.switch_to("portfolio"))
         self.btn_hub.clicked.connect(lambda: self.switch_to("hub"))
         # ★1.61 / §7-B16：统一浮窗的「📚 本页方案」区跟着**当前页 / 当前子页签**走
+        #   （回测子页签的接线在**建页时**做 —— 惰性建页后它第一次可能还没存在）
         self.content_area.currentChanged.connect(self._on_page_changed)
-        self.page_backtest.tabs.currentChanged.connect(self._on_page_changed)
         self.btn_data.clicked.connect(lambda: self.switch_to("data"))
         self.btn_settings.clicked.connect(lambda: self.switch_to("settings"))
-        
-        self.render_all_data()
+
+        # ★2.03：首屏数据已由 `_ensure_page("overview")` 里的 `render_all_data()` 填好
         self.check_for_updates()
         # ★1.61 / §7-B16 护栏6：按偏好还原总库浮窗（偏移 / 上次选中 / 是否开着）。
         #   ⚠ 放在**最后**：它只碰浮窗自己，不该插进页面构造与数据渲染之间。
@@ -265,13 +302,89 @@ class JianMainWindow(QMainWindow):
     #   回测页 ──send_formula_to_market────▶ 主窗口 ──▶ 行情页.receive_formula()
     # ★1.85（P0-0）：**按身份路由**，不再按下标 —— 插页不会错位（§11.5-130 同族）。
     #   旧版 `_PAGE_INDEX = {"market": 3, …}` 一旦插入新页，数据管理/设置就**静默错页**。
-    _PAGES = {}          # 键 → **页面控件**（在 `__init__` 里装满）
+    # ★2.03 / ARCH-PERF P0-1：路由表改为 `_PageMap`（实例在 `__init__` 注入）——
+    #   **遍历只出键、取值才建页**；别写回普通 dict（会一次建回 9 页）。
+
+    def _build_page(self, key: str):
+        """真正构造一页并挂进内容栈（只由 `_ensure_page` 调用）。"""
+        page = _PAGE_FACTORIES[key](self)
+        self._built_pages[key] = page
+        self.content_area.addWidget(page)
+        if key == "backtest":
+            # 子页签接线必须在**建页时**做：惰性建页后构造期它可能还不存在
+            page.tabs.currentChanged.connect(self._on_page_changed)
+        if key in ("overview", "records", "review"):
+            # 数据页首次建好 ⇒ 立刻有内容（否则切过去是空白，像坏了）
+            self.render_all_data()
+        return page
+
+    def page_if_built(self, key: str):
+        """**已建**页面（不触发构造）；没建返回 None —— 给"只想看一眼"的调用方用。
+
+        ⚠ 与属性访问的区别要记牢：`win.page_market` **会建页**，`page_if_built('market')` 不会。
+        """
+        return self._built_pages.get(str(key))
+
+    def _ensure_page(self, key: str):
+        """取页面；没建过就建（同一页只建一次）。"""
+        key = str(key)
+        if key not in _PAGE_ORDER:
+            raise KeyError(key)
+        page = self._built_pages.get(key)
+        if page is not None:
+            return page
+        if key in self._page_building:
+            raise RuntimeError(f"页面构造出现循环依赖：{key}")
+        self._page_building.add(key)
+        try:
+            return self._build_page(key)
+        finally:
+            self._page_building.discard(key)
+
+    # --- 对外保持 `win.page_xxx` 的旧写法（property ⇒ 首次访问即建页）---
+    @property
+    def page_overview(self):
+        return self._ensure_page("overview")
+
+    @property
+    def page_records(self):
+        return self._ensure_page("records")
+
+    @property
+    def page_review(self):
+        return self._ensure_page("review")
+
+    @property
+    def page_market(self):
+        return self._ensure_page("market")
+
+    @property
+    def page_backtest(self):
+        return self._ensure_page("backtest")
+
+    @property
+    def page_portfolio(self):
+        return self._ensure_page("portfolio")
+
+    @property
+    def page_hub(self):
+        return self._ensure_page("hub")
+
+    @property
+    def page_data(self):
+        return self._ensure_page("data")
+
+    @property
+    def page_settings(self):
+        return self._ensure_page("settings")
 
     def switch_to(self, key: str) -> None:
         """按名字切页（互送后直接把用户带到目标页）—— ★1.85：**按控件身份**，不按下标。"""
-        w = self._PAGES.get(str(key))
-        if w is not None:
-            self.content_area.setCurrentWidget(w)
+        try:
+            w = self._PAGES[str(key)]        # 取值即建页（首次切到该页）
+        except KeyError:
+            return
+        self.content_area.setCurrentWidget(w)
 
     # ==========================================
     # 后台下载（v1.43 · §7-B11）：队列属主窗口，界面只是它的三个视图
@@ -365,7 +478,9 @@ class JianMainWindow(QMainWindow):
           **在 M3 上浮窗以为"本页没有方案库"，方案根本存不了**（用户："没法在 m2/m3 存方案"）。
         ⇒ 判据改成"**这个页签控件是谁**"：将来谁插入/重排页签都不会再错位（顺序无关）。
         """
-        view = self.page_backtest
+        view = self._built_pages.get('backtest')
+        if view is None:
+            return '回测'
         for widget, label in ((getattr(view, 'backtest_single', None), '单股回测'),
                               (getattr(view, 'page_sweep', None), '参数研究'),
                               (getattr(view, 'page_scan', None), '全市场筛选'),
@@ -382,13 +497,14 @@ class JianMainWindow(QMainWindow):
           在看 M2 的方案 = 静默错配（§11.5-11 同族）。
         """
         page = page if page is not None else self.content_area.currentWidget()
-        if page is self.page_backtest:
-            return self._bt_tab_name(self.page_backtest.tabs.currentWidget())
-        for attr, label in (('page_market', '市场行情'), ('page_hub', 'ƒ 函数库'),
-                            ('page_overview', '资金与表现'), ('page_records', '交易流水'),
-                            ('page_review', '深度复盘'), ('page_data', '数据管理'),
-                            ('page_settings', '设置')):
-            if page is getattr(self, attr, None):
+        bt = self._built_pages.get('backtest')
+        if bt is not None and page is bt:
+            return self._bt_tab_name(bt.tabs.currentWidget())
+        # ★2.03：只查**已建**页面 —— 不能为了取名把 9 页全建回来（惰性建页的命门）
+        for key, label in _PAGE_LABELS.items():
+            if key == 'backtest':
+                continue
+            if page is self._built_pages.get(key):
                 return label
         return ''
 
@@ -503,13 +619,16 @@ class JianMainWindow(QMainWindow):
         params = str(asset.get('params_text') or '')
         cur = self.content_area.currentWidget()
         n = 0
-        if cur is self.page_market:
+        # ★2.03：只认**已建**页面 —— 用 property 比较会把没建的页顺手建出来（惰性建页失效）
+        market = self._built_pages.get('market')
+        backtest = self._built_pages.get('backtest')
+        if market is not None and cur is market:
             pairs = segments_as_tuples({"segments": asset.get("segments")})
-            n = self.page_market.receive_formula(pairs, params, source_label="函数总库")
-        elif cur is self.page_backtest:
+            n = market.receive_formula(pairs, params, source_label="函数总库")
+        elif backtest is not None and cur is backtest:
             # ★1.71 / §11.5-130：**按身份**分派 —— 旧版按下标 ⇒ 在参数研究里点「载入到本页」
             #   会**悄悄载进看不见的 M2**（idx 1 实际是参数研究），用户完全察觉不到。
-            view = self.page_backtest
+            view = backtest
             tab = view.tabs.currentWidget()
             if tab is getattr(view, 'backtest_single', None):
                 n = view.backtest_single.load_formula_from_external(texts, params)
@@ -549,11 +668,13 @@ class JianMainWindow(QMainWindow):
         :return: `{'name_hint', 'segments': [{text,target}], 'params_text', 'source'}`
         """
         cur = self.content_area.currentWidget()
-        if cur is self.page_market:
-            return self.page_market._formula.current_formula_draft() or None
-        if cur is self.page_backtest:
+        market = self._built_pages.get('market')
+        backtest = self._built_pages.get('backtest')
+        if market is not None and cur is market:
+            return market._formula.current_formula_draft() or None
+        if backtest is not None and cur is backtest:
             # ★1.71 / §11.5-130：**按页签控件身份**分派（旧版按下标 ⇒ 错位一位，见 `_bt_tab_name`）。
-            view = self.page_backtest
+            view = backtest
             tab = view.tabs.currentWidget()
             if tab is getattr(view, 'backtest_single', None):
                 return view.backtest_single.current_formula_draft()
@@ -571,9 +692,9 @@ class JianMainWindow(QMainWindow):
                  —— 全是**可调用对象**（页面/桥接的实现，浮窗只负责画与转发）。
         """
         cur = self.content_area.currentWidget()
-        if cur is not self.page_backtest:
+        view = self._built_pages.get('backtest')     # ★2.03：不许为比较而建页
+        if view is None or cur is not view:
             return None
-        view = self.page_backtest
         tab = view.tabs.currentWidget()          # ★1.71 / §11.5-130：按**身份**分派，不按下标
         if tab is getattr(view, 'backtest_single', None):
             br = view.backtest_single.strategy
@@ -769,20 +890,32 @@ class JianMainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(download_url))
 
     def render_all_data(self):
-        if self.engine.df.empty: 
-            self.page_overview.clear_view()
-            self.page_records.clear_view()
-            self.page_review.refresh_review_filters()
+        """把交易数据刷进**已建**的数据页（★2.03：未建的页不因刷新而被建回来）。
+
+        页面首次建好时 `_build_page` 会再调一次 ⇒ 切过去就有内容；
+        数据变更时这里只动已经在内存里的页，惰性建页不会被"刷新"打回原形。
+        """
+        pages = self._built_pages
+        if self.engine.df.empty:
+            if 'overview' in pages:
+                pages['overview'].clear_view()
+            if 'records' in pages:
+                pages['records'].clear_view()
+            if 'review' in pages:
+                pages['review'].refresh_review_filters()
             return
 
         analyzer = TradeAnalyzer(self.engine.df)
         raw_report = analyzer.generate_raw_report()
-        
+
         if raw_report:
-            self.page_overview.update_view(raw_report, analyzer.df)
-            self.page_records.refresh_records_filters()
-            self.page_review.refresh_review_filters()
-            self.page_review.update_review_view()
+            if 'overview' in pages:
+                pages['overview'].update_view(raw_report, analyzer.df)
+            if 'records' in pages:
+                pages['records'].refresh_records_filters()
+            if 'review' in pages:
+                pages['review'].refresh_review_filters()
+                pages['review'].update_review_view()
 
     # ==========================================
     # 数据流与弹窗调度器 (完全解耦调用)
