@@ -85,11 +85,24 @@ import time
 
 # 【§11.7】Windows 控制台默认 GBK：带 ⇒ 这类符号的 print 会抛 UnicodeEncodeError，
 # 表现为"某个分节整段被跳过 + 假报若干失败"（1.23 修）。统一按 UTF-8 输出。
+# ★2.02 / TEST-HARNESS S1：**行缓冲**。重定向到文件时 Python 走块缓冲 ⇒ 最后一行 ≠ 崩溃
+#   语句（2.0 实测两次都"停在第 657 行"，很可能只是 8KB 缓冲区边界）。`-u` 只在命令行带，
+#   脚本自己钉行缓冲，任何跑法都能拿到真崩点。
 for _stream in (sys.stdout, sys.stderr):
     try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
+        _stream.reconfigure(encoding="utf-8", errors="replace",
+                            line_buffering=True, write_through=True)
     except Exception:  # noqa: BLE001 —— 被重定向的流不支持 reconfigure 就跳过
         pass
+
+# ★2.02 / TEST-HARNESS S2：**C 层 abort 也要留栈**。
+#   现状：0xC0000409 时 app.log 与 stdout 都没有 Python 栈 ⇒ 只能靠猜"第 657 行"。
+#   faulthandler 会接住 SIGSEGV/SIGABRT 等原生崩溃，打印**当时所有线程的栈**。
+#   另加全局超时 15 分钟（正常 ~3 分钟，5 倍余量）：超时打印全线程栈后以 1 退出，
+#   把"跑不完"变成一条可见失败，而不是无限等。
+import faulthandler as _faulthandler
+_faulthandler.enable()
+_faulthandler.dump_traceback_later(900, exit=True)
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 # 本文件在 tests/ 子目录里，**仓库根 = 本文件的父目录**（由 `__file__` 反推，§10-13）
@@ -9631,6 +9644,92 @@ try:
 except Exception as _e83:  # noqa: BLE001
     check(f"§7-B13 S2-7/S2-8 断言整段抛异常: {type(_e83).__name__}: {_e83}", False)
 
+# ==========================================
+# ★2.02 / TEST-HARNESS S4：**运行中的 QThread 不许被 GC**
+#   事故：`ReadinessFlow.start()` 每次直接覆盖 `self._probe`；上一轮还在跑时，
+#   最后一个 Python 引用在赋值瞬间消失 ⇒ sip 析构 C++ QThread ⇒ 进程 fastfail
+#   （0xC0000409，无栈）。overlay 实测约 2/3 崩在「运行历史 → 重跑」这一句。
+#   这里用"永远不自己结束的假线程"把竞态变成确定性断言。
+# ==========================================
+print("\n== ★2.02 · 体检线程生命周期（运行中不许被 GC）==")
+try:
+    import time as _t22  # noqa: E402
+
+    from PyQt6.QtCore import QThread as _QT22, pyqtSignal as _sig22  # noqa: E402
+
+    from ui.widgets import readiness_flow as _rf22  # noqa: E402
+    from ui.widgets import scan_flow as _sf22  # noqa: E402
+
+    class _SlowProbe22(_QT22):
+        """假体检线程：一直跑到被 cancel —— 制造"上一轮还没收尾"。"""
+        progress = _sig22(int, int, str)
+        finished = _sig22(int, object)
+        failed = _sig22(int, str)
+
+        def __init__(self, *_a, **_k):
+            super().__init__()
+            self.cancelled_flag = False
+            self._go = True
+
+        def cancel(self):
+            self.cancelled_flag = True
+            self._go = False
+
+        def run(self):
+            while self._go:
+                _t22.sleep(0.005)
+
+    _orig_worker22 = _rf22.ReadinessWorker
+    _flow22 = _rf22.ReadinessFlow(win.page_backtest.page_breadth)
+    _w1_22 = _w2_22 = None
+    try:
+        _rf22.ReadinessWorker = _SlowProbe22
+        _flow22.start(['600000'])
+        _w1_22 = _flow22._probe
+        _flow22.start(['600001'])          # 上一轮仍在跑 —— 旧版在这一行 fastfail
+        _w2_22 = _flow22._probe
+        check("★ 2.02：体检重入时旧线程被 cancel 且**保住引用**（不再被 GC 析构）",
+              _w1_22.cancelled_flag and _w1_22 in _flow22._probes
+              and _w2_22 in _flow22._probes and _w1_22 is not _w2_22)
+        check("★ 2.02：新一次体检照常启动（不是靠\"干脆不跑\"避免崩溃）",
+              not _w2_22.cancelled_flag)
+    finally:
+        for _w in (_w1_22, _w2_22):
+            if _w is not None:
+                _w.cancel()
+                _w.wait(2000)
+        _rf22.ReadinessWorker = _orig_worker22
+
+    # 迟到补全回包：`_outcome` 已被新扫描清空 ⇒ 不许 AttributeError（guard 实测抓到过）
+    class _Page22:
+        def __init__(self):
+            self._valuation = {}
+            self._valuation_date = None
+            self._outcome = None
+
+    class _Flow22:
+        def __init__(self):
+            self.page = _Page22()
+            self._enrich_scheduler = object()
+
+        def refresh(self):
+            pass
+
+    _page22 = _Page22()
+    _flow22b = _Flow22()
+    _flow22b.page = _page22
+    _orig_store22 = _sf22.get_industry_store
+    _sf22.get_industry_store = lambda: type('_S22', (), {'merge': lambda _s, _m: None})()
+    try:
+        _sf22.ScanFlow._on_enrich_rows(
+            _flow22b, _flow22b._enrich_scheduler, {'600000': {'industry': '银行'}})
+        check("★ 2.02：迟到的行业补全回包（新扫描已清空 `_outcome`）不再抛 AttributeError",
+              _page22._valuation_date is None and bool(_page22._valuation.get('600000')))
+    finally:
+        _sf22.get_industry_store = _orig_store22
+except Exception as _e22:  # noqa: BLE001
+    check(f"★2.02 体检线程生命周期断言整段抛异常: {type(_e22).__name__}: {_e22}", False)
+
 print("\n== 发布物一致性：version.json 可解析 + 版本号三处同步 ==")
 try:
     import json as _json17  # noqa: E402
@@ -9656,6 +9755,74 @@ for b in BAD:
 
 # 【打桩 ③】必须强制退出：只要还有非守护 QThread 存活（哪怕只是后台收尾），
 # 解释器就不退出 ⇒ 管道 | Select-Object -Last N 会一直缓冲、表现为"无响应"。
+#
+# ★2.02 / TEST-HARNESS S5：**退出路径不再无声挂死** ——
+#   ① 先撤掉 15 分钟全局超时（正常收尾不该被它打断）；
+#   ② 立刻武装 30s watchdog（卡在 Qt 析构/线程 join/写管道任何一处都会留栈并以 4 退出）；
+#   ③ 打印存活线程清单（Python 线程 + 还活着的 QThread）——这是"线程没收尾"的可见证据。
+import gc as _gc
+import threading as _threading
+
+
+def _live_qthreads() -> list:
+    """当前仍存活的 QThread（只读探测；C++ 对象已删除的跳过，绝不强转）。"""
+    out = []
+    try:
+        from PyQt6 import sip as _sip
+        from PyQt6.QtCore import QThread as _QT
+    except Exception:  # noqa: BLE001
+        return out
+    for _obj in _gc.get_objects():
+        try:
+            if isinstance(_obj, _QT) and not _sip.isdeleted(_obj) and _obj.isRunning():
+                out.append(_obj)
+        except Exception:  # noqa: BLE001 —— 任何探测失败都只跳过
+            continue
+    return out
+
+
+def _describe_threads(tag: str) -> None:
+    print(f"\n== {tag} ==", flush=True)
+    for _t in _threading.enumerate():
+        print(f"  py  {_t.name:<28} daemon={_t.daemon} alive={_t.is_alive()}", flush=True)
+    _qs = _live_qthreads()
+    print(f"  qt  存活 QThread：{len(_qs)} 个", flush=True)
+    for _q in _qs:
+        try:
+            print(f"  qt  {type(_q).__name__:<28} name={_q.objectName()!r} "
+                  f"finished={_q.isFinished()}", flush=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _arm_exit_watchdog(seconds: float = 30.0) -> None:
+    """退出路径 watchdog：卡住就打印全线程栈并以 4 退出（把"挂死"变成可见失败）。"""
+    def _fire():
+        try:
+            _faulthandler.enable()          # 正常路径已 disable（见文件末尾），这里临时开回来
+            _faulthandler.dump_traceback(all_threads=True)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            os.write(2, (f"\n[watchdog] 退出路径超过 {seconds:.0f}s，强制结束\n")
+                     .encode("utf-8", "replace"))
+        except Exception:  # noqa: BLE001
+            pass
+        os._exit(4)
+
+    _t = _threading.Timer(seconds, _fire)
+    _t.daemon = True
+    _t.start()
+
+
+_faulthandler.cancel_dump_traceback_later()
+_arm_exit_watchdog(30.0)
+_describe_threads("退出前的存活线程")
+# ★2.02 / S2 附注：**已知噪音**，不是断言失败 —— Windows 上 pyqtgraph + os._exit
+#   会在 DLL 卸载期触发一次 access violation（最小对照：只建 `pg.PlotWidget` + os._exit
+#   即可复现；退出码仍为 0；与 overlay 的 0xC0000409 不是同一个东西）。
+#   正常收尾时关掉 faulthandler 免刷日志；watchdog 触发时会自己 enable 回来留栈。
+_faulthandler.disable()
 sys.stdout.flush()
 os._exit(1 if BAD else 0)
 sys.exit(1 if BAD else 0)

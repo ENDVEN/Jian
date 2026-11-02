@@ -284,3 +284,34 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
 **产出**：`docs/plans/active/TEST-HARNESS.md`（S1–S6 排查步骤 + 验收：连跑 10 次 0 崩 0 挂死）、
 `docs/playbook/process.md` §11.5-150、`docs/playbook/INDEX.md` 一行、`docs/STATUS.md` §5 债。
 
+---
+
+## ★2.02 · 测试基建：fastfail 根因修复（2026-11-03 提交）
+
+**结论**：`0xC0000409` 不是断言问题，也不是 Python 异常，而是**运行中的 QThread 被 GC**。
+
+**根因**：`ReadinessFlow.start()` 每次直接覆盖 `self._probe`；上一轮 `ReadinessWorker`
+还在跑时，最后一个 Python 引用在赋值瞬间归零 ⇒ sip 析构 C++ QThread ⇒
+"QThread: Destroyed while thread is still running" ⇒ 进程 fastfail（无栈）。
+`ReadinessWorker` 没有 parent，唯一引用就是 `self._probe`；是否踩中取决于上一轮是否刚好收尾。
+
+**排查（S1–S6）**：
+1. 冒烟输出改行缓冲（`line_buffering + write_through`）⇒ 推翻旧"固定 657 行"结论（块缓冲假象）；
+2. `faulthandler` + 全局 15 分钟超时；可疑段用写 fd 2 的 trace 二分；
+3. 定位链：`_on_rerun` → `apply_config` → `resolve_scope` → `readiness.start` → 覆盖 `_probe`；
+4. 修法：旧线程先 `cancel()`（不 join），`_probes` 列表在收尾前一直持有引用；
+5. 退出路径加存活线程清单 + 30s watchdog（卡住 ⇒ `RC=4` + 全线程栈）；
+6. 连跑 **10/10** 通过（`1239/0`，最长 49.1s）。
+
+**顺带修**：`ScanFlow._on_enrich_rows` 在迟到补全回包里读 `_outcome.result` 会
+`AttributeError`（新扫描已清空 `_outcome`）⇒ 逐层 `getattr`，拿不到就留空。
+
+**已知噪音**：Windows 上 pyqtgraph + `os._exit()` 的 DLL 卸载期 access violation
+（退出码仍 0；只建 `pg.PlotWidget` 即可复现），正常收尾前关掉 `faulthandler` 静音。
+
+**未收口**："打印完汇总不退出"修复后 10 次未复现，按"未复现"记录，不写成已修。
+
+**产出**：`ui/widgets/readiness_flow.py`、`ui/widgets/scan_flow.py`、
+`tests/smoke_{chart,pages_overlay}.py`（S1/S2/S5 + 3 条新断言）、
+`docs/plans/active/TEST-HARNESS.md`、`docs/playbook/process.md` §11.5-150。
+

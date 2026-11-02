@@ -77,8 +77,8 @@ verified: auto
 | `scripts/check_docs.py` | 文档契约自检（秒级、不依赖 Qt）：写完/搬完文档跑一次。 | 9 | 100 |
 | `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 4 | 81 |
 | `scripts/sync_roster.py` | — | 2 | 37 |
-| `tests/smoke_chart.py` | — | 10 | 5696 |
-| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 31 | 8713 |
+| `tests/smoke_chart.py` | — | 13 | 5758 |
+| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 34 | 8858 |
 | `ui/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/bulk_download.py` | 批量预下载弹窗 (v5.8 · §7-A3)。 | 2 | 524 |
@@ -172,7 +172,7 @@ verified: auto
 | `ui/widgets/layer_model.py` | 配方库 / 图层的**单一真源**（v6.24 · §7-B8 R13/R5）—— **零 Qt、纯数据 + 纯规则**。 | 4 | 337 |
 | `ui/widgets/portfolio_changes.py` | 🧺 组合「调仓记录」的**列表渲染件**（★1.90 从富文本改成控件，用户 2026-10-28： | 4 | 189 |
 | `ui/widgets/portfolio_parts.py` | 🧺 组合页的**零件**（★1.90 从 `ui/views/portfolio_view.py` 拆出：那页已 1391 行）。 | 4 | 106 |
-| `ui/widgets/readiness_flow.py` | 「就绪度体检 + 补齐数据」的**两页共用控制器**（§7-B1/B2 主案 D6 · v6.39）。 | 5 | 512 |
+| `ui/widgets/readiness_flow.py` | 「就绪度体检 + 补齐数据」的**两页共用控制器**（§7-B1/B2 主案 D6 · v6.39）。 | 5 | 528 |
 | `ui/widgets/relation_card.py` | 🧮 M3「与指数的关系」量化卡（★1.75 / §7-B16 期 3 · 设计稿 D 页右半）。 | 1 | 227 |
 | `ui/widgets/relation_chart.py` | 🔗 M3「与指数的关系」两张小图（★1.75 / §7-B16 期 3）。 | 4 | 150 |
 | `ui/widgets/review_charts.py` | 复盘页的**图表渲染（日历 / 月度 / 持仓时长）**（1.25 自 `ui/views/review.py` 拆出 · §9-L）。 | 1 | 244 |
@@ -181,7 +181,7 @@ verified: auto
 | `ui/widgets/review_layout.py` | 复盘页的**版式装配**（1.25 自 `ui/views/review.py` 拆出 · §9-L 拆分 + §9-U 收口）。 | 1 | 310 |
 | `ui/widgets/review_playback.py` | 复盘页的**交易回放渲染**（1.25 自 `ui/views/review.py` 拆出 · §9-L）。 | 1 | 238 |
 | `ui/widgets/scan_enrich.py` | 扫描后**分批补全**行业/估值（★v6.74 · §7-B13）—— 用户 2026-09-27 拍板。 | 2 | 149 |
-| `ui/widgets/scan_flow.py` | 🌐 M2「全市场筛选」—— 运行流程（范围解析 / 后台线程 / 进度回执 / 切日期 / 跳行情）。 | 3 | 844 |
+| `ui/widgets/scan_flow.py` | 🌐 M2「全市场筛选」—— 运行流程（范围解析 / 后台线程 / 进度回执 / 切日期 / 跳行情）。 | 3 | 849 |
 | `ui/widgets/scan_layout.py` | 🌐 M2「全市场筛选」—— 版式装配（§7-B1/B2 主案 E 节 · 样板 A） | 5 | 518 |
 | `ui/widgets/scan_result.py` | 🌐 M2「全市场筛选」—— 结果渲染（KPI 行 + 结果表 + 空态）。 | 4 | 283 |
 | `ui/widgets/scan_strategy_bridge.py` | M2/M3「筛选方案」载入 / 存为 / 管理 桥接（§7-B12 P3）。 | 1 | 160 |

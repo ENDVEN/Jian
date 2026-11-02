@@ -17,13 +17,13 @@ verified: 2026-11-02
 
 ---
 
-## 一、在途（active · 只有两件）
+## 一、在途（active · 三件）
 
 | 计划 | 一句话 | 状态 |
 |---|---|---|
 | [`active/ETF-LOF.md`](active/ETF-LOF.md) | 场内 ETF/LOF 接入：`etf_daily` 独立分区 · 基金代码路由 · 名册分表 · **本地等比前复权补跳空** · 不进 A 股扫描/广度 | **未实现**（方案已拍板） |
 | [`active/ARCH-PERF.md`](active/ARCH-PERF.md) | 架构与启动性能：4.05s → ≤2.2s 的 P0 四件 + 测试分层 + 文档分卷 | **未实现**（P0 待开工） |
-| [`active/TEST-HARNESS.md`](active/TEST-HARNESS.md) | 测试基建：overlay 偶发 fastfail（`0xC0000409`）与"跑完不退出"的根因排查（**结论未定**） | **待开工**（专项一轮） |
+| [`active/TEST-HARNESS.md`](active/TEST-HARNESS.md) | 测试基建：overlay 偶发 fastfail（`0xC0000409`）与"跑完不退出"的根因排查 | **进行中**：fastfail 已定位并修复（10/10 绿）；挂死未复现，退出路径已加观测 |
 
 ---
 
@@ -57,7 +57,7 @@ verified: 2026-11-02
 |---|---|---|
 | D2a | `RULES` → `docs/RULES.md` + 76 处引用 | ✅ 2026-11-02 |
 | D2b | 7 份方案书分流 `active/` / `done/` + 补 `status:` 头 + 49 处引用 | ✅ 2026-11-02 |
-| D2c | HISTORY / PLAYBOOK / ARCHIVE 分卷（内容手术，单独一轮） | ⬜ 未开始 |
+| D2c | HISTORY / PLAYBOOK / ARCHIVE 分卷（内容手术，单独一轮） | ✅ 2026-11-02（见 `STATUS.md` §7） |
 
 **为什么已完成的不删**：纪律要求"历史数字冻结、永不回改"——删掉就再也说不清"当年为什么这么定"。
 搬家只是把它从"每次都要扫"变成"要查才翻"。

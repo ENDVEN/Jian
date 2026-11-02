@@ -3,22 +3,24 @@ status: active
 topic: 冒烟 overlay 偶发 fastfail（0xC0000409）/ 跑完不退出 —— 根因排查与收口
 read_when: 要改 tests/smoke_pages_overlay.py 的退出路径、断言编排或线程收尾时
 skip_if: 只改业务代码（这条不影响 app 运行）
-verified: 2026-11-02
+verified: 2026-11-03
 ---
 
 # 测试基建专项：固定点 fastfail + 退出挂死
 
 > 触发：2026-11-02 发布 2.0 时，overlay 连续两次 `0xC0000409`，第三次才 1236/0；
 > 且第三次进程打印完汇总后**不退出**，独占输出文件句柄，常规手段杀不掉。
-> 本文只做**如实记录 + 排查计划**；结论未定，不许写成"已修"。
+> **2026-11-03 更新**：fastfail 的根因已定位并修复（10/10 绿）；"跑完不退出"在修复后
+> 10 次连跑中**未复现**，退出路径已加观测（见 §5-S5），留待复现时收口。
+> 本文只做**如实记录**；未复现的结论不许写成"已修"。
 
 ## 1. 现象（实测）
 
 | 项 | 记录 |
 |---|---|
 | 崩法 | `RC = -1073740791`（`0xC0000409`，fastfail），**不是断言红** |
-| 频率 | 2026-11-02 三次：崩 / 崩 / 通过；历史记录约 2/5（§11.5-102，baseline worktree 同崩同位） |
-| 输出 | 两次都停在**第 657 行**（v1.46 段之后、§7-E2 之前） |
+| 频率（修复前） | 2026-11-02 三次：崩 / 崩 / 通过；历史记录约 2/5（§11.5-102，baseline worktree 同崩同位） |
+| 输出 | 旧记录"两次都停在第 657 行"——**块缓冲导致的假崩点**（S1 实测后推翻） |
 | 退出 | 通过那次打印 `===== 通过 1236 · 失败 0 =====` 后**不退出**（CPU 累计 83s），持住 `_tmp_p20_ov2.txt` |
 | 杀进程 | `taskkill /F /T` 报"没有运行实例"；`Stop-Process -Force` 无效；**`.NET Process.Kill()` 成功**，随后文件立即可删 |
 
@@ -28,27 +30,75 @@ verified: 2026-11-02
 |---|---|---|
 | 槽内未捕获 Python 异常触发 fastfail | 离屏：槽里 `raise`，无 hook → `0xC0000409`；装 hook → 事件循环继续 | 机制成立，但**不是本次原因**：1.95 起两份冒烟已装 `_fastfail_guard`，2.0 仍崩 |
 | `QThread.run` 异常走 `qFatal` | QThread.run 里 `raise` + hook | hook 能兜住（打印 EXCEPTHOOK、exec 返回 0）⇒ 也不是它 |
+| 输出块缓冲导致的"固定点" | S1 加 `line_buffering=True` 后连跑 | **成立**：真崩点比 657 行靠后，旧结论作废 |
 
-## 3. 尚未确认（诚实标注，别当结论）
+## 3. 根因（2026-11-03 确认）
 
-1. **崩点定位不可信**：stdout 重定向到文件是**块缓冲**，最后一行 ≠ 崩溃语句；两次都停 657 行可能只是缓冲区边界巧合。
-2. **C++ 层 abort 的真实来源**：Qt 断言 / 悬挂指针 / 对象已删仍收信号。最可能是"后台线程还活着，而它的 QObject 父已被销毁"（与 §9-F① 孤儿线程同族）。
-3. **退出挂死的机制**：卡在 `os._exit()` 之前（Qt 析构 / atexit / 线程 join）还是卡在写标准输出，未定。
-4. **杀不掉的原因**：`taskkill` 报"无实例"与 `.NET Kill` 成功并存，可能是 PID 记录与句柄释放不同步（僵尸/挂起的内核等待），未定论。
+**调用链**：`运行历史._on_rerun()` → `ScanView.apply_config()` → `ScanFlow.resolve_scope()`
+→ `ReadinessFlow.start()`。
 
-## 4. 排查步骤（下一轮照此执行）
+`ReadinessFlow.start()` 旧写法每次直接覆盖 `self._probe`：
 
-| 步 | 动作 | 目的 |
+```python
+self._probe = ReadinessWorker(job, kline_zone_dir('kline_daily'), scope, min_bars=min_bars)
+```
+
+若上一轮 `ReadinessWorker` **仍在运行**，赋值瞬间最后一个 Python 引用归零 ⇒ PyQt/sip
+析构 C++ `QThread` ⇒ Qt 报 "QThread: Destroyed while thread is still running" ⇒
+**进程 fastfail（0xC0000409）**。是否踩中取决于上一轮是否刚好收尾 ⇒ **约 2/3 概率**。
+
+**证据**（S3 最小复现，连跑 3 次）：
+
+- 行缓冲后最后一条输出是「送行情页被拒」；
+- 展开 `_on_rerun()` 逐段打点：`got page` → 崩，`apply_config` 内
+  `before resolve_scope` → 崩；`resolve_scope` 内 `after result.set_empty` → 崩；
+- `ReadinessFlow.start` 内最后一条 trace = `old probe=ReadinessWorker running=True`，
+  下一条（构造新 worker 并赋值）未打印 ⇒ 崩在引用替换。
+
+**同族问题（顺带修复）**：`ScanFlow._on_enrich_rows()` 在迟到回包里直接
+`getattr(p, '_outcome', None).result.dates` ⇒ 新扫描已把 `_outcome` 清空时
+`AttributeError`（guard 实测抓到）。修法：逐层 `getattr(..., None)`，拿不到就留空。
+
+## 4. 修复（已落到工作区）
+
+| 文件 | 改动 |
+|---|---|
+| `ui/widgets/readiness_flow.py` | `__init__` 增 `_probes`；`start()` 前先 `old.cancel()` 并把旧线程放进 `_probes`（收尾前一直持有引用）；新线程也入列；下次 start 时清掉已停止的 |
+| `ui/widgets/scan_flow.py` | `_on_enrich_rows` 的 `_outcome` 读取改为安全链（`None` ⇒ 不填 `_valuation_date`） |
+| `tests/smoke_pages_overlay.py` | 新增 ★2.02 段 3 条断言（旧线程被 cancel 且保住引用 / 新线程照常跑 / 迟到补全不抛异常） |
+
+**没有改**：`ui/workers.py` 的线程模型（`ReadinessWorker` 仍是普通 QThread，不加全局注册表）。
+
+## 5. S1–S6 执行记录
+
+| 步 | 动作 | 结果 |
 |---|---|---|
-| S1 | 所有 `print` 加 `flush=True`（或 `PYTHONUNBUFFERED=1`） | 先拿到**真崩点**，别再被缓冲骗 |
-| S2 | `PYTHONFAULTHANDLER=1` + `faulthandler.enable()` | abort 时能否留下 Python 栈 |
-| S3 | 把 v1.46 → §7-E2 之间的段落单独跑（最小复现） | 二分定位到语句 |
-| S4 | 审查该段构造/销毁的 `BulkDownloadDialog` / `JobGuard` / QThread 与 `deleteLater` 时序 | 找悬挂指针/父子关系断裂 |
-| S5 | 退出路径：`os._exit` 前打印存活 QThread 列表、逐个 `wait(2000)`；加 30s watchdog 强制退出 | 让"挂死"变成"可见的收尾日志" |
-| S6 | 连续 10 次运行 | 验收：0 fastfail · 0 挂死 · 每次 < 5 分钟 |
+| S1 | 两份冒烟 `sys.stdout/stderr.reconfigure(..., line_buffering=True, write_through=True)` | ✅ 拿到真崩点；旧"657 行"作废 |
+| S2 | `faulthandler.enable()` + `dump_traceback_later(900, exit=True)` | ✅ 原生崩溃/超时留栈；已知噪音见下 |
+| S3 | 展开 `_on_rerun` + `ScanFlow`/`ReadinessFlow` 内打点，连跑二分 | ✅ 定位到 `readiness.start` 的引用替换 |
+| S4 | 审查 `ReadinessWorker` / `JobGuard` / 父对象时序 | ✅ `ReadinessWorker` **无 parent**，唯一的引用就是 `self._probe` |
+| S5 | 退出前打印 Python 线程 + 存活 QThread；30s watchdog；`os._exit` 前关 faulthandler | ✅ 挂死会变成 `RC=4` + 全线程栈，不再无声 |
+| S6 | 连跑 10 次 | ✅ **10/10 · RC=0 · 1239/0**；最长 49.1s；`smoke_chart` 1076/0 |
 
-## 5. 验收 / 风险 / 不做
+**已知噪音（不是失败，别误判）**：Windows 上 `pyqtgraph` + `os._exit()` 会在 DLL 卸载期
+触发一次 access violation（最小对照：只建 `pg.PlotWidget` 再 `os._exit` 即可复现；
+退出码仍为 0）。正常收尾前 `faulthandler.disable()` 把它静音；watchdog 触发时会
+自己 `enable()` 回来留栈。它与 `0xC0000409` 不是同一回事。
 
-- **验收**：S6 达标；且两份冒烟仍在本地必跑（CI 依旧只跑静态检查，理由见 `.github/workflows/ci.yml`）。
-- **风险**：动退出路径可能**掩盖**"线程没收尾"的真实缺陷 ⇒ 先加观测（S1/S5），再决定是否强杀。
-- **不做**：不为让测试变绿而删断言；不动业务代码的线程模型（那是另一件事）。
+## 6. 验收 / 风险 / 不做
+
+- **验收**：S6 达标（0 fastfail · 0 挂死 · 每次 < 5 分钟）；两份冒烟仍在本地必跑
+  （CI 依旧只跑静态检查，理由见 `.github/workflows/ci.yml`）。
+- **风险**：`cancel()` 会让旧体检线程提前结束 —— 它的回包本来就会被 `JobGuard`/范围
+  校验丢弃，因此无行为回归；新断言已钉住"新一次体检照常启动"。
+- **不做**：不为让测试变绿而删断言；不改 `ui/workers.py` 的线程模型；不在未复现挂死前
+  声称"已修挂死"。
+
+## 7. 仍未确认（下次复现时照此收口）
+
+1. "打印完汇总不退出"修复后 10 次未复现 —— **是同一个 fastfail 的另一种表现，还是独立的
+   loader-lock/句柄问题，仍未定**。若复现：先看 watchdog 是否给出 `RC=4` 与全线程栈。
+2. `taskkill` 报"无实例"而 `.NET Kill` 有效：疑似进程卡在 `ExitProcess`/DLL detach，
+   属操作系统层现象，暂不深挖。
+3. CI 何时从静态扩到冒烟子集：需先定"CI 数据种子"方案（空机器上 8 条已知环境失败，
+   见 `docs/reference/SETUP.md`）。

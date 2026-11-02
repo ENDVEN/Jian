@@ -66,11 +66,18 @@ import sys
 
 # 【§11.7】Windows 控制台默认 GBK：带 ↔ / ⇒ 这类符号的 print 会抛 UnicodeEncodeError，
 # 表现为"某个分节整段被跳过 + 假报若干失败"（1.23 修）。统一按 UTF-8 输出。
+# ★2.02 / TEST-HARNESS S1：行缓冲（重定向到文件时块缓冲会让"最后一行"不等于崩点）。
 for _stream in (sys.stdout, sys.stderr):
     try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
+        _stream.reconfigure(encoding="utf-8", errors="replace",
+                            line_buffering=True, write_through=True)
     except Exception:  # noqa: BLE001 —— 被重定向的流不支持 reconfigure 就跳过
         pass
+
+# ★2.02 / TEST-HARNESS S2：原生 abort 留栈 + 全局超时（正常 ~1 分钟，15 分钟兜底）。
+import faulthandler as _faulthandler
+_faulthandler.enable()
+_faulthandler.dump_traceback_later(900, exit=True)
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -6341,5 +6348,70 @@ for b in BAD:
 
 # 【§11.5-20 铁律③】强制退出：残留的非守护 QThread 会让解释器不退出，
 # 而管道分页（tail / Select-Object -Last N）会缓冲到进程结束才显示 ⇒ 表现为"卡死无输出"。
+#
+# ★2.02 / TEST-HARNESS S5：退出路径加 30s watchdog + 存活线程清单
+#   （与 smoke_pages_overlay 同款：卡在 Qt 析构 / 线程 join / 写管道都会留栈并以 4 退出）。
+import gc as _gc
+import threading as _threading
+
+
+def _live_qthreads() -> list:
+    """当前仍存活的 QThread（只读探测；C++ 对象已删除的跳过）。"""
+    out = []
+    try:
+        from PyQt6 import sip as _sip
+        from PyQt6.QtCore import QThread as _QT
+    except Exception:  # noqa: BLE001
+        return out
+    for _obj in _gc.get_objects():
+        try:
+            if isinstance(_obj, _QT) and not _sip.isdeleted(_obj) and _obj.isRunning():
+                out.append(_obj)
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def _describe_threads(tag: str) -> None:
+    print(f"\n== {tag} ==", flush=True)
+    for _t in _threading.enumerate():
+        print(f"  py  {_t.name:<28} daemon={_t.daemon} alive={_t.is_alive()}", flush=True)
+    _qs = _live_qthreads()
+    print(f"  qt  存活 QThread：{len(_qs)} 个", flush=True)
+    for _q in _qs:
+        try:
+            print(f"  qt  {type(_q).__name__:<28} name={_q.objectName()!r} "
+                  f"finished={_q.isFinished()}", flush=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _arm_exit_watchdog(seconds: float = 30.0) -> None:
+    """退出路径 watchdog：卡住就打印全线程栈并以 4 退出。"""
+    def _fire():
+        try:
+            _faulthandler.enable()          # 正常路径已 disable（见文件末尾），这里临时开回来
+            _faulthandler.dump_traceback(all_threads=True)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            os.write(2, (f"\n[watchdog] 退出路径超过 {seconds:.0f}s，强制结束\n")
+                     .encode("utf-8", "replace"))
+        except Exception:  # noqa: BLE001
+            pass
+        os._exit(4)
+
+    _t = _threading.Timer(seconds, _fire)
+    _t.daemon = True
+    _t.start()
+
+
+_faulthandler.cancel_dump_traceback_later()
+_arm_exit_watchdog(30.0)
+_describe_threads("退出前的存活线程")
+# ★2.02 / S2 附注：**已知噪音**，不是断言失败 —— Windows 上 pyqtgraph + os._exit
+#   会在 DLL 卸载期触发 access violation（最小对照可复现；退出码仍 0）。
+#   正常收尾关掉 faulthandler 免刷日志；watchdog 触发时会自己 enable 回来留栈。
+_faulthandler.disable()
 sys.stdout.flush()
 os._exit(1 if BAD else 0)

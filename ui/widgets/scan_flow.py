@@ -627,7 +627,12 @@ class ScanFlow:
                 logger.warning('补全写行业缓存失败（忽略）: %s', e)
         p._valuation = dict(p._valuation or {}, **{sym: dict(rec or {}) for sym, rec in got.items()})
         if p._valuation_date is None:                       # 口径与旧路径一致：只在最新交易日填
-            dates = getattr(getattr(p, '_outcome', None).result, 'dates', None)
+            # ★2.02 / TEST-HARNESS：**迟到的补全回包可能在新扫描之后到** —— 那时
+            #   `_drop_stale_result` 已把 `_outcome` 置 None。旧写法直接 `.result` 会
+            #   AttributeError（冒烟 guard 实测抓到），这里逐层取默认值：拿不到日期就
+            #   不填（诚实留空），绝不为了不报错去猜。
+            _outcome = getattr(p, '_outcome', None)
+            dates = getattr(getattr(_outcome, 'result', None), 'dates', None)
             p._valuation_date = (pd.Timestamp(dates[-1]).normalize()
                                  if dates is not None and len(dates) else None)
         self.refresh()                                      # 重画（不重测列宽）

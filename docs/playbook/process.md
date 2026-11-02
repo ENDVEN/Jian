@@ -385,13 +385,19 @@ verified: 2026-11-02
   【修法】按 `norm(line)` 与 HEAD 建映射，**只还原"仅差引号形态"的行**；不许整文件 `git checkout`（会丢本轮真改动）。
   【为什么值得记】这是"看不见的手改了源码"：内容看着没问题，Python 会当场拒绝执行，而文档里永远发现不了。
 
-- **11.5-150** 【★2.01 · 测试基建】**冒烟会"跑到一半直接没了"，还会"跑完了不退出"**（两个现象，**根因都未确认**）。
-  【现象】2026-11-02 三次 overlay：崩 / 崩 / 通过；崩 = `0xC0000409`（fastfail，不是断言红），两次都停在**同一行数**；
-  通过那次打印完 `1236/0` 后**不退出**（CPU 83s），独占重定向输出文件，`taskkill` 报"没有运行实例"、`Stop-Process` 无效，
-  最后 `.NET Process.Kill()` 才结束（文件随即可删）。
-  【已排除（有实验）】① 槽内 Python 异常：无 hook 时确实 fastfail、装 hook 后能继续 —— 但冒烟 1.95 起就有 guard，2.0 仍崩；
-  ② `QThread.run` 异常：hook 同样兜得住。⇒ **本次不是 Python 异常**，是 C++ 层 abort。
-  【最容易骗人的地方】**输出重定向到文件是块缓冲，最后一行不是崩点**；两次"停在 657 行"可能只是缓冲区边界巧合。
-  【排查顺序】先 `flush=True` 拿真崩点 → `faulthandler` → 最小复现二分 → 查该段对象的 `deleteLater`/父子时序 →
-  退出前打印存活 QThread 并 watchdog 强退 → 连跑 10 次为验收。详见 `docs/plans/active/TEST-HARNESS.md`。
-  【为什么值得记】不记的话，下次看到"测试跑到一半没了"会先怀疑自己刚改的代码，白查几小时（§11.5-102 的同族）。
+- **11.5-150** 【★2.01 / ★2.02 · 测试基建】**冒烟"跑到一半直接没了"的根因 = 运行中的 QThread 被 GC**（2026-11-03 确认并修复）。
+  【现象】修复前 overlay 约 2/3 概率 `0xC0000409`（fastfail，不是断言红）；通过那次偶尔"打印完 `1236/0` 后不退出"。
+  【真崩点怎么找】输出重定向到文件是**块缓冲**，最后一行不是崩点（旧结论"停在 657 行"是假象）。
+  脚本里钉 `line_buffering=True` + `write_through=True`（或 `python -u`），再在可疑段用**写 fd 2 的 trace** 二分。
+  【根因】`ReadinessFlow.start()` 每次直接覆盖 `self._probe`：上一轮 `ReadinessWorker` **还在跑**时，
+  最后一个 Python 引用在赋值瞬间归零 ⇒ sip 析构 C++ QThread ⇒ "QThread: Destroyed while thread is still running"
+  ⇒ **进程 fastfail（0xC0000409，无 Python 栈）**。`ReadinessWorker` **没有 parent**，唯一引用就是 `self._probe`。
+  【修法】① 旧线程先 `cancel()`（只置取消位，不 join）；② 用 `self._probes` 列表**收尾前一直持有引用**；
+  ③ 下次 `start()` 只清已停止的。**判据**：任何"以后台线程为成员、可被下一次调用覆盖"的字段，都要问
+  ——**旧线程还在跑吗？谁持有它？**
+  【同族】迟到回包读 `p._outcome.result.dates`：新扫描已把 `_outcome` 清空 ⇒ `AttributeError`；
+  逐层 `getattr(..., None)`，拿不到就留空（不猜）。
+  【验收】连跑 **10/10** 通过（`1239/0`，最长 49.1s）；退出路径加存活线程清单 + 30s watchdog（卡住 ⇒ `RC=4` + 全线程栈）。
+  【已知噪音】Windows 上 `pyqtgraph` + `os._exit()` 会在 DLL 卸载期报一次 access violation（退出码仍 0；
+  只建 `pg.PlotWidget` 即可复现）—— 正常收尾前 `faulthandler.disable()` 静音，别当失败。
+  仍**未确认**的是"跑完不退出"的独立成因（修复后 10 次未复现）。详见 `docs/plans/active/TEST-HARNESS.md`。

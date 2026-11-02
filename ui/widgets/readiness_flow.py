@@ -127,6 +127,9 @@ class ReadinessFlow:
         self.report: ReadinessReport | None = None
         self._guard = JobGuard()              # 体检回包守卫
         self._probe = None
+        # ★2.02：**还没收尾的体检线程**（含被新一次 start 顶掉的旧线程）。
+        #   只为了保住 Python 引用 —— QThread 在 running 状态被 GC 会直接 fastfail。
+        self._probes = []
         # ★v1.43 / §7-B11：批量下载不再在本页起线程，只记自己提交的任务号；
         #   进度/回执从主窗口的下载队列订阅（队列是唯一真源，本页是投影）。
         self._sync_job: int | None = None
@@ -162,8 +165,21 @@ class ReadinessFlow:
         self.report = None
         job = self._guard.next()
         scope = list(self._last_symbols)      # 本次体检自己的名单 —— 回调**绑定它**做校验，
+        # ★2.02 / TEST-HARNESS S4：**运行中的 QThread 必须被引用住**。
+        #   旧版这里直接 `self._probe = ReadinessWorker(...)`：上一轮还没跑完时，
+        #   最后一次 Python 引用在赋值瞬间消失 ⇒ sip 析构 C++ QThread ⇒
+        #   "QThread: Destroyed while thread is still running" ⇒ 进程 fastfail
+        #   （0xC0000409，无栈）。是否踩中取决于上一轮是否刚好收尾 —— overlay 实测约 2/3。
+        #   处理：① 让旧的尽早停（只置取消位，不 join，不阻塞 UI）；② 收尾前一直持有引用。
+        self._probes = [w for w in self._probes if w.isRunning()]
+        old = self._probe
+        if old is not None and old.isRunning():
+            old.cancel()
+            if old not in self._probes:
+                self._probes.append(old)
         self._probe = ReadinessWorker(job, kline_zone_dir('kline_daily'),  # 防被后续 start 重赋值穿透
                                       scope, min_bars=min_bars)
+        self._probes.append(self._probe)
         self._probe.progress.connect(
             lambda d, t, n, s=scope: self._on_probe_progress(d, t, n, s))
         self._probe.finished.connect(
