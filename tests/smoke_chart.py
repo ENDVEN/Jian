@@ -3,14 +3,15 @@
 
 
 # ==========================================
-# ★1.87：**单实例锁** —— 冒烟不许并发跑。
+# ★1.87：**单实例锁** —— 同一份冒烟不许并发跑。
 #   实测事故：同时跑两份 overlay，其中一份在退出阶段卡了 13 分钟（1 线程等待、
 #   CPU 只占 8%）⇒ 看起来像"测试跑了 10 分钟没结果"。根因是共享文件/退出时序互锁。
-#   现在：发现另一个实例还活着 ⇒ 直接说清并退出（不制造第二个僵尸）。
+#   现在：发现同脚本的另一个实例还活着 ⇒ 直接说清并退出（不制造第二个僵尸）。
+# ★2.04：锁**按脚本分开** —— chart 与 overlay 互不共享状态，可并行（`tests/run_smoke.py`）。
 # ==========================================
 import atexit as _atexit_lock, os as _os_lock
 
-_LOCK = _os_lock.path.join(_os_lock.environ.get("TEMP", "."), "jian_smoke.lock")
+_LOCK = _os_lock.path.join(_os_lock.environ.get("TEMP", "."), "jian_smoke_chart.lock")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -2942,9 +2943,11 @@ try:
         head = next(i for i, line in enumerate(lines) if line.strip() == 'data = df.copy()')
         return [line.strip() for line in lines[head:head + 7]]
 
-    check("★ 与 M1 同口径：`cross_section.prepare_frame` 的准备块与 `core/backtest.py` **逐字相同**"
+    # ★2.04：prepare_frame 已拆到 core/scan_filters.py（cross_section 再导出）—— 读新落点
+    from core import scan_filters as _sf
+    check("★ 与 M1 同口径：`scan_filters.prepare_frame` 的准备块与 `core/backtest.py` **逐字相同**"
           "（谁改一处漏另一处 ⇒ 立刻红）",
-          _prep_block(_cs) == _prep_block(_bt_mod))
+          _prep_block(_sf) == _prep_block(_bt_mod))
 
     # ---------- 合成数据（不依赖本地行情，任何机器都能跑）----------
     _days = pd.bdate_range('2024-01-01', periods=300)
@@ -4865,7 +4868,8 @@ try:
 
         # ---- ④ 收尾口径（源码级，先剥注释再扫 —— 否则会被"讲这条纪律的注释"自己触发）----
         import pathlib as _pl74  # noqa: E402
-        _wk74 = _pl74.Path('ui/workers.py').read_text(encoding='utf-8')
+        # ★2.04：SyncWorker 已拆到 workers_download.py —— 源码级口径读新落点
+        _wk74 = _pl74.Path('ui/workers_download.py').read_text(encoding='utf-8')
         _code74 = '\n'.join(_l.split('#', 1)[0] for _l in _wk74.splitlines())
         check("★ 1.70 / §11.5-124：并发池**收尾有界**（`wait=True` 靠硬超时兜底）且 `cancel_futures`"
               "**只在真的要停时才给**（无条件 True 会把没启动的任务也取消 —— 实测 5 只只跑 3 只 = 静默漏抓）",
@@ -6224,7 +6228,7 @@ try:
           _insp81.signature(_rs81).parameters['commission_rate'].default is None)
     _src81 = ''
     # ★1.90：组合页/组合内核也纳入（旧名单漏掉它们 ⇒ `portfolio_stats` 里留着一份硬编码 0.0003）
-    for _f81 in ('ui/workers.py', 'ui/views/backtest.py', 'ui/widgets/sweep_results.py',
+    for _f81 in ('ui/workers_download.py', 'ui/views/backtest.py', 'ui/widgets/sweep_results.py',
                  'core/param_sweep.py', 'ui/views/portfolio_view.py',
                  'core/portfolio_stats.py'):
         _src81 += open(_f81, encoding='utf-8').read()

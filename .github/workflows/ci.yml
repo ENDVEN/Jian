@@ -1,6 +1,8 @@
 name: CI
 
-# 只做"确定性、零依赖"的检查：不需要 pip install，几十秒跑完。
+# static = 确定性、零依赖检查（不 pip install，几十秒跑完）。
+# unit   = 纯内核单测（pandas/numpy/pyarrow/akshare，不读 ~/.jian_data、不联网）；
+#          跑 41 条，给 PR 一个秒级~分钟级的快速反馈。
 # 为什么不在 CI 跑两份冒烟：
 #   · 它们会真的打开 ~/.jian_data（空数据机器上有 8 条已知环境性失败，见 docs/reference/SETUP.md）；
 #   · 依赖 PyQt6 + 2000 只行情，既慢又易受网络/频控影响，红绿不由代码决定。
@@ -46,3 +48,27 @@ jobs:
 
       - name: 文档契约（front-matter / 计划登记 / 链接 / 体积）
         run: python scripts/check_docs.py
+
+  unit:
+    name: 单元测试
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 只装 unit 真正需要的（不装 PyQt6 / pyqtgraph，避免把 CI 拖成桌面环境）。
+      # 版本与 requirements.txt 同步；升级依赖时两边一起改。
+      - name: 安装 unit 最小依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas==2.3.3 numpy==2.5.3 pyarrow==25.0.1 akshare==1.19.1 requests==2.34.2
+
+      - name: 单元测试
+        run: python -m unittest discover -s tests/unit -v

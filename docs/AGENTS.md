@@ -41,7 +41,8 @@ AkShare → data/akshare_feed.py → ~/.jian_data/data_lake/*.parquet（Parquet 
 ## 4. 五条硬规定（不可妥协）
 
 1. **UI 不碰 SQL / 不直接调爬虫**：一律走 `core/engine.py` 或 `data/sync_service.py` 门面。
-2. **QThread 只在 `ui/workers.py`**：页面/弹窗不许自造线程类（下载调度在 `ui/download_hub.py`）。
+2. **QThread 只在 `ui/workers*.py`**：`ui/workers.py` 是门面，领域件为 `workers_scan/download/backtest/sync/imports/core/throttle.py`；
+   页面/弹窗不许自造线程类（下载调度在 `ui/download_hub.py`）。
 3. **数据三层不许混**：A 层（湖内就地算）/ B 层（当日快照，仅"基准日 == 最新定稿日"才填）/ C 层（无源就不做）。
 4. **单一真源**：版本号 → `version.json`；断言数 → `docs/STATUS.md`；文件行数 → `CODEMAP`；写用户数据一律**原子写**（tmp + `os.replace`）。
 5. **诚实边界**：不造数。缺数据写「数据不足」，不填 0、不猜、不假装实时、不承诺"推荐/最优"。
@@ -57,11 +58,32 @@ AkShare → data/akshare_feed.py → ~/.jian_data/data_lake/*.parquet（Parquet 
 ## 6. 验证怎么跑
 
 ```bash
-python -u tests/smoke_chart.py          # 内核
-python -u tests/smoke_pages_overlay.py  # 页面
+py tests/run_smoke.py                      # 两份冒烟**并行** + 分段耗时（约 60–100s，日常推荐）
+py -m unittest discover -s tests/unit -v   # 纯函数 unit 层（秒级）
+
+# 单项排障（不走 runner）
+python -u tests/smoke_chart.py
+python -u tests/smoke_pages_overlay.py
 ```
 
-两条都必须 **0 失败**；若本机有下载在跑，"缓存命中"类断言会假红（先停下载）。
+两条冒烟都必须 **0 失败**（runner 只在两份都过时返回 0）；若本机有下载在跑，
+"缓存命中"类断言会假红（先停下载）。改了纯内核（`core/` / `data/`）先跑 unit，
+页面改动再跑 overlay；`run_smoke.py` 会打印**最慢的 5 个区段**，便于继续优化。
+
+unit 当前 **41 条**，覆盖：日期批量解析 / roster 向量化 / footer LRU / 缓存键与数据版本 /
+批量耗时文案 / 组合统计与权重 / 横截面 `merge_tail` / 指标与净额 / 成分 diff / 风险文案与格式化。纯内核改动**不必等两份冒烟**。
+
+按改动选测试，别每次都等全量：
+
+| 改了什么 | 先跑 |
+|---|---|
+| `core/` / `data/` 纯函数 | unit（秒级）；触及取数/缓存再加 chart |
+| 图表件 / 公式渲染 | `py tests/run_smoke.py --only chart` |
+| 页面 / 交互 / 样式 | `py tests/run_smoke.py --only overlay` |
+| 提交前 | `py tests/run_smoke.py`（unit + 两份并行） |
+
+CI（push / PR）跑 **静态检查 + unit** 两个 job，都**不读数据湖、不联网**；两份冒烟仍只在本地/发布前跑
+（CI 冒烟子集要等"数据种子"方案，见 `docs/STATUS.md` §4）。
 
 文档/文件改动后另跑两条（各 <2 秒）：
 

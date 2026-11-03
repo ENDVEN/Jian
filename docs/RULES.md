@@ -28,12 +28,12 @@ verified: 2026-11-02
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **`2.03`**（三处同步 §9-A）。**版本详情不抄在这里** —— 见 `docs/STATUS.md` §1 与 `docs/history/recent.md`。 |
-| 上一版记录（滚动） | **`2.02`** 测试基建 fastfail 根因修复 · **`2.0`** 1.0 收官（启动占位 / 同步兜底 / CI）· 更早见 `docs/history/recent.md`。 |
+| APP 版本 | **`2.04`**（三处同步 §9-A）。**版本详情不抄在这里** —— 见 `docs/STATUS.md` §1 与 `docs/history/recent.md`。 |
+| 上一版记录（滚动） | **`2.03`** 启动优化 P0 · **`2.02`** 测试基建 fastfail 根因修复 · 更早见 `docs/history/recent.md`。 |
 | 文档版本 | **v6.88** 之后未再单独立版；文档纪律见 §10-14（唯一硬指标：本文件 < 100,000 字符）。 |
-| 最近三版 | **`2.03`** 启动优化 P0（惰性建页 / 缓存 / 探针）· **`2.02`** 测试基建 fastfail 根因修复 · **`2.01`** 测试基建问题立项 |
-| **当前主线** | **以 `docs/STATUS.md` §4 为准**（本快照不抄顺序）。2026-11-03 起：**ETF/LOF 接入 P1-1…P1-8**（ARCH-PERF P0 已随 2.03 收口）。 |
-| **断点** | **v2.03 已提交、未推送**（2026-11-03）= **ARCH-PERF P0 四件**落地：惰性建页（工厂 + property + 只读 `_PageMap`）/ roster 去 `iterrows` / 日历 `to_dates` 批量 / footer `_footer_cached` LRU + `scripts/probe_startup.py`；**构造 3.6s→0.27s、已建页 9→1、真机探针 2.145s**。连带：组合页不再强制建行情页、`render_all_data` 只刷已建页、两条下标断言改身份。冒烟 **chart 1080/0 · overlay 1244/0**（+9 条行为断言）。2.02 的 fastfail 已修；"跑完不退出"复现后改 `TerminateProcess` 硬退出（仅测试脚本）。**下一步** = ETF/LOF P1-1…P1-8（`plans/active/ETF-LOF.md` §5）。 |
+| 最近三版 | **`2.04`** 测试提速 + 工程拆件（unit / 并行 runner / CI / workers 拆分）· **`2.03`** 启动优化 P0 · **`2.02`** 测试基建 fastfail 根因修复 |
+| **当前主线** | **以 `docs/STATUS.md` §4 为准**（本快照不抄顺序）。2026-11-04 起：**ETF/LOF 接入 P1-1…P1-8**（测试提速与 workers 拆件已随 2.04 收口）。 |
+| **断点** | **v2.04 已提交、未推送**（2026-11-04）= 测试提速 + 工程拆件：`tests/unit` **41 条**（0.05s）、`tests/run_smoke.py` 并行 **56–100s** + 慢段、CI `unit` job；`workers.py` 拆为 **58 行门面 + 7 个领域件**（scan/download/sync/backtest/imports/core/throttle，旧导入路径不变），另拆 `history_parts` / `fetch_messages` / `backtest_preview` / `scan_enrich_flow` / `scan_filters`。冒烟 **chart 1080/0 · overlay 1244/0**。2.02 的 fastfail 已修；挂死已用硬退出收口（仅测试脚本）。**下一步** = ETF/LOF P1-1…P1-8（`plans/active/ETF-LOF.md` §5）。 |
 | ⏭ 最高优先级（并行） | **ETF/LOF P1** → **§7-B17 组合剩余**：① **行业覆盖率**（实测 `industry_map` 仅 **302** 条 / 全市场 5169 只 ≈5.8%）· ② 多组合对比（用户未提）。 |
 | 已知/备忘 | 样板底部指数状态栏**不做** · 卡片右上数字角标**不做**（用户 2026-10-27）· `portfolio_view.py` 纯显示件已拆 `ui/widgets/portfolio_parts.py`，`_build` / `_render_p1` 仍待拆（行数见 CODEMAP）· **市值权重 = 编辑时快照**（不是逐日重算；改完点「确定」才落盘）。 |
 | 待决 | **用户 2026-10-28 / 2026-11-03：不许私自提交** —— 版本号与提交时机由用户拍板。 |
@@ -89,7 +89,7 @@ verified: 2026-11-02
 | 业务库 | SQLite，`INSERT OR IGNORE` 幂等 + MD5 确定性主键 | `core/database.py` |
 | 时序湖 | pyarrow Parquet 分区数据湖（DataLake） | `data/market_db.py` |
 | 偏好/策略库 | JSON 原子写（tmp + os.replace） | `core/preferences.py`、`data/strategy_store.py` |
-| 并发 | 耗时 I/O 一律 QThread Worker | ✅ v5.13 已收口：`ui/workers.py` 是全 app **唯一的 QThread 定义处**（ScanWorker / SyncWorker / SingleSyncWorker / BacktestRunWorker / ConstituentsWorker / FuturesImportWorker / **CrossSectionWorker** / **ReadinessWorker**(v6.39) / **CalendarWorker**(v6.46 交易日历一次性后台抓））+ 公共件 **`JobGuard`（竞态守卫）**，页面与弹窗一律不自造线程类。**v1.43 补**：批量下载的**调度件** = `ui/download_hub.py`（`QObject`，只编排 `SyncWorker`、**不自造线程类**，见 §7-B11）。**唯一例外**：`core/updater.py` 的 `UpdateCheckerThread` 属 core 层（版本检测不是 UI 职责），不搬进 ui/ |
+| 并发 | 耗时 I/O 一律 QThread Worker | ✅ v5.13 已收口：**`ui/workers.py` 门面 + `ui/workers_*.py` 领域件**是全 app **唯一的 QThread 定义处**（scan / download / backtest / sync / imports / core / throttle；★2.04 拆分，旧导入路径不变）+ 公共件 **`JobGuard`（竞态守卫）**，页面与弹窗一律不自造线程类。**v1.43 补**：批量下载的**调度件** = `ui/download_hub.py`（`QObject`，只编排 `SyncWorker`、**不自造线程类**，见 §7-B11）。**唯一例外**：`core/updater.py` 的 `UpdateCheckerThread` 属 core 层（版本检测不是 UI 职责），不搬进 ui/ |
 
 **用户数据目录（物理隔离，勿在仓库存业务数据）:** `~/.jian_data/`
 （`jian_trades.db`、`preferences.json`、`backtest_strategies.json`、`annotations.json`(v6.10 用户标注)、
@@ -138,7 +138,7 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 ├── models/              #   数据契约（TradeRecord —— 全链路唯一闭环交易契约）
 ├── core/                # 【纯计算层：零 UI 零网络】引擎门面 / 解析落库 / 指标 / 公式 DSL / 回测内核
 ├── data/                # 【数据获取/存储层】行情源 / 数据湖 / 同步门面 / 交易日历 / 各类 *_store
-├── ui/                  # 【表现层：只做展示，禁 SQL/爬虫】views / widgets / dialogs / workers(唯一 QThread 处)
+├── ui/                  # 【表现层：只做展示，禁 SQL/爬虫】views / widgets / dialogs / workers*.py(唯一 QThread 处)
 ├── scripts/             # 【只给人手动敲命令，不进 app import 图】（sync_roster.py）
 ├── tests/               # 【人工运行的验收脚本】smoke_chart.py / smoke_pages_overlay.py
 ├── design/              # 【HTML 交互样板："先方案后动手"的方案件，app 不 import】v1.43 正式登记（§10-13）
@@ -161,18 +161,18 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   `tests/smoke_pages_overlay.py` **8415**（冒烟：内核/页面）>
   `tests/smoke_chart.py` **5677**（冒烟：内核/页面）>
   `ui/views/portfolio_view.py` **1405**（★1.90 拆出 `PfCard`/`RingChart`/配色 → `ui/widgets/portfolio_parts.py`；★1.90 调仓记录的**列表控件**与**整形**又拆出 `ui/widgets/portfolio_changes.py`（`ChangeList` + `build_records`，<400 不标数字）；**仍越线三倍** —— 下一步拆 `_build`(~350) 的"三栏版式"与 `_render_p1`(~250) 的"净值装配"各成伴生件）>
-  `ui/views/backtest.py` **966**（★v6.79 加 H4「总库有更新版」接线；★v6.80 H6 删掉策略下拉/保存当前/移除与「存为配方」⇒ 回落，再加**摘要条「ƒ 库」入口**；再长把"预览回放态"整块搬 `ui/widgets/backtest_preview.py`）>
+  `ui/views/backtest.py` **990**（★2.04 已把"预览回放态"拆到 `ui/widgets/backtest_preview.py`；★v6.79 加 H4「总库有更新版」接线；★v6.80 H6 删掉策略下拉/保存当前/移除与「存为配方」⇒ 回落，再加**摘要条「ƒ 库」入口**）>
   ⚠ `ui/widgets/custom_widgets.py` **781**（★1.59 / §7-B14 批3：**样式族已拆出**
     `ui/widgets/styles.py` **496**（非空 —— ★用户 2026-10-01 UI 反馈新增 `WARN_HINT_QSS` 后**过 400** ⇒ **再加常量先按域拆**：候选 `styles_chart.py`（图表）/ `styles_form.py`（表单））—— QSS 常量 / QSS 生成器 / 字体栈定义只此一处，
     本文件保留控件与工厂并对公开名做同名再导出（零 noqa）；再长按"图表控件 / 布局容器"继续拆）>
-  ⚠ `ui/widgets/backtest_history_ui.py` **820**（★v1.46 重做：四态占比条 `ScanStatBar` +
-    条件代码块 `SectionCard` + 换行动作行 + 净值图外套 `chart_card`；**已越 800**，再长把
-    `ScanStatBar` / `SectionCard` / `MiniEquityChart` 拆 `ui/widgets/history_parts.py`）>
-  ⚠ `core/cross_section.py` **758**（已按「阈值/掩码 → 读数 → 结果 → 主入口」天然分段；
-    **处置不变**：新增优先另起模块，收口时按 `scan_filters` / `scan_io` 拆）>
+  ⚠ `ui/widgets/backtest_history_ui.py` **757**（★2.04 已把 `ScanStatBar` / `SectionCard` /
+    `MiniEquityChart` 拆到 `history_parts.py`；★v1.46 重做：四态占比条 + 条件代码块 + 换行动作行 +
+    净值图外套 `chart_card`；再长优先拆预览/表格）>
+  ⚠ `core/cross_section.py` **756**（★2.04 已把阈值/帧准备/读数拆到 `core/scan_filters.py`；
+    粗筛掩码与 scan_io 仍在原文件；新增优先另起模块）>
   ⚠ `ui/widgets/desk_layout.py` **625**（★v6.80：顶部工具行加「ƒ 库」入口；再长拆出配方页 `build_formula_page`）>
   ⚠ `ui/widgets/annotation_layer.py` **612**（场景 I/O 可再拆进 `annotation_draw_session.py`）>
-  ⚠ `data/sync_service.py` **850**（v1.40 日历新鲜度 + v1.43 `failure_hint` + v1.44/1.45 spot 秒补 +
+  ⚠ `data/sync_service.py` **899**（★2.04 已把失败文案拆出 `data/fetch_messages.py`；v1.40 日历新鲜度 + v1.44/1.45 spot 秒补 +
     v1.47 复权自愈 + v6.67 除权闸门 + **v6.68 `fetch_industry_page` 门面**；再长把"失败分类与人话文案"
     抽成 `data/fetch_messages.py`）>
   ⚠ `ui/widgets/chart_host.py` **447**（★1.77 删掉整块"分界拖动"机制后从 585 降下来 —— 那机制 M3 早已不用，
@@ -230,8 +230,8 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
     —— **新设置一律进这四件，别在页面里手写**
   ⚠ `data/em_market.py` **496**（双档取数 + 每日额度闸门 + 全局最小间隔 + S2-1b 自检；
     **再加通道先分文件**——候选：`em_selfcheck.py`）
-  ⚠ `data/akshare_feed.py` **665** / `data/sync_service.py` **850**（都是老越线；**再加门面函数先想分件**）
-  ⚠ `ui/widgets/scan_flow.py` **844**（★v6.74 补全调度接线后越线：**再加流程先拆**——
+  ⚠ `data/akshare_feed.py` **665** / `data/sync_service.py` **899**（都是老越线；**再加门面函数先想分件**）
+  ⚠ `ui/widgets/scan_flow.py` **763**（★2.04 已把补全调度拆到 `scan_enrich_flow.py`；★v6.74 补全调度接线后越线：**再加流程先拆**——
     候选拆法 = "范围解析 / 补全调度 / 回执文案" 三件）
   ★**新** `ui/widgets/scan_enrich.py`（扫描后按轮补全：分轮 / 停止条件 / 渐进刷新）
     —— **补全类改动一律进它**（别再往 `scan_flow` 里堆）
@@ -242,16 +242,16 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
   `data/em_throttle.py`（失败退避：★v6.74 **按通道分桶** + 失败后至少静默 60s
     + ★v6.72 代理类固定冷却 / 抗抖动连击 + `describe_all()`）>
   ★**新** `data/net_env.py`（网络策略唯一出口：地址族限定 IPv4 + 代理指纹 + 可回退开关）>
-  ⚠ `ui/workers.py` **841**（★v1.45 越线 + ★v6.69 三个后台 worker 加 `cancel()`
+  ✅ `ui/workers.py` **58** 行门面 + 领域件：`workers_scan` 213 · `workers_download` 398 · `workers_sync` 198 · `workers_backtest` 177 · `workers_imports` 39 · `workers_core` 43 · `workers_throttle` 122（★2.04 拆分；★v1.45 越线 + ★v6.69 三个后台 worker 加 `cancel()`
     + **★v6.71 §9-F② `SyncWorker` 两路径各记一行 `symbols_attempted`**
     + ★v6.74 S2-1b `NetSelfCheckWorker`（网络自检，**可取消**）；
-    **仍是全 app 唯一 QThread 处**；再长按 worker 类拆 `ui/workers_download.py`）>
+    **仍是全 app 唯一 QThread 处**；新增 worker 按领域放对应 `workers_*.py`，不要再回填门面）>
   ⚠ `ui/download_hub.py` **429**（★1.59 / §7-B14 批2：过渡**再导出已撤** —— 外部一律直连
     `ui/download_jobs`（DownloadJob / 状态常量 / SingleSyncGate / hub_of），hub 本体只留
     “排队 + 串行执行 + 广播” + 孤儿自清 / 续传幂等；**重回红榜，勿再往里堆**）>
   ⚠ `ui/widgets/breadth_flow.py`（行数见 §4）（★v1.46 纠偏：§7-B12 之后长期未测；收口时与
     `scan_flow` 一起把"范围解析→体检接线→重跑等待"收进 `ReadinessFlow`）>
-  ⚠ `ui/widgets/scan_flow.py` **844**（★v1.46 纠偏 + ★v6.69 行业每批 3 页/退避守卫/失败回执收口；
+  ⚠ `ui/widgets/scan_flow.py` **763**（★2.04 拆出 `scan_enrich_flow.py`；★v1.46 纠偏 + ★v6.69 行业每批 3 页/退避守卫/失败回执收口；
     再长把"行业与估值两条后台抓取"抽成 `ui/widgets/scan_sources.py`）>
   ⚠ `ui/widgets/desk_watch.py` **486** > ⚠ `ui/widgets/backtest_result.py` **492** >
   ⚠ `ui/dialogs/bulk_download.py` **523**（v1.43 交队列后不再持有线程；v1.45 删四个旋钮后回落；
@@ -454,12 +454,12 @@ Jian/                    # 根目录只留"门面"（§10-13 白名单）
 4. **数据三层不许混**：A 层（数据湖就地算，任意基准日都真）／B 层（当日快照，**仅基准日 == 最新定稿日才填**，否则 `—` 并注明"当前值"）／C 层（无源不做）。**绝不拿今日 PE 冒充历史某天**。
 5. **kind 差异只许在声明表里**（`ui/widgets/history_kinds.py`：列 / 过滤轴 / 动作集，一行一种 kind，业务里不许再有 `if kind`）；⚠ **M2/M3 既无「载入查看」也无「送行情页」**（统计口径不针对个股，v6.64 用户拍板撤销）。
 - **[x] 遗留（v6.65 已还）**：全仓专有字体名已清零（`Consolas`×5 / `Microsoft YaHei`×5 / `Arial`×4，共 14 处 ⇒ `mono_font_css()` / `ui_painter_font()`），并加**源码级断言**扫全 `ui/` 防回归。
-- **[ ] 待拍板**：给行情页加**一键「修回历史」**（= 对当前标的 `kline_daily` 走一次全量重拉）—— 现在只能靠体检点名 + 用户自己跑去「🗄 数据管理 → 重新全量下载」；数据污染（如 300803 的假跳空）是一次性事件、自动自愈只覆盖"下次新交易日同步"。
+- **[x] 不做（2026-11-03 拍板）**：给行情页加**一键「修回历史」**（= 对当前标的 `kline_daily` 走一次全量重拉）—— 现在只能靠体检点名 + 用户自己跑去「🗄 数据管理 → 重新全量下载」；数据污染（如 300803 的假跳空）是一次性事件、自动自愈只覆盖"下次新交易日同步"。
 
 ### B13 · ⚙ 设置中心（**主案立项 · `2026-09-26` 用户拍板做**）
 
 > **状态（★1.83 更新）**：**S2-0/-1a/-1b/-2/-4/-5(除迁移)/-7/-8 已交付** ✅；
-> **未动工**：S2-3 外观与个性化（需 `ui/theme.py` 令牌化，2–3 轮，**需用户先定范围**）· S2-6 快捷键（目前只读列出）· S2-5 数据目录**迁移**（另拍）。
+> **未动工**：S2-3 外观与个性化（需 `ui/theme.py` 令牌化，2–3 轮，**需用户先定范围**）· S2-6 快捷键（目前只读列出）· **S2-5 数据目录迁移：不做（2026-11-03 拍板）**。
 > **设计正文（技术骨架 / 验收口径 / 各步细目）已搬 `docs/archive/README.md`「三·补 · 五」**（★1.83 · §10-14 第十二次超线处置：RULES 余量只剩 1,070 ⇒ **先搬走再写新内容**）。
 ### B14 · 🧹 系统级架构优化 / 垃圾清理 / 文件瘦身（**第一轮已执行 `1.59` · 2026-09-29** · `2026-09-26` 用户提出）
 **为什么现在提**：功能在快速累积 ⇒ 已出现"**再导出壳 / 临时兼容层 / 旧对话框与新页面并存**"，
@@ -1031,8 +1031,8 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 | 加技术指标（画图）/ 加数据湖 zone / 加用户偏好 | `core/indicators.py` `REGISTRY`+`OUTPUTS` ／ `data/market_db.py` `self.zones`（**另两处登记见 §11.7**）／ `core/preferences.py` `DEFAULTS` |
 | QSS 样式 / 界面字体定义 | **`ui/widgets/styles.py` 唯一定义处**（★1.59 拆出）；控件本体与数值工厂 = `ui/widgets/custom_widgets.py`（禁就地 `setStyleSheet`、禁 `setFixedWidth`、禁专有字体名 §10-15） |
 | 后台下载 / 队列 / 进度呈现 / 单只互斥 | **`ui/download_hub.py`（唯一真源）** + `SingleSyncGate`；⚠ 弹窗与页面不得自己持有 `SyncWorker`；测前打桩不 `start()` |
-| 给页面加后台任务 | `ui/workers.py`（全 app 唯一 QThread 处）+ 公共件 `JobGuard`（禁各写 `_token`） |
-| 行情同步 / 节流 / 失败分类文案 / 定稿判据 | **`data/sync_service.py` 一处**（`ThrottlePolicy` / `abort_reason_text` / `DAILY_SETTLE_HHMM`）；「最近交易日」→ `data/trade_calendar.py` |
+| 给页面加后台任务 | `ui/workers.py` 门面 + `ui/workers_*.py` 领域件（全 app 唯一 QThread 处）+ 公共件 `JobGuard`（禁各写 `_token`） |
+| 行情同步 / 节流 / 定稿判据 | **`data/sync_service.py`**（`ThrottlePolicy` / `DAILY_SETTLE_HHMM`）；失败文案 → **`data/fetch_messages.py`**（`abort_reason_text` / `failure_hint` / 两个 friendly_*）；「最近交易日」→ `data/trade_calendar.py` |
 | 图表样式 / 轴 / 自适应刻度 / 公式叠层 / 用户标注 | `chart_style.py`（唯一来源）· `adaptive_axis.py` · `core/formula/draw.py` + `draw_overlay.py` · `data/annotations.py` + `annotation_layer.py`（**四层不得新起并行管线**，§10-12） |
 | 全市场筛选 M2 / 广度 M3 / 就绪度体检 | `ui/views/scan_view.py` + `scan_layout`/`scan_flow`/`scan_result` · `breadth_view.py` + `breadth_*` · 共用 `data/readiness.py` + `readiness_flow.py` + `core/cross_section.py` |
 | 回测历史存档 / 运行历史页 | `data/backtest_archive.py`（存储）· `ui/widgets/backtest_history_ui.py`（渲染）· `history_kinds.py`（**kind 差异只许在声明表里**） |
@@ -1147,6 +1147,8 @@ AkShare →data/akshare_feed.py→ ~/.jian_data/data_lake/*.parquet (数据湖)
 
 > **旧更新块指针（17 块：v6.31 ~ v6.79 —— 主文件瘦身第六次 / 东财额度 / 下载入口 / 复权自愈 / 运行历史重做 / 统一浮窗 H6 / 统一下载设置 等）→ 逐块指针已搬 `docs/archive/README.md`「三、§11.6 历史刷新块（v1.73 搬入）」**；全过程与断言数见 `docs/history/README.md` §8。
 ### 11.7 收工前自检清单
+- [ ] **测试分层跑对了吗？** 纯内核（`core/` / `data/`）先 `py -m unittest discover -s tests/unit -v`（秒级）；
+      页面改动跑 `py tests/run_smoke.py`（并行 + 慢段 Top5）；**提交前两份冒烟都必须 0 失败**。
 - [ ] 改动的模块状态（`[x]` / `[~]` / `[ ]`）在 §6 / §7 同步了吗？
 - [ ] 有没有引入新的"UI 直连 SQL/爬虫"？（§9-H）
 - [ ] 净额口径有没有被绕过？（§5.3-B）

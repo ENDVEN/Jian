@@ -17,20 +17,23 @@ verified: 2026-11-02
 
 | 项 | 值 |
 |---|---|
-| 版本 | **2.03**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
-| HEAD | 本版提交（`git log -1`）· `2.03 启动优化P0 惰性建页 缓存探针` |
-| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **2 个提交**：2.02 / 2.03） |
-| 工作区 | ✅ 干净（2.03 提交后；`scripts/probe_startup.py` 已入库） |
-| 最近三版 | `2.03` 启动优化 P0（惰性建页 / 三种缓存 / 探针）· `2.02` 测试基建 fastfail 根因修复 · `2.01` 测试基建问题立项 |
+| 版本 | **2.04**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
+| HEAD | 本版提交（`git log -1`）· `2.04 测试提速 工程拆件 CI单测` |
+| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **3 个提交**：2.02 / 2.03 / 2.04） |
+| 工作区 | ✅ 干净（2.04 提交后） |
+| 最近三版 | `2.04` 测试提速 + 工程拆件（unit / 并行 runner / CI / workers 拆分）· `2.03` 启动优化 P0 · `2.02` 测试基建 fastfail 根因修复 |
 
 ---
 
-## 2. 冒烟基线（最近一次全绿，2026-11-03）
+## 2. 冒烟基线（最近一次全绿，2026-11-04）
 
 | 命令 | 结果 |
 |---|---|
 | `python -u tests/smoke_chart.py` | **1080 / 0**（+4 条 P0 内核断言） |
 | `python -u tests/smoke_pages_overlay.py` | **1244 / 0**（+5 条惰性建页断言） |
+| `py tests/run_smoke.py`（并行） | **56–100s**（实测 56.3 / 80.5 / 100.2s；逐个相加 88.7–150.1s），两份均 0 失败 |
+| `py -m unittest discover -s tests/unit -v` | **41 tests / 0.05s**（日期 / roster / footer / 缓存键 / 文案 / 组合 / merge_tail / 指标与净额 / 风险与格式化） |
+| `.github/workflows/ci.yml` | `unit` job：41 条，**不读数据湖、不联网**；冒烟仍本地跑 |
 
 > ⚠ **已知假红**：本机有下载在跑时（数据湖 parquet 的 mtime 每几秒变），两条"缓存命中"断言必红（§11.5-79）。**先停下载再跑**。
 > ✅ **fastfail 已收口**（2026-11-03）：根因 = `ReadinessFlow.start()` 覆盖 `self._probe` 时旧 `ReadinessWorker` 仍在运行 ⇒ 引用归零 ⇒ QThread 析构 ⇒ `0xC0000409`。修法见 `plans/active/TEST-HARNESS.md` §4；连跑 10/10 通过。
@@ -50,14 +53,13 @@ verified: 2026-11-02
 
 ## 4. 下一步（按顺序，别跳）
 
-### P0 · 测试基建收尾（S1–S6 已随 2.02 提交）
-- 已做：行缓冲 / `faulthandler` / 全局超时 / 退出 watchdog / 线程清单 / fastfail 根因修复 / 3 条新断言；
-- 剩：**观察"跑完不退出"是否复现**（复现 ⇒ 按 `TEST-HARNESS.md` §7 收口）；确认后再定 CI 冒烟子集（当前 CI 只跑静态检查）。
-
-### 已完成（2.03）
-- **启动优化 P0 四件**：惰性建页 / roster 向量化 / 日历批量 / footer LRU + `probe_startup.py`；
-  行为断言 9 条（chart +4、overlay +5）；实测 3.6s → 0.27s、9 → 1 页、真机探针 **2.145s**。
+### 已完成（2.02 / 2.03 / 2.04）
 - **测试基建 S1–S6**（2.02）：fastfail 根因修复 + 挂死改硬退出；仅剩"2 个 ScanWorker 来源"（测试侧）。
+- **启动优化 P0 四件**（2.03）：惰性建页 / roster 向量化 / 日历批量 / footer LRU + `probe_startup.py`；
+  行为断言 9 条（chart +4、overlay +5）；实测 3.6s → 0.27s、9 → 1 页、真机探针 **2.145s**。
+- **测试提速 + 工程拆件**（2.04）：`tests/unit` **41 条**（0.05s）+ `tests/run_smoke.py`
+  并行 **56–100s** + CI `unit` job；`workers.py` 拆为 58 行门面 + 7 个领域件，运行历史/
+  下载文案/横截面/回测预览等大文件按领域拆分，旧导入路径不变。
 
 ### P0 · 下一件：ETF/LOF 接入（≈1.5 轮）
 - `docs/plans/active/ETF-LOF.md` §5 的 **P1-1 … P1-8**：分区/schema → 基金取数 → 名册独立表 →
@@ -70,9 +72,9 @@ verified: 2026-11-02
 3. `data/market_db.py` `get_lake()` 单例（去掉每次 `new` + `makedirs`）。
 
 ### 之后
-- **测试分层**（unit / integration / ui_smoke）+ CI 冒烟子集（先定"CI 数据种子"）；
+- **测试分层**（unit / integration / ui_smoke）：CI **unit job 已接**（41 条，与静态检查并行）；integration/ui_smoke 与冒烟子集待"CI 数据种子"；
 - **B17 组合剩余**：行业覆盖率（`industry_map` 302/5169 ≈5.8%）· 多组合对比（用户未提）；
-- **B13 外观/深色主题**（需先定范围）· B12「修回历史」待拍板。
+- **B13 外观/深色主题**（需先定范围）· **S2-5 迁移 / B12「修回历史」已拍板不做**（2026-11-03）。
 
 ---
 
@@ -80,7 +82,7 @@ verified: 2026-11-02
 
 | 类别 | 事实 | 影响 |
 |---|---|---|
-| 测试形态 | `tests/` **2 个脚本 14.4k 行**；无 unit / 无 pytest。overlay 的 `0xC0000409` **已随 2.02 修复**（`ReadinessFlow` 旧线程被 GC）；"跑完不退出"未复现（`plans/active/TEST-HARNESS.md`） | 反馈 ~1–3 分钟；失败靠行眼找 |
+| 测试形态 | `tests/` 2 个脚本 **16.4k 行** + `tests/unit` **41 条**（秒级）；无 pytest。`tests/run_smoke.py` 并行 **56–100s**（逐个相加 89–150s）。overlay fastfail 已修；"跑完不退出"已复现并硬退出（2 个 `ScanWorker` 来源另立） | 日常 ~80s；unit 秒级；失败仍靠行眼找 |
 | 视图层 | `ui/` 37,388 行（57%）· `widgets/` **94 个平铺** · ≥800 行文件 **11 个** | 改动要读多处 |
 | 启动 | P0 后构造 **0.27s**、已建页 **1/9**、真机探针 **2.145s**（旧基线 4.05s = import 1.36 + 构造 2.48 + 首绘 0.16） | 见 §4 P1（首次切页有一次性 0.3~0.5s） |
 | 文档 | 总计约 700k 字符（RULES **87.6k** · ARCHIVE 242k · HISTORY · PLAYBOOK · CODEMAP） | 见 §7 |
@@ -129,8 +131,8 @@ verified: 2026-11-02
 | 项 | 现状 | 要做 |
 |---|---|---|
 | **LICENSE** | ✅ **已定 GPLv3**（2026-11-02 作者拍板）：根目录 `LICENSE` = 完整 GPLv3 文本（35,147 字符，取自本机 PyQt6 附带文本逐字复制）；README 已有「许可证」一节 | 无（PyQt6 在 GPLv3 下合规）。将来若要闭源分发，需另购 PyQt 商业授权 |
-| **samples/** | ✅ **真实数据已移出仓库**（→ 本机 `~/.jian_data/samples/`）；作者确认交割单是**真实交易记录**。**历史核对：仓库里只提交过 `samples/README.md`，4 个 xlsx 从未入库**（`git log --all --name-only -- samples` 实测）⇒ **无需重写历史** | 忽略规则改成 `samples/*` + `!samples/README.md`（只按扩展名忽略会漏 `.md`/`.json`） |
-| **截图** | 无 | README 产品页需要截图 ⇒ 建 `docs/assets/`，图放那里（不塞根目录） |
+| **samples/** | ✅ **真实数据已移出仓库**（→ 本机 `~/.jian_data/samples/`）；作者确认交割单是**真实交易记录**。**历史核对：仓库里只提交过 `samples/README.md`，4 个 xlsx 从未入库**（`git log --all --name-only -- samples` 实测）⇒ **无需重写历史** | ✅ 已完成：`.gitignore` 用 `samples/*` + `!samples/README.md`（整目录忽略 + 只放行说明） |
+| **截图** | ✅ 已有 `docs/assets/market.png` / `portfolio.png`，README 两处引用均有效；`overview.png` 是历史上有意删除（空界面） | 无（新增截图仍放 `docs/assets/`，不塞根目录） |
 | **隐私扫描** | `docs/` 中邮箱 / 手机 / 绝对路径命中 **0**；24 处 "cookie" 仅为说明文字 | 每次公开前重扫一遍（含 HISTORY/ARCHIVE 里的用户原话） |
 | **根目录文件** | **6 个**：README / LICENSE / main.py / requirements.txt / version.json / .gitignore（`RULES.md` 已在 `docs/` 下） | 保持；新增文件一律先问"能不能放进 docs/" |
 | **依赖清单** | ✅ 已合并为**单一** `requirements.txt`（35 项全 `==` 锁定；原 `requirements.lock.txt` 删除，SETUP 已改写为"一份文件"口径） | — |

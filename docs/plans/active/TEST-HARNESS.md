@@ -101,8 +101,9 @@ self._probe = ReadinessWorker(job, kline_zone_dir('kline_daily'), scope, min_bar
 1. **挂死根因已确认**（2026-11-03 后台复现）：退出时仍有 **2 个 `ScanWorker`**；
    `os._exit()` 卡在 `ExitProcess`，主线程持 **GIL** ⇒ 30s watchdog 线程也跑不起来。
    修法 = `_hard_exit()`（Windows `TerminateProcess`，绕开 DLL detach），已生效。
-2. **那 2 个 ScanWorker 的来源未定位**：属测试自身遗留（异步扫描/回测未收尾），
-   硬退出后不再阻塞；彻底收尾另立，不与业务线程模型混。
+2. **那 2 个 ScanWorker 的来源未定位**：属测试自身遗留（异步扫描/回测未收尾）。
+   2026-11-04 已加**通用收尾**（`_live_qthreads()` 全量 `cancel/requestInterruption` + 最多等 3s），
+   退出不再多花 15s；来源仍待定位，不与业务线程模型混。
 3. `taskkill` 报"无实例"而 `.NET Kill` 有效：与第 1 条同族（进程卡在 `ExitProcess`）。
 4. CI 何时从静态扩到冒烟子集：需先定"CI 数据种子"方案（空机器上 8 条已知环境失败，
    见 `docs/reference/SETUP.md`）。

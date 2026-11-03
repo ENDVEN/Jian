@@ -344,3 +344,22 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
 **产出**：`ui/main_window.py` · `ui/views/portfolio_view.py` · `core/engine.py` ·
 `data/{trade_calendar,readiness}.py` · `scripts/probe_startup.py` · 两份冒烟 ·
 `docs/plans/active/ARCH-PERF.md` · `docs/playbook/ui.md` §11.5-151。
+
+## ★2.04 · 测试提速 + 工程拆件（2026-11-04 提交）
+
+**目标**：把日常测试等待压下来，并在不改行为的前提下拆大文件。
+
+**改了什么**
+1. **unit 层**：新增 `tests/unit` 41 条（日期批量 / roster / footer LRU / 缓存键与数据版本 /
+   批量文案 / 组合统计 / merge_tail / 指标 / 风险与格式化），秒级反馈；不依赖 Qt / 不读数据湖。
+2. **并行 runner**：`tests/run_smoke.py` 同时跑 chart + overlay，流式日志、慢段 Top5、
+   单份超时强杀；锁按脚本分开。
+3. **CI**：新增 `unit` job（最小依赖 pandas/numpy/pyarrow/akshare，不读数据湖、不联网）；
+   冒烟仍本地跑。
+4. **workers 拆件**：`ui/workers.py` 1081 → **58 行门面** + `workers_scan` / `workers_download` /
+   `workers_sync` / `workers_backtest` / `workers_imports` / `workers_core` / `workers_throttle`；
+   旧导入路径不变。
+5. **其他大文件**：`history_parts.py`（运行历史小件）· `fetch_messages.py`（失败文案）·
+   `backtest_preview.py`（回放）· `scan_enrich_flow.py`（补全调度）· `scan_filters.py`（阈值/帧准备）。
+
+**验证**：unit **41/0** · chart **1080/0** · overlay **1244/0**；并行 **56–100s**（逐个相加 89–150s）。

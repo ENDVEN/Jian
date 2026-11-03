@@ -18,7 +18,7 @@ verified: 2026-11-02
 
 1. **启动 4.05s，其中 2.48s 是"9 个页面全在 `__init__` 里建好"** —— 首屏只用 1 个，其余 8 个白建（还各自扫数据湖）。
    ⇒ 惰性建页 + 三处热点修法，预计 **4.05s → 1.8~2.2s**，且**不改任何 UI 行为**。
-2. **测试形态是全仓最大的结构债**：`tests/` 仅 2 个脚本却占 **14,389 行（22% 代码量）**，没有 unit 层/CI。
+2. **测试形态仍是最大的结构债**：`tests/` 2 个脚本 **16,389 行**；已起 **41 条 unit**（`tests/unit`）+ CI `unit` job，但 integration/ui_smoke 仍未分层。
 3. **文档总量 740k 字符**（RULES 97.8k 逼近 100k 上限 · HISTORY 172k 名叫"最近三版"实际全量 · ARCHIVE 242k），且**根目录没有 README**。
 4. **目录归类基本规范**（根目录仅 7 个文件、`.gitignore` 到位），只有 `models/`、`samples/` 两处像遗留物。
 
@@ -28,14 +28,14 @@ verified: 2026-11-02
 
 | 项 | 实测 |
 |---|---|
-| 代码分布 | `ui/` 126 文件 **37,388 行**（57%）· `data/` 31 · **7,663** · `core/` 24 · **5,726** · `models/` 103 · `config/` 332 · `tests/` 2 文件 **14,389** |
+| 代码分布 | `ui/` 126 文件 **36,953 行** · `data/` 31 · **7,663** · `core/` 24 · **5,726** · `models/` 103 · `config/` 332 · `tests/` 2 文件 **16,389** + `tests/unit` 4 文件 |
 | 超大文件 | ≥400 行 **41 个**；≥800 行 **11 个**（非测试最大 = `portfolio_view.py` 1,463） |
 | 启动 | **4.05s** = Qt 0.04 + `import` 1.36 + 构造 **2.48** + 首绘 0.16（离屏实测，2026-10-29） |
 | 导入成本 | pandas 0.54 · akshare **0.41** · pyqtgraph 0.18 · `ui.main_window` 0.39（后四项累计） |
 | 构造热点（cProfile，有放大但排序可信） | `getsize` 1.69 / `nt.stat` 1.04 / parquet init 1.18 / `readiness._footer_last_date` 0.55（2,673 次）/ `iterrows` **15,055 次** / `strptime` **26,391 次** / `portfolio_view.__init__` 0.47 / `breadth_flow.resolve_scope` 0.67 |
 | 页面 | **9 个页面全部在 `__init__` 建好**（overview/records/review/market/backtest/portfolio/hub/data/settings），首屏只显示 market |
 | 文档 | RULES **97,765 字符**（上限 100k）· docs 合计 **641,993**：ARCHIVE 242k · HISTORY 172k · PLAYBOOK 87k · CODEMAP 61k |
-| 工程配套 | 无 `README.md` · 无 `pyproject.toml` · 无 `pytest.ini/conftest.py` · 无 `.github`（无 CI） |
+| 工程配套 | ✅ `README.md` / `.github`（CI 静态 + unit）· 仍无 `pyproject.toml` / `pytest.ini`（unit 用 stdlib `unittest`） |
 
 ### 1.5 P0 执行结果（2026-11-03，`scripts/probe_startup.py` 同一把尺子）
 
@@ -198,10 +198,10 @@ verified: 2026-11-02
 
 ## 10. 延申（后续轮次）
 
-- **P2-1 测试分层**：先搬 3 个纯模块（`portfolio_stats` / `scan_store` / `sync_service` 的纯函数）做试点，验证"秒级反馈"。
+- **P2-1 测试分层**：**第一层已落地（2026-11-03）**：`tests/unit`（stdlib unittest，**41 条 / 0.05s**）+ `tests/run_smoke.py`（并行 **56–100s** / 逐个相加 89–150s，附慢段 Top5）。下一步：把 `scan_store` / `sync_service` 的纯函数继续搬进来；pytest 需先加依赖。
 - **P2-2 文档**：README + `docs/history/` 分卷 + RULES 瘦身（目标 ≤85k）。
 - **P2-3 目录**：`models` 归位、`samples` 迁移、`widgets` 按页分组（`widgets/portfolio/` 等）。
-- **P2-4 CI**：GitHub Actions（ubuntu + offscreen）：`pytest tests/unit` + `smoke_chart` 子集（`SMOKE_FULL=0`）。
+- **P2-4 CI**：✅ **unit job 已落地**（`windows-latest` + 最小依赖 pandas/numpy/pyarrow/akshare；**不读数据湖、不联网**，跑 41 条）。冒烟子集仍待"CI 数据种子"方案；`smoke_chart` 子集（`SMOKE_FULL=0`）未接。
 - **P3**：全市场扫描耗时（`cross_section` 758 行）—— **先加计时再动**，当前无实测数据，不盲优化。
 
 ---

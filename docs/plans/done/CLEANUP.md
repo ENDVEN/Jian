@@ -77,12 +77,12 @@ verified: 2026-11-02
 | 文件 | 实测行数 | 文档既定拆法（出处 §4） | 优先级 | 状态 |
 |---|---|---|---|---|
 | `ui/widgets/custom_widgets.py` | 1072→**759** | 拆 `ui/widgets/styles.py`（**356 非空**，<400 不标数）——样式族九块逐字节搬移，本体 `import X as X` 同名再导出（零 noqa） | **P0** | [x] 已执行（批3） |
-| `ui/views/backtest.py` | 955 | 搬「预览回放态」→ `ui/widgets/backtest_preview.py` | P2 | [ ] |
-| `data/sync_service.py` | 834 | 抽「失败分类与人话文案」→ `data/fetch_messages.py` | P2 | [ ] |
-| `ui/widgets/scan_flow.py` | 828 | 拆「范围解析 / 补全调度 / 回执文案」三件（补全调度已有 `scan_enrich.py`，继续外搬） | P2 | [ ] |
-| `ui/widgets/backtest_history_ui.py` | 815 | 拆 `ScanStatBar` / `SectionCard` / `MiniEquityChart` → `history_parts.py` | P2 | [ ] |
-| `core/cross_section.py` | 689 | 按 `scan_filters` / `scan_io` 拆 | P2 | [ ] |
-| `ui/workers.py` | 688 | 按 worker 类拆 `ui/workers_download.py` | P2 | [ ] |
+| `ui/views/backtest.py` | 955（实测拆前 1086）→**990**（+ `backtest_preview.py` 113） | 搬「预览回放态」→ `ui/widgets/backtest_preview.py` | P2 | [x] 已执行（批6） |
+| `data/sync_service.py` | 834（实测拆前 994）→**899**（+ `fetch_messages.py` 106） | 抽「失败分类与人话文案」→ `data/fetch_messages.py` | P2 | [x] 已执行（批5） |
+| `ui/widgets/scan_flow.py` | 828（实测拆前 931）→**763**（+ `scan_enrich_flow.py` 198） | 拆「范围解析 / 补全调度 / 回执文案」三件；**补全调度已搬**，剩范围解析/回执文案 | P2 | [~] 批7：补全调度已搬 |
+| `ui/widgets/backtest_history_ui.py` | 815（实测拆前 953）→**757**（+ `history_parts.py` 196） | 拆 `ScanStatBar` / `SectionCard` / `MiniEquityChart` → `history_parts.py` | P2 | [x] 已执行（批4） |
+| `core/cross_section.py` | 689（实测拆前 866）→**756**（+ `scan_filters.py` 132） | 按 `scan_filters` / `scan_io` 拆；**阈值/帧准备/读数**已搬，粗筛掩码与 IO 未动 | P2 | [~] 批8：阈值/帧准备已搬 |
+| `ui/workers.py` | 688（实测拆前 1081）→**58 行门面** + `workers_scan` 213 · `workers_download` 398 · `workers_sync` 198 · `workers_backtest` 177 · `workers_imports` 39 · `workers_core` 43 · `workers_throttle` 122 | 按领域拆完；`workers.py` 只做再导出，旧 import 路径不变 | P2 | [x] 已执行（批12，全拆） |
 | 其余 23 个越线文件 | 418–617 | 无既定拆法 ⇒ **登记不返工**（B15 动到谁再顺手按 §10-12 落新件） | — | [x] 已登记 |
 
 ---

@@ -19,14 +19,15 @@
 
 
 # ==========================================
-# ★1.87：**单实例锁** —— 冒烟不许并发跑。
+# ★1.87：**单实例锁** —— 同一份冒烟不许并发跑。
 #   实测事故：同时跑两份 overlay，其中一份在退出阶段卡了 13 分钟（1 线程等待、
 #   CPU 只占 8%）⇒ 看起来像"测试跑了 10 分钟没结果"。根因是共享文件/退出时序互锁。
-#   现在：发现另一个实例还活着 ⇒ 直接说清并退出（不制造第二个僵尸）。
+#   现在：发现同脚本的另一个实例还活着 ⇒ 直接说清并退出（不制造第二个僵尸）。
+# ★2.04：锁**按脚本分开** —— overlay 与 chart 互不共享状态，可并行（`tests/run_smoke.py`）。
 # ==========================================
 import atexit as _atexit_lock, os as _os_lock
 
-_LOCK = _os_lock.path.join(_os_lock.environ.get("TEMP", "."), "jian_smoke.lock")
+_LOCK = _os_lock.path.join(_os_lock.environ.get("TEMP", "."), "jian_smoke_overlay.lock")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -4803,7 +4804,7 @@ try:
               '_bulk_dialog.exec' not in _dm13s and '.show()' in _dm13s
               and '_set_busy' not in _dm13s)
         _hub13s = _pl13.Path('ui/download_hub.py').read_text(encoding='utf-8')
-        check("★ 队列不自造 QThread（§2：`ui/workers.py` 仍是全 app 唯一 QThread 定义处）",
+        check("★ 队列不自造 QThread（§2：QThread 只在 `ui/workers_*.py`，页面不自造）",
               _re13.search(r'class\s+\w+\(QThread\)', _hub13s) is None)
         check("★ 新鲜度注入仍只有一处（队列不重复实现§7-E5 的日历注入）",
               'inject_expected_latest(' not in _hub13s)
@@ -5170,7 +5171,7 @@ try:
           _btn4.text() == "已续传" and not _btn4.isEnabled())
 
     # ---- ⑤ 源码级防漂移 ----
-    _ws19 = _pl19.Path('ui/workers.py').read_text(encoding='utf-8')
+    _ws19 = _pl19.Path('ui/workers_download.py').read_text(encoding='utf-8')
     check("★ 两条取数路径（串行 + 并发池）**都**记 attempted（只加一处 = 另一档位静默错值）",
           _ws19.count('stats["symbols_attempted"].append(symbol)') == 2)
     _hs19 = _pl19.Path('ui/download_hub.py').read_text(encoding='utf-8')
@@ -7989,7 +7990,7 @@ try:
     check("★ 1.92 / B：**真报错**仍然重试（4 次尝试不删）—— 别把网络抖动当死票",
           _s92b.calls == 4)
 
-    _w92 = _read90("ui/workers.py")
+    _w92 = _read90("ui/workers_download.py")
     check("★ 1.92 / F：吞吐日志在位（每 100 只一行 `[吞吐]` + 收尾实测算账 per_sec）",
           "_log_throughput" in _w92 and "[吞吐]" in _w92 and "per_sec" in _w92)
 except Exception as _e93:  # noqa: BLE001
@@ -9368,7 +9369,8 @@ try:
           and _sr77.find('enrich.enabled').default is True
           and int(_sr77.find('enrich.requests').default) == 3
           and int(_sr77.find('enrich.gap').default) == 30)
-    _sfsrc77 = _pl77.Path('ui/widgets/scan_flow.py').read_text(encoding='utf-8')
+    _sfsrc77 = (_pl77.Path('ui/widgets/scan_flow.py').read_text(encoding='utf-8')
+                + _pl77.Path('ui/widgets/scan_enrich_flow.py').read_text(encoding='utf-8'))
     check("★ v6.74：页面**默认值取注册表**（`_setting('enrich.requests', …)`；源码级防第二份默认）",
           "_setting('enrich.requests'" in _sfsrc77 and "_setting('em.legacy_paging'" in _sfsrc77)
 
@@ -9440,7 +9442,7 @@ try:
     check("★ S2-1b：页面有异步动作通道（`_run_worker_action`）且**握引用**防 QThread 被 GC",
           hasattr(_SV79, '_run_worker_action')
           and '_worker_action = thread' in _pl79.Path('ui/views/settings_view.py').read_text(encoding='utf-8'))
-    check("★ S2-1b：worker 在 `ui/workers.py`（§9-O2 线程唯一出处）+ 可取消（关窗不漏线程）",
+    check("★ S2-1b：worker 在 `ui/workers_*.py`（§9-O2 线程唯一出处）+ 可取消（关窗不漏线程）",
           callable(getattr(_NSW79, 'cancel', None)))
 except Exception as _e79:  # noqa: BLE001
     check(f"§7-B13 S2-1b 断言整段抛异常: {type(_e79).__name__}: {_e79}", False)
@@ -9857,16 +9859,28 @@ def _arm_exit_watchdog(seconds: float = 30.0) -> None:
 
 _faulthandler.cancel_dump_traceback_later()
 
-# ★2.03：收掉测试自己起的扫描线程（它们不参与断言；带着跑会让退出路径变慢甚至挂死）。
-#   `ScanWorker.cancel()` 只置取消位，最多等 2s —— 不为收尾把整包拖长。
+# ★2.03 / ★2.04：收掉测试自己起的**所有**存活线程（不只看两个页面的 `_worker`）。
+#   它们不参与断言；带着跑会让退出路径变慢甚至挂死（实测退出多花 15s+）。
+#   只 cancel + 最多等 3s，到点仍不退就交给 `_hard_exit`，不为收尾把整包拖长。
 try:
-    for _pg in (win.page_backtest.page_scan, win.page_backtest.page_breadth):
-        _wk = getattr(_pg, '_worker', None)
-        if _wk is not None and _wk.isRunning():
-            _wk.cancel()
-            _wk.wait(2000)
+    _alive = _live_qthreads()
+    for _w in _alive:
+        for _name in ('cancel', 'requestInterruption'):
+            _fn = getattr(_w, _name, None)
+            if callable(_fn):
+                try:
+                    _fn()
+                except Exception:  # noqa: BLE001
+                    pass
+    _deadline = time.monotonic() + 3.0
+    for _w in _alive:
+        _ms = max(0, int((_deadline - time.monotonic()) * 1000))
+        try:
+            _w.wait(_ms)
+        except Exception:  # noqa: BLE001
+            pass
 except Exception as _e_wk:  # noqa: BLE001 —— 收尾失败不影响断言结果
-    print(f"  [说明] 收尾扫描线程失败（不影响断言）: {type(_e_wk).__name__}: {_e_wk}")
+    print(f"  [说明] 收尾线程失败（不影响断言）: {type(_e_wk).__name__}: {_e_wk}")
 
 _arm_exit_watchdog(30.0)
 _describe_threads("退出前的存活线程")

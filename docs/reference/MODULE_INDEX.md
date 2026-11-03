@@ -19,7 +19,7 @@ verified: auto
 | `core/analyzer.py` | — | 1 | 110 |
 | `core/backtest.py` | 单股事件模式回测引擎 (A股仅做多 LONG)。 | 14 | 558 |
 | `core/conditions.py` | 买卖条件配置 → DSL 表达式（**唯一真源**，§7-B15 SW-3 补）。 | 4 | 90 |
-| `core/cross_section.py` | M2 全市场横截面筛选 / M3 广度统计 —— 纯计算内核（§7-B1/B2 主案 · D2 / D5） | 20 | 758 |
+| `core/cross_section.py` | M2 全市场横截面筛选 / M3 广度统计 —— 纯计算内核（§7-B1/B2 主案 · D2 / D5） | 15 | 661 |
 | `core/database.py` | — | 1 | 435 |
 | `core/engine.py` | — | 1 | 169 |
 | `core/formula/__init__.py` | 通达信(优先)/Pine 兼容 公式引擎。 | 3 | 41 |
@@ -35,6 +35,7 @@ verified: auto
 | `core/portfolio_sweep.py` | 组合层级的**池化研究**（★1.85 / §7-B17 **P4**）—— 纯计算，零 Qt、零 IO。 | 6 | 131 |
 | `core/preferences.py` | 用户偏好持久化 (User Preferences Store)。 | 1 | 153 |
 | `core/relation_stats.py` | ★1.73 / §7-B16 期 0：把 M3「与指数的关系」这件事的**判据与切分**收成纯函数。 | 13 | 381 |
+| `core/scan_filters.py` | 扫描阈值 / 帧准备 / 读数人话（★2.04 / P2 拆件）。 | 5 | 109 |
 | `core/sweep_plan.py` | 参数稳健性研究（§7-B15）· 网格纯计算（SW-0）。 | 9 | 228 |
 | `core/sweep_stats.py` | 参数稳健性研究（§7-B15）· 统计唯一真源（SW-1）。 | 15 | 257 |
 | `core/updater.py` | — | 1 | 57 |
@@ -51,6 +52,7 @@ verified: auto
 | `data/feed_fifo.py` | 交割单解析的**数据模型 + FIFO 配对引擎**（1.25 自 `data/data_feed.py` 拆出 · §9-L）。 | 7 | 218 |
 | `data/feed_months.py` | 交割单的**月份推断与资金链对账**（1.25 自 `data/data_feed.py` 拆出 · §9-L）。 | 3 | 63 |
 | `data/feed_report.py` | 交割单的**结算月报页签解析**（1.25 自 `data/data_feed.py` 拆出 · §9-L）。 | 2 | 56 |
+| `data/fetch_messages.py` | 取数失败的**人话文案唯一出口**（★2.04 / P2 拆件）。 | 4 | 91 |
 | `data/formula_store.py` | 公式配方库（函数资产化）—— §7-B3 P7。 | 8 | 252 |
 | `data/hub_assets.py` | ƒ 函数总库的**数据层助手**（★1.61 / §7-B16 · 实现方案书 `docs/plans/done/HUB.md`）。 | 10 | 190 |
 | `data/hub_migration.py` | ƒ 函数总库的**一次性资产收编**（★1.61 / §7-B16 · H1 · 方案书 `docs/plans/done/HUB.md` §3）。 | 4 | 97 |
@@ -66,7 +68,7 @@ verified: auto
 | `data/storage_maintenance.py` | 存储与维护（★v6.75 · §7-B13 · **S2-5**）—— 数据目录 / 缓存清理 / 配置导出导入的**唯一实现处**。 | 9 | 143 |
 | `data/strategy_store.py` | 回测策略本地持久化 (JSON, 位于用户数据目录，物理隔离不随代码分发)。 | 8 | 183 |
 | `data/sweep_archive.py` | 参数研究快照存档（§7-B15 SW-4）· 照抄 `data/backtest_archive.py` 范式。 | 6 | 281 |
-| `data/sync_service.py` | 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。 | 23 | 868 |
+| `data/sync_service.py` | 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。 | 19 | 787 |
 | `data/trade_calendar.py` | A 股交易日历获取件（v6.45 / §7-B10 · 用户拍板引入真交易日历）。 | 9 | 134 |
 | `data/watchlist_change.py` | 自选分组的「组合当日涨跌」（§7-B8 R3）—— **零 Qt**：纯函数 + 一层带 TTL 的快照缓存。 | 7 | 155 |
 | `data/watchlist_store.py` | 自选股（Watchlist）—— 用户关心的标的清单，JSON 原子写（§7-B3 P8）。 | 5 | 340 |
@@ -78,8 +80,13 @@ verified: auto
 | `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 4 | 81 |
 | `scripts/probe_startup.py` | 启动耗时探针（★2.03 / ARCH-PERF P0-5）—— **同一把尺子**，不参与运行。 | 1 | 63 |
 | `scripts/sync_roster.py` | — | 2 | 37 |
-| `tests/smoke_chart.py` | — | 14 | 5836 |
-| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 35 | 8902 |
+| `tests/run_smoke.py` | 一键跑两份冒烟（默认**并行**）+ 分段耗时 + 紧凑汇总（★2.04 / B1 测试提速）。 | 6 | 242 |
+| `tests/smoke_chart.py` | — | 14 | 5840 |
+| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 35 | 8916 |
+| `tests/unit/test_core_math_and_store.py` | 指标 / 净额 / 参数文本 / 组合成分 diff 的纯函数测试（★2.04 / B1 第四层）。 | 4 | 105 |
+| `tests/unit/test_core_p0.py` | 纯函数单元测试（★2.04 / B1 测试分层第一层）。 | 4 | 91 |
+| `tests/unit/test_portfolio_and_merge.py` | 组合统计 / 横截面增量续接的纯函数测试（★2.04 / B1 第三层）。 | 6 | 102 |
+| `tests/unit/test_scan_and_texts.py` | 缓存键 / 数据版本 / 批量耗时文案 / 交易日定稿的纯函数测试（★2.04 / B1 第二层）。 | 3 | 102 |
 | `ui/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/bulk_download.py` | 批量预下载弹窗 (v5.8 · §7-A3)。 | 2 | 524 |
@@ -97,7 +104,7 @@ verified: auto
 | `ui/main_window.py` | — | 2 | 921 |
 | `ui/settings_registry.py` | 设置项的**唯一真源**（★v6.73 / §7-B13 · S2 路径表 **S2-0**）。 | 35 | 567 |
 | `ui/views/__init__.py` | — | 0 | 0 |
-| `ui/views/backtest.py` | 📐 市场回测 视图 —— 策略工作台（UI 1.22 = 「样板 A」：摘要条 + 右侧遮罩抽屉 + 结果吃满）。 | 2 | 966 |
+| `ui/views/backtest.py` | 📐 市场回测 视图 —— 策略工作台（UI 1.22 = 「样板 A」：摘要条 + 右侧遮罩抽屉 + 结果吃满）。 | 2 | 876 |
 | `ui/views/backtest_history.py` | 🗂 运行历史（§7-A4 · v1.37 立 · **v1.46 按样板重做**）—— 市场回测页第 4 个子页。 | 1 | 272 |
 | `ui/views/backtest_module.py` | 📐 市场回测 —— 模块容器（子页全部上线）： | 1 | 64 |
 | `ui/views/breadth_view.py` | 📊 M3「广度统计」—— 页面本体（§7-B1/B2 主案 STEP 5）。 | 1 | 330 |
@@ -124,8 +131,9 @@ verified: auto
 | `ui/widgets/annotation_tiles.py` | 画线类型目录的**可视件**（v6.24 · §7-B8 R10/R11）。 | 4 | 175 |
 | `ui/widgets/backtest_export.py` | 📐 回测结果导出（1.22 · 自 `ui/views/backtest.py` 拆出，§9-L 体积债）。 | 6 | 159 |
 | `ui/widgets/backtest_flow.py` | 📐 回测「运行流程」（1.22 自 `ui/views/backtest.py` 拆出 · §9-L 第二批后半）。 | 2 | 436 |
-| `ui/widgets/backtest_history_ui.py` | 🗂 运行历史「版式 + 渲染」（§7-A4 · v1.37 立 · **v1.46 按样板重做**）。 | 12 | 820 |
+| `ui/widgets/backtest_history_ui.py` | 🗂 运行历史「版式 + 渲染」（§7-A4 · v1.37 立 · **v1.46 按样板重做**）。 | 9 | 664 |
 | `ui/widgets/backtest_panes.py` | 📐 回测页「编辑卡片 + 配置抽屉」（1.22 · 样板 A 的 L3 层 · §9-L 拆分）。 | 9 | 460 |
+| `ui/widgets/backtest_preview.py` | 回测页的**只读回放 / 复用参数 / 手动存档**（★2.04 / P2 拆件）。 | 1 | 101 |
 | `ui/widgets/backtest_report.py` | 回测结果报告图 —— 单页 PNG「一图看懂」(v5.15 · §7-A2)。 | 6 | 239 |
 | `ui/widgets/backtest_result.py` | 📐 回测「结果区」（L0 主角 · 1.22 自 `ui/views/backtest.py` 拆出 · §9-L 第二批）。 | 2 | 492 |
 | `ui/widgets/backtest_strategy.py` | 📐 回测「策略库桥接」（1.22 自 `ui/views/backtest.py` 拆出 · §9-L 第二批后半）。 | 1 | 265 |
@@ -163,6 +171,7 @@ verified: auto
 | `ui/widgets/function_segments.py` | ① 多函数段编辑器 (阶段A) —— 把单段粘贴升级为「多段共享变量池」。 | 1 | 156 |
 | `ui/widgets/gate_hint.py` | 🚦 三道闸的**"看得见"部件**（★1.74 / §7-B16 期 2）。 | 3 | 224 |
 | `ui/widgets/history_kinds.py` | 「🗂 运行历史」的 kind **声明式注册表**（§7-A4 · v1.46 重做）。 | 18 | 134 |
+| `ui/widgets/history_parts.py` | 运行历史页的**纯显示小件**（★2.04 / P2 拆件）。 | 3 | 169 |
 | `ui/widgets/hub_editor.py` | ƒ 函数总库的**编辑器**（★1.61 / §7-B16 · H2 · 方案书 `docs/plans/done/HUB.md`）。 | 1 | 165 |
 | `ui/widgets/hub_float_list.py` | 浮窗里的**统一列表**：本页方案 + 函数资产（★1.61 / §7-B16 · H7「用户实测后重做交互」）。 | 1 | 387 |
 | `ui/widgets/hub_flow.py` | ƒ 函数总库的**行为层**（★1.61 / §7-B16 · H2；约定同 scan_flow：状态在页面，行为在这）。 | 3 | 251 |
@@ -182,7 +191,8 @@ verified: auto
 | `ui/widgets/review_layout.py` | 复盘页的**版式装配**（1.25 自 `ui/views/review.py` 拆出 · §9-L 拆分 + §9-U 收口）。 | 1 | 310 |
 | `ui/widgets/review_playback.py` | 复盘页的**交易回放渲染**（1.25 自 `ui/views/review.py` 拆出 · §9-L）。 | 1 | 238 |
 | `ui/widgets/scan_enrich.py` | 扫描后**分批补全**行业/估值（★v6.74 · §7-B13）—— 用户 2026-09-27 拍板。 | 2 | 149 |
-| `ui/widgets/scan_flow.py` | 🌐 M2「全市场筛选」—— 运行流程（范围解析 / 后台线程 / 进度回执 / 切日期 / 跳行情）。 | 3 | 849 |
+| `ui/widgets/scan_enrich_flow.py` | 扫描后的**行业 / 估值补全调度**（★2.04 / P2 拆件）。 | 1 | 175 |
+| `ui/widgets/scan_flow.py` | 🌐 M2「全市场筛选」—— 运行流程（范围解析 / 后台线程 / 进度回执 / 切日期 / 跳行情）。 | 3 | 694 |
 | `ui/widgets/scan_layout.py` | 🌐 M2「全市场筛选」—— 版式装配（§7-B1/B2 主案 E 节 · 样板 A） | 5 | 518 |
 | `ui/widgets/scan_result.py` | 🌐 M2「全市场筛选」—— 结果渲染（KPI 行 + 结果表 + 空态）。 | 4 | 283 |
 | `ui/widgets/scan_strategy_bridge.py` | M2/M3「筛选方案」载入 / 存为 / 管理 桥接（§7-B12 P3）。 | 1 | 160 |
@@ -205,6 +215,13 @@ verified: auto
 | `ui/widgets/watch_row_delegate.py` | 自选清单的**行绘制**（v6.24 · §7-B8 R15 / 2b 余项）：`名称 · 代码（右对齐）· 涨跌列`。 | 3 | 115 |
 | `ui/widgets/watch_sort_list.py` | 自选清单的**拖拽排序列表**（v6.24 · §7-B8 R15）—— 用"三道闸"防误触。 | 1 | 70 |
 | `ui/widgets/yearly_review.py` | — | 1 | 124 |
-| `ui/workers.py` | 共享的后台工作线程 (QThread Workers) —— v5.8。 | 22 | 912 |
+| `ui/workers.py` | 全 app 的 QThread 门面（★2.04 / P2 拆件后只做再导出）。 | 0 | 52 |
+| `ui/workers_backtest.py` | 回测 / 参数扫描 / 组合池化类 QThread（★2.04 / P2 拆件）。 | 3 | 150 |
+| `ui/workers_core.py` | 任务竞态守卫（★2.04 / P2 拆件）。 | 1 | 34 |
+| `ui/workers_download.py` | 批量下载 / 网络自检 / 缓存清理 / 更新检查类 QThread（★2.04 / P2 拆件）。 | 5 | 347 |
+| `ui/workers_imports.py` | 期货交割单解析 worker（★2.04 / P2 拆件）。 | 1 | 28 |
+| `ui/workers_scan.py` | 扫描 / 成分股 / 就绪度 / 日历类 QThread（★2.04 / P2 拆件）。 | 6 | 171 |
+| `ui/workers_sync.py` | 同步类小 worker（★2.04 / P2 拆件）。 | 6 | 158 |
+| `ui/workers_throttle.py` | 下载节流 / 交易日历注入的**无 Qt 辅助件**（★2.04 / P2 拆件）。 | 4 | 98 |
 
-> 共 193 个 .py 文件。
+> 共 210 个 .py 文件。
