@@ -47,6 +47,8 @@ def main() -> int:
     ap.add_argument("--overwrite", action="store_true", help="覆盖已有文件")
     ap.add_argument("--data-dir", default="", help="临时用户目录（验证用）")
     ap.add_argument("--max-errors", type=int, default=100)
+    ap.add_argument("--source", choices=("sina", "em"), default="sina",
+                    help="全历史默认新浪（与旧库口径一致）；em 仅用于已验证的快速路径")
     args = ap.parse_args()
 
     if args.data_dir:
@@ -99,16 +101,22 @@ def main() -> int:
     errors = []
     done = 0
 
+    from data.akshare_feed import AkShareFeed
+    from data.quality import check_ohlcv
+
     def one(sym):
-        # ★2.06：东财 push2his 不支持 920xxx 北交所；这批走新浪（不占登录预算）
-        if str(sym).startswith("920"):
-            from data.akshare_feed import AkShareFeed
-            df = AkShareFeed.fetch_a_share_daily(sym, start_date=args.start, adjust="qfq")
-        else:
+        # 默认新浪：与旧库的比例前复权口径一致；东财 qfq 是加法复权，已验证不可直接替换。
+        if args.source == "em" and not str(sym).startswith("920"):
             df = em_history.fetch_daily(sym, start_date=args.start, adjust="qfq",
                                         allow_over_budget=True)
+        else:
+            df = pd.DataFrame()
         if df is None or df.empty:
-            return sym, False, "empty"
+            # 920xxx 或 em 拒收/失败 ⇒ 新浪兜底
+            df = AkShareFeed.fetch_a_share_daily(sym, start_date=args.start, adjust="qfq")
+        problems = check_ohlcv(df)
+        if problems:
+            return sym, False, "quality:" + "；".join(problems[:2])
         if not lake.save_data(ZONE_KLINE, sym, df):
             return sym, False, "save_failed"
         return sym, True, ""

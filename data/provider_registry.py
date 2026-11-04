@@ -24,7 +24,8 @@ class ProviderSpec:
 PROVIDERS = (
     ProviderSpec("eastmoney", ("quote_snapshot", "bar_daily", "industry"),
                  "both", "snapshot", "measured",
-                 "clist 全市场 52s；ulist 100 只/批；单只匿名 RST，登录直连实测可用（预算 300/日）"),
+                 "clist 全市场 52s；ulist 100 只/批；单只匿名 RST；"
+                 "登录直连实测可用但默认关闭（加法前复权≠新浪比例前复权）"),
     ProviderSpec("sina", ("quote_snapshot", "bar_daily", "bar_minute"),
                  "anon", "per_symbol", "measured",
                  "批量报价 100 只/批（备源）；单只日线/分钟，吞吐约 1 只/秒"),

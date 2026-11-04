@@ -18,7 +18,7 @@ verified: 2026-11-02
 
 1. **启动 4.05s，其中 2.48s 是"9 个页面全在 `__init__` 里建好"** —— 首屏只用 1 个，其余 8 个白建（还各自扫数据湖）。
    ⇒ 惰性建页 + 三处热点修法，预计 **4.05s → 1.8~2.2s**，且**不改任何 UI 行为**。
-2. **测试形态仍是最大的结构债**：`tests/` 2 个脚本 **16,389 行**；已起 **78 条 unit**（`tests/unit`）+ CI `unit` job，但 integration/ui_smoke 仍未分层。
+2. **测试形态仍是最大的结构债**：`tests/` 2 个脚本 **16,389 行**；已起 **83 条 unit**（`tests/unit`）+ CI `unit` job，但 integration/ui_smoke 仍未分层。
 3. **文档总量 740k 字符**（RULES 97.8k 逼近 100k 上限 · HISTORY 172k 名叫"最近三版"实际全量 · ARCHIVE 242k），且**根目录没有 README**。
 4. **目录归类基本规范**（根目录仅 7 个文件、`.gitignore` 到位），只有 `models/`、`samples/` 两处像遗留物。
 
@@ -198,10 +198,10 @@ verified: 2026-11-02
 
 ## 10. 延申（后续轮次）
 
-- **P2-1 测试分层**：**第一层已落地（2026-11-03）**：`tests/unit`（stdlib unittest，**78 条 / 0.30s**）+ `tests/run_smoke.py`（并行 **56–100s** / 逐个相加 89–150s，附慢段 Top5）。下一步：把 `scan_store` / `sync_service` 的纯函数继续搬进来；pytest 需先加依赖。
+- **P2-1 测试分层**：**第一层已落地（2026-11-03）**：`tests/unit`（stdlib unittest，**83 条 / 0.30s**）+ `tests/run_smoke.py`（并行 **56–100s** / 逐个相加 89–150s，附慢段 Top5）。下一步：把 `scan_store` / `sync_service` 的纯函数继续搬进来；pytest 需先加依赖。
 - **P2-2 文档**：README + `docs/history/` 分卷 + RULES 瘦身（目标 ≤85k）。
 - **P2-3 目录**：`models` 归位、`samples` 迁移、`widgets` 按页分组（`widgets/portfolio/` 等）。
-- **P2-4 CI**：✅ **unit job 已落地**（`windows-latest` + 最小依赖 pandas/numpy/pyarrow/akshare；**不读数据湖、不联网**，跑 78 条）。冒烟子集仍待"CI 数据种子"方案；`smoke_chart` 子集（`SMOKE_FULL=0`）未接。
+- **P2-4 CI**：✅ **unit job 已落地**（`windows-latest` + 最小依赖 pandas/numpy/pyarrow/akshare；**不读数据湖、不联网**，跑 83 条）。冒烟子集仍待"CI 数据种子"方案；`smoke_chart` 子集（`SMOKE_FULL=0`）未接。
 - **P3**：全市场扫描耗时（`cross_section` 758 行）—— **先加计时再动**，当前无实测数据，不盲优化。
 
 ---

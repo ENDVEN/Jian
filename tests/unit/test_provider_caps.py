@@ -22,7 +22,7 @@ class TestProviderCaps(unittest.TestCase):
     def test_detail_contains_both_columns(self):
         text = provider_caps.detail_text()
         self.assertIn("匿名：可用", text)
-        self.assertIn("登录：可用（实测 K=16）", text)
+        self.assertIn("登录：已实测 K=16", text)
         self.assertIn("未登录不会让软件不可用", text)
 
 

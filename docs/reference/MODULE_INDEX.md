@@ -41,7 +41,7 @@ verified: auto
 | `core/updater.py` | — | 1 | 57 |
 | `core/utils.py` | 通用无副作用工具函数集合 (Pure Helpers)。 | 24 | 369 |
 | `data/__init__.py` | — | 0 | 0 |
-| `data/akshare_feed.py` | — | 8 | 712 |
+| `data/akshare_feed.py` | — | 8 | 716 |
 | `data/annotations.py` | 用户手绘标注：对象模型 + 持久化 CRUD（§7-B3 ④ · P6）。 | 19 | 524 |
 | `data/backfill.py` | 历史补全计划（★2.05 / DATA-PLATFORM P1）。 | 4 | 109 |
 | `data/backtest_archive.py` | 回测结果历史存档 (v1.37 / §7-A4) —— 每次回测落一份**不可变快照**。 | 9 | 556 |
@@ -49,7 +49,7 @@ verified: auto
 | `data/daily_store.py` | 日快照中转（★2.05 / DATA-PLATFORM P1）。 | 7 | 116 |
 | `data/data_feed.py` | 交易账单解析层 (Bill Parsing Layer)。 | 9 | 365 |
 | `data/em_auth.py` | 东财**登录态凭据**的唯一出口（★v6.73）—— 存储、有效性判据、Cookie 头、每日预算。 | 17 | 206 |
-| `data/em_history.py` | 东财单只历史直连（登录档，★2.06 / DATA-PLATFORM P2）。 | 2 | 77 |
+| `data/em_history.py` | 东财单只历史直连（登录档，★2.06 / DATA-PLATFORM P2）。 | 2 | 83 |
 | `data/em_market.py` | 东财 `push2` 的**两条取数通道**（★v6.69）—— 全仓库唯一的东财行情明细出口。 | 27 | 523 |
 | `data/em_throttle.py` | 东财取数的**退避闸门**（★v6.69 起；★v6.74 改为**按通道**）—— 全仓库唯一出处。 | 16 | 169 |
 | `data/feed_cells.py` | 交割单解析的**单元格 / 工作表工具层**（1.25 自 `data/data_feed.py` 拆出 · §9-L）。 | 12 | 208 |
@@ -66,9 +66,10 @@ verified: auto
 | `data/market_store.py` | 统一读门面（★2.05 / DATA-PLATFORM P1）。 | 1 | 50 |
 | `data/net_env.py` | 行情取数的**网络环境策略**（★v6.72）—— **地址族**与**代理指纹**两件事的唯一出处。 | 11 | 175 |
 | `data/portfolio_store.py` | 🧺 组合的**存储层**（★1.85 / §7-B17 P0）。 | 7 | 216 |
-| `data/provider_caps.py` | 匿名 / 登录能力表（★2.06 / DATA-PLATFORM P2）。 | 5 | 56 |
-| `data/provider_registry.py` | Provider 能力注册表（★2.06 / DATA-PLATFORM P2）。 | 2 | 34 |
+| `data/provider_caps.py` | 匿名 / 登录能力表（★2.06 / DATA-PLATFORM P2）。 | 5 | 57 |
+| `data/provider_registry.py` | Provider 能力注册表（★2.06 / DATA-PLATFORM P2）。 | 2 | 35 |
 | `data/provider_router.py` | 历史取数 provider 顺序（★2.06 / DATA-PLATFORM P2）。 | 3 | 33 |
+| `data/quality.py` | 日线数据质量闸门（★2.07 修复 bootstrap 污染）。 | 1 | 46 |
 | `data/readiness.py` | 就绪度体检（§7-B1/B2 主案 D6-1 · v6.39）—— 扫描之前，先告诉用户 | 6 | 228 |
 | `data/roster_sync.py` | 花名册同步的**唯一入口**（app 内一键按钮 / 运维脚本共用 · ★1.70 / §11.5-125）。 | 1 | 46 |
 | `data/scan_store.py` | M2 / M3 的**会话内存缓存**（§7-B1/B2 主案 D3 · v6.35） | 14 | 406 |
@@ -87,10 +88,11 @@ verified: auto
 | `models/trade.py` | — | 1 | 103 |
 | `scripts/analyze_index_regimes.py` | 上证指数切块 · 离线脚本（§7-B15 SW-2 · 方案书 §11 决议 3）。 | 1 | 73 |
 | `scripts/bench_data.py` | 数据下载 / 存储布局基准（★2.05 / DATA-PLATFORM P0）。 | 19 | 460 |
-| `scripts/bootstrap_history.py` | 一次性全历史 bootstrap（★2.06 / DATA-PLATFORM P2）。 | 1 | 139 |
+| `scripts/bootstrap_history.py` | 一次性全历史 bootstrap（★2.06 / DATA-PLATFORM P2）。 | 1 | 146 |
 | `scripts/check_docs.py` | 文档契约自检（秒级、不依赖 Qt）：写完/搬完文档跑一次。 | 9 | 100 |
 | `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 4 | 81 |
 | `scripts/probe_startup.py` | 启动耗时探针（★2.03 / ARCH-PERF P0-5）—— **同一把尺子**，不参与运行。 | 1 | 63 |
+| `scripts/repair_history.py` | 修复被 bootstrap 污染的日线（★2.07）。 | 1 | 91 |
 | `scripts/sync_roster.py` | — | 2 | 37 |
 | `tests/run_smoke.py` | 一键跑两份冒烟（默认**并行**）+ 分段耗时 + 紧凑汇总（★2.04 / B1 测试提速）。 | 6 | 244 |
 | `tests/smoke_chart.py` | — | 14 | 5843 |
@@ -104,6 +106,7 @@ verified: auto
 | `tests/unit/test_market_store.py` | — | 1 | 66 |
 | `tests/unit/test_portfolio_and_merge.py` | 组合统计 / 横截面增量续接的纯函数测试（★2.04 / B1 第三层）。 | 6 | 102 |
 | `tests/unit/test_provider_caps.py` | — | 2 | 35 |
+| `tests/unit/test_quality.py` | — | 3 | 37 |
 | `tests/unit/test_scan_and_texts.py` | 缓存键 / 数据版本 / 批量耗时文案 / 交易日定稿的纯函数测试（★2.04 / B1 第二层）。 | 3 | 102 |
 | `tests/unit/test_sina_market.py` | — | 1 | 48 |
 | `tests/unit/test_tencent_market.py` | — | 1 | 27 |
@@ -244,4 +247,4 @@ verified: auto
 | `ui/workers_sync.py` | 同步类小 worker（★2.04 / P2 拆件）。 | 6 | 158 |
 | `ui/workers_throttle.py` | 下载节流 / 交易日历注入的**无 Qt 辅助件**（★2.04 / P2 拆件）。 | 4 | 98 |
 
-> 共 230 个 .py 文件。
+> 共 233 个 .py 文件。

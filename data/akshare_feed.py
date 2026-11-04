@@ -582,7 +582,8 @@ class AkShareFeed:
                 note_fetch_error(f"新浪源: {e}")   # ★1.92：真报错 ⇒ 上层值得重试
 
         # 2) 近年/增量：登录档东财直连（带 Cookie；受每日预算保护）
-        if ("tencent" in _order and os.environ.get("JIAN_EM_DIRECT", "1") != "0"):
+        #    默认关：东财 qfq 是加法复权，与新浪比例前复权不同；开启前必须先做一致性校验。
+        if ("tencent" in _order and os.environ.get("JIAN_EM_DIRECT", "0") == "1"):
             try:
                 from data.em_history import fetch_daily as _em_direct
                 em_hit = _em_direct(symbol, start_date, end_date, adjust=adjust)
@@ -593,7 +594,10 @@ class AkShareFeed:
                 logging.info("东财直连历史失败 [%s]: %s", symbol, e)
 
         # 3) 近年/增量：腾讯 640 根备源（全历史不适用；volume 手→股）
-        if "tencent" in _order:
+        #    默认关：腾讯 qfq 与新浪比例前复权仍有差异（实测 000001 约 5%），
+        #    直接拼进新浪历史会污染复权口径；需显式 opt-in 并自行校验。
+        if ("tencent" in _order
+                and os.environ.get("JIAN_TENCENT_HISTORY", "0") == "1"):
             try:
                 from data.tencent_market import fetch_daily as _tencent_daily
                 tc_df = _tencent_daily(symbol, start_date, end_date, adjust=adjust)

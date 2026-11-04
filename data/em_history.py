@@ -16,6 +16,7 @@ import logging
 import pandas as pd
 
 from data import em_auth, em_market
+from data.quality import check_ohlcv
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,12 @@ def fetch_daily(symbol: str, start_date: str | None = None,
         obj = em_market._http_get(_URL, params, kind="kline_hist",
                                   billable=not allow_over_budget)
         rows = (((obj or {}).get("data") or {}).get("klines") or [])
-        return parse_klines(rows, symbol)
+        out = parse_klines(rows, symbol)
+        problems = check_ohlcv(out)
+        if problems:
+            logger.warning("东财历史质量拒收 [%s]: %s", symbol, "；".join(problems[:3]))
+            return pd.DataFrame()
+        return out
     except Exception as e:  # noqa: BLE001 —— 直连失败由上层降级
         logger.info("东财直连历史失败 [%s]: %s", symbol, e)
         return pd.DataFrame()
