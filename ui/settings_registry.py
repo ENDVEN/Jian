@@ -116,11 +116,22 @@ def _login_text() -> str:
     from data import em_auth
     st = em_auth.status()
     if not st.get('logged_in'):
-        return (f"未登录（本机有 {st.get('count')} 条但不齐，缺登录三元组）"
+        base = (f"未登录（本机有 {st.get('count')} 条但不齐，缺登录三元组）"
                 if st.get('present') else '未登录')
+        return base + " · 东财单只历史受限（快照/新浪历史仍可用）"
     return (f"已登录 · {st.get('count')} 条凭据 · "
             f"{'已加密' if st.get('encrypted') else '⚠ 明文（DPAPI 不可用）'}"
             + (f" · 存于 {st.get('saved_at')}" if st.get('saved_at') else ''))
+
+
+def _caps_text() -> str:
+    from data import provider_caps
+    return provider_caps.summary_line()
+
+
+def _caps_help() -> str:
+    from data import provider_caps
+    return provider_caps.detail_text()
 
 
 def _budget_text() -> str:
@@ -423,6 +434,11 @@ _ITEMS_V1 = (
          where='readonly:data/em_auth.status（只报条数与名字，**绝不回显凭据值**）',
          readonly=True, value_fn=_login_text,
          tip='凭据只存本机（首选用 Windows DPAPI 加密）；随时可"退出登录"清除。'),
+    Item('em.caps', 'account', '当前档位能做什么', KIND_READONLY, default='—',
+         where='readonly:data/provider_caps（匿名/登录能力表）',
+         readonly=True, value_fn=_caps_text,
+         tip='匿名不会让软件不可用；东财单只历史兜底受限，主源新浪仍可用。',
+         help=_caps_help()),
     Item('em.budget', 'account', '今日取数额度', KIND_READONLY, default='—',
          where='readonly:data/em_auth.budget_text（防「狂点把账号打进风控」）',
          readonly=True, value_fn=_budget_text,

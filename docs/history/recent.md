@@ -397,3 +397,25 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
 5. **回滚**：`JIAN_AUTO_DAILY` / `JIAN_AUTO_BACKFILL` / `JIAN_BULK_DAILY`。
 
 **实测**：全市场日更 117s；100 只 parity；unit 59/0；chart 1080/0；overlay 1244/0。
+
+## ★2.07 · 数据底层 P2：双通道 + 备源 + 一次性 bootstrap（2026-11-05 提交）
+
+**目标**：把匿名/登录差异、候选源和登录档边界变成可实测、可回退的生产能力。
+
+**改了什么**
+1. **能力表**：`data/provider_caps.py`；设置页账号组显示“当前档位能做什么”，
+   匿名状态明确提示“东财单只历史受限（快照/新浪历史仍可用）”。
+2. **provider registry**：Eastmoney / Sina / Tencent / NetEase / Baostock 的
+   数据集、认证、批量能力与实测状态；腾讯 limited、网易 unavailable、Baostock 未安装。
+3. **备源**：
+   - 新浪批量报价 100 只/批（快照备源）；
+   - 腾讯近年历史 640 根（Sina 失败后；volume 手→股）；
+   - 全市场快照失败时按花名册回退新浪。
+4. **东财登录直连**：`data/em_history.py` 带 Cookie 走 `push2his`；
+   实测 100 只 2010 起全历史 **7.06s / 0 错误**；日常只接近年/增量。
+5. **一次性 bootstrap**：`data/bootstrap_once.py` + `scripts/bootstrap_history.py`；
+   显式 arm、跑一次 consume、请求不占日常 300/日预算。
+   2026-11-05 实跑 4955 只：统计到 **4605 成功 / 343.8s**，失败主要是 `920xxx` 北交所
+   （东财直连不支持；本地原完整文件未覆盖），预算仍 **96/300**。
+
+**验证**：unit **78/0** · chart **1080/0** · overlay **1244/0**；check_docs / codemap 全 OK。

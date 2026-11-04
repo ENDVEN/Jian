@@ -83,6 +83,7 @@ _faulthandler.dump_traceback_later(900, exit=True)
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 # 冒烟不触发启动自动日快照（会联网/写用户库）；生产默认开启。
 os.environ.setdefault('JIAN_AUTO_DAILY', '0')
+os.environ.setdefault('JIAN_EM_DIRECT', '0')   # 冒烟不因本机登录态走东财直连
 
 import numpy as np
 import pandas as pd

@@ -2,6 +2,7 @@
 import akshare as ak
 import pandas as pd
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -566,6 +567,9 @@ class AkShareFeed:
         #     这个参数（内部 6 处 `requests.get` 全裸奔），传了只会被 TypeError 吃掉、看着像修了。
         #     本路径的超时由**进程级 socket 默认超时**兜住：`data/net_env.apply()`（默认 20s）。
         #     实证：2026-10-11 用户实测就是卡在这一行的 TLS 握手，永久阻塞 ⇒ 点中断无效。
+        from data.provider_router import history_order
+        _order = history_order(start_date)
+
         sina_symbol = AkShareFeed._to_sina_stock_symbol(symbol)
         if sina_symbol:
             try:
@@ -577,7 +581,29 @@ class AkShareFeed:
                 logging.warning(f"A股日线新浪源失败 [{sina_symbol}]: {e}")
                 note_fetch_error(f"新浪源: {e}")   # ★1.92：真报错 ⇒ 上层值得重试
 
-        # 2) 兜底：东财 (覆盖北交所与新浪暂未支持的标的)
+        # 2) 近年/增量：登录档东财直连（带 Cookie；受每日预算保护）
+        if ("tencent" in _order and os.environ.get("JIAN_EM_DIRECT", "1") != "0"):
+            try:
+                from data.em_history import fetch_daily as _em_direct
+                em_hit = _em_direct(symbol, start_date, end_date, adjust=adjust)
+                if em_hit is not None and not em_hit.empty:
+                    note_fetch_error("")
+                    return AkShareFeed._normalize_ohlcv(em_hit, KLINE_CN_RENAME, symbol)
+            except Exception as e:  # noqa: BLE001 —— 直连失败继续降级
+                logging.info("东财直连历史失败 [%s]: %s", symbol, e)
+
+        # 3) 近年/增量：腾讯 640 根备源（全历史不适用；volume 手→股）
+        if "tencent" in _order:
+            try:
+                from data.tencent_market import fetch_daily as _tencent_daily
+                tc_df = _tencent_daily(symbol, start_date, end_date, adjust=adjust)
+                if tc_df is not None and not tc_df.empty:
+                    note_fetch_error("")
+                    return AkShareFeed._normalize_ohlcv(tc_df, KLINE_CN_RENAME, symbol)
+            except Exception as e:  # noqa: BLE001 —— 备源失败继续走东财
+                logging.info("腾讯日线备源失败 [%s]: %s", symbol, e)
+
+        # 4) 兜底：东财 (覆盖北交所与新浪暂未支持的标的)
         em_df = AkShareFeed._fetch_a_share_via_em(symbol, start_date, end_date, adjust=adjust)
         if not em_df.empty:
             note_fetch_error("")                   # 兜底成功 ⇒ 清掉主源那笔错误

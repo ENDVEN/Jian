@@ -124,6 +124,7 @@ def _launch(name: str, log_dir: str | None) -> Result:
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env["JIAN_AUTO_DAILY"] = "0"       # 冒烟不触发启动自动日快照
+    env["JIAN_EM_DIRECT"] = "0"        # 冒烟不受本机登录态影响
     res.log_path = ""
     if log_dir:
         res.log_path = os.path.join(log_dir, f"{name}.log")

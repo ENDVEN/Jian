@@ -6,7 +6,7 @@ skip_if: 只改某个页面的展示或文案
 verified: 2026-11-04
 ---
 
-# 数据底层重构与下载提速方案 · ★2.06（P1 完成，P2 进行中）
+# 数据底层重构与下载提速方案 · ★2.07（P1/P2 完成，P3 待开工）
 
 > **用户 2026-11-04 明确**：现有下载链路是早期按 A 股日线设计的，面对港股 / ETF / 期货 /
 > ROE·PE·PB·财报 / 分钟线会越来越乱；同时“5000 多只全 A 下载要 1 小时 20 分”不可接受。
@@ -308,6 +308,29 @@ capabilities:
 
 ### P2 · 登录双通道与 provider 扩展（1 周）
 
+#### P2 已落地（2026-11-05，2.07）
+
+- `data/provider_caps.py`：匿名/登录能力表（快照 / 报价 / 新浪历史 / 东财兜底 /
+  行业分页 / 财报 / 其他资产），**只写实测或明确未接入**；
+- `data/provider_registry.py`：Eastmoney / Sina / Tencent / NetEase / Baostock
+  的数据集、认证、批量能力与实测状态（腾讯 limited、网易 unavailable、Baostock 未安装）；
+- 设置页账号组新增“当前档位能做什么”，登录状态追加“东财单只历史受限（快照/新浪历史仍可用）”；
+  长表放在 tooltip，不把限制藏起来；
+- `data/sina_market.py`：新浪批量报价（100 只/批，GBK）；小池日快照在
+  东财失败时显式启用备源（`allow_fallback=True`），默认关闭保持旧路径。
+  全市场快照失败时也可按花名册回退（`fallback_symbols`）。
+- `data/tencent_market.py` + `data/provider_router.py`：近年/增量在 Sina 失败后
+  走腾讯 640 根备源（volume 手→股，amount 缺列）；全历史仍走 Sina/东财，避免分页 7 倍请求。
+- `scripts/bootstrap_history.py` + `data/bootstrap_once.py`：一次性授权 arm/consume，
+  只对脚本请求 `allow_over_budget=True`，不占日常 300 次预算；
+  2026-11-05 实跑 4955 只：统计到 **4605 成功 / 343.8s**（12.5–14.3 只/s），
+  失败为 `920xxx` 北交所（东财直连不支持；本地原有完整文件未覆盖），预算仍 96/300。
+- `data/em_history.py`：登录档东财 `push2his` 直连（带 Cookie、预算记账）；
+  实测（2026-11-05，22 条凭据）：20 只短历史 K=1/4/8/16 = 17.4 / 5.78 / 3.07 / 1.93s，
+  100 只 2010 起全历史 K=16 = **7.06s / 0 错误**。
+  **约束**：登录日预算 300 次；5000 只一次性全历史不可行，当前只接“近年/增量”，
+  全量 bootstrap 是否临时提额需用户拍板，绝不静默绕过风控。
+
 - `auth_mode=anon/logged_in`；能力表分别记录；
 - 匿名档：保守限速，明确哪些功能不可用；
 - 登录档：用现有 `em_auth` Cookie；仍设上限；
@@ -418,8 +441,10 @@ capabilities:
 - [x] P1：日更批量快照 + 混合布局（快照 + 立即合并；全市场 117s；统一读门面已接）
 - [x] P1：首次打开可用 + 后台补全队列 + 正式覆盖率体检（启动检查：空/只缺一天 → 快照；缺口更大 → backfill）
 - [x] P1：100 只新旧路径逐位对比（临时目录，全部一致）+ `JIAN_BULK_DAILY=0` 回滚
-- [ ] P2：匿名/登录双通道 + 能力表 + UI 硬提示
-- [ ] P2：腾讯/网易/Baostock 候选源实测与 registry
+- [x] P2：匿名/登录能力表 + 设置页提示；快照/近年历史/全市场快照备源已接；登录档已实测
+      （全量 5000 受 300 次/日预算约束，提额待拍板）
+- [x] P2：provider registry 已落地；Sina 报价 + 腾讯近年历史 + 东财登录直连已参与 fallback；
+      全历史 planner 归入 P3
 - [ ] P3：catalog + planner + scheduler + 盘后预取
 - [ ] P3：按 benchmark 结果迁移存储
 - [ ] P4：ETF / 港股 / 期货 / 财报 / 分钟数据集接入

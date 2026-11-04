@@ -17,11 +17,11 @@ verified: 2026-11-02
 
 | 项 | 值 |
 |---|---|
-| 版本 | **2.06**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
-| HEAD | 本版提交（`git log -1`）· `2.06 数据底层P1收尾 启动检查 覆盖率` |
-| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **2 个提交**：2.05 / 2.06） |
-| 工作区 | ✅ 干净（2.06 提交后） |
-| 最近三版 | `2.06` 数据底层 P1 收尾（启动检查 / 覆盖率 / 读门面）· `2.05` 日更快照 / benchmark · `2.04` 测试提速 + 工程拆件 |
+| 版本 | **2.07**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
+| HEAD | 本版提交（`git log -1`）· `2.07 数据底层P2 双通道 备源 Bootstrap` |
+| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **3 个提交**：2.05 / 2.06 / 2.07） |
+| 工作区 | ✅ 干净（2.07 提交后） |
+| 最近三版 | `2.07` 双通道 / 备源 / bootstrap · `2.06` P1 收尾 · `2.05` 日更快照 / benchmark |
 
 ---
 
@@ -32,8 +32,8 @@ verified: 2026-11-02
 | `python -u tests/smoke_chart.py` | **1080 / 0**（+4 条 P0 内核断言） |
 | `python -u tests/smoke_pages_overlay.py` | **1244 / 0**（+5 条惰性建页断言） |
 | `py tests/run_smoke.py`（并行） | **56–100s**（实测 56.3 / 80.5 / 100.2s；逐个相加 88.7–150.1s），两份均 0 失败 |
-| `py -m unittest discover -s tests/unit -v` | **59 tests / 0.31s**（日期 / roster / footer / 缓存键 / 文案 / 组合 / merge_tail / 指标与净额 / 风险与格式化 / 日快照） |
-| `.github/workflows/ci.yml` | `unit` job：59 条，**不读数据湖、不联网**；冒烟仍本地跑 |
+| `py -m unittest discover -s tests/unit -v` | **78 tests / 0.30s**（日期 / roster / footer / 缓存键 / 文案 / 组合 / merge_tail / 指标与净额 / 风险与格式化 / 日快照） |
+| `.github/workflows/ci.yml` | `unit` job：78 条，**不读数据湖、不联网**；冒烟仍本地跑 |
 
 > ⚠ **已知假红**：本机有下载在跑时（数据湖 parquet 的 mtime 每几秒变），两条"缓存命中"断言必红（§11.5-79）。**先停下载再跑**。
 > ✅ **fastfail 已收口**（2026-11-03）：根因 = `ReadinessFlow.start()` 覆盖 `self._probe` 时旧 `ReadinessWorker` 仍在运行 ⇒ 引用归零 ⇒ QThread 析构 ⇒ `0xC0000409`。修法见 `plans/active/TEST-HARNESS.md` §4；连跑 10/10 通过。
@@ -45,7 +45,7 @@ verified: 2026-11-02
 
 | 任务 | 方案书 | 状态 | 一句话 |
 |---|---|---|---|
-| **数据底层平台与下载提速** | `docs/plans/active/DATA-PLATFORM.md` | **P1 完成**（2.06）；P2 进行中 | 全市场日更 **117s** · 100 只 parity · 启动自动检查 · 后台 backfill · 正式覆盖率 · 统一读门面 |
+| **数据底层平台与下载提速** | `docs/plans/active/DATA-PLATFORM.md` | **P1/P2 完成**（2.07）；P3 待开工 | 全市场日更 **117s** · 100 只 parity · 启动检查/backfill/覆盖率/读门面；双通道能力表、登录直连（100 只全历史 7s）、一次性 bootstrap（4605 只） |
 | **场内基金 ETF/LOF 接入** | `docs/plans/active/ETF-LOF.md` | **未实现**，方案已拍板 | 只做场内 ETF/LOF；`etf_daily` 独立分区；用新浪分红表**本地等比前复权**补跳空；不进 A 股扫描/广度 |
 | **架构与性能（启动）优化** | `docs/plans/active/ARCH-PERF.md` | **P0 已完成**（2.03）· P1/P2 未做 | 构造 3.6s→0.27s；已建页面 9→1；真机探针 **2.145s**（目标 ≤2.2s） |
 | **测试基建** | `docs/plans/active/TEST-HARNESS.md` | **进行中**（2.02 已提交） | fastfail 10/10 绿；挂死已复现并收口（存活 QThread + `ExitProcess` 死锁 ⇒ 硬退出）；2 个 ScanWorker 来源另立 |
@@ -54,16 +54,18 @@ verified: 2026-11-02
 
 ## 4. 下一步（按顺序，别跳）
 
-### 已完成（2.02 / 2.03 / 2.04 / 2.05 / 2.06）
+### 已完成（2.02 / 2.03 / 2.04 / 2.05 / 2.06 / 2.07）
 - **测试基建 S1–S6**（2.02）：fastfail 根因修复 + 挂死改硬退出；仅剩"2 个 ScanWorker 来源"（测试侧）。
 - **启动优化 P0 四件**（2.03）：惰性建页 / roster 向量化 / 日历批量 / footer LRU + `probe_startup.py`；
   行为断言 9 条（chart +4、overlay +5）；实测 3.6s → 0.27s、9 → 1 页、真机探针 **2.145s**。
 - **测试提速 + 工程拆件**（2.04）：`tests/unit` **41 条**（0.05s）+ `tests/run_smoke.py`
   并行 **56–100s** + CI `unit` job；`workers.py` 拆为 58 行门面 + 7 个领域件，运行历史/
   下载文案/横截面/回测预览等大文件按领域拆分，旧导入路径不变。
-- **数据底层 P0/P1**（2.05 / 2.06）：`bench_data.py` 实测边界；日更改批量快照 + 立即合并，
+- **数据底层 P0/P1/P2**（2.05 / 2.06 / 2.07）：`bench_data.py` 实测边界；日更改批量快照 + 立即合并，
   全市场 **117s**（旧约 80 分钟）；100 只新旧路径逐位一致；启动检查/后台补全/正式覆盖率/
-  统一读门面已接；`JIAN_BULK_DAILY=0`、`JIAN_AUTO_DAILY=0`、`JIAN_AUTO_BACKFILL=0` 可回滚。
+  统一读门面已接；**P2 双通道**：能力表、东财登录直连（100 只全历史 7s）、新浪/腾讯备源、
+  一次性 bootstrap（4605 只，343.8s）。回滚：`JIAN_BULK_DAILY=0`、`JIAN_AUTO_DAILY=0`、
+  `JIAN_AUTO_BACKFILL=0`、`JIAN_EM_DIRECT=0`。
 
 ### P0 · 下一件：数据底层平台与下载提速（≈2–4 轮）
 - `docs/plans/active/DATA-PLATFORM.md`：P0 benchmark（provider 矩阵 + 存储三布局）→
@@ -92,7 +94,7 @@ verified: 2026-11-02
 
 | 类别 | 事实 | 影响 |
 |---|---|---|
-| 测试形态 | `tests/` 2 个脚本 **16.4k 行** + `tests/unit` **59 条**（秒级）；无 pytest。`tests/run_smoke.py` 并行 **56–100s**（逐个相加 89–150s）。overlay fastfail 已修；"跑完不退出"已复现并硬退出（2 个 `ScanWorker` 来源另立） | 日常 ~80s；unit 秒级；失败仍靠行眼找 |
+| 测试形态 | `tests/` 2 个脚本 **16.4k 行** + `tests/unit` **78 条**（秒级）；无 pytest。`tests/run_smoke.py` 并行 **56–100s**（逐个相加 89–150s）。overlay fastfail 已修；"跑完不退出"已复现并硬退出（2 个 `ScanWorker` 来源另立） | 日常 ~80s；unit 秒级；失败仍靠行眼找 |
 | 视图层 | `ui/` 37,388 行（57%）· `widgets/` **94 个平铺** · ≥800 行文件 **11 个** | 改动要读多处 |
 | 启动 | P0 后构造 **0.27s**、已建页 **1/9**、真机探针 **2.145s**（旧基线 4.05s = import 1.36 + 构造 2.48 + 首绘 0.16） | 见 §4 P1（首次切页有一次性 0.3~0.5s） |
 | 文档 | 总计约 700k 字符（RULES **87.6k** · ARCHIVE 242k · HISTORY · PLAYBOOK · CODEMAP） | 见 §7 |

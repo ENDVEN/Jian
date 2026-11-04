@@ -207,7 +207,7 @@ def _session(use_proxy: bool):
     return sess
 
 
-def _do_get(url: str, params: dict, use_proxy: bool) -> dict:
+def _do_get(url: str, params: dict, use_proxy: bool, billable: bool = True) -> dict:
     """发一次请求（唯一真正碰网络的地方）⇒ JSON 字典。
 
     ★v6.73 双档：登录 ⇒ 每请求带 `Cookie`（`em_auth.cookie_header()`）；未登录 ⇒ 不带。
@@ -223,13 +223,14 @@ def _do_get(url: str, params: dict, use_proxy: bool) -> dict:
     if cookie:
         headers = {'Cookie': cookie}
     _respect_min_gap()                                    # ★v6.74 全进程节流线（跨通道统一）
-    em_auth.note_request(current_tier())
+    if billable:                                          # bootstrap 一次性请求不占日预算
+        em_auth.note_request(current_tier())
     resp = _session(use_proxy).get(url, params=params, headers=headers,
                                    timeout=EM_TIMEOUT_SECONDS)
     return resp.json() or {}
 
 
-def _http_get(url: str, params: dict, *, kind: str) -> dict:
+def _http_get(url: str, params: dict, *, kind: str, billable: bool = True) -> dict:
     """唯一 HTTP 出口：应用网络策略 → 发一次 → **代理报错则降级直连重试一次**。"""
     net_env.apply()
     mode = net_env.proxy_mode()
@@ -237,7 +238,10 @@ def _http_get(url: str, params: dict, *, kind: str) -> dict:
     if mode == 'proxy':
         use_proxy = True                      # 用户明说"只走代理" ⇒ 不降级
     try:
-        return _do_get(url, params, use_proxy)
+        # 默认路径保持旧签名（测试/旧代码在 _do_get 上打桩）；只有 bootstrap 才传新参
+        if billable:
+            return _do_get(url, params, use_proxy)
+        return _do_get(url, params, use_proxy, billable=False)
     except Exception as e:                    # noqa: BLE001 —— 分类后可能降级重试
         if not (use_proxy and mode == 'auto' and net_env.looks_like_proxy_error(e)):
             raise

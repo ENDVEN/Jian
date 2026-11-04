@@ -364,9 +364,11 @@ class DailySnapshotWorker(QThread):
         try:
             # 全市场（>=3000）才扫 56 页；500–2999 用 ulist 按池取，避免为小池拉全市场
             if len(self._symbols) >= 3000:
-                snap = service.fetch_market_snapshot(should_stop=lambda: self._cancel)
+                snap = service.fetch_market_snapshot(
+                    should_stop=lambda: self._cancel,
+                    fallback_symbols=self._symbols)
             else:
-                got = service.fetch_spot_snapshot(self._symbols)
+                got = service.fetch_spot_snapshot(self._symbols, allow_fallback=True)
                 snap = pd.DataFrame(list(got.values())) if got else pd.DataFrame()
             snap = normalize_snapshot(snap, asof)
             if self._cancel:

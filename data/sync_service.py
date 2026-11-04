@@ -402,18 +402,27 @@ class MarketSyncService:
     # ==========================================
     # ★v1.45 / §7-B11 后续：全市场当日快照（秒补“只差当天”的批量入口）
     # ==========================================
-    def fetch_spot_snapshot(self, symbols=None) -> dict:
+    def fetch_spot_snapshot(self, symbols=None, allow_fallback: bool = False) -> dict:
         """**按标的**批量取当天日线快照 → `{symbol: {open,high,low,close,volume,amount,turnover,outstanding_share,prev_close}}`。
 
         联网唯一出口（§9-H）：内部只调 `AkShareFeed.fetch_market_spot_daily(symbols)`（单位已在该层归一）。
         ★v6.69：**只抓清单里的标的**（100 只/请求）—— 旧写法是"全市场 56 页"，与行业分页同时开火
         ⇒ 把东财匿名额度自己打光（§11.5-100）。`symbols` 为空 ⇒ 不联网、回 `{}`。
         失败/空 ⇒ 回 `{}`（调用方据此诚实回退逐只，**绝不因快照挂了而报错中断整批**）。
+        ★2.06 / P2：`allow_fallback=True` 时东财空/失败后走新浪批量报价备源
+        （当前报价，不含 PE/PB/换手；只给日快照用）。默认关闭，保持旧路径确定性。
         """
         want = [str(s).strip() for s in (symbols or []) if str(s).strip()]
         if not want:
             return {}
         df = AkShareFeed.fetch_market_spot_daily(want)
+        if (df is None or df.empty or 'symbol' not in df.columns) and allow_fallback:
+            try:
+                from data.sina_market import fetch_batch_quotes
+                df = fetch_batch_quotes(want)
+            except Exception as e:  # noqa: BLE001 —— 备源失败仍按空表回
+                logger.info("新浪批量报价备源失败: %s", e)
+                df = pd.DataFrame()
         if df is None or df.empty or 'symbol' not in df.columns:
             return {}
         out = {}
@@ -423,14 +432,25 @@ class MarketSyncService:
                 out[sym] = rec
         return out
 
-    def fetch_market_snapshot(self, pz: int = 100, should_stop=None) -> pd.DataFrame:
+    def fetch_market_snapshot(self, pz: int = 100, should_stop=None,
+                              fallback_symbols=None) -> pd.DataFrame:
         """全市场当前日快照（东财 `clist` 56 页；只读、不落库）。
 
         ★2.05 / DATA-PLATFORM P1：日更的批量入口。实测 5563 行约 52s（匿名档）。
         失败返回已拿到的部分；空表表示一个都没拿到。日期由调用方用真交易日历赋。
+        ★2.06 / P2：东财空/失败且给了花名册时，走新浪批量报价备源（只当前价，
+        无 PE/PB/换手；够日快照用，不冒充完整报价）。
         """
         from data import em_market
-        return em_market.fetch_market_quotes(pz=pz, should_stop=should_stop)
+        df = em_market.fetch_market_quotes(pz=pz, should_stop=should_stop)
+        if (df is not None and not df.empty) or not fallback_symbols:
+            return df
+        try:
+            from data.sina_market import fetch_batch_quotes
+            return fetch_batch_quotes(fallback_symbols, should_stop=should_stop)
+        except Exception as e:  # noqa: BLE001 —— 备源失败仍按空表回
+            logger.info("全市场快照新浪备源失败: %s", e)
+            return pd.DataFrame()
 
     # ==========================================
     # 状态查询
