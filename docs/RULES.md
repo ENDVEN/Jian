@@ -28,13 +28,13 @@ verified: 2026-11-02
 
 | 项 | 值 |
 |---|---|
-| APP 版本 | **`2.04`**（三处同步 §9-A）。**版本详情不抄在这里** —— 见 `docs/STATUS.md` §1 与 `docs/history/recent.md`。 |
-| 上一版记录（滚动） | **`2.03`** 启动优化 P0 · **`2.02`** 测试基建 fastfail 根因修复 · 更早见 `docs/history/recent.md`。 |
+| APP 版本 | **`2.05`**（三处同步 §9-A）。**版本详情不抄在这里** —— 见 `docs/STATUS.md` §1 与 `docs/history/recent.md`。 |
+| 上一版记录（滚动） | **`2.04`** 测试提速 + 工程拆件 · **`2.03`** 启动优化 P0 · 更早见 `docs/history/recent.md`。 |
 | 文档版本 | **v6.88** 之后未再单独立版；文档纪律见 §10-14（唯一硬指标：本文件 < 100,000 字符）。 |
-| 最近三版 | **`2.04`** 测试提速 + 工程拆件（unit / 并行 runner / CI / workers 拆分）· **`2.03`** 启动优化 P0 · **`2.02`** 测试基建 fastfail 根因修复 |
-| **当前主线** | **以 `docs/STATUS.md` §4 为准**（本快照不抄顺序）。2026-11-04 起：**ETF/LOF 接入 P1-1…P1-8**（测试提速与 workers 拆件已随 2.04 收口）。 |
-| **断点** | **v2.04 已提交、未推送**（2026-11-04）= 测试提速 + 工程拆件：`tests/unit` **41 条**（0.05s）、`tests/run_smoke.py` 并行 **56–100s** + 慢段、CI `unit` job；`workers.py` 拆为 **58 行门面 + 7 个领域件**（scan/download/sync/backtest/imports/core/throttle，旧导入路径不变），另拆 `history_parts` / `fetch_messages` / `backtest_preview` / `scan_enrich_flow` / `scan_filters`。冒烟 **chart 1080/0 · overlay 1244/0**。2.02 的 fastfail 已修；挂死已用硬退出收口（仅测试脚本）。**下一步** = ETF/LOF P1-1…P1-8（`plans/active/ETF-LOF.md` §5）。 |
-| ⏭ 最高优先级（并行） | **ETF/LOF P1** → **§7-B17 组合剩余**：① **行业覆盖率**（实测 `industry_map` 仅 **302** 条 / 全市场 5169 只 ≈5.8%）· ② 多组合对比（用户未提）。 |
+| 最近三版 | **`2.05`** 数据底层 P1（日更快照 / benchmark / 117s）· **`2.04`** 测试提速 + 工程拆件 · **`2.03`** 启动优化 P0 |
+| **当前主线** | **以 `docs/STATUS.md` §4 为准**（本快照不抄顺序）。2026-11-05 起：**数据底层平台 P1 收尾 + P2 双通道**（`plans/active/DATA-PLATFORM.md`）；ETF/LOF 排后。 |
+| **断点** | **v2.05 已提交、未推送**（2026-11-05）= **数据底层 P0/P1 首轮**：`scripts/bench_data.py`（provider/存储 benchmark，存储选 **A 混合**）；`data/daily_store.py` + `DailySnapshotWorker`，全市场日更 **117s**（fetch 50.8 + 合并 66.3），100 只新旧路径逐位一致；`JIAN_BULK_DAILY=0` 回滚。**尚未做**：首次打开/后台补全队列、`MarketDataStore` 统一读门面、登录档 provider 实测。**下一步** = 这些 P1 收尾项。 |
+| ⏭ 最高优先级（并行） | **数据底层 P1 收尾**（首次打开/后台补全/读门面）→ **ETF/LOF P1** → **§7-B17 组合剩余**：① **行业覆盖率**（实测 `industry_map` 仅 **302** 条 / 全市场 5169 只 ≈5.8%）· ② 多组合对比（用户未提）。 |
 | 已知/备忘 | 样板底部指数状态栏**不做** · 卡片右上数字角标**不做**（用户 2026-10-27）· `portfolio_view.py` 纯显示件已拆 `ui/widgets/portfolio_parts.py`，`_build` / `_render_p1` 仍待拆（行数见 CODEMAP）· **市值权重 = 编辑时快照**（不是逐日重算；改完点「确定」才落盘）。 |
 | 待决 | **用户 2026-10-28 / 2026-11-03：不许私自提交** —— 版本号与提交时机由用户拍板。 |
 | ⏸ 另拍 | 下载偏快档（放宽到 K>3 或降 interval）仍待实测后另拍 → 见 §7-B11 与 §11.6 顶部。 |

@@ -423,6 +423,15 @@ class MarketSyncService:
                 out[sym] = rec
         return out
 
+    def fetch_market_snapshot(self, pz: int = 100, should_stop=None) -> pd.DataFrame:
+        """全市场当前日快照（东财 `clist` 56 页；只读、不落库）。
+
+        ★2.05 / DATA-PLATFORM P1：日更的批量入口。实测 5563 行约 52s（匿名档）。
+        失败返回已拿到的部分；空表表示一个都没拿到。日期由调用方用真交易日历赋。
+        """
+        from data import em_market
+        return em_market.fetch_market_quotes(pz=pz, should_stop=should_stop)
+
     # ==========================================
     # 状态查询
     # ==========================================

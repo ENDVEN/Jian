@@ -363,3 +363,22 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
    `backtest_preview.py`（回放）· `scan_enrich_flow.py`（补全调度）· `scan_filters.py`（阈值/帧准备）。
 
 **验证**：unit **41/0** · chart **1080/0** · overlay **1244/0**；并行 **56–100s**（逐个相加 89–150s）。
+
+## ★2.05 · 数据底层 P1：日更批量快照（2026-11-05 提交）
+
+**目标**：把全市场日更从“5000 次单只历史请求（约 80 分钟）”改为“批量快照 + 本地合并”。
+
+**改了什么**
+1. **benchmark**：新增 `scripts/bench_data.py`，实测 provider/并发与存储三布局；
+   存储最终选 **A 混合**（历史按 symbol + 每日快照）。
+2. **日快照**：`data/daily_store.py` 原子写/读 + `merge_row`；快照先落盘，再逐只合并。
+3. **批量入口**：`em_market.fetch_market_quotes`（clist 56 页）+ `MarketSyncService.fetch_market_snapshot`。
+4. **DailySnapshotWorker**：>=3000 只走 clist，500–2999 走 ulist；16 路本地合并；
+   缺口/除权/缺昨收退回单只 `refresh_one`，不抄错价。
+5. **回滚**：`JIAN_BULK_DAILY=0` 回退旧 `SyncWorker`；<500 只仍走旧路径。
+
+**实测（临时目录，不写用户库）**：全市场 fetch **50.8s** + 合并 **66.3s** = **117.1s**；
+5220 只写入，343 只停牌/无正价归 skipped/missing；100 只新旧路径
+`date/open/high/low/close/volume/amount` 逐位一致。
+
+**尚未完成**：首次打开/后台补全队列、`MarketDataStore` 统一读门面、登录档 provider 实测。

@@ -44,9 +44,10 @@ verified: auto
 | `data/akshare_feed.py` | — | 8 | 689 |
 | `data/annotations.py` | 用户手绘标注：对象模型 + 持久化 CRUD（§7-B3 ④ · P6）。 | 19 | 524 |
 | `data/backtest_archive.py` | 回测结果历史存档 (v1.37 / §7-A4) —— 每次回测落一份**不可变快照**。 | 9 | 556 |
+| `data/daily_store.py` | 日快照中转（★2.05 / DATA-PLATFORM P1）。 | 7 | 98 |
 | `data/data_feed.py` | 交易账单解析层 (Bill Parsing Layer)。 | 9 | 365 |
 | `data/em_auth.py` | 东财**登录态凭据**的唯一出口（★v6.73）—— 存储、有效性判据、Cookie 头、每日预算。 | 17 | 206 |
-| `data/em_market.py` | 东财 `push2` 的**两条取数通道**（★v6.69）—— 全仓库唯一的东财行情明细出口。 | 26 | 496 |
+| `data/em_market.py` | 东财 `push2` 的**两条取数通道**（★v6.69）—— 全仓库唯一的东财行情明细出口。 | 27 | 519 |
 | `data/em_throttle.py` | 东财取数的**退避闸门**（★v6.69 起；★v6.74 改为**按通道**）—— 全仓库唯一出处。 | 16 | 169 |
 | `data/feed_cells.py` | 交割单解析的**单元格 / 工作表工具层**（1.25 自 `data/data_feed.py` 拆出 · §9-L）。 | 12 | 208 |
 | `data/feed_fifo.py` | 交割单解析的**数据模型 + FIFO 配对引擎**（1.25 自 `data/data_feed.py` 拆出 · §9-L）。 | 7 | 218 |
@@ -68,7 +69,7 @@ verified: auto
 | `data/storage_maintenance.py` | 存储与维护（★v6.75 · §7-B13 · **S2-5**）—— 数据目录 / 缓存清理 / 配置导出导入的**唯一实现处**。 | 9 | 143 |
 | `data/strategy_store.py` | 回测策略本地持久化 (JSON, 位于用户数据目录，物理隔离不随代码分发)。 | 8 | 183 |
 | `data/sweep_archive.py` | 参数研究快照存档（§7-B15 SW-4）· 照抄 `data/backtest_archive.py` 范式。 | 6 | 281 |
-| `data/sync_service.py` | 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。 | 19 | 787 |
+| `data/sync_service.py` | 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。 | 19 | 794 |
 | `data/trade_calendar.py` | A 股交易日历获取件（v6.45 / §7-B10 · 用户拍板引入真交易日历）。 | 9 | 134 |
 | `data/watchlist_change.py` | 自选分组的「组合当日涨跌」（§7-B8 R3）—— **零 Qt**：纯函数 + 一层带 TTL 的快照缓存。 | 7 | 155 |
 | `data/watchlist_store.py` | 自选股（Watchlist）—— 用户关心的标的清单，JSON 原子写（§7-B3 P8）。 | 5 | 340 |
@@ -76,6 +77,7 @@ verified: auto
 | `models/__init__.py` | — | 0 | 0 |
 | `models/trade.py` | — | 1 | 103 |
 | `scripts/analyze_index_regimes.py` | 上证指数切块 · 离线脚本（§7-B15 SW-2 · 方案书 §11 决议 3）。 | 1 | 73 |
+| `scripts/bench_data.py` | 数据下载 / 存储布局基准（★2.05 / DATA-PLATFORM P0）。 | 19 | 460 |
 | `scripts/check_docs.py` | 文档契约自检（秒级、不依赖 Qt）：写完/搬完文档跑一次。 | 9 | 100 |
 | `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 4 | 81 |
 | `scripts/probe_startup.py` | 启动耗时探针（★2.03 / ARCH-PERF P0-5）—— **同一把尺子**，不参与运行。 | 1 | 63 |
@@ -85,6 +87,7 @@ verified: auto
 | `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 35 | 8916 |
 | `tests/unit/test_core_math_and_store.py` | 指标 / 净额 / 参数文本 / 组合成分 diff 的纯函数测试（★2.04 / B1 第四层）。 | 4 | 105 |
 | `tests/unit/test_core_p0.py` | 纯函数单元测试（★2.04 / B1 测试分层第一层）。 | 4 | 91 |
+| `tests/unit/test_daily_store.py` | — | 1 | 73 |
 | `tests/unit/test_portfolio_and_merge.py` | 组合统计 / 横截面增量续接的纯函数测试（★2.04 / B1 第三层）。 | 6 | 102 |
 | `tests/unit/test_scan_and_texts.py` | 缓存键 / 数据版本 / 批量耗时文案 / 交易日定稿的纯函数测试（★2.04 / B1 第二层）。 | 3 | 102 |
 | `ui/__init__.py` | — | 0 | 0 |
@@ -99,7 +102,7 @@ verified: auto
 | `ui/dialogs/manual_entry.py` | — | 1 | 181 |
 | `ui/dialogs/portfolio_edit.py` | 🧺 组合「编辑成分」对话框（★1.87 补漏：**手工增删改成分**）。 | 1 | 439 |
 | `ui/dialogs/watchlist_picker.py` | 从自选股里挑选 → 批量移入某个分组（§7-B8 R2 的**第二种添加入口**）。 | 1 | 98 |
-| `ui/download_hub.py` | 全局后台下载调度器 (v1.43 · §7-B11) —— 把"下载任务"的归属从**弹窗**搬到**主窗口**。 | 2 | 429 |
+| `ui/download_hub.py` | 全局后台下载调度器 (v1.43 · §7-B11) —— 把"下载任务"的归属从**弹窗**搬到**主窗口**。 | 2 | 437 |
 | `ui/download_jobs.py` | 下载任务的"数据与判据"件（★v6.70 / §4 体积债：从 `ui/download_hub.py` 拆出）。 | 3 | 168 |
 | `ui/main_window.py` | — | 2 | 921 |
 | `ui/settings_registry.py` | 设置项的**唯一真源**（★v6.73 / §7-B13 · S2 路径表 **S2-0**）。 | 35 | 567 |
@@ -215,13 +218,13 @@ verified: auto
 | `ui/widgets/watch_row_delegate.py` | 自选清单的**行绘制**（v6.24 · §7-B8 R15 / 2b 余项）：`名称 · 代码（右对齐）· 涨跌列`。 | 3 | 115 |
 | `ui/widgets/watch_sort_list.py` | 自选清单的**拖拽排序列表**（v6.24 · §7-B8 R15）—— 用"三道闸"防误触。 | 1 | 70 |
 | `ui/widgets/yearly_review.py` | — | 1 | 124 |
-| `ui/workers.py` | 全 app 的 QThread 门面（★2.04 / P2 拆件后只做再导出）。 | 0 | 52 |
+| `ui/workers.py` | 全 app 的 QThread 门面（★2.04 / P2 拆件后只做再导出）。 | 0 | 53 |
 | `ui/workers_backtest.py` | 回测 / 参数扫描 / 组合池化类 QThread（★2.04 / P2 拆件）。 | 3 | 150 |
 | `ui/workers_core.py` | 任务竞态守卫（★2.04 / P2 拆件）。 | 1 | 34 |
-| `ui/workers_download.py` | 批量下载 / 网络自检 / 缓存清理 / 更新检查类 QThread（★2.04 / P2 拆件）。 | 5 | 347 |
+| `ui/workers_download.py` | 批量下载 / 网络自检 / 缓存清理 / 更新检查类 QThread（★2.04 / P2 拆件）。 | 6 | 495 |
 | `ui/workers_imports.py` | 期货交割单解析 worker（★2.04 / P2 拆件）。 | 1 | 28 |
 | `ui/workers_scan.py` | 扫描 / 成分股 / 就绪度 / 日历类 QThread（★2.04 / P2 拆件）。 | 6 | 171 |
 | `ui/workers_sync.py` | 同步类小 worker（★2.04 / P2 拆件）。 | 6 | 158 |
 | `ui/workers_throttle.py` | 下载节流 / 交易日历注入的**无 Qt 辅助件**（★2.04 / P2 拆件）。 | 4 | 98 |
 
-> 共 210 个 .py 文件。
+> 共 213 个 .py 文件。

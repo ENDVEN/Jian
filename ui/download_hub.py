@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import deque
 from typing import Iterable
 
@@ -37,7 +38,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from core.preferences import preferences
 from data.sync_service import (DEFAULT_DOWNLOAD_CONCURRENCY, MAX_DOWNLOAD_CONCURRENCY,
                                ZONE_KLINE, ThrottlePolicy, format_duration)
-from ui.workers import SyncWorker
+from ui.workers import DailySnapshotWorker, SyncWorker
 
 # ★v6.70 / §4 体积债：任务形状、状态口径、单只互斥已拆到 `ui/download_jobs.py`
 #   （纯搬家）。★1.59/§7-B14：这里的**过渡再导出已撤** —— 外部调用方一律直连
@@ -346,8 +347,15 @@ class DownloadHub(QObject):
         job.status = STATUS_RUNNING
         self._running = job
         self._set_active(True)
-        worker = SyncWorker(job.symbols, zone=job.zone, force_full=job.force_full,
-                            min_date=job.min_date, policy=job.policy, parent=self)
+        # ★2.05 / DATA-PLATFORM P1：全市场日更走批量快照（500 只以下仍走逐只，
+        #   保留单只/小池原有的确定性；强全量仍走 SyncWorker）。
+        if (os.environ.get("JIAN_BULK_DAILY", "1") != "0"
+                and job.zone == ZONE_KLINE and not job.force_full
+                and len(job.symbols) >= 500):
+            worker = DailySnapshotWorker(job.symbols, policy=job.policy, parent=self)
+        else:
+            worker = SyncWorker(job.symbols, zone=job.zone, force_full=job.force_full,
+                                min_date=job.min_date, policy=job.policy, parent=self)
         worker.progress.connect(self._on_progress)
         worker.failed.connect(self._on_failed)
         worker.finished.connect(self._on_finished)

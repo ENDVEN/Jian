@@ -273,14 +273,40 @@ def _record_failure(kind: str, err) -> str:
 # ==========================================
 # HTTP 边界（**测试只打桩这两个函数**，编排逻辑一律可离网验证）
 # ==========================================
-def clist_page(page: int, pz: int = EM_PAGE_SIZE) -> tuple:
+def clist_page(page: int, pz: int = EM_PAGE_SIZE, fields: str = None) -> tuple:
     """取 `clist` 一页 ⇒ `(rows, total)`；网络/接口异常**上抛**给编排层去记退避。"""
     params = {"pn": max(1, int(page)), "pz": max(1, int(pz)), "po": 1, "np": 1,
               "ut": EM_UT, "fltt": 2, "invt": 2, "fid": "f12", "fs": EM_FS_A,
-              "fields": INDUSTRY_FIELDS}
+              "fields": fields or INDUSTRY_FIELDS}
     payload = _http_get(EM_CLIST_URL, params, kind='clist')
     data = (payload or {}).get("data") or {}
     return (data.get("diff") or []), int(data.get("total") or 0)
+
+
+def fetch_market_quotes(pz: int = EM_PAGE_SIZE, should_stop=None) -> pd.DataFrame:
+    """全市场**当前日快照**（`clist` 分页，字段 = 报价列）。
+
+    只读、不落库；失败返回已拿到的部分（空表 = 一个都没拿到）。
+    56 页 / 5563 行实测约 52s（匿名档）；调用方负责“是否落成日快照”。
+    """
+    frames = []
+    page = 1
+    total = 0
+    while True:
+        if should_stop is not None and should_stop():
+            break
+        rows, total = clist_page(page, pz, fields=QUOTE_FIELDS)
+        if not rows:
+            break
+        frames.append(rows_to_quotes(rows))
+        if page * pz >= total:
+            break
+        page += 1
+    got = [f for f in frames if f is not None and not f.empty]
+    if not got:
+        return empty_quotes()
+    return pd.concat(got, ignore_index=True).drop_duplicates(
+        subset=["symbol"], keep="last").reset_index(drop=True)
 
 
 def ulist_page(codes) -> list:

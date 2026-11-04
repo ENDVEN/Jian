@@ -17,23 +17,23 @@ verified: 2026-11-02
 
 | 项 | 值 |
 |---|---|
-| 版本 | **2.04**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
-| HEAD | 本版提交（`git log -1`）· `2.04 测试提速 工程拆件 CI单测` |
-| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **3 个提交**：2.02 / 2.03 / 2.04） |
-| 工作区 | ✅ 干净（2.04 提交后） |
-| 最近三版 | `2.04` 测试提速 + 工程拆件（unit / 并行 runner / CI / workers 拆分）· `2.03` 启动优化 P0 · `2.02` 测试基建 fastfail 根因修复 |
+| 版本 | **2.05**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
+| HEAD | 本版提交（`git log -1`）· `2.05 数据底层P1 日更快照 下载提速` |
+| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **4 个提交**：2.02 / 2.03 / 2.04 / 2.05） |
+| 工作区 | ✅ 干净（2.05 提交后） |
+| 最近三版 | `2.05` 数据底层 P1（日更快照 / benchmark / 117s）· `2.04` 测试提速 + 工程拆件 · `2.03` 启动优化 P0 |
 
 ---
 
-## 2. 冒烟基线（最近一次全绿，2026-11-04）
+## 2. 冒烟基线（最近一次全绿，2026-11-05）
 
 | 命令 | 结果 |
 |---|---|
 | `python -u tests/smoke_chart.py` | **1080 / 0**（+4 条 P0 内核断言） |
 | `python -u tests/smoke_pages_overlay.py` | **1244 / 0**（+5 条惰性建页断言） |
 | `py tests/run_smoke.py`（并行） | **56–100s**（实测 56.3 / 80.5 / 100.2s；逐个相加 88.7–150.1s），两份均 0 失败 |
-| `py -m unittest discover -s tests/unit -v` | **41 tests / 0.05s**（日期 / roster / footer / 缓存键 / 文案 / 组合 / merge_tail / 指标与净额 / 风险与格式化） |
-| `.github/workflows/ci.yml` | `unit` job：41 条，**不读数据湖、不联网**；冒烟仍本地跑 |
+| `py -m unittest discover -s tests/unit -v` | **45 tests / 0.10s**（日期 / roster / footer / 缓存键 / 文案 / 组合 / merge_tail / 指标与净额 / 风险与格式化 / 日快照） |
+| `.github/workflows/ci.yml` | `unit` job：45 条，**不读数据湖、不联网**；冒烟仍本地跑 |
 
 > ⚠ **已知假红**：本机有下载在跑时（数据湖 parquet 的 mtime 每几秒变），两条"缓存命中"断言必红（§11.5-79）。**先停下载再跑**。
 > ✅ **fastfail 已收口**（2026-11-03）：根因 = `ReadinessFlow.start()` 覆盖 `self._probe` 时旧 `ReadinessWorker` 仍在运行 ⇒ 引用归零 ⇒ QThread 析构 ⇒ `0xC0000409`。修法见 `plans/active/TEST-HARNESS.md` §4；连跑 10/10 通过。
@@ -41,10 +41,11 @@ verified: 2026-11-02
 
 ---
 
-## 3. 在途任务（active，三件）
+## 3. 在途任务（active，四件）
 
 | 任务 | 方案书 | 状态 | 一句话 |
 |---|---|---|---|
+| **数据底层平台与下载提速** | `docs/plans/active/DATA-PLATFORM.md` | **P0 完成；P1 首轮已落地**（2.05） | 全市场日更 **117s**（fetch 50.8 + 合并 66.3）· 100 只 parity 通过；首次打开/后台补全/读门面待做；存储选 **A 混合** |
 | **场内基金 ETF/LOF 接入** | `docs/plans/active/ETF-LOF.md` | **未实现**，方案已拍板 | 只做场内 ETF/LOF；`etf_daily` 独立分区；用新浪分红表**本地等比前复权**补跳空；不进 A 股扫描/广度 |
 | **架构与性能（启动）优化** | `docs/plans/active/ARCH-PERF.md` | **P0 已完成**（2.03）· P1/P2 未做 | 构造 3.6s→0.27s；已建页面 9→1；真机探针 **2.145s**（目标 ≤2.2s） |
 | **测试基建** | `docs/plans/active/TEST-HARNESS.md` | **进行中**（2.02 已提交） | fastfail 10/10 绿；挂死已复现并收口（存活 QThread + `ExitProcess` 死锁 ⇒ 硬退出）；2 个 ScanWorker 来源另立 |
@@ -53,20 +54,28 @@ verified: 2026-11-02
 
 ## 4. 下一步（按顺序，别跳）
 
-### 已完成（2.02 / 2.03 / 2.04）
+### 已完成（2.02 / 2.03 / 2.04 / 2.05）
 - **测试基建 S1–S6**（2.02）：fastfail 根因修复 + 挂死改硬退出；仅剩"2 个 ScanWorker 来源"（测试侧）。
 - **启动优化 P0 四件**（2.03）：惰性建页 / roster 向量化 / 日历批量 / footer LRU + `probe_startup.py`；
   行为断言 9 条（chart +4、overlay +5）；实测 3.6s → 0.27s、9 → 1 页、真机探针 **2.145s**。
 - **测试提速 + 工程拆件**（2.04）：`tests/unit` **41 条**（0.05s）+ `tests/run_smoke.py`
   并行 **56–100s** + CI `unit` job；`workers.py` 拆为 58 行门面 + 7 个领域件，运行历史/
   下载文案/横截面/回测预览等大文件按领域拆分，旧导入路径不变。
+- **数据底层 P0/P1**（2.05）：`bench_data.py` 实测边界；日更改批量快照 + 立即合并，
+  全市场 **117s**（旧约 80 分钟）；100 只新旧路径逐位一致；`JIAN_BULK_DAILY=0` 可回滚。
 
-### P0 · 下一件：ETF/LOF 接入（≈1.5 轮）
+### P0 · 下一件：数据底层平台与下载提速（≈2–4 轮）
+- `docs/plans/active/DATA-PLATFORM.md`：P0 benchmark（provider 矩阵 + 存储三布局）→
+  P1 日更批量快照（5000 只目标 <2 分钟）→ 首次打开可用、后台补全量 → P2 匿名/登录双通道。
+- 关键实测：东财 `clist` 全市场 5563 行 **52.4s**；新浪单只日线 K=8 仍只有 **1.04 只/秒**。
+- 候选源（腾讯/网易/Baostock）允许引入实测；存储按 benchmark 直接选优。
+
+### P1 · ETF/LOF 接入（等数据层 P1 落定后，≈1.5 轮）
 - `docs/plans/active/ETF-LOF.md` §5 的 **P1-1 … P1-8**：分区/schema → 基金取数 → 名册独立表 →
   下载入口 → 组合接入 → 数据管理分区名 → 本地等比前复权 → 10 条断言 + 文档。
 - 前置已具备：A 股日历复用、`load_daily` 统一出口、组合页已接 `load_daily`。
 
-### P1 · 启动优化第二批（ARCH-PERF P1，≈0.5 轮）
+### P2 · 启动优化第二批（ARCH-PERF P1，≈0.5 轮）
 1. `data/akshare_feed.py` 顶层 `import akshare` → 惰性（启动省 ~0.4s）；
 2. `ui/views/portfolio_view.py` `refresh()` 延迟到首次可见 + `_save_ui` 300ms 防抖；
 3. `data/market_db.py` `get_lake()` 单例（去掉每次 `new` + `makedirs`）。

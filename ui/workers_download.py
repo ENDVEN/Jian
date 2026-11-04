@@ -5,21 +5,23 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from data.daily_store import merge_row, normalize_snapshot, write_snapshot
 from data.sync_service import (MarketSyncService, ThrottlePolicy, ZONE_KLINE,
                                is_daily_bar_settled, network_self_check, short_fetch_reason)
-from data.trade_calendar import previous_trading_day
+from data.trade_calendar import (latest_settled_trading_day, previous_trading_day)
 from ui.workers_throttle import (RateGovernor, _load_calendar_safely,
                                  inject_expected_latest)
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["SyncWorker", "NetSelfCheckWorker", "CacheCleanWorker",
-           "UpdateCheckWorker"]
+__all__ = ["SyncWorker", "DailySnapshotWorker", "NetSelfCheckWorker",
+           "CacheCleanWorker", "UpdateCheckWorker"]
 
 
 def _resolve_worker_dep(name: str, fallback):
@@ -283,6 +285,165 @@ class SyncWorker(QThread):
             ex.shutdown(wait=True, cancel_futures=_stopping)
         if self._cancel and not stats.get("aborted"):
             stats.update(aborted=True, aborted_by="cancel")   # 与串行一致：用户中断单独归类
+
+
+class DailySnapshotWorker(QThread):
+    """★2.05 / DATA-PLATFORM P1：**全市场日快照** → 每只一行合并进历史。
+
+    与 `SyncWorker` 的区别：不再逐只发网络请求。全市场走东财 `clist`（56 页 / 约 52s），
+    小池走 `ulist`（100 只/批）；随后只做本地文件合并（实测 5000 只约 30–50s）。
+    这样日更总耗时目标 <2 分钟，而旧路径是 5000 次单只历史请求（约 80 分钟）。
+
+    安全口径：
+    - 快照先原子落盘（可恢复/审计），再逐只合并；
+    - 只有“本地末日 == 上一交易日 且 快照昨收 == 本地收盘”才直接追加；
+    - 缺口 / 除权 / 缺昨收 ⇒ 退回 `refresh_one` 单只修复，绝不把错误价格抄进历史；
+    - 本地已 >= asof ⇒ 跳过。
+    """
+
+    progress = pyqtSignal(int, int, str)
+    failed = pyqtSignal(str, str)
+    finished = pyqtSignal(dict)
+
+    def __init__(self, symbols, policy: ThrottlePolicy = None, parent=None):
+        super().__init__(parent)
+        self._symbols = [str(s).strip() for s in (symbols or []) if str(s).strip()]
+        self._policy = policy or ThrottlePolicy()
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    @staticmethod
+    def _asof(calendar):
+        try:
+            d = latest_settled_trading_day(calendar=calendar)
+        except Exception:  # noqa: BLE001 —— 日历坏了就回退今天，绝不阻断
+            d = None
+        return pd.Timestamp(d).normalize() if d is not None else pd.Timestamp.today().normalize()
+
+    @staticmethod
+    def _can_append(old: pd.DataFrame, rec: dict, asof: pd.Timestamp, calendar) -> bool:
+        """只有“本地恰好缺 asof 这一天、且昨收一致”才允许直接追加。"""
+        if old is None or len(old) == 0:
+            return True                      # 首次：先落当天一根，历史由后台补
+        try:
+            data = old.copy()
+            data["date"] = pd.to_datetime(data["date"], errors="coerce")
+            data = data.dropna(subset=["date"]).sort_values("date")
+            if data.empty:
+                return True
+            last = data.iloc[-1]
+            last_day = pd.Timestamp(last["date"]).normalize()
+            if last_day >= asof:
+                return False
+            prev = previous_trading_day(asof.date(), calendar)
+            if prev is None or last_day != pd.Timestamp(prev).normalize():
+                return False
+            prev_close = rec.get("prev_close")
+            last_close = last.get("close")
+            if prev_close is None or last_close is None:
+                return False
+            prev_close = float(prev_close)
+            last_close = float(last_close)
+            if last_close <= 0:
+                return False
+            return abs(prev_close - last_close) / last_close <= 1e-3
+        except Exception:  # noqa: BLE001 —— 判不了就走单只真拉
+            return False
+
+    def run(self):
+        service = _resolve_worker_dep("MarketSyncService", MarketSyncService)()
+        calendar = _load_calendar_safely()
+        policy = inject_expected_latest(self._policy, calendar=calendar)
+        asof = self._asof(calendar)
+        stats = {"ok": 0, "fail": 0, "skipped": 0, "added": 0,
+                 "aborted": False, "aborted_by": "", "symbols_failed": [],
+                 "symbols_attempted": [], "total": len(self._symbols),
+                 "mode": "daily_snapshot", "asof": asof.strftime("%Y-%m-%d")}
+        try:
+            # 全市场（>=3000）才扫 56 页；500–2999 用 ulist 按池取，避免为小池拉全市场
+            if len(self._symbols) >= 3000:
+                snap = service.fetch_market_snapshot(should_stop=lambda: self._cancel)
+            else:
+                got = service.fetch_spot_snapshot(self._symbols)
+                snap = pd.DataFrame(list(got.values())) if got else pd.DataFrame()
+            snap = normalize_snapshot(snap, asof)
+            if self._cancel:
+                stats.update(aborted=True, aborted_by="cancel")
+                self.finished.emit(stats)
+                return
+            if snap.empty:
+                stats["fail"] = len(self._symbols)
+                self.failed.emit("", "日快照为空（网络/接口/非交易日）")
+                self.finished.emit(stats)
+                return
+            if not write_snapshot(snap, asof):
+                stats["fail"] = len(self._symbols)
+                self.failed.emit("", "日快照落盘失败")
+                self.finished.emit(stats)
+                return
+
+            want = set(self._symbols)
+            snap = snap[snap["symbol"].isin(want)].reset_index(drop=True)
+            total = len(snap)
+            lock = threading.Lock()
+
+            def _merge_one(rec):
+                sym = str(rec.get("symbol") or "").strip()
+                try:
+                    if self._cancel:
+                        return sym, "skipped", 0, None
+                    old = service.lake.load_data(ZONE_KLINE, sym)
+                    if old is not None and len(old) and "date" in old.columns:
+                        last_day = pd.to_datetime(old["date"], errors="coerce").max()
+                        if pd.notna(last_day) and pd.Timestamp(last_day).normalize() >= asof:
+                            return sym, "skipped", 0, None
+                    if self._can_append(old, rec, asof, calendar):
+                        merged = merge_row(old, pd.Series(rec))
+                        if not service.lake.save_data(ZONE_KLINE, sym, merged):
+                            return sym, "fail", 0, "落盘失败"
+                        return sym, "ok", 1, None
+                    # 缺口 / 除权 / 缺昨收：走单只真实增量，宁可慢也不抄错
+                    result = service.refresh_one(sym, zone=ZONE_KLINE, policy=policy)
+                    if result.get("ok"):
+                        return sym, "ok", int(result.get("added", 0)), None
+                    return sym, "fail", 0, short_fetch_reason(result)
+                except Exception as e:  # noqa: BLE001 —— 单只失败不废整批
+                    return sym, "fail", 0, f"{type(e).__name__}: {e}"
+
+            with ThreadPoolExecutor(max_workers=min(16, max(1, total))) as ex:
+                futures = [ex.submit(_merge_one, rec) for rec in snap.to_dict("records")]
+                for index, fut in enumerate(as_completed(futures), start=1):
+                    sym, status, added, err = fut.result()
+                    with lock:
+                        stats["symbols_attempted"].append(sym)
+                        if status == "ok":
+                            stats["ok"] += 1
+                            stats["added"] += added
+                        elif status == "skipped":
+                            stats["skipped"] += 1
+                        else:
+                            stats["fail"] += 1
+                            stats["symbols_failed"].append(sym)
+                    self.progress.emit(index, total, sym)
+                    if err:
+                        self.failed.emit(sym, err)
+                    if self._cancel:
+                        stats.update(aborted=True, aborted_by="cancel")
+                        break
+            missing = [s for s in self._symbols if s not in set(snap["symbol"])]
+            if missing:
+                # 停牌/退市/快照无行 ≠ 下载失败；如实记 missing，不制造 343 条假失败
+                stats["skipped"] += len(missing)
+                stats["symbols_missing"] = missing
+        except Exception as e:  # noqa: BLE001 —— 线程内兜底，回包必须有
+            logger.error("日快照批量任务异常: %s", e)
+            stats["fail"] = max(1, len(self._symbols) - stats["ok"] - stats["skipped"])
+            stats["aborted"] = True
+            stats["aborted_by"] = "error"
+            self.failed.emit("", f"{type(e).__name__}: {e}")
+        self.finished.emit(stats)
 
 
 class NetSelfCheckWorker(QThread):

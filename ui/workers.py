@@ -34,8 +34,9 @@ from data.trade_calendar import load_or_fetch, previous_trading_day  # noqa: F40
 from ui.workers_backtest import (BacktestRunWorker, ParamSweepWorker,
                                  PoolSweepWorker)
 from ui.workers_core import JobGuard
-from ui.workers_download import (CacheCleanWorker, NetSelfCheckWorker,
-                                 SyncWorker, UpdateCheckWorker)
+from ui.workers_download import (CacheCleanWorker, DailySnapshotWorker,
+                                 NetSelfCheckWorker, SyncWorker,
+                                 UpdateCheckWorker)
 from ui.workers_imports import FuturesImportWorker
 from ui.workers_scan import (CalendarWorker, ConstituentsWorker,
                              CrossSectionWorker, ReadinessWorker, ScanWorker)
@@ -48,7 +49,7 @@ from ui.workers_throttle import (RateGovernor, _CAL_UNSET, _load_calendar_safely
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "ScanWorker", "SyncWorker", "RosterSyncWorker", "SingleSyncWorker",
+    "ScanWorker", "SyncWorker", "DailySnapshotWorker", "RosterSyncWorker", "SingleSyncWorker",
     "SpotValuationWorker", "IndustryMapWorker", "IndustryPoolWorker",
     "NetSelfCheckWorker", "CacheCleanWorker", "UpdateCheckWorker",
     "BacktestRunWorker", "ParamSweepWorker", "PoolSweepWorker",
