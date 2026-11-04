@@ -43,8 +43,9 @@ verified: auto
 | `data/__init__.py` | — | 0 | 0 |
 | `data/akshare_feed.py` | — | 8 | 689 |
 | `data/annotations.py` | 用户手绘标注：对象模型 + 持久化 CRUD（§7-B3 ④ · P6）。 | 19 | 524 |
+| `data/backfill.py` | 历史补全计划（★2.05 / DATA-PLATFORM P1）。 | 4 | 109 |
 | `data/backtest_archive.py` | 回测结果历史存档 (v1.37 / §7-A4) —— 每次回测落一份**不可变快照**。 | 9 | 556 |
-| `data/daily_store.py` | 日快照中转（★2.05 / DATA-PLATFORM P1）。 | 7 | 98 |
+| `data/daily_store.py` | 日快照中转（★2.05 / DATA-PLATFORM P1）。 | 7 | 116 |
 | `data/data_feed.py` | 交易账单解析层 (Bill Parsing Layer)。 | 9 | 365 |
 | `data/em_auth.py` | 东财**登录态凭据**的唯一出口（★v6.73）—— 存储、有效性判据、Cookie 头、每日预算。 | 17 | 206 |
 | `data/em_market.py` | 东财 `push2` 的**两条取数通道**（★v6.69）—— 全仓库唯一的东财行情明细出口。 | 27 | 519 |
@@ -60,6 +61,7 @@ verified: auto
 | `data/industry_store.py` | M2 结果表「细分行业」本地缓存 (JSON，位于用户数据目录，物理隔离不随代码分发)。 | 2 | 79 |
 | `data/lake_schema.py` | 数据湖**列合约**（★1.78 · §9.1 收口：让"湖里有哪些列算数"由**一处**说了算）。 | 3 | 69 |
 | `data/market_db.py` | — | 2 | 208 |
+| `data/market_store.py` | 统一读门面（★2.05 / DATA-PLATFORM P1）。 | 1 | 50 |
 | `data/net_env.py` | 行情取数的**网络环境策略**（★v6.72）—— **地址族**与**代理指纹**两件事的唯一出处。 | 11 | 175 |
 | `data/portfolio_store.py` | 🧺 组合的**存储层**（★1.85 / §7-B17 P0）。 | 7 | 216 |
 | `data/readiness.py` | 就绪度体检（§7-B1/B2 主案 D6-1 · v6.39）—— 扫描之前，先告诉用户 | 6 | 228 |
@@ -69,7 +71,7 @@ verified: auto
 | `data/storage_maintenance.py` | 存储与维护（★v6.75 · §7-B13 · **S2-5**）—— 数据目录 / 缓存清理 / 配置导出导入的**唯一实现处**。 | 9 | 143 |
 | `data/strategy_store.py` | 回测策略本地持久化 (JSON, 位于用户数据目录，物理隔离不随代码分发)。 | 8 | 183 |
 | `data/sweep_archive.py` | 参数研究快照存档（§7-B15 SW-4）· 照抄 `data/backtest_archive.py` 范式。 | 6 | 281 |
-| `data/sync_service.py` | 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。 | 19 | 794 |
+| `data/sync_service.py` | 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。 | 19 | 812 |
 | `data/trade_calendar.py` | A 股交易日历获取件（v6.45 / §7-B10 · 用户拍板引入真交易日历）。 | 9 | 134 |
 | `data/watchlist_change.py` | 自选分组的「组合当日涨跌」（§7-B8 R3）—— **零 Qt**：纯函数 + 一层带 TTL 的快照缓存。 | 7 | 155 |
 | `data/watchlist_store.py` | 自选股（Watchlist）—— 用户关心的标的清单，JSON 原子写（§7-B3 P8）。 | 5 | 340 |
@@ -82,12 +84,14 @@ verified: auto
 | `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 4 | 81 |
 | `scripts/probe_startup.py` | 启动耗时探针（★2.03 / ARCH-PERF P0-5）—— **同一把尺子**，不参与运行。 | 1 | 63 |
 | `scripts/sync_roster.py` | — | 2 | 37 |
-| `tests/run_smoke.py` | 一键跑两份冒烟（默认**并行**）+ 分段耗时 + 紧凑汇总（★2.04 / B1 测试提速）。 | 6 | 242 |
-| `tests/smoke_chart.py` | — | 14 | 5840 |
-| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 35 | 8916 |
+| `tests/run_smoke.py` | 一键跑两份冒烟（默认**并行**）+ 分段耗时 + 紧凑汇总（★2.04 / B1 测试提速）。 | 6 | 243 |
+| `tests/smoke_chart.py` | — | 14 | 5842 |
+| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 35 | 8918 |
+| `tests/unit/test_backfill.py` | — | 2 | 64 |
 | `tests/unit/test_core_math_and_store.py` | 指标 / 净额 / 参数文本 / 组合成分 diff 的纯函数测试（★2.04 / B1 第四层）。 | 4 | 105 |
 | `tests/unit/test_core_p0.py` | 纯函数单元测试（★2.04 / B1 测试分层第一层）。 | 4 | 91 |
 | `tests/unit/test_daily_store.py` | — | 1 | 73 |
+| `tests/unit/test_market_store.py` | — | 1 | 66 |
 | `tests/unit/test_portfolio_and_merge.py` | 组合统计 / 横截面增量续接的纯函数测试（★2.04 / B1 第三层）。 | 6 | 102 |
 | `tests/unit/test_scan_and_texts.py` | 缓存键 / 数据版本 / 批量耗时文案 / 交易日定稿的纯函数测试（★2.04 / B1 第二层）。 | 3 | 102 |
 | `ui/__init__.py` | — | 0 | 0 |
@@ -102,9 +106,9 @@ verified: auto
 | `ui/dialogs/manual_entry.py` | — | 1 | 181 |
 | `ui/dialogs/portfolio_edit.py` | 🧺 组合「编辑成分」对话框（★1.87 补漏：**手工增删改成分**）。 | 1 | 439 |
 | `ui/dialogs/watchlist_picker.py` | 从自选股里挑选 → 批量移入某个分组（§7-B8 R2 的**第二种添加入口**）。 | 1 | 98 |
-| `ui/download_hub.py` | 全局后台下载调度器 (v1.43 · §7-B11) —— 把"下载任务"的归属从**弹窗**搬到**主窗口**。 | 2 | 437 |
+| `ui/download_hub.py` | 全局后台下载调度器 (v1.43 · §7-B11) —— 把"下载任务"的归属从**弹窗**搬到**主窗口**。 | 2 | 456 |
 | `ui/download_jobs.py` | 下载任务的"数据与判据"件（★v6.70 / §4 体积债：从 `ui/download_hub.py` 拆出）。 | 3 | 168 |
-| `ui/main_window.py` | — | 2 | 921 |
+| `ui/main_window.py` | — | 2 | 974 |
 | `ui/settings_registry.py` | 设置项的**唯一真源**（★v6.73 / §7-B13 · S2 路径表 **S2-0**）。 | 35 | 567 |
 | `ui/views/__init__.py` | — | 0 | 0 |
 | `ui/views/backtest.py` | 📐 市场回测 视图 —— 策略工作台（UI 1.22 = 「样板 A」：摘要条 + 右侧遮罩抽屉 + 结果吃满）。 | 2 | 876 |
@@ -112,7 +116,7 @@ verified: auto
 | `ui/views/backtest_module.py` | 📐 市场回测 —— 模块容器（子页全部上线）： | 1 | 64 |
 | `ui/views/breadth_view.py` | 📊 M3「广度统计」—— 页面本体（§7-B1/B2 主案 STEP 5）。 | 1 | 330 |
 | `ui/views/dashboard.py` | — | 1 | 247 |
-| `ui/views/data_manager.py` | 🗄 数据管理 (v5.8 · §7-A3；v5.10 UX 加固；v5.11 勾选重设计) | 2 | 537 |
+| `ui/views/data_manager.py` | 🗄 数据管理 (v5.8 · §7-A3；v5.10 UX 加固；v5.11 勾选重设计) | 2 | 594 |
 | `ui/views/formula_hub.py` | ƒ 函数总库 —— 页面本体（★1.61 / §7-B16 · 方案书 `docs/plans/done/HUB.md`）。 | 1 | 115 |
 | `ui/views/param_sweep.py` | 🧪 参数研究 —— 页面装配（§7-B15 SW-5/6/7 · 薄壳 · ★v6.86 视觉返工版）。 | 1 | 397 |
 | `ui/views/portfolio_view.py` | 🧺 组合页（★1.85 / §7-B17 · **P0 已交付 + P1 净值/持仓**）。 | 2 | 1475 |
@@ -218,13 +222,13 @@ verified: auto
 | `ui/widgets/watch_row_delegate.py` | 自选清单的**行绘制**（v6.24 · §7-B8 R15 / 2b 余项）：`名称 · 代码（右对齐）· 涨跌列`。 | 3 | 115 |
 | `ui/widgets/watch_sort_list.py` | 自选清单的**拖拽排序列表**（v6.24 · §7-B8 R15）—— 用"三道闸"防误触。 | 1 | 70 |
 | `ui/widgets/yearly_review.py` | — | 1 | 124 |
-| `ui/workers.py` | 全 app 的 QThread 门面（★2.04 / P2 拆件后只做再导出）。 | 0 | 53 |
+| `ui/workers.py` | 全 app 的 QThread 门面（★2.04 / P2 拆件后只做再导出）。 | 0 | 54 |
 | `ui/workers_backtest.py` | 回测 / 参数扫描 / 组合池化类 QThread（★2.04 / P2 拆件）。 | 3 | 150 |
 | `ui/workers_core.py` | 任务竞态守卫（★2.04 / P2 拆件）。 | 1 | 34 |
-| `ui/workers_download.py` | 批量下载 / 网络自检 / 缓存清理 / 更新检查类 QThread（★2.04 / P2 拆件）。 | 6 | 495 |
+| `ui/workers_download.py` | 批量下载 / 网络自检 / 缓存清理 / 更新检查类 QThread（★2.04 / P2 拆件）。 | 6 | 500 |
 | `ui/workers_imports.py` | 期货交割单解析 worker（★2.04 / P2 拆件）。 | 1 | 28 |
-| `ui/workers_scan.py` | 扫描 / 成分股 / 就绪度 / 日历类 QThread（★2.04 / P2 拆件）。 | 6 | 171 |
+| `ui/workers_scan.py` | 扫描 / 成分股 / 就绪度 / 日历类 QThread（★2.04 / P2 拆件）。 | 7 | 207 |
 | `ui/workers_sync.py` | 同步类小 worker（★2.04 / P2 拆件）。 | 6 | 158 |
 | `ui/workers_throttle.py` | 下载节流 / 交易日历注入的**无 Qt 辅助件**（★2.04 / P2 拆件）。 | 4 | 98 |
 
-> 共 213 个 .py 文件。
+> 共 217 个 .py 文件。

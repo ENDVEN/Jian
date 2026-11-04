@@ -442,6 +442,24 @@ class MarketSyncService:
         """
         symbol = str(symbol or "").strip()
         key = minute_key(symbol, period) if zone == ZONE_MIN else symbol
+        if zone == ZONE_KLINE and symbol:
+            # ★2.05：状态也走统一读门面 —— 快照已落地但尚未合并时仍算“有数据”
+            from data.market_store import MarketDataStore
+            data = MarketDataStore(self.lake).history(symbol, zone)
+            cached = not data.empty
+            last_date = ""
+            if cached and "date" in data.columns:
+                last = pd.to_datetime(data["date"], errors="coerce").max()
+                if pd.notna(last):
+                    last_date = last.strftime("%Y%m%d")
+            return {
+                "symbol": symbol,
+                "zone": zone,
+                "key": key,
+                "period": "",
+                "cached": cached,
+                "last_date": last_date,
+            }
         cached = bool(symbol) and self.lake.exists(zone, key)
         return {
             "symbol": symbol,

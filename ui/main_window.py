@@ -1,13 +1,14 @@
 # ui/main_window.py
 import logging
+import os
 from collections.abc import Mapping
 from datetime import datetime
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                              QVBoxLayout, QPushButton, QFrame, QStackedWidget,
                              QDialog, QMessageBox, QFileDialog, QLabel,
                              QApplication, QLayout)
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtCore import QEventLoop, Qt, QThread, QUrl
+from PyQt6.QtCore import QEventLoop, Qt, QThread, QTimer, QUrl
 
 from config import settings
 from core.analyzer import TradeAnalyzer
@@ -143,6 +144,7 @@ class JianMainWindow(QMainWindow):
         # ★1.61 / §7-B16 护栏6：函数总库浮窗的**位置偏移**（拖出来的，记进 `hub_ui`）。
         #   必须在**任何 `resizeEvent` 之前**就位 —— 重摆浮窗的路径会读它。
         self._hub_offset = (0, 0)
+        self._startup_check_worker = None
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -261,6 +263,62 @@ class JianMainWindow(QMainWindow):
         apply_ui_font(self)
         # ★1.69 / §10-16：把窗口尺寸夹进屏幕可用区域（否则 125% 缩放屏上窗口比屏幕还宽）
         self._clamp_to_screen()
+
+        # ★2.05 / DATA-PLATFORM P1：首次安装本地无日线时，后台先拉当天快照。
+        #   只检查文件是否存在，不阻塞首屏；详情/回滚见 DATA-PLATFORM §7。
+        QTimer.singleShot(1500, self._maybe_auto_daily_snapshot)
+
+    def _maybe_auto_daily_snapshot(self) -> None:
+        """启动时只读检查本地日线；空则快照，过期则按缺口大小走快照/backfill。
+
+        - `JIAN_AUTO_DAILY=0` 关闭（测试默认关闭，见 smoke 脚本）；
+        - 名单为空 / 队列忙 ⇒ 跳过，不抢用户任务；
+        - 不阻塞首屏：有旧数据时先在后台跑 `StartupCheckWorker`（只读 footer）。
+        """
+        if os.environ.get("JIAN_AUTO_DAILY", "1") == "0" or self._exiting:
+            return
+        try:
+            from data.market_db import DataLakeManager
+            from data.scan_store import kline_zone_dir
+            from data.sync_service import ZONE_KLINE
+            lake = DataLakeManager()
+            symbols = self.engine.list_stock_symbols()
+            if len(symbols) < 500 or self.downloads.is_busy():
+                return
+            if not lake.list_zone(ZONE_KLINE):
+                self._submit_startup_snapshot(symbols, "首次日快照")
+                return
+            from ui.workers import StartupCheckWorker
+            worker = StartupCheckWorker(symbols, kline_zone_dir(ZONE_KLINE),
+                                        parent=self)
+            self._startup_check_worker = worker
+            worker.finished.connect(self._on_startup_check)
+            worker.start()
+        except Exception as e:  # noqa: BLE001 —— 启动兜底绝不阻断 UI
+            logger.warning("启动日线检查失败（忽略）: %s", e)
+
+    def _on_startup_check(self, result) -> None:
+        if not result or self._exiting or self.downloads.is_busy():
+            return
+        action = str(result.get("action") or "none")
+        if action == "snapshot":
+            symbols = self.engine.list_stock_symbols()
+            if len(symbols) >= 500:
+                self._submit_startup_snapshot(symbols, "启动补日快照")
+        elif action == "backfill":
+            stale = list(result.get("symbols") or [])
+            if stale:
+                self.downloads.submit_backfill(
+                    stale, label=f"后台补全历史（启动检查 {len(stale)} 只）")
+        logger.info("启动数据检查：action=%s reason=%s",
+                    action, result.get("reason") or "")
+
+    def _submit_startup_snapshot(self, symbols, label: str) -> None:
+        if self.downloads.is_busy():
+            return
+        self.downloads.submit(f"{label}（{len(symbols)} 只）", symbols,
+                             origin="startup")
+        logger.info("%s：已投递日快照任务（%d 只）", label, len(symbols))
 
     # ==========================================
     # 窗口尺寸策略（v1.69 · §10-16）

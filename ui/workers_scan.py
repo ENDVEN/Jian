@@ -7,16 +7,19 @@ import logging
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.cross_section import ScanCancelled
+from data.backfill import plan_startup
 from data.market_db import DataLakeManager
 from data.readiness import ReadinessCancelled, probe_readiness
 from data.scan_store import scan_cached
 from data.sync_service import MarketSyncService
-from data.trade_calendar import load_or_fetch
+from data.trade_calendar import (latest_settled_trading_day, load_or_fetch,
+                                 previous_trading_day)
+from ui.workers_throttle import _load_calendar_safely
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["ScanWorker", "ConstituentsWorker", "CrossSectionWorker",
-           "ReadinessWorker", "CalendarWorker"]
+           "ReadinessWorker", "CalendarWorker", "StartupCheckWorker"]
 
 
 def _resolve_worker_dep(name: str, fallback):
@@ -189,6 +192,46 @@ class ReadinessWorker(QThread):
             self.failed.emit(self._job_id, str(e))
             return
         self.finished.emit(self._job_id, report)
+
+
+class StartupCheckWorker(QThread):
+    """启动时的只读检查：本地日线是否过期，决定 snapshot / backfill / none。
+
+    只读 parquet footer + 交易日历，不联网下载；日历冷缓存时可能有一次网络，
+    但整个线程在后台，不阻塞首屏。回包 `{action, symbols, reason, report}`。
+    """
+
+    finished = pyqtSignal(object)
+
+    def __init__(self, symbols, zone_dir: str, parent=None):
+        super().__init__(parent)
+        self._symbols = [str(s).strip() for s in (symbols or []) if str(s).strip()]
+        self._zone_dir = zone_dir
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        try:
+            calendar = _load_calendar_safely()
+            expected = latest_settled_trading_day(calendar=calendar)
+            previous = previous_trading_day(expected, calendar) if expected else None
+            report = probe_readiness(
+                self._zone_dir, self._symbols, min_bars=250,
+                should_stop=lambda: self._cancel)
+            plan = plan_startup(report, expected, previous)
+            self.finished.emit({
+                "action": plan.action,
+                "symbols": plan.symbols,
+                "reason": plan.reason,
+                "report": report,
+            })
+        except ReadinessCancelled:
+            self.finished.emit(None)
+        except Exception as e:  # noqa: BLE001 —— 启动检查失败绝不阻断
+            logger.warning("启动数据检查失败（忽略）: %s", e)
+            self.finished.emit(None)
 
 
 class CalendarWorker(QThread):

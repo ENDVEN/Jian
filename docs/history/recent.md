@@ -382,3 +382,18 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
 `date/open/high/low/close/volume/amount` 逐位一致。
 
 **尚未完成**：首次打开/后台补全队列、`MarketDataStore` 统一读门面、登录档 provider 实测。
+
+## ★2.06 · 数据底层 P1 收尾（2026-11-05 提交）
+
+**目标**：首次打开可用、后台补历史、覆盖率可见、读取有统一门面。
+
+**改了什么**
+1. **启动检查**：`StartupCheckWorker` 只读 footer + 交易日历；空库/只缺一天 → 日快照，
+   缺口更大 → 低优先级 backfill；`JIAN_AUTO_DAILY=0` 关闭。
+2. **自动补全**：日快照完成后的 `symbols_empty` 自动投 backfill；普通下载优先。
+3. **覆盖率**：数据管理页用 `ReadinessWorker` 显示就绪/历史不足/未下载。
+4. **统一读门面**：`data/market_store.py`；`MarketSyncService.status()` 已接，
+   快照未合并时也能读到最后一天。
+5. **回滚**：`JIAN_AUTO_DAILY` / `JIAN_AUTO_BACKFILL` / `JIAN_BULK_DAILY`。
+
+**实测**：全市场日更 117s；100 只 parity；unit 59/0；chart 1080/0；overlay 1244/0。

@@ -32,10 +32,11 @@ from ui.widgets.custom_widgets import (FLAT_QSS_WIDE,      # ★v6.70 §9-F③ �
                                         ui_painter_font)    # ★v1.46 §10-15 开源字体栈
 
 from data.market_db import DataLakeManager
+from data.scan_store import kline_zone_dir
 from data.sync_service import (MarketSyncService, ZONE_KLINE, ZONE_KLINE_RAW,
                                ZONE_INDEX)
 from ui.dialogs.bulk_download import BulkDownloadDialog
-from ui.workers import ScanWorker
+from ui.workers import ReadinessWorker, ScanWorker
 
 # 分区中文名（顺序即左侧清单顺序）
 ZONE_ORDER = ["kline_daily", "kline_daily_raw", "index_daily", "kline_min", "macro_eco",
@@ -87,6 +88,8 @@ class DataManagerView(QWidget):
         self._current_zone = ZONE_KLINE
         self._checked: set[str] = set()   # 当前已勾选的标的名（跨过滤搜索保留勾选）
         self._scan_worker = None
+        self._readiness_worker = None
+        self._readiness_job = 0
         # ★v1.43 / §7-B11：批量下载不再在本页开线程 —— 任务归主窗口的队列，
         #   本页只是它的一个发起方 + 一个"跑完刷新清单"的订阅者。
         self._bulk_dialog = None          # 非模态 ⇒ 复用同一个实例，不堆窗口
@@ -175,6 +178,10 @@ class DataManagerView(QWidget):
         self.lbl_zone_title = QLabel("—")
         self.lbl_zone_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #1F2430;")
         tools.addWidget(self.lbl_zone_title)
+        # ★2.05 / DATA-PLATFORM P1：本地覆盖率（只读清单口径，不联网）
+        self.lbl_coverage = QLabel("")
+        self.lbl_coverage.setStyleSheet("font-size: 11.5px; color:#8A94A6;")
+        tools.addWidget(self.lbl_coverage)
         tools.addStretch()
         self.txt_filter = QLineEdit()
         self.txt_filter.setPlaceholderText("过滤代码…")
@@ -325,7 +332,61 @@ class DataManagerView(QWidget):
         self.lbl_status.setText(
             f"{len(self._items)} 项 · 合计 {_fmt_bytes(total_bytes)}"
             + ("" if self._current_zone in SYNCABLE else "　（该分区暂不支持联网同步）"))
+        self._update_coverage(zone, self._items)
         self._sync_ops_enabled()
+
+    def _update_coverage(self, zone: str, items: list) -> None:
+        """先给文件计数，再由后台体检补正式三态（只读 footer，不联网）。"""
+        if zone != ZONE_KLINE:
+            self.lbl_coverage.setText(f"本地 {len(items)} 只")
+            return
+        try:
+            total = len(self.main_win.engine.list_stock_symbols())
+        except Exception:  # noqa: BLE001
+            total = len(items)
+        if total <= 0:
+            total = len(items)
+        ready = sum(1 for i in items if int(i.get("rows") or 0) >= 250)
+        if not items:
+            self.lbl_coverage.setText(f"本地覆盖 0/{max(total, 0)}")
+            return
+        self.lbl_coverage.setText(
+            f"本地覆盖 {len(items)}/{total} · 历史≥250根 {ready}（体检中…）")
+        self._start_readiness(zone, items)
+
+    def _start_readiness(self, zone: str, items: list) -> None:
+        """正式覆盖率：复用 ReadinessWorker（footer 体检，不联网、不阻塞 UI）。"""
+        names = [i.get("name") for i in items if i.get("name")]
+        if not names:
+            return
+        if self._readiness_worker is not None and self._readiness_worker.isRunning():
+            self._readiness_worker.cancel()
+        self._readiness_job += 1
+        job = self._readiness_job
+        worker = ReadinessWorker(job, kline_zone_dir(zone), names,
+                                 min_bars=250, parent=self)
+        worker.finished.connect(
+            lambda jid, rep: self._on_readiness(jid, zone, rep))
+        worker.failed.connect(
+            lambda jid, err: self._on_readiness_failed(jid, zone, err))
+        self._readiness_worker = worker
+        worker.start()
+
+    def _on_readiness(self, job_id: int, zone: str, report) -> None:
+        if job_id != self._readiness_job or zone != self._current_zone:
+            return
+        if report is None:
+            self.lbl_coverage.setText("体检已取消")
+            return
+        self.lbl_coverage.setText(report.summary_line())
+        self.lbl_coverage.setToolTip(
+            "只读 parquet footer：就绪=行数≥250；历史不足=有文件但不够；"
+            "未下载=本地无文件。不联网。")
+
+    def _on_readiness_failed(self, job_id: int, zone: str, err: str) -> None:
+        if job_id != self._readiness_job or zone != self._current_zone:
+            return
+        self.lbl_coverage.setText(f"体检失败：{err}")
 
     # ==========================================
     # 明细表

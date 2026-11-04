@@ -39,7 +39,8 @@ from ui.workers_download import (CacheCleanWorker, DailySnapshotWorker,
                                  UpdateCheckWorker)
 from ui.workers_imports import FuturesImportWorker
 from ui.workers_scan import (CalendarWorker, ConstituentsWorker,
-                             CrossSectionWorker, ReadinessWorker, ScanWorker)
+                             CrossSectionWorker, ReadinessWorker, ScanWorker,
+                             StartupCheckWorker)
 from ui.workers_sync import (IndustryMapWorker, IndustryPoolWorker,
                              RosterSyncWorker, SingleSyncWorker,
                              SpotValuationWorker)
@@ -54,6 +55,6 @@ __all__ = [
     "NetSelfCheckWorker", "CacheCleanWorker", "UpdateCheckWorker",
     "BacktestRunWorker", "ParamSweepWorker", "PoolSweepWorker",
     "ConstituentsWorker", "FuturesImportWorker", "CrossSectionWorker",
-    "ReadinessWorker", "CalendarWorker", "JobGuard", "RateGovernor",
+    "ReadinessWorker", "CalendarWorker", "StartupCheckWorker", "JobGuard", "RateGovernor",
     "inject_expected_latest", "_load_calendar_safely", "_CAL_UNSET",
 ]

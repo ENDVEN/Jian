@@ -70,6 +70,10 @@ def write_snapshot(df: pd.DataFrame, asof) -> str:
                 os.remove(tmp)
             except OSError:
                 pass
+    try:
+        _LATEST_CACHE.clear()          # 写后立即失效，避免同 mtime 粒度下读旧快照
+    except Exception:  # noqa: BLE001 —— 缓存清理失败不影响落盘
+        pass
     return path
 
 
@@ -84,8 +88,14 @@ def read_snapshot(asof) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+_LATEST_CACHE: dict = {}
+
+
 def latest_snapshot() -> tuple[str, pd.DataFrame]:
-    """返回 `(asof_text, df)`；没有快照 ⇒ `("", empty)`。"""
+    """返回 `(asof_text, df)`；没有快照 ⇒ `("", empty)`。
+
+    缓存按 `(path, mtime_ns, size)` 失效：读单只时不会反复解析同一个 10KB 快照。
+    """
     folder = snapshot_dir()
     if not os.path.isdir(folder):
         return "", pd.DataFrame()
@@ -93,7 +103,18 @@ def latest_snapshot() -> tuple[str, pd.DataFrame]:
     if not names:
         return "", pd.DataFrame()
     asof = names[-1][:-8]          # YYYY-MM-DD.parquet
-    return asof, read_snapshot(asof)
+    path = os.path.join(folder, names[-1])
+    try:
+        st = os.stat(path)
+        key = (path, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return asof, pd.DataFrame()
+    cached = _LATEST_CACHE.get("key")
+    if cached == key and _LATEST_CACHE.get("df") is not None:
+        return asof, _LATEST_CACHE["df"]
+    df = read_snapshot(asof)
+    _LATEST_CACHE.update(key=key, df=df)
+    return asof, df
 
 
 def merge_row(history: pd.DataFrame, row: pd.Series) -> pd.DataFrame:

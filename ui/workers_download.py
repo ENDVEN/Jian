@@ -388,39 +388,43 @@ class DailySnapshotWorker(QThread):
             snap = snap[snap["symbol"].isin(want)].reset_index(drop=True)
             total = len(snap)
             lock = threading.Lock()
+            empty_hist = []
 
             def _merge_one(rec):
                 sym = str(rec.get("symbol") or "").strip()
                 try:
                     if self._cancel:
-                        return sym, "skipped", 0, None
+                        return sym, "skipped", 0, None, False
                     old = service.lake.load_data(ZONE_KLINE, sym)
+                    was_empty = old is None or len(old) == 0
                     if old is not None and len(old) and "date" in old.columns:
                         last_day = pd.to_datetime(old["date"], errors="coerce").max()
                         if pd.notna(last_day) and pd.Timestamp(last_day).normalize() >= asof:
-                            return sym, "skipped", 0, None
+                            return sym, "skipped", 0, None, False
                     if self._can_append(old, rec, asof, calendar):
                         merged = merge_row(old, pd.Series(rec))
                         if not service.lake.save_data(ZONE_KLINE, sym, merged):
-                            return sym, "fail", 0, "落盘失败"
-                        return sym, "ok", 1, None
+                            return sym, "fail", 0, "落盘失败", was_empty
+                        return sym, "ok", 1, None, was_empty
                     # 缺口 / 除权 / 缺昨收：走单只真实增量，宁可慢也不抄错
                     result = service.refresh_one(sym, zone=ZONE_KLINE, policy=policy)
                     if result.get("ok"):
-                        return sym, "ok", int(result.get("added", 0)), None
-                    return sym, "fail", 0, short_fetch_reason(result)
+                        return sym, "ok", int(result.get("added", 0)), None, was_empty
+                    return sym, "fail", 0, short_fetch_reason(result), was_empty
                 except Exception as e:  # noqa: BLE001 —— 单只失败不废整批
-                    return sym, "fail", 0, f"{type(e).__name__}: {e}"
+                    return sym, "fail", 0, f"{type(e).__name__}: {e}", False
 
             with ThreadPoolExecutor(max_workers=min(16, max(1, total))) as ex:
                 futures = [ex.submit(_merge_one, rec) for rec in snap.to_dict("records")]
                 for index, fut in enumerate(as_completed(futures), start=1):
-                    sym, status, added, err = fut.result()
+                    sym, status, added, err, was_empty = fut.result()
                     with lock:
                         stats["symbols_attempted"].append(sym)
                         if status == "ok":
                             stats["ok"] += 1
                             stats["added"] += added
+                            if was_empty:
+                                empty_hist.append(sym)
                         elif status == "skipped":
                             stats["skipped"] += 1
                         else:
@@ -437,6 +441,7 @@ class DailySnapshotWorker(QThread):
                 # 停牌/退市/快照无行 ≠ 下载失败；如实记 missing，不制造 343 条假失败
                 stats["skipped"] += len(missing)
                 stats["symbols_missing"] = missing
+            stats["symbols_empty"] = empty_hist
         except Exception as e:  # noqa: BLE001 —— 线程内兜底，回包必须有
             logger.error("日快照批量任务异常: %s", e)
             stats["fail"] = max(1, len(self._symbols) - stats["ok"] - stats["skipped"])

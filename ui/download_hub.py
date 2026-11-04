@@ -173,6 +173,12 @@ class DownloadHub(QObject):
         self._pump()
         return job.id
 
+    def submit_backfill(self, symbols: Iterable[str], *,
+                        label: str = "后台补全历史") -> int:
+        """低优先级补历史：只在没有普通下载任务时跑（用户任务永远先走）。"""
+        return self.submit(label, symbols, force_full=True,
+                           origin="backfill")
+
     def jobs(self) -> list:
         return list(self._jobs)
 
@@ -343,7 +349,15 @@ class DownloadHub(QObject):
         """只有一个坑位：有任务在跑就等着；跑完再取下一个。"""
         if self._running is not None or not self._queue:
             return
-        job = self._queue.popleft()
+        # ★2.05：backfill 是低优先级，队列里还有普通任务时绝不抢跑。
+        job = None
+        for i, queued in enumerate(self._queue):
+            if queued.origin != "backfill":
+                job = self._queue[i]
+                del self._queue[i]
+                break
+        if job is None:
+            job = self._queue.popleft()
         job.status = STATUS_RUNNING
         self._running = job
         self._set_active(True)
@@ -392,6 +406,12 @@ class DownloadHub(QObject):
         job.status = (STATUS_CANCELLED if (stats or {}).get("aborted") else STATUS_DONE)
         self._running = None
         self._emit_finished(job, stats or {})
+        # ★2.05：日快照完成后，把“历史为空”的标的投到低优先级补全队列。
+        #   不阻塞首屏；用户随后发起的普通下载会排在它前面。
+        empty = (stats or {}).get("symbols_empty") or []
+        if (empty and not (stats or {}).get("aborted") and not self._closing
+                and os.environ.get("JIAN_AUTO_BACKFILL", "1") != "0"):
+            self.submit_backfill(empty, label=f"后台补全历史（{len(empty)} 只）")
         self.jobs_changed.emit()
         self._pump()                      # 串行：接着跑下一个
         self._settle_activity()           # 全跑完 ⇒ 收起角标（下载条仍留一句回执）

@@ -6,7 +6,7 @@ skip_if: 只改某个页面的展示或文案
 verified: 2026-11-04
 ---
 
-# 数据底层重构与下载提速方案 · ★2.05（2026-11-04 拍板）
+# 数据底层重构与下载提速方案 · ★2.06（P1 完成，P2 进行中）
 
 > **用户 2026-11-04 明确**：现有下载链路是早期按 A 股日线设计的，面对港股 / ETF / 期货 /
 > ROE·PE·PB·财报 / 分钟线会越来越乱；同时“5000 多只全 A 下载要 1 小时 20 分”不可接受。
@@ -281,7 +281,19 @@ capabilities:
   - 逐只合并进度照常上报，支持取消。
 - `DownloadHub`：`kline_daily` 且非全量、>=500 只走日快照 worker；
   设 `JIAN_BULK_DAILY=0` 可整体回退旧 `SyncWorker`（回滚开关）；
-- unit 新增 4 条 `daily_store` 测试（45/0）。
+- unit 新增 4 条 `daily_store` 测试（49/0）。
+- `data/backfill.py`：把 `ReadinessReport` 转成 `BackfillPlan`（missing → partial → unreadable，
+  可分批、可算覆盖率）；`DownloadHub.submit_backfill()` 作为**低优先级**队列通道 ——
+  有普通下载任务时绝不抢跑。
+- 日快照完成后，`DailySnapshotWorker.stats["symbols_empty"]` 自动投给 backfill 队列；
+  `JIAN_AUTO_BACKFILL=0` 可关闭（与 `JIAN_BULK_DAILY=0` 同族回滚开关）。
+- 首次启动：主窗口延迟 1.5s 检查；本地全空 ⇒ 直接日快照；有旧数据 ⇒
+  `StartupCheckWorker` 只读体检后决定：只缺一天 ⇒ 快照，缺口更大 ⇒ 低优先级 backfill。
+  花名册 >=500 只、队列空闲才动作；`JIAN_AUTO_DAILY=0` 关闭（冒烟默认关闭）。
+- 数据管理页覆盖率先给文件计数，再由 `ReadinessWorker`（只读 parquet footer、不联网）
+  补正式三态（就绪/历史不足/未下载）；不阻塞页面。
+- `data/market_store.py`：统一读门面；`history()` 合并最新快照（合并中断时可兜底），
+  `cross_section()` 读日快照；`MarketSyncService.status()` 已改走该门面。
 
 **P1 首轮实测（2026-11-05，临时目录，不写用户库）**：
 
@@ -291,11 +303,8 @@ capabilities:
 - 100 只新旧路径逐位对比：新快照合并 vs 旧 `refresh_one(spot_bar=...)`，
   `date/open/high/low/close/volume/amount` **全部一致**。
 
-**尚未完成**：
-
-- 首次打开/后台补全量的队列与覆盖率 UI（P1 的计划项，需 P2 调度器）；
-- `MarketDataStore` 统一读门面（当前用“立即合并进 symbol 历史”保证旧读路径不变，
-  属于混合布局的简化版）。
+**P1 收尾说明**：读写门面已接（`history` 快照兜底 / `cross_section` 只读日快照）；
+历史反扫、分钟/财报读门面留给 P2/P4。P1 完成，进入 P2。
 
 ### P2 · 登录双通道与 provider 扩展（1 周）
 
@@ -406,8 +415,8 @@ capabilities:
 - [x] P0：`scripts/bench_data.py` + provider 矩阵 + 现有链路阶段计时
 - [x] P0：存储三布局 benchmark（A/B/C）与评分表 → **选 A 混合**
 - [ ] P0 补：登录档 provider 实测（东财单只/腾讯）、Baostock 引入后实测
-- [~] P1：日更批量快照 + 混合布局（已落地：快照 + 立即合并；全市场 117s；读门面未做）
-- [ ] P1：首次打开可用 + 后台补全队列 + 覆盖率 UI
+- [x] P1：日更批量快照 + 混合布局（快照 + 立即合并；全市场 117s；统一读门面已接）
+- [x] P1：首次打开可用 + 后台补全队列 + 正式覆盖率体检（启动检查：空/只缺一天 → 快照；缺口更大 → backfill）
 - [x] P1：100 只新旧路径逐位对比（临时目录，全部一致）+ `JIAN_BULK_DAILY=0` 回滚
 - [ ] P2：匿名/登录双通道 + 能力表 + UI 硬提示
 - [ ] P2：腾讯/网易/Baostock 候选源实测与 registry
