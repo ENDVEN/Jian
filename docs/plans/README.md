@@ -21,7 +21,7 @@ verified: 2026-11-02
 
 | 计划 | 一句话 | 状态 |
 |---|---|---|
-| [`active/DATA-PLATFORM.md`](active/DATA-PLATFORM.md) | 数据底层平台与下载提速：provider 抽象 / 日更批量快照 / 目录与调度 / 存储 benchmark / 资产扩展 | **P1/P2 完成 + 2.09 日更覆盖**（能力表 / registry / 备源 / bootstrap；北交所/新股/滞后已补）；P3 待开工 |
+| [`active/DATA-PLATFORM.md`](active/DATA-PLATFORM.md) | 数据底层平台与下载提速：provider 抽象 / 日更批量快照 / 目录与调度 / 存储 benchmark / 资产扩展 | **P1/P2 完成 + 2.09 日更覆盖**；P3-0 测试隔离、P3-1 catalog、P3-2 planner、P3-3 scheduler 内核已落地；P3-4 接线待做 |
 | [`active/ETF-LOF.md`](active/ETF-LOF.md) | 场内 ETF/LOF 接入：`etf_daily` 独立分区 · 基金代码路由 · 名册分表 · **本地等比前复权补跳空** · 不进 A 股扫描/广度 | **未实现**（方案已拍板） |
 | [`active/ARCH-PERF.md`](active/ARCH-PERF.md) | 架构与启动性能：4.05s → ≤2.2s 的 P0 四件 + 测试分层 + 文档分卷 | **P0 已完成**（2.03：构造 3.6s→0.27s；探针 2.145s）；P1/P2 未做 |
 | [`active/TEST-HARNESS.md`](active/TEST-HARNESS.md) | 测试基建：overlay 偶发 fastfail（`0xC0000409`）与"跑完不退出"的根因排查 | **进行中**：fastfail 已定位并修复（10/10 绿）；挂死未复现，退出路径已加观测 |

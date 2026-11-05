@@ -1,5 +1,5 @@
 {
-  "version": "2.09",
-  "notes": "这一版补齐日更覆盖与新股入库：\n· 北交所 349 只、快照名单外新股、214 只滞后标的已补；\n· 全市场日更会从快照增量发现新股并入花名册，北交所走新浪后置；\n· 修正新浪/腾讯北交所 bj 前缀；\n· 新增花名册增量合并与 repair 脚本。",
+  "version": "2.10",
+  "notes": "这一版落下数据平台 P3 内核：\n· SQLite catalog：5580 只日线元数据，扫描 4.6s；\n· planner：daily/repair/bootstrap/minute 任务规划；\n· scheduler：按 provider/channel 独立限流、优先级、自适应并发、熔断；\n· 测试不再读取本机登录额度；生产额度不变；\n· 修复测试临时目录误写真实花名册的问题。",
   "url": "https://github.com/ENDVEN/Jian/releases"
 }

@@ -102,6 +102,9 @@ def budget_blocked() -> str:
     【为什么要挡】用户拍板"要避免被反爬系统盯上" —— 反复点扫描会把额度（乃至账号）打进风控。
     挡住的语义是"**停在缓存档**"：已抓到的行业/报价照常从缓存读，明天自动恢复。
     """
+    # 测试隔离：本机真实额度耗尽不应让测试桩失效（只影响测试进程）
+    if os.environ.get("JIAN_TEST_IGNORE_BUDGET", "0") == "1":
+        return ""
     who = current_tier()
     try:
         if em_auth.budget_left(who) > 0:
@@ -588,11 +591,9 @@ def fetch_quotes(symbols, sleep_fn=time.sleep, interval: float = QUOTE_BATCH_INT
         logger.info(f"批量报价跳过（{cooling}）")
         return empty_quotes()
     blocked = budget_blocked()                           # ★v6.73 预算：共用同一条闸门
-    if blocked and os.environ.get("JIAN_TEST_IGNORE_BUDGET", "0") != "1":
+    if blocked:
         logger.info(f"批量报价跳过（{blocked}）")
         return empty_quotes()
-    if blocked:
-        logger.info("测试模式：忽略本地预算闸门（%s）", blocked)
 
     frames = []
     for i in range(0, len(codes), QUOTE_BATCH_SIZE):

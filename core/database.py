@@ -59,13 +59,16 @@ class DatabaseManager:
     管理复盘流水 (trades) 和 市场元数据 (market_symbols)。
     """
     def __init__(self):
-        self.db_path = settings.DB_PATH
+        # 动态取路径：测试把 USER_DATA_DIR 指到临时目录时，绝不能写真实库。
+        # settings.DB_PATH 是模块加载时的静态快照，不能在这里直接用。
+        self.db_path = os.path.join(settings.USER_DATA_DIR, "jian_trades.db")
         self._init_db()
 
     def _init_db(self):
         """数据库初始化与版本迁移机制"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        conn = sqlite3.connect(self.db_path)
+        try:
             self._prepare_schema_upgrade(conn)
             self._ensure_trades_table(conn)
             self._restore_legacy_backup(conn)
@@ -74,6 +77,8 @@ class DatabaseManager:
             self._ensure_coverage_tables(conn)
             self._ensure_roster_table(conn)
             conn.commit()
+        finally:
+            conn.close()          # Windows：不关闭会锁住临时目录/文件
 
     # ==========================================
     # 表结构治理 (Schema Management)

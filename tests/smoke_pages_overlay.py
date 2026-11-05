@@ -109,7 +109,8 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 # 冒烟不触发启动自动日快照（会联网/写用户库）；生产默认开启。
 os.environ.setdefault('JIAN_AUTO_DAILY', '0')
 os.environ.setdefault('JIAN_EM_DIRECT', '0')   # 冒烟不因本机登录态走东财直连
-os.environ.setdefault('JIAN_TEST_IGNORE_BUDGET', '1')  # 不因本机额度耗尽误红
+# 开发测试不读本机登录额度；预算专项断言用合成预算，临时恢复闸门。
+os.environ.setdefault('JIAN_TEST_IGNORE_BUDGET', '1')
 # 本文件在 tests/ 子目录里，**仓库根 = 本文件的父目录**（由 `__file__` 反推，§10-13）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -9189,9 +9190,15 @@ try:
     _back_desc74 = _em74.em_throttle.describe
     _em74.clist_page = lambda page, pz=100: (_hit74.append(page), ([], 0))[1]
     _em74.em_throttle.describe = lambda *a, **k: ''            # 排除"冷却中"那条更早的闸门干扰
+    _budget_flag74 = os.environ.get('JIAN_TEST_IGNORE_BUDGET')
+    os.environ['JIAN_TEST_IGNORE_BUDGET'] = '0'                 # 本条必须走真实预算闸门
     try:
         _r74 = _em74.fetch_industry_page(1, 3, sleep_fn=lambda _s: None)
     finally:
+        if _budget_flag74 is None:
+            os.environ.pop('JIAN_TEST_IGNORE_BUDGET', None)
+        else:
+            os.environ['JIAN_TEST_IGNORE_BUDGET'] = _budget_flag74
         _em74.clist_page, _em74.em_throttle.describe = _back_clist74, _back_desc74
         _ea74.budget_left, _ea74.budget_text = _back_left74, _back_btext74
     check("★ S2-1：**额度用完 ⇒ 连第 1 页都不打**（停在缓存档，不拿账号去硬试）",

@@ -17,11 +17,11 @@ verified: 2026-11-02
 
 | 项 | 值 |
 |---|---|
-| 版本 | **2.09**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
-| HEAD | 本版提交（`git log -1`）· `2.09 日更覆盖 新股入库 北交所` |
-| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **5 个提交**：2.05 / 2.06 / 2.07 / 2.08 / 2.09） |
-| 工作区 | ✅ 干净（2.09 提交后） |
-| 最近三版 | `2.09` 日更覆盖 / 新股入库 / 北交所 · `2.08` 复权污染修复 · `2.07` 双通道 / bootstrap |
+| 版本 | **2.10**（`version.json` / `config/settings.py` / commit 首词 三处一致） |
+| HEAD | 本版提交（`git log -1`）· `2.10 数据平台P3 契约 Catalog Planner Scheduler` |
+| 推送 | ⬜ **已提交、未推送**（`main` 领先 `origin/main` **6 个提交**：2.05–2.10） |
+| 工作区 | ✅ 干净（2.10 提交后） |
+| 最近三版 | `2.10` P3 契约 / catalog / planner / scheduler · `2.09` 日更覆盖 / 新股 · `2.08` 复权修复 |
 
 ---
 
@@ -32,8 +32,8 @@ verified: 2026-11-02
 | `python -u tests/smoke_chart.py` | **1080 / 0**（+4 条 P0 内核断言） |
 | `python -u tests/smoke_pages_overlay.py` | **1244 / 0**（+5 条惰性建页断言） |
 | `py tests/run_smoke.py`（并行） | **56–100s**（实测 56.3 / 80.5 / 100.2s；逐个相加 88.7–150.1s），两份均 0 失败 |
-| `py -m unittest discover -s tests/unit -v` | **84 tests / 0.31s**（日期 / roster / footer / 缓存键 / 文案 / 组合 / merge_tail / 指标与净额 / 风险与格式化 / 日快照） |
-| `.github/workflows/ci.yml` | `unit` job：84 条，**不读数据湖、不联网**；冒烟仍本地跑 |
+| `py -m unittest discover -s tests/unit -v` | **104 tests / 0.44s**（日期 / roster / footer / 缓存键 / 文案 / 组合 / merge_tail / 指标与净额 / 风险与格式化 / 日快照） |
+| `.github/workflows/ci.yml` | `unit` job：104 条，**不读数据湖、不联网**；冒烟仍本地跑 |
 
 > ⚠ **已知假红**：本机有下载在跑时（数据湖 parquet 的 mtime 每几秒变），两条"缓存命中"断言必红（§11.5-79）。**先停下载再跑**。
 > ✅ **fastfail 已收口**（2026-11-03）：根因 = `ReadinessFlow.start()` 覆盖 `self._probe` 时旧 `ReadinessWorker` 仍在运行 ⇒ 引用归零 ⇒ QThread 析构 ⇒ `0xC0000409`。修法见 `plans/active/TEST-HARNESS.md` §4；连跑 10/10 通过。
@@ -45,7 +45,7 @@ verified: 2026-11-02
 
 | 任务 | 方案书 | 状态 | 一句话 |
 |---|---|---|---|
-| **数据底层平台与下载提速** | `docs/plans/active/DATA-PLATFORM.md` | **P1/P2 完成**（2.07）；**2.08 修复**；**2.09 日更覆盖/新股**；P3 待开工 | 全市场日更 **117s** · 100 只 parity · 启动检查/backfill/覆盖率/读门面；2.09 补北交所 349 / 新股 622 / 滞后 213，花名册 5577 |
+| **数据底层平台与下载提速** | `docs/plans/active/DATA-PLATFORM.md` | **P1/P2 完成**；**P3 内核完成**（2.10：contracts / catalog / planner / scheduler）；P3-4 接线待做 | 全市场日更 **117s** · 100 只 parity · catalog 5580 只 · planner 任务规划 · 调度器内核 |
 | **场内基金 ETF/LOF 接入** | `docs/plans/active/ETF-LOF.md` | **未实现**，方案已拍板 | 只做场内 ETF/LOF；`etf_daily` 独立分区；用新浪分红表**本地等比前复权**补跳空；不进 A 股扫描/广度 |
 | **架构与性能（启动）优化** | `docs/plans/active/ARCH-PERF.md` | **P0 已完成**（2.03）· P1/P2 未做 | 构造 3.6s→0.27s；已建页面 9→1；真机探针 **2.145s**（目标 ≤2.2s） |
 | **测试基建** | `docs/plans/active/TEST-HARNESS.md` | **进行中**（2.02 已提交） | fastfail 10/10 绿；挂死已复现并收口（存活 QThread + `ExitProcess` 死锁 ⇒ 硬退出）；2 个 ScanWorker 来源另立 |
