@@ -380,13 +380,39 @@ class DailySnapshotWorker(QThread):
                 self.failed.emit("", "日快照为空（网络/接口/非交易日）")
                 self.finished.emit(stats)
                 return
+
+            # ★2.08：全市场快照只覆盖东财全 A，北交所/少数新票不在里面。
+            #   先按花名册补一次新浪批量报价（bj 前缀已修），并合并进快照。
+            full_market = len(self._symbols) >= 3000
+            if full_market:
+                missing = [s for s in self._symbols if s not in set(snap["symbol"])]
+                if missing:
+                    got = service.fetch_spot_snapshot(missing, allow_fallback=True)
+                    extra = pd.DataFrame(list(got.values())) if got else pd.DataFrame()
+                    if not extra.empty:
+                        extra = normalize_snapshot(extra, asof)
+                        if not extra.empty:
+                            snap = pd.concat([snap, extra], ignore_index=True)
+                            snap = snap.drop_duplicates(subset=["symbol"], keep="last")
+                # 快照里有、花名册没有的新股 ⇒ 增量入库，不删旧名单
+                try:
+                    from data.roster_sync import merge_snapshot_symbols
+                    stats["roster_added"] = merge_snapshot_symbols(
+                        snap[["symbol", "name"]] if "name" in snap.columns else snap[["symbol"]])
+                except Exception as e:  # noqa: BLE001 —— 名单增量失败不拖垮日更
+                    logger.warning("新股并入花名册失败: %s", e)
+
             if not write_snapshot(snap, asof):
                 stats["fail"] = len(self._symbols)
                 self.failed.emit("", "日快照落盘失败")
                 self.finished.emit(stats)
                 return
 
-            want = set(self._symbols)
+            # 全市场把快照里出现的新股也纳入合并；小池仍只处理用户点名的标的。
+            target = (list(dict.fromkeys(self._symbols + list(snap["symbol"])))
+                      if full_market else list(self._symbols))
+            stats["total"] = len(target)
+            want = set(target)
             snap = snap[snap["symbol"].isin(want)].reset_index(drop=True)
             total = len(snap)
             lock = threading.Lock()
@@ -438,7 +464,7 @@ class DailySnapshotWorker(QThread):
                     if self._cancel:
                         stats.update(aborted=True, aborted_by="cancel")
                         break
-            missing = [s for s in self._symbols if s not in set(snap["symbol"])]
+            missing = [s for s in target if s not in set(snap["symbol"])]
             if missing:
                 # 停牌/退市/快照无行 ≠ 下载失败；如实记 missing，不制造 343 条假失败
                 stats["skipped"] += len(missing)

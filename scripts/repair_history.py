@@ -29,6 +29,8 @@ for _stream in (sys.stdout, sys.stderr):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true", help="重拉全部非北交所标的")
+    ap.add_argument("--bj-only", action="store_true", help="只重拉北交所")
+    ap.add_argument("--symbols", nargs="*", default=None, help="只修指定代码")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--start", default="20100101")
     ap.add_argument("--dry-run", action="store_true")
@@ -44,7 +46,11 @@ def main() -> int:
     folder = lake.folder_of(ZONE_KLINE)
     names = sorted(os.path.splitext(n)[0] for n in os.listdir(folder)
                    if n.lower().endswith(".parquet"))
-    if args.all:
+    if args.symbols:
+        todo = [str(s).strip() for s in args.symbols if str(s).strip()]
+    elif args.bj_only:
+        todo = [s for s in names if s.startswith(("920", "43", "83", "87", "88"))]
+    elif args.all:
         todo = [s for s in names if not s.startswith("920")]
     else:
         todo = []

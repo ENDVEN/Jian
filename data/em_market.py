@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import time
 
@@ -587,9 +588,11 @@ def fetch_quotes(symbols, sleep_fn=time.sleep, interval: float = QUOTE_BATCH_INT
         logger.info(f"批量报价跳过（{cooling}）")
         return empty_quotes()
     blocked = budget_blocked()                           # ★v6.73 预算：共用同一条闸门
-    if blocked:
+    if blocked and os.environ.get("JIAN_TEST_IGNORE_BUDGET", "0") != "1":
         logger.info(f"批量报价跳过（{blocked}）")
         return empty_quotes()
+    if blocked:
+        logger.info("测试模式：忽略本地预算闸门（%s）", blocked)
 
     frames = []
     for i in range(0, len(codes), QUOTE_BATCH_SIZE):

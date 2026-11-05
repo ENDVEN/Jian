@@ -29,6 +29,9 @@ _RE = re.compile(r'var hq_str_([a-z]{2}\d{6})="(.*?)";')
 
 def _sina_key(symbol: str) -> str:
     code = str(symbol).strip()
+    # 北交所：920 新段 + 43/83/87/88 老段；不能按首位 9 当沪市
+    if code.startswith(("920", "43", "83", "87", "88")):
+        return "bj" + code
     return ("sh" if code[:1] in ("5", "6", "9") else "sz") + code
 
 

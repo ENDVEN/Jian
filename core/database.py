@@ -458,6 +458,28 @@ class DatabaseManager:
         if df.empty: return
         with sqlite3.connect(self.db_path) as conn:
             df.to_sql('market_symbols', conn, if_exists='replace', index=False)
+
+    def merge_market_roster(self, df: pd.DataFrame) -> int:
+        """只**增量加入**新股，不删除、不覆写旧名单；返回新增条数。"""
+        if df is None or df.empty or 'symbol' not in df.columns:
+            return 0
+        data = df.copy()
+        data['symbol'] = data['symbol'].astype(str).str.strip().str.zfill(6)
+        if 'name' not in data.columns:
+            data['name'] = ''
+        data = data[data['symbol'].str.match(r'^\d{6}$')]
+        data = data.drop_duplicates('symbol')[['symbol', 'name']]
+        if data.empty:
+            return 0
+        before = 0
+        with sqlite3.connect(self.db_path) as conn:
+            before = int(conn.execute("SELECT COUNT(*) FROM market_symbols").fetchone()[0])
+            conn.executemany(
+                "INSERT OR IGNORE INTO market_symbols (symbol, name) VALUES (?, ?)",
+                [(str(r.symbol), '' if pd.isna(r.name) else str(r.name)) for r in data.itertuples()])
+            conn.commit()
+            after = int(conn.execute("SELECT COUNT(*) FROM market_symbols").fetchone()[0])
+        return max(0, after - before)
             
     def load_roster(self) -> pd.DataFrame:
         """读取全量花名册（供"全市场预下载"取代码列表；只读，不做任何改写）"""

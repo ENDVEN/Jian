@@ -28,6 +28,16 @@ logger = logging.getLogger(__name__)
 MIN_A_SHARE_ROWS = 3000
 
 
+def merge_snapshot_symbols(df) -> int:
+    """把当天全市场快照里的新代码增量并入花名册（不删旧；供日更自动发现新股）。"""
+    try:
+        from core.database import DatabaseManager
+        return int(DatabaseManager().merge_market_roster(df))
+    except Exception as e:  # noqa: BLE001 —— 名单增量失败不拖垮日更
+        logger.warning("快照新股并入花名册失败: %s", e)
+        return 0
+
+
 def sync_roster() -> dict:
     """拉取并**覆写**花名册 ⇒ 返回报告 dict（**绝不抛**；失败在 `ok=False` + `reason` 里说清）。
 

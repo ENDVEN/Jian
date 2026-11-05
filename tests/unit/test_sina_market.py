@@ -3,11 +3,18 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from data.sina_market import parse_batch
+from data.sina_market import _sina_key, parse_batch
 from data.sync_service import MarketSyncService
 
 
 class TestSinaMarket(unittest.TestCase):
+    def test_sina_key_bj_and_main(self):
+        self.assertEqual(_sina_key("920000"), "bj920000")
+        self.assertEqual(_sina_key("830799"), "bj830799")
+        self.assertEqual(_sina_key("430047"), "bj430047")
+        self.assertEqual(_sina_key("600000"), "sh600000")
+        self.assertEqual(_sina_key("000001"), "sz000001")
+
     def test_parse_batch_standard_columns(self):
         text = (
             'var hq_str_sh600000="浦发银行,10.050,10.090,10.090,10.230,10.050,'

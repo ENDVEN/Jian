@@ -20,7 +20,7 @@ verified: auto
 | `core/backtest.py` | 单股事件模式回测引擎 (A股仅做多 LONG)。 | 14 | 558 |
 | `core/conditions.py` | 买卖条件配置 → DSL 表达式（**唯一真源**，§7-B15 SW-3 补）。 | 4 | 90 |
 | `core/cross_section.py` | M2 全市场横截面筛选 / M3 广度统计 —— 纯计算内核（§7-B1/B2 主案 · D2 / D5） | 15 | 661 |
-| `core/database.py` | — | 1 | 435 |
+| `core/database.py` | — | 1 | 456 |
 | `core/engine.py` | — | 1 | 169 |
 | `core/formula/__init__.py` | 通达信(优先)/Pine 兼容 公式引擎。 | 3 | 41 |
 | `core/formula/draw.py` | 公式绘图的契约层（IR）—— 引擎侧唯一「绘图语义」定义处（§7-B3 B① · P1）。 | 6 | 143 |
@@ -50,7 +50,7 @@ verified: auto
 | `data/data_feed.py` | 交易账单解析层 (Bill Parsing Layer)。 | 9 | 365 |
 | `data/em_auth.py` | 东财**登录态凭据**的唯一出口（★v6.73）—— 存储、有效性判据、Cookie 头、每日预算。 | 17 | 206 |
 | `data/em_history.py` | 东财单只历史直连（登录档，★2.06 / DATA-PLATFORM P2）。 | 2 | 83 |
-| `data/em_market.py` | 东财 `push2` 的**两条取数通道**（★v6.69）—— 全仓库唯一的东财行情明细出口。 | 27 | 523 |
+| `data/em_market.py` | 东财 `push2` 的**两条取数通道**（★v6.69）—— 全仓库唯一的东财行情明细出口。 | 27 | 526 |
 | `data/em_throttle.py` | 东财取数的**退避闸门**（★v6.69 起；★v6.74 改为**按通道**）—— 全仓库唯一出处。 | 16 | 169 |
 | `data/feed_cells.py` | 交割单解析的**单元格 / 工作表工具层**（1.25 自 `data/data_feed.py` 拆出 · §9-L）。 | 12 | 208 |
 | `data/feed_fifo.py` | 交割单解析的**数据模型 + FIFO 配对引擎**（1.25 自 `data/data_feed.py` 拆出 · §9-L）。 | 7 | 218 |
@@ -71,15 +71,15 @@ verified: auto
 | `data/provider_router.py` | 历史取数 provider 顺序（★2.06 / DATA-PLATFORM P2）。 | 3 | 33 |
 | `data/quality.py` | 日线数据质量闸门（★2.07 修复 bootstrap 污染）。 | 1 | 46 |
 | `data/readiness.py` | 就绪度体检（§7-B1/B2 主案 D6-1 · v6.39）—— 扫描之前，先告诉用户 | 6 | 228 |
-| `data/roster_sync.py` | 花名册同步的**唯一入口**（app 内一键按钮 / 运维脚本共用 · ★1.70 / §11.5-125）。 | 1 | 46 |
+| `data/roster_sync.py` | 花名册同步的**唯一入口**（app 内一键按钮 / 运维脚本共用 · ★1.70 / §11.5-125）。 | 2 | 54 |
 | `data/scan_store.py` | M2 / M3 的**会话内存缓存**（§7-B1/B2 主案 D3 · v6.35） | 14 | 406 |
 | `data/scan_strategy_store.py` | M2/M3「筛选方案」本地持久化 (JSON，位于用户数据目录，物理隔离不随代码分发)。 | 2 | 90 |
-| `data/sina_market.py` | 新浪批量报价（★2.06 / DATA-PLATFORM P2 备源）。 | 4 | 79 |
+| `data/sina_market.py` | 新浪批量报价（★2.06 / DATA-PLATFORM P2 备源）。 | 4 | 82 |
 | `data/storage_maintenance.py` | 存储与维护（★v6.75 · §7-B13 · **S2-5**）—— 数据目录 / 缓存清理 / 配置导出导入的**唯一实现处**。 | 9 | 143 |
 | `data/strategy_store.py` | 回测策略本地持久化 (JSON, 位于用户数据目录，物理隔离不随代码分发)。 | 8 | 183 |
 | `data/sweep_archive.py` | 参数研究快照存档（§7-B15 SW-4）· 照抄 `data/backtest_archive.py` 范式。 | 6 | 281 |
 | `data/sync_service.py` | 行情同步服务 (Market Sync Service) —— 数据湖「增量维护」的统一门面 (v5.8)。 | 19 | 832 |
-| `data/tencent_market.py` | 腾讯历史日线备源（★2.06 / DATA-PLATFORM P2）。 | 4 | 71 |
+| `data/tencent_market.py` | 腾讯历史日线备源（★2.06 / DATA-PLATFORM P2）。 | 4 | 73 |
 | `data/trade_calendar.py` | A 股交易日历获取件（v6.45 / §7-B10 · 用户拍板引入真交易日历）。 | 9 | 134 |
 | `data/watchlist_change.py` | 自选分组的「组合当日涨跌」（§7-B8 R3）—— **零 Qt**：纯函数 + 一层带 TTL 的快照缓存。 | 7 | 155 |
 | `data/watchlist_store.py` | 自选股（Watchlist）—— 用户关心的标的清单，JSON 原子写（§7-B3 P8）。 | 5 | 340 |
@@ -92,11 +92,11 @@ verified: auto
 | `scripts/check_docs.py` | 文档契约自检（秒级、不依赖 Qt）：写完/搬完文档跑一次。 | 9 | 100 |
 | `scripts/gen_codemap.py` | 生成 `docs/reference/MODULE_INDEX.md`：**每个 .py 一行**（路径 · 一句话 · 公共符号 · 行数）。 | 4 | 81 |
 | `scripts/probe_startup.py` | 启动耗时探针（★2.03 / ARCH-PERF P0-5）—— **同一把尺子**，不参与运行。 | 1 | 63 |
-| `scripts/repair_history.py` | 修复被 bootstrap 污染的日线（★2.07）。 | 1 | 91 |
+| `scripts/repair_history.py` | 修复被 bootstrap 污染的日线（★2.07）。 | 1 | 97 |
 | `scripts/sync_roster.py` | — | 2 | 37 |
-| `tests/run_smoke.py` | 一键跑两份冒烟（默认**并行**）+ 分段耗时 + 紧凑汇总（★2.04 / B1 测试提速）。 | 6 | 244 |
-| `tests/smoke_chart.py` | — | 14 | 5843 |
-| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 35 | 8919 |
+| `tests/run_smoke.py` | 一键跑两份冒烟（默认**并行**）+ 分段耗时 + 紧凑汇总（★2.04 / B1 测试提速）。 | 6 | 245 |
+| `tests/smoke_chart.py` | — | 14 | 5844 |
+| `tests/smoke_pages_overlay.py` | 「回测页 + 行情工作台」公式叠层 / 标注 / 配方 / 自选 / 周期 / 成交模型（§7-B5）的**页面级**验收（P3–P8）。 | 35 | 8920 |
 | `tests/unit/test_backfill.py` | — | 2 | 64 |
 | `tests/unit/test_bootstrap_once.py` | — | 1 | 33 |
 | `tests/unit/test_core_math_and_store.py` | 指标 / 净额 / 参数文本 / 组合成分 diff 的纯函数测试（★2.04 / B1 第四层）。 | 4 | 105 |
@@ -108,7 +108,7 @@ verified: auto
 | `tests/unit/test_provider_caps.py` | — | 2 | 35 |
 | `tests/unit/test_quality.py` | — | 3 | 37 |
 | `tests/unit/test_scan_and_texts.py` | 缓存键 / 数据版本 / 批量耗时文案 / 交易日定稿的纯函数测试（★2.04 / B1 第二层）。 | 3 | 102 |
-| `tests/unit/test_sina_market.py` | — | 1 | 48 |
+| `tests/unit/test_sina_market.py` | — | 1 | 54 |
 | `tests/unit/test_tencent_market.py` | — | 1 | 27 |
 | `ui/__init__.py` | — | 0 | 0 |
 | `ui/dialogs/__init__.py` | — | 0 | 0 |
@@ -241,7 +241,7 @@ verified: auto
 | `ui/workers.py` | 全 app 的 QThread 门面（★2.04 / P2 拆件后只做再导出）。 | 0 | 54 |
 | `ui/workers_backtest.py` | 回测 / 参数扫描 / 组合池化类 QThread（★2.04 / P2 拆件）。 | 3 | 150 |
 | `ui/workers_core.py` | 任务竞态守卫（★2.04 / P2 拆件）。 | 1 | 34 |
-| `ui/workers_download.py` | 批量下载 / 网络自检 / 缓存清理 / 更新检查类 QThread（★2.04 / P2 拆件）。 | 6 | 502 |
+| `ui/workers_download.py` | 批量下载 / 网络自检 / 缓存清理 / 更新检查类 QThread（★2.04 / P2 拆件）。 | 6 | 526 |
 | `ui/workers_imports.py` | 期货交割单解析 worker（★2.04 / P2 拆件）。 | 1 | 28 |
 | `ui/workers_scan.py` | 扫描 / 成分股 / 就绪度 / 日历类 QThread（★2.04 / P2 拆件）。 | 7 | 207 |
 | `ui/workers_sync.py` | 同步类小 worker（★2.04 / P2 拆件）。 | 6 | 158 |

@@ -22,6 +22,8 @@ _LIMIT = 640
 
 def _key(symbol: str) -> str:
     code = str(symbol).strip()
+    if code.startswith(("920", "43", "83", "87", "88")):
+        return "bj" + code
     return ("sh" if code[:1] in ("5", "6", "9") else "sz") + code
 
 
