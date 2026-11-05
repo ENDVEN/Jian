@@ -70,7 +70,7 @@ python -u tests/smoke_pages_overlay.py
 "缓存命中"类断言会假红（先停下载）。改了纯内核（`core/` / `data/`）先跑 unit，
 页面改动再跑 overlay；`run_smoke.py` 会打印**最慢的 5 个区段**，便于继续优化。
 
-unit 当前 **104 条**，覆盖：日期批量解析 / roster 向量化 / footer LRU / 缓存键与数据版本 /
+unit 当前 **106 条**，覆盖：日期批量解析 / roster 向量化 / footer LRU / 缓存键与数据版本 /
 批量耗时文案 / 组合统计与权重 / 横截面 `merge_tail` / 指标与净额 / 成分 diff / 风险文案与格式化。纯内核改动**不必等两份冒烟**。
 
 按改动选测试，别每次都等全量：

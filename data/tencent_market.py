@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import pandas as pd
 import requests
@@ -18,6 +19,22 @@ __all__ = ["fetch_daily", "parse_payload"]
 
 _URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 _LIMIT = 640
+_SCHED = None
+
+
+def _fetch_scheduled(url, timeout):
+    """腾讯 HTTP 边界；JIAN_SCHEDULER=0 回退裸 requests。"""
+    global _SCHED
+    if os.environ.get("JIAN_SCHEDULER", "1") == "0":
+        return requests.get(url, timeout=timeout,
+                            headers={"Referer": "https://gu.qq.com/"})
+    if _SCHED is None:
+        from data.scheduler import ChannelPolicy, Scheduler
+        _SCHED = Scheduler(policies=[ChannelPolicy("tencent", max_concurrency=2)])
+    return _SCHED.call(
+        "tencent", lambda: requests.get(
+            url, timeout=timeout, headers={"Referer": "https://gu.qq.com/"}),
+        max_wait=1.0)
 
 
 def _key(symbol: str) -> str:
@@ -71,8 +88,7 @@ def fetch_daily(symbol: str, start_date: str = None, end_date: str = None,
     adj = "qfq" if str(adjust) == "qfq" else ""
     url = f"{_URL}?param={key},day,{start},{end},{_LIMIT},{adj}"
     try:
-        r = requests.get(url, timeout=timeout,
-                         headers={"Referer": "https://gu.qq.com/"})
+        r = _fetch_scheduled(url, timeout)
         r.raise_for_status()
         df = parse_payload(r.json(), symbol, adjust)
     except Exception as e:  # noqa: BLE001 —— 备源失败不抛

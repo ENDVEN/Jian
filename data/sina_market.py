@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 import pandas as pd
@@ -25,6 +26,20 @@ _HEADERS = {"Referer": "https://finance.sina.com.cn/",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 _CHUNK = 100
 _RE = re.compile(r'var hq_str_([a-z]{2}\d{6})="(.*?)";')
+_SCHED = None
+
+
+def _fetch_scheduled(url, timeout):
+    """新浪 HTTP 边界；JIAN_SCHEDULER=0 回退裸 requests。"""
+    global _SCHED
+    if os.environ.get("JIAN_SCHEDULER", "1") == "0":
+        return requests.get(url, headers=_HEADERS, timeout=timeout)
+    if _SCHED is None:
+        from data.scheduler import ChannelPolicy, Scheduler
+        _SCHED = Scheduler(policies=[ChannelPolicy("sina", max_concurrency=2)])
+    return _SCHED.call(
+        "sina", lambda: requests.get(url, headers=_HEADERS, timeout=timeout),
+        max_wait=1.0)
 
 
 def _sina_key(symbol: str) -> str:
@@ -82,7 +97,7 @@ def fetch_batch_quotes(symbols, chunk: int = _CHUNK, timeout: float = 15.0,
         batch = codes[i:i + chunk]
         url = "https://hq.sinajs.cn/list=" + ",".join(_sina_key(s) for s in batch)
         try:
-            r = requests.get(url, headers=_HEADERS, timeout=timeout)
+            r = _fetch_scheduled(url, timeout)
             r.raise_for_status()
             text = r.content.decode("gbk", errors="replace")
             df = parse_batch(text)

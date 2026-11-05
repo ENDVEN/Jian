@@ -447,3 +447,12 @@ HISTORY 172k 名不副实、**根目录无 README**；④ 目录归类基本规�
   `sina/tencent` 北交所前缀修为 `bj`。
 - 残留：`689009`（CDR）/`301139` 源无历史，保留不伪造。
 - unit 84/0；chart 受本机预算/代理态影响未作为通过依据。
+
+## ★2.11 · P3-4 调度器接线与队列优先级（2026-11-06 提交）
+
+- scheduler 接入 `em_market` / `sina_market` / `tencent_market` 三个 HTTP 出口；
+- 通道并发、优先级、代理/限流冷却、自适应并发、熔断；
+- DownloadHub 队列按 用户 > 启动 > 普通 > backfill 排序；
+- Catalog UI 与 15:10 收盘检查；
+- 日更/单只写入增量更新 catalog；
+- 修复调度器并发锁与备源冷却长时间等待。

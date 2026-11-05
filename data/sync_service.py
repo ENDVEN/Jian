@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -334,6 +335,23 @@ class ThrottlePolicy:
         if self.jitter:
             base *= random.uniform(1 - self.jitter, 1 + self.jitter)
         sleep_fn(max(0.0, base))
+
+
+def _catalog_record(symbol, zone, merged, source: str = "sync") -> None:
+    """单只落盘后增量更新 catalog；失败只记日志，绝不影响行情保存。"""
+    if zone != ZONE_KLINE or os.environ.get("JIAN_CATALOG", "1") == "0":
+        return
+    try:
+        from data.catalog import Catalog
+        last = None
+        if merged is not None and "date" in merged.columns and len(merged):
+            last = pd.to_datetime(merged["date"], errors="coerce").max()
+            last = "" if pd.isna(last) else last.strftime("%Y-%m-%d")
+        Catalog().record("bar_daily", symbol, last_date=last,
+                         rows=0 if merged is None else len(merged),
+                         source=source)
+    except Exception as e:  # noqa: BLE001
+        logger.info("catalog 记录失败 [%s]: %s", symbol, e)
 
 
 class MarketSyncService:
@@ -653,6 +671,7 @@ class MarketSyncService:
         if not self.lake.save_data(zone, key, merged):
             result["message"] = "落盘失败"
             return result
+        _catalog_record(symbol, zone, merged, source="sync")
 
         result.update(
             ok=True, rows=len(merged), added=max(0, len(merged) - old_rows),
@@ -768,6 +787,7 @@ class MarketSyncService:
         merged = _drop_unsettled_tail(merged)      # 二次防线（spot 本应定稿）
         if merged is None or merged.empty or not self.lake.save_data(zone, key, merged):
             return None
+        _catalog_record(symbol, zone, merged, source="spot")
         result.update(ok=True, rows=len(merged),
                       added=max(0, len(merged) - len(old)),
                       first=self._first_day(merged), last=self._last_day(merged),

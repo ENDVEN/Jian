@@ -417,40 +417,47 @@ class DailySnapshotWorker(QThread):
             total = len(snap)
             lock = threading.Lock()
             empty_hist = []
+            catalog_updates = []
 
             def _merge_one(rec):
                 sym = str(rec.get("symbol") or "").strip()
                 try:
                     if self._cancel:
-                        return sym, "skipped", 0, None, False
+                        return sym, "skipped", 0, None, False, None
                     old = service.lake.load_data(ZONE_KLINE, sym)
                     was_empty = old is None or len(old) == 0
                     if old is not None and len(old) and "date" in old.columns:
                         last_day = pd.to_datetime(old["date"], errors="coerce").max()
                         if pd.notna(last_day) and pd.Timestamp(last_day).normalize() >= asof:
-                            return sym, "skipped", 0, None, False
+                            return sym, "skipped", 0, None, False, None
                     if self._can_append(old, rec, asof, calendar):
                         merged = merge_row(old, pd.Series(rec))
                         if not service.lake.save_data(ZONE_KLINE, sym, merged):
-                            return sym, "fail", 0, "落盘失败", was_empty
-                        return sym, "ok", 1, None, was_empty
+                            return sym, "fail", 0, "落盘失败", was_empty, None
+                        return (sym, "ok", 1, None, was_empty,
+                                (sym, asof.strftime("%Y-%m-%d"), len(merged)))
                     # 缺口 / 除权 / 缺昨收：走单只真实增量，宁可慢也不抄错
                     result = service.refresh_one(sym, zone=ZONE_KLINE, policy=policy)
                     if result.get("ok"):
-                        return sym, "ok", int(result.get("added", 0)), None, was_empty
-                    return sym, "fail", 0, short_fetch_reason(result), was_empty
+                        last = result.get("last") or asof.strftime("%Y-%m-%d")
+                        rows = int(result.get("rows") or 0)
+                        return (sym, "ok", int(result.get("added", 0)), None,
+                                was_empty, (sym, last, rows))
+                    return sym, "fail", 0, short_fetch_reason(result), was_empty, None
                 except Exception as e:  # noqa: BLE001 —— 单只失败不废整批
-                    return sym, "fail", 0, f"{type(e).__name__}: {e}", False
+                    return sym, "fail", 0, f"{type(e).__name__}: {e}", False, None
 
             with ThreadPoolExecutor(max_workers=min(16, max(1, total))) as ex:
                 futures = [ex.submit(_merge_one, rec) for rec in snap.to_dict("records")]
                 for index, fut in enumerate(as_completed(futures), start=1):
-                    sym, status, added, err, was_empty = fut.result()
+                    sym, status, added, err, was_empty, cat_entry = fut.result()
                     with lock:
                         stats["symbols_attempted"].append(sym)
                         if status == "ok":
                             stats["ok"] += 1
                             stats["added"] += added
+                            if cat_entry:
+                                catalog_updates.append(cat_entry)
                             if was_empty:
                                 empty_hist.append(sym)
                         elif status == "skipped":
@@ -464,6 +471,13 @@ class DailySnapshotWorker(QThread):
                     if self._cancel:
                         stats.update(aborted=True, aborted_by="cancel")
                         break
+            if catalog_updates and os.environ.get("JIAN_CATALOG", "1") != "0":
+                try:
+                    from data.catalog import Catalog
+                    Catalog().record_many("bar_daily", catalog_updates,
+                                          source="daily")
+                except Exception as e:  # noqa: BLE001 —— catalog 失败不废行情
+                    logger.warning("catalog 更新失败: %s", e)
             missing = [s for s in target if s not in set(snap["symbol"])]
             if missing:
                 # 停牌/退市/快照无行 ≠ 下载失败；如实记 missing，不制造 343 条假失败

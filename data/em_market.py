@@ -234,7 +234,50 @@ def _do_get(url: str, params: dict, use_proxy: bool, billable: bool = True) -> d
     return resp.json() or {}
 
 
-def _http_get(url: str, params: dict, *, kind: str, billable: bool = True) -> dict:
+_NET_SCHEDULER = None
+
+
+def _net_scheduler():
+    """进程级 scheduler；按东财通道独立限制并发/自适应（JIAN_SCHEDULER=0 回滚）。"""
+    global _NET_SCHEDULER
+    if _NET_SCHEDULER is None:
+        from data.scheduler import ChannelPolicy, Scheduler
+        _NET_SCHEDULER = Scheduler(policies=[
+            ChannelPolicy("clist", max_concurrency=4, min_interval=0),
+            ChannelPolicy("ulist", max_concurrency=4, min_interval=0),
+            ChannelPolicy("industry", max_concurrency=2, min_interval=0),
+            ChannelPolicy("kline_hist", max_concurrency=8, min_interval=0),
+        ])
+    return _NET_SCHEDULER
+
+
+def _sched_begin(kind: str):
+    if os.environ.get("JIAN_SCHEDULER", "1") == "0":
+        return None, 0.0
+    # 已有通道冷却时不再进 scheduler 等待；交回原有 em_throttle 快速失败路径。
+    if em_throttle.is_cooling(kind=kind):
+        return None, 0.0
+    from data.scheduler import PRIORITY, Task
+    sch = _net_scheduler()
+    task = Task(payload=None, channel=str(kind),
+                priority=PRIORITY["watchlist"])
+    while not sch.acquire(task):
+        wait = sch.wait_for(task)
+        time.sleep(min(max(wait, 0.005), 0.2))
+    return task, time.perf_counter()
+
+
+def _sched_end(task, started: float, ok: bool, err=None) -> None:
+    if task is None:
+        return
+    sch = _net_scheduler()
+    cls = "proxy" if (err is not None and net_env.looks_like_proxy_error(err)) else ""
+    sch.finish(task, ok=ok, latency=max(0.0, time.perf_counter() - started),
+               error_class=cls)
+
+
+def _http_get_impl(url: str, params: dict, *, kind: str,
+                   billable: bool = True) -> dict:
     """唯一 HTTP 出口：应用网络策略 → 发一次 → **代理报错则降级直连重试一次**。"""
     net_env.apply()
     mode = net_env.proxy_mode()
@@ -259,6 +302,18 @@ def _http_get(url: str, params: dict, *, kind: str, billable: bool = True) -> di
         _STATE['direct_locked'] = True
         logger.warning("东财取数临时改用**直连**（本轮会话；代理修好后重启应用即恢复走代理）")
         return data
+
+
+def _http_get(url: str, params: dict, *, kind: str, billable: bool = True) -> dict:
+    """scheduler 准入 + 原 HTTP 实现；失败按通道回报，供自适应/熔断使用。"""
+    task, started = _sched_begin(kind)
+    try:
+        data = _http_get_impl(url, params, kind=kind, billable=billable)
+    except Exception as e:                    # noqa: BLE001
+        _sched_end(task, started, False, e)
+        raise
+    _sched_end(task, started, True)
+    return data
 
 
 def direct_locked() -> bool:

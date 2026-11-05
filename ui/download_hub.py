@@ -349,15 +349,17 @@ class DownloadHub(QObject):
         """只有一个坑位：有任务在跑就等着；跑完再取下一个。"""
         if self._running is not None or not self._queue:
             return
-        # ★2.05：backfill 是低优先级，队列里还有普通任务时绝不抢跑。
-        job = None
+        # ★2.10 / P3-4：队列优先级与 scheduler 同口径；
+        #   用户任务 > 启动任务 > 普通任务 > 后台 backfill，同档保持 FIFO。
+        rank = {"user": 10, "": 15, "startup": 20, "backfill": 30}
+        best_i = 0
+        best_key = None
         for i, queued in enumerate(self._queue):
-            if queued.origin != "backfill":
-                job = self._queue[i]
-                del self._queue[i]
-                break
-        if job is None:
-            job = self._queue.popleft()
+            key = (rank.get(str(queued.origin or ""), 20), i)
+            if best_key is None or key < best_key:
+                best_key, best_i = key, i
+        job = self._queue[best_i]
+        del self._queue[best_i]
         job.status = STATUS_RUNNING
         self._running = job
         self._set_active(True)

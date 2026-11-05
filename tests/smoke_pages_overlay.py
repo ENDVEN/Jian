@@ -111,6 +111,8 @@ os.environ.setdefault('JIAN_AUTO_DAILY', '0')
 os.environ.setdefault('JIAN_EM_DIRECT', '0')   # 冒烟不因本机登录态走东财直连
 # 开发测试不读本机登录额度；预算专项断言用合成预算，临时恢复闸门。
 os.environ.setdefault('JIAN_TEST_IGNORE_BUDGET', '1')
+os.environ.setdefault('JIAN_SCHEDULER', '0')  # 测试不启动进程级调度器状态
+os.environ.setdefault('JIAN_CATALOG', '0')    # 测试不写真实 catalog
 # 本文件在 tests/ 子目录里，**仓库根 = 本文件的父目录**（由 `__file__` 反推，§10-13）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

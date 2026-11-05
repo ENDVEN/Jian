@@ -66,6 +66,20 @@ class TestScheduler(unittest.TestCase):
         second = self.s.state("em").cooldown_until - self.now
         self.assertGreater(second, first)
 
+    def test_call_success_and_failure(self):
+        s = Scheduler(policies=[ChannelPolicy("sina", max_concurrency=2)],
+                      clock=lambda: self.now)
+        self.assertEqual(s.call("sina", lambda: 42), 42)
+        self.assertEqual(s.stats()["sina"]["in_flight"], 0)
+        with self.assertRaises(RuntimeError):
+            s.call("sina", lambda: (_ for _ in ()).throw(RuntimeError("ProxyError")))
+        self.assertEqual(s.state("sina").fail_class, "proxy")
+
+    def test_call_max_wait_does_not_stall_on_cooldown(self):
+        self.s.state("em").cooldown_until = self.now + 60
+        with self.assertRaises(Exception):
+            self.s.call("em", lambda: 1, max_wait=1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 {
-  "version": "2.10",
-  "notes": "这一版落下数据平台 P3 内核：\n· SQLite catalog：5580 只日线元数据，扫描 4.6s；\n· planner：daily/repair/bootstrap/minute 任务规划；\n· scheduler：按 provider/channel 独立限流、优先级、自适应并发、熔断；\n· 测试不再读取本机登录额度；生产额度不变；\n· 修复测试临时目录误写真实花名册的问题。",
+  "version": "2.11",
+  "notes": "这一版完成数据平台 P3-4 收尾：\n· scheduler 接入东财/新浪/腾讯 HTTP 出口，带通道并发、优先级、自适应、熔断；\n· DownloadHub 队列按用户 > 启动 > 普通 > backfill 排序；\n· Catalog UI 与收盘后 15:10 检查；\n· 日更/单只写入增量更新 catalog；\n· 修正调度器并发锁与备源冷却过长等待。",
   "url": "https://github.com/ENDVEN/Jian/releases"
 }

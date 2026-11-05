@@ -335,6 +335,18 @@ class DataManagerView(QWidget):
         self._update_coverage(zone, self._items)
         self._sync_ops_enabled()
 
+    def _catalog_line(self) -> str:
+        """读 catalog 的日线汇总；失败不影响页面（只读元数据）。"""
+        try:
+            from data.catalog import Catalog
+            s = Catalog().summary("bar_daily")
+            if not s.get("total"):
+                return ""
+            return (f"catalog {s.get('covered', 0)}/{s.get('total', 0)}"
+                    f" · {s.get('last_date') or '—'}")
+        except Exception:  # noqa: BLE001
+            return ""
+
     def _update_coverage(self, zone: str, items: list) -> None:
         """先给文件计数，再由后台体检补正式三态（只读 footer，不联网）。"""
         if zone != ZONE_KLINE:
@@ -378,10 +390,11 @@ class DataManagerView(QWidget):
         if report is None:
             self.lbl_coverage.setText("体检已取消")
             return
-        self.lbl_coverage.setText(report.summary_line())
+        cat = self._catalog_line()
+        self.lbl_coverage.setText(report.summary_line() + (f" · {cat}" if cat else ""))
         self.lbl_coverage.setToolTip(
             "只读 parquet footer：就绪=行数≥250；历史不足=有文件但不够；"
-            "未下载=本地无文件。不联网。")
+            "未下载=本地无文件。catalog 为元数据汇总，不联网。")
 
     def _on_readiness_failed(self, job_id: int, zone: str, err: str) -> None:
         if job_id != self._readiness_job or zone != self._current_zone:

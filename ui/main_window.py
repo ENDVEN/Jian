@@ -145,6 +145,7 @@ class JianMainWindow(QMainWindow):
         #   必须在**任何 `resizeEvent` 之前**就位 —— 重摆浮窗的路径会读它。
         self._hub_offset = (0, 0)
         self._startup_check_worker = None
+        self._prefetch_day = ""
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -267,6 +268,25 @@ class JianMainWindow(QMainWindow):
         # ★2.05 / DATA-PLATFORM P1：首次安装本地无日线时，后台先拉当天快照。
         #   只检查文件是否存在，不阻塞首屏；详情/回滚见 DATA-PLATFORM §7。
         QTimer.singleShot(1500, self._maybe_auto_daily_snapshot)
+        # 收盘后 15:10 起每 5 分钟检查一次；只触发一次，不重复打接口。
+        self._prefetch_timer = QTimer(self)
+        self._prefetch_timer.setInterval(5 * 60 * 1000)
+        self._prefetch_timer.timeout.connect(self._maybe_prefetch_after_close)
+        self._prefetch_timer.start()
+
+    def _maybe_prefetch_after_close(self) -> None:
+        """收盘后自动补当天；不等待、不重复、不绕过用户预算。"""
+        if os.environ.get("JIAN_AUTO_DAILY", "1") == "0" or self._exiting:
+            return
+        now = datetime.now()
+        if now.time() < now.replace(hour=15, minute=10, second=0,
+                                    microsecond=0).time():
+            return
+        today = now.date().isoformat()
+        if self._prefetch_day == today:
+            return
+        self._prefetch_day = today
+        self._maybe_auto_daily_snapshot()
 
     def _maybe_auto_daily_snapshot(self) -> None:
         """启动时只读检查本地日线；空则快照，过期则按缺口大小走快照/backfill。

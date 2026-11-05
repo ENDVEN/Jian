@@ -126,6 +126,8 @@ def _launch(name: str, log_dir: str | None) -> Result:
     env["JIAN_AUTO_DAILY"] = "0"       # 冒烟不触发启动自动日快照
     env["JIAN_EM_DIRECT"] = "0"        # 冒烟不受本机登录态影响
     env["JIAN_TEST_IGNORE_BUDGET"] = "1"  # 开发测试不读本机登录额度；生产仍受限
+    env["JIAN_SCHEDULER"] = "0"        # 测试不启动进程级调度器状态
+    env["JIAN_CATALOG"] = "0"          # 测试不写真实 catalog
     res.log_path = ""
     if log_dir:
         res.log_path = os.path.join(log_dir, f"{name}.log")

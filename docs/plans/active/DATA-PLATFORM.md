@@ -6,7 +6,7 @@ skip_if: 只改某个页面的展示或文案
 verified: 2026-11-05
 ---
 
-# 数据底层重构与下载提速方案 · ★2.10（P3 内核完成，P3-4 接线待做）
+# 数据底层重构与下载提速方案 · ★2.11（P3 完成，P4 待开工）
 
 > **用户 2026-11-04 明确**：现有下载链路是早期按 A 股日线设计的，面对港股 / ETF / 期货 /
 > ROE·PE·PB·财报 / 分钟线会越来越乱；同时“5000 多只全 A 下载要 1 小时 20 分”不可接受。
@@ -226,7 +226,7 @@ capabilities:
 | 登录东财直连 | ✅ 实测；⚠ 默认关 | qfq 口径不等价；预算 300/日 |
 | 新浪/腾讯备源 | ✅ | 腾讯默认关；北交所 `bj` 已修 |
 | 新股/北交所覆盖 | ✅ 2.09 | 快照新股入册；349 北交所后置 |
-| catalog / planner / scheduler | 🟡 catalog + planner + scheduler 内核已落地（未提交）；执行接线待做 | P3-4 |
+| catalog / planner / scheduler | ✅ P3 完成（catalog/planner/scheduler/UI/预取） | P4 |
 | 财报/港股/ETF/期货/分钟 | ❌ | P4；当前只有目录/能力表占位 |
 
 **当前不是“缺一个下载函数”**：取数、快照、备源都有了；缺的是**目录、计划、调度**
@@ -458,11 +458,17 @@ capabilities:
 - 预算：登录 300/日、匿名 100/日继续生效，调度器不得绕过；
 - 回滚：`JIAN_SCHEDULER=0` 回退当前 `DownloadHub` 队列。
 
-#### P3-4 盘后预取 + Scheduler 接线 + Catalog UI（1–2 天）
+#### P3-4 盘后预取 + Scheduler 接线 + Catalog UI（已完成）
 
 - 收盘后 15:10 触发：先日快照，再 catalog 驱动的 repair/backfill；
 - 启动时只做“catalog 对比 + 缺口任务”，不再扫全目录；
 - 数据管理页显示：`dataset / 覆盖 / 最后更新 / 来源 / 失败数`；
+  **已落地**：覆盖率结果后面追加 `catalog covered/total · last_date`；
+- **已落地**：主窗口收盘后 15:10 起每 5 分钟检查一次，当天只投一次；
+  `JIAN_AUTO_DAILY=0` 仍可关闭；
+- **已接**：`em_market._http_get`、`sina_market`、`tencent_market` 三个 HTTP 边界都进 scheduler；
+  `DownloadHub` 队列按 用户 > 启动 > 普通 > backfill 排序；`JIAN_SCHEDULER=0` 回滚。
+- **边界**：`DownloadHub` 仍是一次只跑一个 job；scheduler 管通道级并发，不是多 job 并行。
 - 目标：连续 5 个交易日，用户不点下载，打开即最新。
 
 **P3 验收**
@@ -611,7 +617,7 @@ capabilities:
 - [x] P3-1：contracts + catalog（SQLite；dataset/asset/last_date/source/schema_version；5580 文件扫描 4.6s）
 - [x] P3-2：planner（bootstrap/daily/repair/minute；新股/北交所规则入 planner）
 - [x] P3-3：scheduler 内核（独立 channel、优先级、自适应、熔断；预算不绕过）
-- [ ] P3-4：scheduler 接 DownloadHub/em_market + 盘后预取 + Catalog UI
+- [x] P3-4：Catalog UI + 盘后 15:10 检查 + scheduler（东财/Sina/Tencent）+ DownloadHub 优先级
 - [ ] P3-4：盘后 15:10 预取 + catalog 驱动的启动检查 + 数据管理页
 - [ ] P4-1：ETF/LOF 独立 `etf_daily` + 本地等比前复权
 - [ ] P4-2：财报/ROE/PE/PB 按报告期批量

@@ -85,6 +85,8 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ.setdefault('JIAN_AUTO_DAILY', '0')
 os.environ.setdefault('JIAN_EM_DIRECT', '0')   # 冒烟不因本机登录态走东财直连
 os.environ.setdefault('JIAN_TEST_IGNORE_BUDGET', '1')  # 不因本机额度耗尽误红
+os.environ.setdefault('JIAN_SCHEDULER', '0')  # 测试不启动进程级调度器状态
+os.environ.setdefault('JIAN_CATALOG', '0')    # 测试不写真实 catalog
 
 import numpy as np
 import pandas as pd
